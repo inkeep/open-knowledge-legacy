@@ -14,8 +14,16 @@ Each row shows an author, a relative timestamp (e.g. "3 min ago"), and a kind-sp
 - **Diamond — "Save Version"**. A user-triggered snapshot. Click to preview the state at that version; the **Restore** action writes that snapshot over the current document as a new edit.
 - **Amber alert-triangle — "Auto-saved before a concurrent edit (size)"**. The editor wrote this checkpoint automatically right before a concurrent-edit merge finalized. If you notice a paragraph blink or lost text, this is where it's preserved. See [[collaboration-recovery]] for the full flow.
 - **Sky file-archive — "Recovered from an external change (size)"**. An external writer (another process, a `git checkout`, a file-watcher sync) overrode an in-memory draft. The draft is preserved under this entry.
-- **Writer chip (bullet + color)** — a per-writer WIP (work-in-progress) auto-commit. Individually noisy; the Timeline folds consecutive same-writer runs.
+- **Writer chip (bullet + color)** — a per-writer WIP (work-in-progress) auto-commit. Individually noisy; the Timeline folds consecutive same-writer runs. When an agent provided a `summary` on its write, the row carries one bullet per summary underneath the author line — see "Agent summaries" below.
 - **Upstream arrow** — a `git pull` or equivalent brought new content in from outside the editor.
+
+## Agent summaries
+
+Agents writing through MCP (`write_document`, `edit_document`, `rename_document`, `rollback_to_version`) can attach a short `summary` describing the intent of the edit. Summaries appear as bulleted text under the author line on the WIP row — one bullet per summarized write, oldest first, capped at 80 characters each. The first bullet is always visible; additional bullets collapse behind a "Show N more" expander.
+
+The **doc list** on the row (e.g. `foo.md · bar.md`) is still shown as ground truth: it lists every document the commit touched, regardless of whether each got a summary. Bullets enrich that list — they don't replace it.
+
+Legacy commits, WYSIWYG edits, auto-saves, and rollbacks driven by the in-editor Restore button have no bullets. For rename and rollback calls made through MCP, the server fills in a default summary — `Renamed <from> → <to>` or `Restored to <sha-short>` — so those rows are self-describing even when the agent didn't provide one.
 
 ## Restoring
 

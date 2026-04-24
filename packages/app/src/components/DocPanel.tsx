@@ -1,18 +1,21 @@
-import { CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { lazy, Suspense, useState } from 'react';
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
+import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
+import { lazy, Suspense } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
+import { TimelineContent } from '@/components/TimelinePanel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
+export type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph' | 'timeline';
 
-const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
+export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', icon: ListTree },
   { id: 'backlinks', label: 'Backlinks', icon: CornerDownLeft },
   { id: 'forward-links', label: 'Outgoing Links', icon: CornerUpRight },
   { id: 'graph', label: 'Graph', icon: Network },
+  { id: 'timeline', label: 'Timeline', icon: Clock },
 ];
 
 export function loadGraphPanelModule() {
@@ -27,11 +30,20 @@ const LazyGraphPanel = lazy(async () => {
 interface DocPanelProps {
   docName: string;
   isSourceMode: boolean;
+  activeTab: PanelTab;
+  onActiveTabChange: (tab: PanelTab) => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
 }
 
-export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
-  const [activeTab, setActiveTab] = useState(TABS[0].id);
-
+export function DocPanel({
+  docName,
+  isSourceMode,
+  activeTab,
+  onActiveTabChange,
+  onEntrySelect,
+  selectedSha,
+}: DocPanelProps) {
   return (
     <>
       <ToggleGroup
@@ -39,7 +51,7 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
         variant="outline"
         value={activeTab}
         onValueChange={(value: PanelTab) => {
-          if (value) setActiveTab(value);
+          if (value) onActiveTabChange(value);
         }}
         className="mx-auto p-2"
         aria-label="Document panels"
@@ -82,6 +94,13 @@ export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
           >
             <LazyGraphPanel activeDocName={docName} />
           </Suspense>
+        )}
+        {activeTab === 'timeline' && (
+          <TimelineContent
+            docName={docName}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+          />
         )}
       </div>
     </>

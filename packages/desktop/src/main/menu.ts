@@ -33,6 +33,7 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
@@ -52,6 +53,35 @@ export interface MenuDeps {
   clearRecentProjects(): void;
   /** Open an external URL (Help menu). Injected so the `shell` runtime value doesn't cross the module boundary. */
   openExternalUrl(url: string): void;
+  /**
+   * Current CLI-on-PATH install status (M6a, D52). Returning `null` hides
+   * the File → Install/Uninstall Command-Line Tools menu item entirely —
+   * used for non-darwin platforms (NG4 defers Windows/Linux) and for unit
+   * tests that don't exercise the M6a feature.
+   *
+   * A function (not a value) so re-calling `installApplicationMenu` after a
+   * toggle re-reads `getInstallStatus(app.getPath('exe'))` afresh without
+   * needing to thread a state snapshot through the click handler — same
+   * shape as `getRecentProjects`.
+   */
+  cliInstallStatus?(): CliInstallStatus | null;
+  /**
+   * Run the install-or-uninstall flow for the Command-Line Tools menu item.
+   * Wired in `index.ts` to dispatch `installCli` / `uninstallCli` based on
+   * the current status, then call `refreshApplicationMenu()` — same
+   * side-effect pattern as `clearRecentProjects`. Rejection semantics live
+   * in the CLI-install layer (translocation warning, admin-cancel fallback).
+   */
+  toggleCliInstall?(): Promise<void> | void;
+  /**
+   * Pass 2 Major #5: re-trigger M6b consent from the File menu. Invoked
+   * by "Configure AI Tool Integrations…" — a user who Skip'd first-launch
+   * (or added a new editor afterwards) can re-open the dialog without
+   * hand-deleting `~/.open-knowledge/mcp-status.json`. Gated on darwin
+   * + `app.isPackaged`; `index.ts` short-circuits in dev + non-darwin so
+   * the menu item is hidden there.
+   */
+  reconfigureMcpWiring?(): Promise<void> | void;
 }
 
 /**
@@ -69,6 +99,13 @@ export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
 export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] {
   const isMac = process.platform === 'darwin';
   const recents = deps.getRecentProjects();
+  // D52 / M6a menu item — shown only on darwin and only when the runtime
+  // provides a status probe. `'installed'` flips the label to "Uninstall…";
+  // `'not-installed'` and `'broken'` both render "Install…" (broken is
+  // primarily surfaced by the launch-time repair dialog in `index.ts`, but
+  // clicking the menu item while broken re-runs the install flow which
+  // overwrites the dangling symlink — same end state).
+  const cliStatus = isMac ? (deps.cliInstallStatus?.() ?? null) : null;
 
   const recentSubmenu: MenuItemConstructorOptions[] =
     recents.length === 0
@@ -135,6 +172,35 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           submenu: recentSubmenu,
         },
         { type: 'separator' },
+        ...(cliStatus
+          ? ([
+              {
+                label:
+                  cliStatus === 'installed'
+                    ? 'Uninstall Command-Line Tools'
+                    : 'Install Command-Line Tools…',
+                click: () => {
+                  void deps.toggleCliInstall?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
+        // Pass 2 Major #5 — re-trigger M6b consent. The dep is optional
+        // so non-macOS / non-packaged contexts (where MCP wiring no-ops
+        // anyway) hide the row. Gating matches cliStatus above — `deps`
+        // plumbs `undefined` when the runtime has nothing to offer.
+        ...(deps.reconfigureMcpWiring
+          ? ([
+              {
+                label: 'Configure AI Tool Integrations…',
+                click: () => {
+                  void deps.reconfigureMcpWiring?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },

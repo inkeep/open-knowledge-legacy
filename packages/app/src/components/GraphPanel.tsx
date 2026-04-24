@@ -1,13 +1,22 @@
 import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, CheckCircle2, Globe, Maximize2, Minimize2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CheckCircle2,
+  Globe,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
 import {
   type GraphNodeSelection,
   getHashForGraphDocSelection,
 } from '@/components/graph-view-utils';
+import { usePageList } from '@/components/PageListContext';
+import { resolveTargetNavigationIntent } from '@/components/target-navigation-intent';
 import { Button } from '@/components/ui/button';
 import {
   Panel,
@@ -104,19 +113,6 @@ async function fetchHubs(limit: number): Promise<HubEntry[]> {
 
 function navigateToDoc(docName: string) {
   window.location.assign(hashFromDocName(docName));
-}
-
-async function exitFullscreen(): Promise<void> {
-  if (!getFullscreenElement()) return;
-
-  try {
-    await (document.exitFullscreen?.() ??
-      (
-        document as Document & { webkitExitFullscreen?: () => Promise<void> }
-      ).webkitExitFullscreen?.());
-  } catch {
-    // User gesture / permission / unsupported
-  }
 }
 
 function getOrphanDescription(mode: OrphanMode): string {
@@ -266,33 +262,9 @@ function FullscreenHubsView() {
   );
 }
 
-function getFullscreenElement(): Element | null {
-  return (
-    document.fullscreenElement ??
-    (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
-    null
-  );
-}
-
-async function toggleFullscreen(el: HTMLElement | null): Promise<void> {
-  if (!el) return;
-  try {
-    if (getFullscreenElement()) {
-      await exitFullscreen();
-    } else {
-      await (el.requestFullscreen?.() ??
-        (
-          el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
-        ).webkitRequestFullscreen?.());
-    }
-  } catch {
-    // User gesture / permission / unsupported
-  }
-}
-
 export function GraphPanel({ activeDocName }: { activeDocName: string }) {
-  const panelRef = useRef<HTMLElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const { folderPaths, loading: pageListLoading, pages } = usePageList();
+  const [isExpanded, setIsExpanded] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
   const [selectedNode, setSelectedNode] = useState<GraphNodeSelection | null>(null);
@@ -306,16 +278,6 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   );
 
   useEffect(() => {
-    const sync = () => setIsFullscreen(getFullscreenElement() === panelRef.current);
-    document.addEventListener('fullscreenchange', sync);
-    document.addEventListener('webkitfullscreenchange', sync);
-    return () => {
-      document.removeEventListener('fullscreenchange', sync);
-      document.removeEventListener('webkitfullscreenchange', sync);
-    };
-  }, []);
-
-  useEffect(() => {
     saveBoolPref(GRAPH_URL_NODES_DOCKED_KEY, showUrlNodesDocked);
   }, [showUrlNodesDocked]);
 
@@ -324,10 +286,19 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   }, [showUrlNodesFull]);
 
   useEffect(() => {
-    if (!isFullscreen && selectedNode !== null) {
+    if (!isExpanded) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsExpanded(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (!isExpanded && selectedNode !== null) {
       setSelectedNode(null);
     }
-  }, [isFullscreen, selectedNode]);
+  }, [isExpanded, selectedNode]);
 
   useEffect(() => {
     if (fullscreenMode !== 'explore' && selectedNode !== null) {
@@ -335,59 +306,74 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
     }
   }, [fullscreenMode, selectedNode]);
 
-  const activeMode = isFullscreen ? fullscreenMode : 'explore';
-  const showUrlNodes = isFullscreen ? showUrlNodesFull : showUrlNodesDocked;
-  const setShowUrlNodes = isFullscreen ? setShowUrlNodesFull : setShowUrlNodesDocked;
+  const activeMode = isExpanded ? fullscreenMode : 'explore';
+  const showUrlNodes = isExpanded ? showUrlNodesFull : showUrlNodesDocked;
+  const setShowUrlNodes = isExpanded ? setShowUrlNodesFull : setShowUrlNodesDocked;
+  const selectedDocDisplayState =
+    selectedNode?.kind === 'doc' && !pageListLoading
+      ? resolveTargetNavigationIntent(selectedNode.docName, {
+          pages,
+          folderPaths,
+        }).displayState
+      : 'doc';
   const selectedNodeState =
     selectedNode === null
       ? null
-      : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
+      : selectedNode.kind === 'doc' && selectedDocDisplayState === 'missing'
         ? {
-            eyebrow: 'Already open',
+            eyebrow: 'Broken link',
             description:
-              'This document is already active in the editor. Use Open to leave fullscreen.',
-            Icon: CheckCircle2,
-            actionLabel: 'Open',
+              "This page doesn't exist yet. Open it to create the page in the editor and collapse the graph.",
+            Icon: AlertTriangle,
+            actionLabel: 'Create page',
             secondaryLabel: selectedNode.docName,
             onAction: () => {
               const hash = getHashForGraphDocSelection(selectedNode);
-
-              void (async () => {
-                await exitFullscreen();
-                window.location.assign(hash);
-              })();
+              setIsExpanded(false);
+              window.location.assign(hash);
             },
           }
-        : selectedNode.kind === 'doc'
+        : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
           ? {
-              eyebrow: 'Selected in graph',
-              description: 'Open this document in the editor and leave fullscreen.',
-              Icon: ArrowUpRight,
+              eyebrow: 'Already open',
+              description:
+                'This document is already active in the editor. Use Open to collapse the graph.',
+              Icon: CheckCircle2,
               actionLabel: 'Open',
               secondaryLabel: selectedNode.docName,
               onAction: () => {
                 const hash = getHashForGraphDocSelection(selectedNode);
-
-                void (async () => {
-                  await exitFullscreen();
-                  window.location.assign(hash);
-                })();
+                setIsExpanded(false);
+                window.location.assign(hash);
               },
             }
-          : {
-              eyebrow: 'Selected in graph',
-              description: 'Open this link in a new tab and leave fullscreen.',
-              Icon: ArrowUpRight,
-              actionLabel: 'Open link',
-              secondaryLabel: selectedNode.url,
-              onAction: () => {
-                window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
-                void exitFullscreen();
-              },
-            };
+          : selectedNode.kind === 'doc'
+            ? {
+                eyebrow: 'Selected in graph',
+                description: 'Open this document in the editor and collapse the graph.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open',
+                secondaryLabel: selectedNode.docName,
+                onAction: () => {
+                  const hash = getHashForGraphDocSelection(selectedNode);
+                  setIsExpanded(false);
+                  window.location.assign(hash);
+                },
+              }
+            : {
+                eyebrow: 'Selected in graph',
+                description: 'Open this link in a new tab and collapse the graph.',
+                Icon: ArrowUpRight,
+                actionLabel: 'Open link',
+                secondaryLabel: selectedNode.url,
+                onAction: () => {
+                  window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
+                  setIsExpanded(false);
+                },
+              };
 
   return (
-    <Panel ref={panelRef} className={isFullscreen ? 'min-h-[100dvh] bg-background' : undefined}>
+    <Panel className={isExpanded ? 'fixed inset-0 z-50 bg-background overflow-hidden' : undefined}>
       <PanelHeader className="flex-wrap gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <PanelTitle>Graph</PanelTitle>
@@ -399,13 +385,13 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           ) : null}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          {isFullscreen ? (
+          {isExpanded ? (
             <ToggleGroup
               type="single"
               size="sm"
               variant="outline"
               value={fullscreenMode}
-              aria-label="Fullscreen graph mode"
+              aria-label="Expanded graph mode"
               onValueChange={(value) => {
                 if (value === 'explore' || value === 'orphans' || value === 'hubs') {
                   setFullscreenMode(value);
@@ -442,7 +428,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               <TooltipContent
                 side="bottom"
                 sideOffset={8}
-                className={isFullscreen ? 'z-[9999]' : undefined}
+                className={isExpanded ? 'z-[9999]' : undefined}
               >
                 {showUrlNodes ? 'Hide external URL nodes' : 'Show external URL nodes'}
               </TooltipContent>
@@ -453,22 +439,18 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
                   variant="ghost"
                   size="icon-sm"
                   className="text-muted-foreground hover:text-foreground hover:bg-accent"
-                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Full screen'}
-                  onClick={() => void toggleFullscreen(panelRef.current)}
+                  aria-label={isExpanded ? 'Collapse graph' : 'Expand graph'}
+                  onClick={() => setIsExpanded((prev) => !prev)}
                 >
-                  {isFullscreen ? (
-                    <Minimize2 className="size-4" />
-                  ) : (
-                    <Maximize2 className="size-4" />
-                  )}
+                  {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
                 </Button>
               </TooltipTrigger>
               <TooltipContent
                 side="bottom"
                 sideOffset={8}
-                className={isFullscreen ? 'z-[9999]' : undefined}
+                className={isExpanded ? 'z-[9999]' : undefined}
               >
-                {isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                {isExpanded ? 'Collapse' : 'Expand graph'}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -478,14 +460,14 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
         <div className="relative flex min-h-0 flex-1 flex-col">
           <GraphView
             activeDocName={activeDocName}
-            selectedNodeId={isFullscreen ? (selectedNode?.id ?? null) : null}
-            isFullscreen={isFullscreen}
+            selectedNodeId={isExpanded ? (selectedNode?.id ?? null) : null}
+            isExpanded={isExpanded}
             showUrlNodes={showUrlNodes}
             className="h-full min-h-0"
-            docClickBehavior={isFullscreen ? 'select' : 'navigate'}
-            onSelectNode={isFullscreen ? setSelectedNode : undefined}
+            docClickBehavior={isExpanded ? 'select' : 'navigate'}
+            onSelectNode={isExpanded ? setSelectedNode : undefined}
             onBackgroundClick={
-              isFullscreen
+              isExpanded
                 ? () => {
                     if (selectedNode !== null) {
                       setSelectedNode(null);
@@ -500,13 +482,10 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               }
               setStats({ nodes, links });
             }}
-            onClustersChange={isFullscreen ? setClusters : undefined}
+            onClustersChange={setClusters}
           />
-          {isFullscreen && <GraphLegend clusters={clusters} />}
-          {isFullscreen &&
-          activeMode === 'explore' &&
-          selectedNode !== null &&
-          selectedNodeState ? (
+          <GraphLegend clusters={clusters} variant={isExpanded ? 'fullscreen' : 'docked'} />
+          {isExpanded && activeMode === 'explore' && selectedNode !== null && selectedNodeState ? (
             <div className="pointer-events-none absolute inset-x-4 top-4 z-10 flex justify-center">
               <div
                 role="status"
@@ -534,10 +513,10 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           ) : null}
         </div>
       ) : null}
-      {isFullscreen && activeMode === 'orphans' ? (
+      {isExpanded && activeMode === 'orphans' ? (
         <FullscreenOrphansView mode={orphanMode} onModeChange={setOrphanMode} />
       ) : null}
-      {isFullscreen && activeMode === 'hubs' ? <FullscreenHubsView /> : null}
+      {isExpanded && activeMode === 'hubs' ? <FullscreenHubsView /> : null}
     </Panel>
   );
 }

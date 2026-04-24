@@ -1,6 +1,18 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
@@ -13,7 +25,7 @@ import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import { displayAuthor, formatRelativeTime, TimelinePanel } from './TimelinePanel';
+import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
 /**
  * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
@@ -34,7 +46,6 @@ export function EditorPane() {
   // the persisted value applies at load (refresh / new tab / new window).
   const [persistedMode, setPersistedMode] = useEditorMode();
   const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
@@ -58,11 +69,11 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName, activeTarget } = useDocumentContext();
+  const { activeDocName } = useDocumentContext();
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
-      // "Now" clicked — exit diff mode, restore prior editing mode
+      // "Current version" clicked — exit diff mode, restore prior editing mode
       setPreviewEntry(null);
       setEditorMode(modeBeforeDiffRef.current);
     } else {
@@ -104,14 +115,19 @@ export function EditorPane() {
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, [activeDocName]);
 
+  // Clear stale diff state when the active document changes (spec D3 / FR-3).
+  // Uses a ref to detect doc changes in an effect that reads activeDocName,
+  // satisfying the React Compiler's dependency analysis.
+  const prevDocNameRef = useRef(activeDocName);
   useEffect(() => {
-    if (activeTarget?.kind !== 'folder') return;
-    setPreviewEntry(null);
-    setTimelineOpen(false);
-    if (editorMode === 'diff') {
-      setEditorMode(modeBeforeDiffRef.current);
+    if (prevDocNameRef.current !== activeDocName) {
+      prevDocNameRef.current = activeDocName;
+      setPreviewEntry(null);
+      if (editorMode === 'diff') {
+        setEditorMode(modeBeforeDiffRef.current);
+      }
     }
-  }, [activeTarget, editorMode]);
+  }, [activeDocName, editorMode]);
 
   // Opt-in prompt (D36): show a dismissible toast the first time we detect
   // a remote exists but sync is dormant (not yet enabled).
@@ -190,14 +206,9 @@ export function EditorPane() {
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
-        onTimelineToggle={() => setTimelineOpen((o) => !o)}
         onSaveVersion={handleSaveVersion}
         saving={saving}
         previewEntry={previewEntry}
-        restoring={restoring}
-        restoreError={restoreError}
-        onExitPreview={handleExitPreview}
-        onRestore={handleRestore}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
         onSignIn={() => {
@@ -212,10 +223,40 @@ export function EditorPane() {
         onOpenClone={() => setCloneDialogOpen(true)}
       />
       {editorMode === 'diff' && previewEntry && (
-        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 justify-center">
-          <span className="truncate text-xs text-muted-foreground">
+        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 gap-2">
+          <span className="flex-1 truncate text-xs text-muted-foreground">
             Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
           </span>
+          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
+          <Button
+            variant="ghost"
+            className="font-mono uppercase"
+            size="xs"
+            onClick={handleExitPreview}
+          >
+            Close
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="default" size="xs" disabled={restoring}>
+                {restoring ? 'Restoring…' : 'Restore'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Restore this version?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will replace the current document content with the version from{' '}
+                  {formatRelativeTime(previewEntry.timestamp)}. Your current content is already
+                  saved in the timeline — you can restore it anytime.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="font-mono uppercase">Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleRestore}>Restore</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
       <EditorArea
@@ -223,11 +264,6 @@ export function EditorPane() {
         previewEntry={previewEntry}
         diffLayout={diffLayout}
         onNoDiff={handleNoDiff}
-      />
-      <TimelinePanel
-        open={timelineOpen}
-        onOpenChange={setTimelineOpen}
-        docName={activeDocName ?? ''}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
       />

@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { checkpointHeadlineLabel, checkpointVariant } from './TimelinePanel.tsx';
+import { allSummariesFor, checkpointHeadlineLabel, checkpointVariant } from './TimelinePanel.tsx';
 
 function baseEntry(overrides: Partial<TimelineEntry>): TimelineEntry {
   return {
@@ -140,5 +140,64 @@ describe('checkpointHeadlineLabel (user-outcome language — review iteration 5)
     for (const label of labels) {
       expect(label).not.toMatch(/mergeThreeWay|observer|observer A|Path B/i);
     }
+  });
+});
+
+describe('allSummariesFor (spec D23 flat shape)', () => {
+  test('returns [] for legacy entries with no contributors', () => {
+    expect(allSummariesFor(baseEntry({ contributors: [] }))).toEqual([]);
+  });
+
+  test('returns [] when contributors have no summaries field (legacy commit shape)', () => {
+    expect(
+      allSummariesFor(
+        baseEntry({
+          contributors: [{ id: 'agent-a', name: 'Claude', docs: ['foo.md'] }],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  test('preserves insertion order for a single contributor', () => {
+    expect(
+      allSummariesFor(
+        baseEntry({
+          contributors: [
+            {
+              id: 'agent-a',
+              name: 'Claude',
+              docs: ['foo.md'],
+              summaries: ['Fixed typo', 'Added example', 'Tightened intro'],
+            },
+          ],
+        }),
+      ),
+    ).toEqual(['Fixed typo', 'Added example', 'Tightened intro']);
+  });
+
+  test('flattens across multiple contributors in contributor order (D23)', () => {
+    expect(
+      allSummariesFor(
+        baseEntry({
+          contributors: [
+            { id: 'agent-a', name: 'Alice', docs: ['a.md'], summaries: ['A1', 'A2'] },
+            { id: 'agent-b', name: 'Bob', docs: ['b.md'], summaries: ['B1'] },
+          ],
+        }),
+      ),
+    ).toEqual(['A1', 'A2', 'B1']);
+  });
+
+  test('mixed contributors: one with summaries, one without — only the summaries land', () => {
+    expect(
+      allSummariesFor(
+        baseEntry({
+          contributors: [
+            { id: 'agent-a', name: 'Alice', docs: ['a.md'], summaries: ['Cleaned up'] },
+            { id: 'agent-b', name: 'Bob', docs: ['b.md'] },
+          ],
+        }),
+      ),
+    ).toEqual(['Cleaned up']);
   });
 });

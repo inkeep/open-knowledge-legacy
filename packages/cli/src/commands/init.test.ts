@@ -7,6 +7,7 @@ import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import {
   ALL_EDITOR_IDS,
+  EDITOR_TARGETS,
   resolveClaudeCodeConfigPath,
   resolveClaudeDesktopConfigPath,
   resolveCodexConfigPath,
@@ -14,7 +15,20 @@ import {
   resolveVsCodeConfigPath,
   resolveWindsurfConfigPath,
 } from './editors.ts';
-import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
+// `parseEditorFlag` removed by main PR #282 (#295) along with the `--editors`
+// CLI flag — `ok init` now installs for a canonical default set instead of
+// user-specified subsets. US-006's `writeUserMcpConfigs` exports are M6b-only
+// additions that survive on top of main's refactor.
+import {
+  detectInstalledEditors,
+  type EditorMcpResult,
+  formatInitResult,
+  readExistingMcpEntry,
+  runInit,
+  type UserMcpConfigsOptions,
+  writeEditorMcpConfig,
+  writeUserMcpConfigs,
+} from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -1163,5 +1177,481 @@ describe('detectInstalledEditors', () => {
     const missingHome = join(testDir, 'also-not-here');
     const detected = detectInstalledEditors(missingCwd, missingHome);
     expect(detected).toEqual([]);
+  });
+});
+
+describe('writeUserMcpConfigs', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  const CLI_PATH = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `write-user-mcp-configs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('writes the cliPath shape for every selected editor', async () => {
+    const opts: UserMcpConfigsOptions = {
+      editors: ['claude', 'cursor'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    };
+    const results: EditorMcpResult[] = await writeUserMcpConfigs(opts);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((r) => r.action === 'written')).toBe(true);
+
+    const claudeConfig = JSON.parse(
+      readFileSync(resolveClaudeCodeConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+
+    const cursorConfig = JSON.parse(
+      readFileSync(resolveCursorConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(cursorConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('falls back to the npx shape when cliPath is not provided', async () => {
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('written');
+
+    const claudeConfig = JSON.parse(
+      readFileSync(resolveClaudeCodeConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
+  });
+
+  it('preserves type:stdio on the VS Code entry with cliPath', async () => {
+    await writeUserMcpConfigs({
+      editors: ['vscode'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    const vsConfig = JSON.parse(readFileSync(resolveVsCodeConfigPath({ home: fakeHome }), 'utf-8'));
+    expect(vsConfig.servers['open-knowledge']).toEqual({
+      type: 'stdio',
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('does NOT create .git, AGENTS.md, .open-knowledge, or launch.json under the fake HOME', async () => {
+    await writeUserMcpConfigs({
+      editors: ['claude', 'cursor', 'vscode'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    // None of runInit's project-scoped side effects should fire
+    expect(existsSync(join(fakeHome, '.git'))).toBe(false);
+    expect(existsSync(join(fakeHome, 'AGENTS.md'))).toBe(false);
+    expect(existsSync(join(fakeHome, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(fakeHome, '.claude', 'launch.json'))).toBe(false);
+    expect(existsSync(join(fakeHome, OK_DIR))).toBe(false);
+    // Also verify no legacy project .mcp.json was scanned into existence
+    expect(existsSync(join(fakeHome, '.mcp.json'))).toBe(false);
+  });
+
+  it('unconditionally overwrites a differing existing entry (M6b always-write semantic)', async () => {
+    // Post-main-PR-#282 semantic (reconciled 2026-04-23): writeEditorMcpConfig
+    // dropped its `force` parameter and now always overwrites. `writeUserMcpConfigs`
+    // inherits that — the caller (mcp-wiring.ts confirmHandler) filters foreign
+    // customizations via `computeForce` + `readExistingMcpEntry` BEFORE this call,
+    // so every editor that reaches this function is one the caller decided to
+    // overwrite.
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['old'] } } },
+        null,
+        2,
+      ),
+    );
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('overwritten');
+
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('caller controls which editors get overwritten by omitting them from the editors array', async () => {
+    // Regression gate for the reconciliation with main PR #282: the
+    // mcp-wiring.ts confirmHandler classifies existing entries via
+    // `readExistingMcpEntry` + `computeForce` and only passes MANAGED-SHAPE
+    // editors to writeUserMcpConfigs. This test proves the contract: if a
+    // foreign editor is not in `editors[]`, its config is left untouched.
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    const cursorPath = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    mkdirSync(dirname(cursorPath), { recursive: true });
+
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['claude-old'] } } },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      cursorPath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['cursor-old'] } } },
+        null,
+        2,
+      ),
+    );
+
+    // Only claude is in `editors` — caller has decided cursor's custom entry
+    // should be preserved (via classification it didn't include here).
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.editorId).toBe('claude');
+    expect(results[0]?.action).toBe('overwritten');
+
+    const claudeConfig = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+    // Cursor untouched — wasn't in the editors array.
+    const cursorConfig = JSON.parse(readFileSync(cursorPath, 'utf-8'));
+    expect(cursorConfig.mcpServers['open-knowledge']).toEqual({
+      command: 'custom',
+      args: ['cursor-old'],
+    });
+  });
+
+  it('preserves unrelated mcpServers entries when writing the managed entry', async () => {
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'other-server': { command: 'node', args: ['x.js'] } } },
+        null,
+        2,
+      ),
+    );
+
+    await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['other-server']).toEqual({
+      command: 'node',
+      args: ['x.js'],
+    });
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('reports "overwritten" even when the entry already matches cliPath shape (main PR #282 always-overwrite)', async () => {
+    // Post-rebase semantic (2026-04-23): `writeEditorMcpConfig` always
+    // overwrites existing entries — "skipped-existing" and "skipped-conflict"
+    // are gone. Re-running with the same cliPath is safe (byte-identical
+    // result), but the action value reflects "there was an existing entry
+    // that got re-written" not "the entry was idempotent."
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: CLI_PATH, args: ['mcp'] } } },
+        null,
+        2,
+      ),
+    );
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('overwritten');
+    // Idempotency check: the written entry is byte-identical to the prior.
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({ command: CLI_PATH, args: ['mcp'] });
+  });
+
+  it('reports action:failed for unsupported editors without throwing', async () => {
+    // Claude Desktop is unsupported on Linux — but resolveClaudeDesktopConfigPath
+    // throws synchronously. writeEditorMcpConfig catches that path-resolution
+    // throw and returns action:'failed' instead of bubbling.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude-desktop'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('failed');
+    expect(results[0].error).toMatch(/Claude Desktop is not available on linux/);
+  });
+});
+
+describe('writeEditorMcpConfig (exported for Electron main)', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  const CLI_PATH = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `write-editor-mcp-config-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('is callable as a standalone export with a single target', () => {
+    // Post-rebase signature (2026-04-23): `writeEditorMcpConfig(target, cwd,
+    // installOptions, home?)` — the `force` 3rd arg was dropped when main
+    // refactored to always-overwrite semantics. The M6b call-site
+    // (writeUserMcpConfigs) passes `skipAvailabilityCheck: true` so the
+    // user-toggled editor isn't silently rejected by the new
+    // `isEditorTargetAvailable` guard.
+    const result: EditorMcpResult = writeEditorMcpConfig(
+      EDITOR_TARGETS.cursor,
+      '',
+      { cliPath: CLI_PATH, skipAvailabilityCheck: true },
+      fakeHome,
+    );
+    expect(result.action).toBe('written');
+    expect(result.editorId).toBe('cursor');
+    const config = JSON.parse(readFileSync(resolveCursorConfigPath({ home: fakeHome }), 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+});
+
+/**
+ * Pass 0 Major #13 — direct unit coverage for `readExistingMcpEntry`.
+ *
+ * The function is the M6b consent-flow tolerance boundary: every reachable
+ * fail mode (config absent, config unparseable, top-level not an object,
+ * server entry not an object, configPath throws on platform mismatch) MUST
+ * return `null`, never throw. A regression that makes any branch throw
+ * crashes `confirmHandler`, leaves the marker absent, and creates an infinite
+ * dialog re-fire loop on user machines with corrupted editor configs.
+ *
+ * The orchestration tests in `mcp-wiring.test.ts` stub this function, so
+ * direct coverage here is the only guard against tolerance regressions.
+ */
+describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `read-existing-mcp-entry-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('returns null when the editor config file is absent', () => {
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when configPath throws (platform-mismatched target)', () => {
+    // Claude Desktop's configPath only resolves on macOS / Windows. Switch to
+    // linux so the configPath helper throws — readExistingMcpEntry MUST
+    // catch + return null rather than propagate the throw.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    expect(readExistingMcpEntry(EDITOR_TARGETS['claude-desktop'], '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid JSON (corrupt config)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{ this is not valid JSON', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid TOML (corrupt Codex config)', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'not = valid = toml = at = all', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when top-level mcpServers key is not an object (e.g. array)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ mcpServers: ['not', 'an', 'object'] }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the server entry exists but is not an object', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'open-knowledge': 'not-an-object' } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns the parsed entry when JSON config is well-formed', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ mcpServers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toEqual(entry);
+  });
+
+  it('returns the parsed entry when TOML config (Codex) is well-formed', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    // Codex's `mcp_servers."open-knowledge"` table — quoted key form so the
+    // TOML parser keeps the dash-bearing name as one identifier (per
+    // smol-toml grammar). Same shape Codex itself writes via `ok init`.
+    writeFileSync(
+      path,
+      '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["@inkeep/open-knowledge", "mcp"]\n',
+      'utf-8',
+    );
+    const result = readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome);
+    expect(result).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
+  });
+
+  it('returns null when config has the top-level key but no entry for our serverName', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'some-other-server': { command: 'foo' } } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the file exists but is empty', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns the parsed entry when VS Code config uses servers key (not mcpServers)', () => {
+    // Regression gate for the `topLevelKey` abstraction: VS Code is the
+    // only EDITOR_TARGETS entry that uses 'servers' (editors.ts:EDITOR_TARGETS.vscode)
+    // instead of 'mcpServers' / 'mcp_servers'. Without this test, a future
+    // refactor that hard-codes 'mcpServers' (easy to do since 5/6 editors use
+    // it) would silently break M6b's VS Code detection — the dialog would
+    // classify the entry as absent, write a duplicate, and the consent flow
+    // would never surface the existing entry to the user for replacement.
+    // Reviewer-requested coverage (PR #289 inline thread).
+    const path = resolveVsCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ servers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.vscode, '', fakeHome)).toEqual(entry);
   });
 });

@@ -61,6 +61,54 @@ export function lockFilePath(lockDir: string, lockName: LockName): string {
   return resolve(lockDir, `${lockName}.lock`);
 }
 
+/**
+ * Per-process active-acquire refcount keyed by lockPath. Bumped on every
+ * successful `acquireProcessLock` (path 1: atomic create, path 2: same-pid
+ * idempotent rewrite, path 3: stale replacement). Decremented by
+ * `releaseProcessLock`, which only unlinks the lock file when the count
+ * reaches zero.
+ *
+ * Why this matters: the Vite dev plugin (`packages/app/src/server/
+ * hocuspocus-plugin.ts`) calls `createServer()` per `configureServer`
+ * invocation. A `vite.config.ts` edit triggers Vite's `restartServer`,
+ * which fires `_createServer` (acquiring lock #2 idempotently) BEFORE
+ * `await server.close()` (firing pass-1's close handler → destroy →
+ * `releaseServerLock`). Without refcounting, pass-1's release would
+ * `unlinkSync` the lock file out from under the still-running pass-2
+ * srv, silently breaking the cross-process `ServerLockCollisionError`
+ * guarantee until the developer kills + restarts `bun run dev`.
+ *
+ * The map is process-local (in-memory). Stale entries from crashed
+ * processes are not relevant — those processes are dead, so their
+ * refcounts cease to matter; the next process's `acquireProcessLock`
+ * detects the orphaned lock file via `isProcessAlive` and replaces it.
+ */
+const activeLockRefs = new Map<string, number>();
+
+function bumpActiveLockRef(lockPath: string): void {
+  activeLockRefs.set(lockPath, (activeLockRefs.get(lockPath) ?? 0) + 1);
+}
+
+/**
+ * Decrement the refcount. Returns `true` when the count reaches zero (the
+ * caller should proceed with `unlinkSync`); returns `false` when other
+ * active acquires still hold the lock (caller MUST NOT unlink).
+ *
+ * Untracked release (no prior acquire in this process — e.g. a process-exit
+ * fallback after the close-handler path already drained refs) returns `true`
+ * so the original ownership-guarded unlink path runs; that path is itself
+ * idempotent and a missing-file is a no-op.
+ */
+function dropActiveLockRef(lockPath: string): boolean {
+  const current = activeLockRefs.get(lockPath);
+  if (current === undefined || current <= 1) {
+    activeLockRefs.delete(lockPath);
+    return true;
+  }
+  activeLockRefs.set(lockPath, current - 1);
+  return false;
+}
+
 function parseLock(lockPath: string, logPrefix: string): ProcessLockMetadata | null {
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
@@ -125,6 +173,7 @@ export function acquireProcessLock(opts: {
         } finally {
           closeSync(fd);
         }
+        bumpActiveLockRef(lockPath);
         return buildHandle({ lockName, lockDir, lockPath });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
@@ -137,8 +186,13 @@ export function acquireProcessLock(opts: {
       const sameHost = existing.hostname === hostname();
       if (sameHost && existing.pid === process.pid) {
         // Idempotent rewrite — our own lock. Safe to overwrite in place;
-        // O_EXCL is not needed here (we can't race ourselves).
+        // O_EXCL is not needed here (we can't race ourselves). Bumps the
+        // refcount so the corresponding releaseProcessLock decrement
+        // doesn't unlink the file out from under the prior holder. See
+        // `activeLockRefs` doc above for the Vite-restart scenario this
+        // protects against.
         writeFileSync(lockPath, payload, { encoding: 'utf-8', mode: 0o600 });
+        bumpActiveLockRef(lockPath);
         return buildHandle({ lockName, lockDir, lockPath });
       }
       if (sameHost && isProcessAlive(existing.pid)) {
@@ -269,11 +323,22 @@ export function readProcessLock(opts: {
  * content directories (NFS-mounted home, remote content volumes) where two
  * hosts can legitimately run processes with the same pid — without the
  * check we'd unlink a peer's lock.
+ *
+ * Refcount-aware: when this process holds multiple active acquires for the
+ * same lockPath (Vite plugin per-`configureServer` createServer lifecycle),
+ * release decrements the in-process refcount; the file is only unlinked
+ * when the LAST active acquire releases. See `activeLockRefs` for the bug
+ * class this protects against.
  */
 export function releaseProcessLock(opts: { lockName: LockName; lockDir: string }): void {
   const { lockName, lockDir } = opts;
   const logPrefix = `[${lockName}-lock]`;
   const lockPath = lockFilePath(lockDir, lockName);
+  if (!dropActiveLockRef(lockPath)) {
+    // Other active acquires in this process still hold the lock — preserve
+    // the file so cross-process collision detection (FR10) keeps working.
+    return;
+  }
   if (!existsSync(lockPath)) return;
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));

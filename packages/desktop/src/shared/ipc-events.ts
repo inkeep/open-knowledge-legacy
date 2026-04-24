@@ -16,6 +16,7 @@
  */
 
 import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
+import type { McpWiringEditorDetection } from './ipc-channels.ts';
 
 export interface EventChannels {
   /** Informational — "we're about to switch, show loading state". */
@@ -56,4 +57,14 @@ export interface EventChannels {
    * open the target doc — the existing hash-route listener handles the rest.
    */
   'ok:deep-link': { payload: { doc: string } };
+  /**
+   * M6b first-launch MCP consent — main dispatches ONCE per app boot after
+   * the renderer invokes `ok:mcp-wiring:renderer-ready` (mount-ack handshake
+   * per D-M6-R10). Payload carries all six editor detections (checkbox list
+   * pre-selected per `detected`). Renderer renders `<McpConsentDialog>` as
+   * a modal overlay; dismiss via confirm / skip IPC invoke.
+   */
+  'ok:mcp-wiring:show': {
+    payload: { detectedEditors: readonly McpWiringEditorDetection[] };
+  };
 }

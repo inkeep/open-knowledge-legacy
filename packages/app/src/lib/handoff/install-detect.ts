@@ -1,28 +1,17 @@
 /**
- * Unified install-detection primitive for the Open-in-Agent dropdown.
+ * Unified install-detection primitive for the Open-in-Agent dropdown. Two
+ * probe strategies (one per host):
+ *   - `probeViaElectron` — fans out `detectProtocol(scheme)` IPC calls.
+ *   - `probeViaFetch`    — single `GET /api/installed-agents`; flat
+ *     `{claude,codex,cursor}` response fanned out to scheme keys.
  *
- * Governing spec: `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.4.
+ * `createProbeCoordinator` wraps either with throttle + inflight dedup so the
+ * dropdown can `refresh()` liberally. Subscribers fire only on actual state
+ * changes. Pure of React.
  *
- * Two probe strategies (one per host):
- *   - `probeViaElectron` — fans out `window.okDesktop.shell.detectProtocol(scheme)`
- *     IPC calls in parallel, one per unique scheme.
- *   - `probeViaFetch`    — a single `GET /api/installed-agents` whose flat
- *     `{claude,codex,cursor}` response is fanned out to scheme keys.
- *
- * `createProbeCoordinator` wraps either strategy with throttle + inflight dedup
- * so the dropdown can `refresh()` liberally without spamming the OS / server
- * (SQ5 DIRECTED option c). Subscribers are notified only when the state
- * actually differs — identical probe results do NOT cause a re-render cascade.
- *
- * Pure of React. Consumers: the React hook wrapper at
- * `packages/app/src/components/handoff/useInstalledAgents.ts`, and unit tests
- * here that exercise throttle + dedup + host-override semantics directly.
- *
- * Defense-in-depth: web-host Cursor is ALWAYS `installed: false` regardless of
- * probe result (E4 DIRECTED). The UI additionally filters that row on web, so
- * this override is never user-observable in practice — but it means even if
- * the UI forgot to filter, dispatch would still resolve to the conservative
- * disabled state.
+ * Web-host Cursor is always forced to `installed: false` as defense-in-depth —
+ * the UI filters that row on web, but the override here means a filter miss
+ * still lands on the conservative disabled state.
  */
 
 import type { HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
@@ -43,18 +32,11 @@ export interface SchemeProbeResult {
 /** Scheme → probe-result map. Partial during boot; fully populated after a probe. */
 export type SchemeStates = Readonly<Record<string, SchemeProbeResult>>;
 
-/** Default throttle window (SQ5 DIRECTED option c). */
 export const DEFAULT_THROTTLE_MS = 10_000;
 
 /**
- * Pure mapping: per-scheme probe results → per-target `InstallState`.
- *
- * Applies the web-host Cursor override (E4 DIRECTED): on web host, the
- * `cursor` target's `installed` is forced to `false` regardless of the probed
- * scheme state.
- *
- * `lastChecked` is stamped from `opts.now()` on every probed entry — unprobed
- * entries have no `lastChecked`.
+ * Pure mapping: per-scheme probe results → per-target `InstallState`. Web-host
+ * Cursor is forced to `installed: false` regardless of probed scheme state.
  */
 export function schemeStatesToTargetStates(
   schemeStates: SchemeStates,
@@ -92,17 +74,13 @@ export function initialTargetStates(opts: {
 }
 
 /**
- * Electron probe strategy — one IPC call per unique scheme, in parallel.
- * Per-scheme rejection is caught and treated as `installed: false` so one
- * flaky scheme doesn't sink the whole refresh.
+ * Electron probe — one IPC call per unique scheme in parallel. Per-scheme
+ * rejection collapses to `installed: false`.
  *
- * IPC contract: `detectProtocol` expects the scheme NAME without trailing
- * colon (e.g. `'claude'` not `'claude:'`). The main-process handler's
- * shell-injection sanitizer (`^[a-z][a-z0-9+.-]*$`) rejects any scheme
- * containing a colon before `getApplicationInfoForProtocol` is called —
- * matching the Linux `xdg-mime query default x-scheme-handler/<name>`
- * shell-command form. `KNOWN_TARGETS.schemes` carries the colonful form
- * (matches `URL.protocol` + `ALLOWED_SCHEMES`), so we strip here.
+ * IPC contract: `detectProtocol` wants the scheme NAME without trailing colon
+ * (`'claude'`, not `'claude:'`). The main-process sanitizer rejects colons
+ * before `getApplicationInfoForProtocol` runs. `KNOWN_TARGETS.schemes`
+ * carries the colonful form to match `URL.protocol`, so we strip here.
  */
 export async function probeViaElectron(deps: {
   detectProtocol: (schemeName: string) => Promise<SchemeProbeResult>;
@@ -128,13 +106,10 @@ const CONSERVATIVE_FALSE: SchemeStates = Object.fromEntries(
 );
 
 /**
- * Web probe strategy — single `GET /api/installed-agents`. The server response
- * is flat `{claude: bool, codex: bool, cursor: bool}` (no colon on keys); we
- * translate each key back to the colon-suffixed scheme for internal state.
- * Any failure (network, non-200, malformed body) resolves to all-false
- * conservative default — matches SPEC §6.4 "conservative default" policy.
- *
- * AbortError propagates so callers can cancel in-flight fetches.
+ * Web probe — single `GET /api/installed-agents`. Server response is flat
+ * `{claude: bool, codex: bool, cursor: bool}`; we add the colon back for
+ * internal scheme keys. Any failure collapses to all-false conservative
+ * default. AbortError propagates so callers can cancel in-flight fetches.
  */
 export async function probeViaFetch(deps: {
   fetch: typeof globalThis.fetch;
@@ -254,8 +229,7 @@ export function createProbeCoordinator(deps: ProbeDeps): ProbeHandle {
         lastProbedAt = deps.now();
       } catch {
         // Don't ratchet lastProbedAt on error — a transient flake can retry
-        // immediately on the next refresh() without waiting for the throttle
-        // window (conservative-false, not conservative-hide per SPEC §6.4).
+        // immediately without waiting for the throttle window.
       } finally {
         inflight = null;
       }

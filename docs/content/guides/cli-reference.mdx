@@ -8,6 +8,10 @@ The `@inkeep/open-knowledge` CLI is the primary interface for managing projects,
 npx @inkeep/open-knowledge <command> [options]
 ```
 
+<Callout type="info" title="macOS desktop app">
+If you installed from the DMG, the CLI ships inside the app bundle and can be placed on your `PATH` via **File → Install Command-Line Tools…** (creates `/usr/local/bin/ok` + `/usr/local/bin/open-knowledge` symlinks after an admin prompt). No separate Node install required — the wrapper runs the bundled CLI via Electron's embedded Node. See [Desktop app (first-launch consent)](/guides/mcp-integration#desktop-app-first-launch-consent) for how MCP wiring differs from the CLI's `init` flow.
+</Callout>
+
 Global options available on all commands:
 
 | Option                | Description                 |
@@ -63,6 +67,8 @@ npx @inkeep/open-knowledge init [options]
 | `--dev-mcp` | Point MCP config and Claude Code preview launchers at the local `packages/cli/dist/cli.mjs` build |
 
 The command is idempotent -- safe to run again without side effects. If the project has no `.git/`, `init` runs `git init --initial-branch=main` first and prints the same disclosure line as `start`.
+
+Desktop app users may already have MCP wired — the first-launch consent dialog writes user-level MCP entries without any of the project-scoped scaffolding (`.open-knowledge/`, `AGENTS.md`, `launch.json`) that `ok init` performs. Run `init` when you want that project-scoped scaffolding; the dialog and the CLI can coexist. See [MCP integration](/guides/mcp-integration#desktop-app-first-launch-consent).
 
 ## `clone`
 

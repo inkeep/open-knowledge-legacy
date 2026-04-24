@@ -18,16 +18,21 @@ import {
 } from './graph-label-layout';
 import { buildGraphLabelDescriptors } from './graph-label-utils';
 import {
+  buildGraphLinkSignature,
+  buildGraphNodeSignature,
   type GraphData,
   type GraphDocClickBehavior,
+  type GraphDocDisplayState,
   type GraphLink,
   type GraphNode,
   type GraphNodeSelection,
   type GraphNodeVisualState,
+  getGraphLinkEndpointId,
   getGraphNodeCanvasRadius,
   getGraphNodePointerRadius,
   getGraphNodeTooltipLabel,
   getGraphNodeVisualState,
+  reconcileGraphData,
   resolveGraphNodeClickAction,
 } from './graph-view-utils';
 import { resolveTargetNavigationIntent } from './target-navigation-intent';
@@ -70,6 +75,31 @@ type GraphPointerTarget =
   | { kind: 'background' }
   | { kind: 'link' }
   | { kind: 'node'; node: GraphNode };
+
+function getGraphNodeDisplayState({
+  node,
+  navigationIntentByNodeId,
+}: {
+  node: GraphNode;
+  navigationIntentByNodeId: Map<string, { displayState: GraphDocDisplayState }>;
+}): GraphDocDisplayState {
+  if (node.kind !== 'doc') return 'doc';
+  return navigationIntentByNodeId.get(node.id)?.displayState ?? 'doc';
+}
+
+function getGraphNodeInteractiveRadius({
+  state,
+  displayState,
+  globalScale,
+}: {
+  state: GraphNodeVisualState;
+  displayState: GraphDocDisplayState;
+  globalScale: number;
+}): number {
+  const pointerRadius = getGraphNodePointerRadius(state, globalScale);
+  if (displayState !== 'missing') return pointerRadius;
+  return Math.max(pointerRadius, getGraphNodeCanvasRadius(state) + 2 / Math.max(globalScale, 0.01));
+}
 
 function getActiveGraphNodeCoords({
   nodes,
@@ -206,12 +236,14 @@ function getGraphNodeHitbox({
   activeDocName,
   selectedNodeId,
   globalScale,
+  displayState,
 }: {
   node: NodeObject<GraphNode>;
   fg: ForceGraphMethods<NodeObject<GraphNode>>;
   activeDocName: string;
   selectedNodeId: string | null;
   globalScale: number;
+  displayState: GraphDocDisplayState;
 }): GraphNodeHitbox | null {
   if (typeof node.x !== 'number' || typeof node.y !== 'number') return null;
 
@@ -224,7 +256,7 @@ function getGraphNodeHitbox({
   return {
     x: screen.x,
     y: screen.y,
-    radiusPx: getGraphNodePointerRadius(state, globalScale) * globalScale,
+    radiusPx: getGraphNodeInteractiveRadius({ state, displayState, globalScale }) * globalScale,
     state,
   };
 }
@@ -251,23 +283,30 @@ function getGraphNodeAtPoint({
   nodes,
   activeDocName,
   selectedNodeId,
+  navigationIntentByNodeId,
 }: {
   point: { x: number; y: number };
   fg: ForceGraphMethods<NodeObject<GraphNode>>;
   nodes: GraphNode[];
   activeDocName: string;
   selectedNodeId: string | null;
+  navigationIntentByNodeId: Map<string, { displayState: GraphDocDisplayState }>;
 }): GraphNode | null {
   const globalScale = fg.zoom();
   let closestNode: { node: GraphNode; distance: number } | null = null;
 
   for (const node of nodes as NodeObject<GraphNode>[]) {
+    const displayState = getGraphNodeDisplayState({
+      node,
+      navigationIntentByNodeId,
+    });
     const hitbox = getGraphNodeHitbox({
       node,
       fg,
       activeDocName,
       selectedNodeId,
       globalScale,
+      displayState,
     });
     if (!hitbox) continue;
 
@@ -428,7 +467,7 @@ function handleGraphPointerTapTarget({
 export function GraphView({
   activeDocName,
   selectedNodeId = null,
-  isFullscreen = false,
+  isExpanded = false,
   showUrlNodes = true,
   className = '',
   docClickBehavior = 'navigate',
@@ -439,7 +478,7 @@ export function GraphView({
 }: {
   activeDocName: string;
   selectedNodeId?: string | null;
-  isFullscreen?: boolean;
+  isExpanded?: boolean;
   showUrlNodes?: boolean;
   className?: string;
   docClickBehavior?: GraphDocClickBehavior;
@@ -451,7 +490,6 @@ export function GraphView({
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
-  const [graphSig, setGraphSig] = useState({ nodes: '', links: '' });
   // Signatures of the last-applied API response, stored separately from rendered graph data because
   // force-graph mutates link objects in-place (replacing string IDs with node object refs).
   const lastSigRef = useRef({ nodes: '', links: '' });
@@ -461,6 +499,7 @@ export function GraphView({
   const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>> | undefined>(undefined);
   const focusStateRef = useRef<FocusState>({ key: '', lastX: null, lastY: null, lastAt: 0 });
   const backgroundPointerRef = useRef<BackgroundPointerState | null>(null);
+  const graphNodesRef = useRef<GraphNode[]>(graphData.nodes);
   // Tracks whether the force-layout simulation has reached its cooldown
   // terminus. Flipped true in `onEngineStop`, false on every `onEngineTick`
   // (engine re-runs whenever graphData mutates or an explicit reheat fires).
@@ -478,7 +517,7 @@ export function GraphView({
     async function load() {
       try {
         const params = new URLSearchParams();
-        if (!isFullscreen && activeDocName) {
+        if (!isExpanded && activeDocName) {
           params.set('docName', activeDocName);
           params.set('degrees', '2');
         }
@@ -499,12 +538,16 @@ export function GraphView({
         }
         const nextNodes = data.nodes ?? [];
         const nextLinks = data.links ?? [];
-        const nextNodeSig = nextNodes.map((n) => `${n.id}:${n.label}`).join(',');
-        const nextLinkSig = nextLinks.map((l) => `${l.source}>${l.target}`).join(',');
+        const nextNodeSig = buildGraphNodeSignature(nextNodes);
+        const nextLinkSig = buildGraphLinkSignature(nextLinks);
         if (nextNodeSig !== lastSigRef.current.nodes || nextLinkSig !== lastSigRef.current.links) {
           lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
-          setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
-          setGraphData({ nodes: nextNodes, links: nextLinks });
+          setGraphData((previous) =>
+            reconcileGraphData(previous, {
+              nodes: nextNodes,
+              links: nextLinks,
+            }),
+          );
         }
         setError(null);
         setLoading(false);
@@ -536,7 +579,7 @@ export function GraphView({
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, [activeDocName, isFullscreen]);
+  }, [activeDocName, isExpanded]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -559,55 +602,42 @@ export function GraphView({
   const activeSelectedNodeColor = isDark ? '#c084fc' : '#7c3aed';
   const externalNodeColor = isDark ? '#f59e0b' : '#c2410c';
   const folderNodeColor = isDark ? '#a78bfa' : '#7c3aed';
+  const missingNodeColor = isDark ? '#f87171' : '#dc2626';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
   const folderNodeRingColor = isDark ? 'rgba(167,139,250,0.38)' : 'rgba(124,58,237,0.22)';
+  const missingNodeRingColor = isDark ? 'rgba(248,113,113,0.58)' : 'rgba(220,38,38,0.38)';
   const selectedNodeRingColor = isDark ? 'rgba(52,211,153,0.5)' : 'rgba(5,150,105,0.3)';
   const activeSelectedNodeRingColor = isDark ? 'rgba(192,132,252,0.5)' : 'rgba(124,58,237,0.35)';
   const labelChipColor = isDark ? 'rgba(3,7,18,0.92)' : 'rgba(255,255,255,0.94)';
   const labelChipBorderColor = isDark ? 'rgba(243,244,246,0.08)' : 'rgba(17,24,39,0.08)';
-  const focusZoom = isFullscreen ? 1.6 : 2.35;
-  const maxLabelWidthPx = isFullscreen ? 220 : 150;
+  const focusZoom = isExpanded ? 1.6 : 2.35;
+  const maxLabelWidthPx = isExpanded ? 220 : 150;
   // Fullscreen shows the whole project graph, so it intentionally uses a tighter
   // label budget than the docked 2-hop neighborhood view to avoid flooding.
-  const maxVisibleLabels = isFullscreen ? 10 : 18;
+  const maxVisibleLabels = isExpanded ? 10 : 18;
 
-  const externalNodeIds = showUrlNodes
-    ? null
-    : new Set(graphData.nodes.filter((n) => n.kind === 'external').map((n) => n.id));
-  const displayNodes = externalNodeIds
-    ? graphData.nodes.filter((n) => n.kind !== 'external')
-    : graphData.nodes;
-  const displayLinks = externalNodeIds
-    ? graphData.links.filter((l) => {
-        // force-graph mutates source/target from string IDs to node object refs after the
-        // first simulation tick, so we must handle both forms when checking for external nodes.
-        const src = l.source as unknown;
-        const tgt = l.target as unknown;
-        const srcId =
-          typeof src === 'string'
-            ? src
-            : src !== null && typeof src === 'object' && 'id' in src
-              ? String((src as { id: unknown }).id)
-              : '';
-        const tgtId =
-          typeof tgt === 'string'
-            ? tgt
-            : tgt !== null && typeof tgt === 'object' && 'id' in tgt
-              ? String((tgt as { id: unknown }).id)
-              : '';
-        return !externalNodeIds.has(srcId) && !externalNodeIds.has(tgtId);
-      })
-    : graphData.links;
-  const displayData: GraphData = externalNodeIds
-    ? { nodes: displayNodes, links: displayLinks }
-    : graphData;
+  const displayData: GraphData = showUrlNodes
+    ? graphData
+    : (() => {
+        const externalNodeIds = new Set(
+          graphData.nodes.filter((n) => n.kind === 'external').map((n) => n.id),
+        );
+        return {
+          nodes: graphData.nodes.filter((n) => n.kind !== 'external'),
+          links: graphData.links.filter((link) => {
+            const srcId = getGraphLinkEndpointId(link.source);
+            const tgtId = getGraphLinkEndpointId(link.target);
+            return !externalNodeIds.has(srcId) && !externalNodeIds.has(tgtId);
+          }),
+        };
+      })();
 
   const layoutNodes = displayData.nodes as GraphLabelLayoutNode[];
   const layoutLinks = displayData.links as GraphLabelLayoutLink[];
   const labelDescriptors = buildGraphLabelDescriptors(displayData.nodes);
-  const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
+  const focusKey = `${activeDocName}|${focusZoom}`;
   const navigationIntentByNodeId = new Map(
     graphData.nodes.flatMap((node) => {
       if (node.kind !== 'doc') return [];
@@ -640,6 +670,10 @@ export function GraphView({
   }, [graphData, onClustersChange]);
 
   useEffect(() => {
+    graphNodesRef.current = graphData.nodes;
+  }, [graphData.nodes]);
+
+  useEffect(() => {
     focusStateRef.current = {
       key: focusKey,
       lastX: null,
@@ -649,7 +683,7 @@ export function GraphView({
     const animationFrame = window.requestAnimationFrame(() => {
       focusStateRef.current = maybeFocusActiveGraphNode({
         fg: fgRef.current,
-        nodes: graphData.nodes,
+        nodes: graphNodesRef.current,
         activeDocName,
         zoom: focusZoom,
         focusKey,
@@ -658,7 +692,7 @@ export function GraphView({
       });
     });
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [focusKey, activeDocName, focusZoom, graphData.nodes]);
+  }, [focusKey, activeDocName, focusZoom]);
 
   useEffect(() => {
     // DEV-gate guards all `window.__graphHarness` writes below; see
@@ -728,6 +762,10 @@ export function GraphView({
           activeDocName,
           selectedNodeId,
           globalScale: fg.zoom(),
+          displayState: getGraphNodeDisplayState({
+            node,
+            navigationIntentByNodeId,
+          }),
         });
         if (!hitbox) return null;
 
@@ -784,6 +822,10 @@ export function GraphView({
           activeDocName,
           selectedNodeId,
           globalScale: fg.zoom(),
+          displayState: getGraphNodeDisplayState({
+            node: sourceNode,
+            navigationIntentByNodeId,
+          }),
         });
         const targetHitbox = getGraphNodeHitbox({
           node: targetNode,
@@ -791,6 +833,10 @@ export function GraphView({
           activeDocName,
           selectedNodeId,
           globalScale: fg.zoom(),
+          displayState: getGraphNodeDisplayState({
+            node: targetNode,
+            navigationIntentByNodeId,
+          }),
         });
         if (!sourceHitbox || !targetHitbox) return null;
 
@@ -824,6 +870,7 @@ export function GraphView({
     docClickBehavior,
     displayData.links,
     displayData.nodes,
+    navigationIntentByNodeId,
     onBackgroundClick,
     onSelectNode,
     selectedNodeId,
@@ -863,6 +910,7 @@ export function GraphView({
               nodes: displayData.nodes,
               activeDocName,
               selectedNodeId,
+              navigationIntentByNodeId,
             });
             if (node) {
               return { kind: 'node', node } satisfies GraphPointerTarget;
@@ -961,11 +1009,12 @@ export function GraphView({
             backgroundColor={bgColor}
             nodeId="id"
             nodeLabel={(node: NodeObject<GraphNode>) => {
-              const label = getGraphNodeTooltipLabel(node);
-              if (node.kind !== 'doc') return label;
-              return navigationIntentByNodeId.get(node.id)?.displayState === 'folder'
-                ? `Folder: ${label}`
-                : label;
+              return getGraphNodeTooltipLabel(node, {
+                displayState: getGraphNodeDisplayState({
+                  node,
+                  navigationIntentByNodeId,
+                }),
+              });
             }}
             nodeRelSize={4}
             nodeVal={(node: NodeObject<GraphNode>) => {
@@ -991,11 +1040,18 @@ export function GraphView({
                 activeDocName,
                 selectedNodeId,
               });
-              const isFolderTarget =
-                node.kind === 'doc' &&
-                navigationIntentByNodeId.get(node.id)?.displayState === 'folder';
+              const displayState = getGraphNodeDisplayState({
+                node,
+                navigationIntentByNodeId,
+              });
+              const isFolderTarget = displayState === 'folder';
+              const isMissingTarget = displayState === 'missing';
               const nodeRadius = getGraphNodeCanvasRadius(state);
-              const pointerRadius = getGraphNodePointerRadius(state, globalScale);
+              const pointerRadius = getGraphNodeInteractiveRadius({
+                state,
+                displayState,
+                globalScale,
+              });
 
               const docCluster = node.kind === 'doc' ? node.cluster : undefined;
               const clusterFill = docCluster ? clusterColor(docCluster, isDark) : defaultNodeColor;
@@ -1005,28 +1061,33 @@ export function GraphView({
               ctx.fillStyle =
                 state === 'active'
                   ? activeNodeColor
-                  : state === 'selected'
-                    ? selectedNodeColor
-                    : state === 'active-selected'
-                      ? activeSelectedNodeColor
-                      : state === 'external' || state === 'external-selected'
-                        ? externalNodeColor
-                        : isFolderTarget
-                          ? folderNodeColor
-                          : clusterFill;
+                  : state === 'active-selected'
+                    ? activeSelectedNodeColor
+                    : state === 'external' || state === 'external-selected'
+                      ? externalNodeColor
+                      : isMissingTarget
+                        ? missingNodeColor
+                        : state === 'selected'
+                          ? selectedNodeColor
+                          : isFolderTarget
+                            ? folderNodeColor
+                            : clusterFill;
               ctx.fill();
 
               if (pointerRadius > nodeRadius) {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, pointerRadius, 0, 2 * Math.PI, false);
-                ctx.strokeStyle =
-                  state === 'active'
+                ctx.strokeStyle = isMissingTarget
+                  ? missingNodeRingColor
+                  : state === 'active'
                     ? activeNodeRingColor
                     : state === 'selected' || state === 'external-selected'
                       ? selectedNodeRingColor
                       : activeSelectedNodeRingColor;
-                ctx.lineWidth = 2 / globalScale;
+                ctx.lineWidth = isMissingTarget ? 1.75 / globalScale : 2 / globalScale;
+                ctx.setLineDash(isMissingTarget ? [3 / globalScale, 2 / globalScale] : []);
                 ctx.stroke();
+                ctx.setLineDash([]);
               } else if (isFolderTarget) {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, nodeRadius + 2 / globalScale, 0, 2 * Math.PI, false);
@@ -1046,11 +1107,19 @@ export function GraphView({
                 activeDocName,
                 selectedNodeId,
               });
+              const displayState = getGraphNodeDisplayState({
+                node,
+                navigationIntentByNodeId,
+              });
               ctx.beginPath();
               ctx.arc(
                 node.x,
                 node.y,
-                getGraphNodePointerRadius(state, globalScale),
+                getGraphNodeInteractiveRadius({
+                  state,
+                  displayState,
+                  globalScale,
+                }),
                 0,
                 2 * Math.PI,
                 false,
@@ -1086,7 +1155,19 @@ export function GraphView({
                     activeDocName,
                     selectedNodeId,
                   });
-                  return getGraphNodePointerRadius(state, globalScale) * globalScale + 4;
+                  const displayState = getGraphNodeDisplayState({
+                    node,
+                    navigationIntentByNodeId,
+                  });
+                  return (
+                    getGraphNodeInteractiveRadius({
+                      state,
+                      displayState,
+                      globalScale,
+                    }) *
+                      globalScale +
+                    4
+                  );
                 },
               });
 

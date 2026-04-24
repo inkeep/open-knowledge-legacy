@@ -221,6 +221,16 @@
 
 /* OK Blob mascot */
 
+/* 3D wrapper — hosts perspective + cursor-following rotateX/rotateY so the
+   head can tilt independently of the click-bounce transform on .ok-blob-group.
+   Inline-flex avoids inline-block whitespace gaps. */
+.ok-blob-3d-wrapper {
+  display: inline-flex;
+  perspective: 400px;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
 /* Group wrapper — the click bounce animates the group so body + eyes squish together. */
 .ok-blob-group {
   transform-box: fill-box;
@@ -606,6 +616,12 @@
   font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.4em;
+}
+
+.ProseMirror > h1:first-child,
+.ProseMirror > h2:first-child,
+.ProseMirror > h3:first-child {
+  margin-top: 0;
 }
 
 .ProseMirror h1 {

@@ -74,6 +74,15 @@ All 21 docName-producing tools emit `previewUrl` in their result (single-doc too
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
 
+### `summary` on write tools
+
+The four write tools — `write_document`, `edit_document`, `rename_document`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
+
+- **Cap.** 80 characters at the API boundary (49 visible + `…` suffix when truncated). The Zod schema caps input at 200 characters as a transport-safety bound; summaries longer than 80 are truncated server-side and the tool response includes `truncatedFrom: <original-length>` so the agent can adjust.
+- **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document` and `edit_document` produce a bulletless row in that case.
+- **Attribution.** Only MCP-driven calls (i.e. those that pass through agent identity) attach a contributor entry. Human Restore actions taken in the React editor stay anonymous on the timeline as they always have.
+- **Privacy.** Avoid secrets or PII in summaries — they are persisted to git history.
+
 ## previewUrl in tool results
 
 Every docName-producing MCP tool emits a `previewUrl` in its `structuredContent` so you can click straight from the agent's response into the React editor at the exact doc it just touched. Single-doc tools emit a top-level `previewUrl`; list-producing tools emit one per row alongside a top-level `ui` block. When neither a UI nor a configured base URL is reachable, `previewUrl` is `null` and tools still return their primary data — it's an affordance, not a blocker.
@@ -86,6 +95,44 @@ Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for
 4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
+
+## Desktop app (first-launch consent)
+
+If you installed Open Knowledge from the macOS DMG rather than via `npx`, MCP wiring can happen automatically on first app launch — no terminal contact required. The first time the packaged app opens, a consent dialog enumerates the AI editors it detects on your machine (Claude Code, Claude Desktop, Cursor, VS Code, Codex, Windsurf). Every detected editor is preselected; click **Add** and MCP server entries land in each editor's user-level config file. Click **Skip** and nothing is written.
+
+The dialog is user-scoped — it fires once per Mac per user, not per project.
+
+### What gets written
+
+MCP entries written by the desktop app have the shape `{"command": "<cliPath>", "args": ["mcp"]}` — not `npx`. The `cliPath` is resolved via a hybrid strategy at confirm time:
+
+1. If `/usr/local/bin/ok` exists, is a symlink, and its target resolves into the currently-running app bundle (ownership check), the symlink path is written. Stable across auto-updates and drag-to-new-location moves.
+2. Otherwise the bundle-absolute path (`<bundle>/Contents/Resources/cli/bin/ok.sh`) is written. Self-contained — works even when the `Install Command-Line Tools…` menu item has never been clicked.
+
+CLI-origin `ok init` continues to produce the `{"command": "npx", "args": ["@inkeep/open-knowledge", "mcp"]}` shape since CLI users have Node by definition.
+
+### Marker file
+
+The dialog records its outcome in `~/.open-knowledge/mcp-status.json` (next to `~/.open-knowledge/config.yml`):
+
+```json
+{
+  "configured": true,
+  "configuredAt": "2026-04-23T15:30:00Z",
+  "editors": ["claude", "cursor"],
+  "cliPath": "/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh"
+}
+```
+
+Skipped runs write `{ "configured": false, "skippedAt": "..." }` instead. Either shape suppresses the dialog on all subsequent launches.
+
+### Re-triggering the dialog
+
+Delete `~/.open-knowledge/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
+
+<Callout type="info" title="CLI users">
+If you installed via `npx @inkeep/open-knowledge` and ran `ok init` from the terminal, MCP is already wired — the consent dialog is only relevant for users who arrived via the DMG. Both paths coexist safely; if you later install the DMG, the dialog detects your existing OK entries and overwrites them with the bundle-absolute `cliPath` shape (foreign customizations are preserved).
+</Callout>
 
 ## Transport
 
@@ -106,6 +153,7 @@ Agents use these catalogs for navigation -- the MCP server's connect instruction
 The MCP server works with any editor that supports the MCP standard:
 
 - Claude Code
+- Claude Desktop
 - Cursor
 - Windsurf
 - VS Code (with MCP extension)

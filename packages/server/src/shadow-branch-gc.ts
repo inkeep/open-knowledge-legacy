@@ -1,22 +1,18 @@
 /**
  * Shadow branch garbage collection.
  *
- * Cleans up orphaned shadow branch refs when their corresponding project
- * branches are deleted. Also handles branch rename detection.
+ * Cleans up orphaned shadow branch refs when the corresponding project
+ * branches are deleted, and handles branch-rename detection.
  *
- * - WIP refs (refs/wip/<branch>/*) are deleted after 24h grace period
+ * - WIP refs (refs/wip/<branch>/*) are deleted after a 24h grace period.
  * - Checkpoint refs (refs/checkpoints/<branch>/*) have kind-aware GC:
  *   - `Save Version` (no `ok-checkpoint-v1:` body line): retained
- *     indefinitely — these are the user-intentional permanent-history
- *     artifacts the original "retained" contract was written for.
- *   - `bridge-merge-loss` (observer Path B auto-rescue, written silently
- *     on post-condition violation): keep the most-recent N per branch
- *     + TTL (bridge-correctness review iteration 5).
- *   - `external-change-rescue` (reconcile-delete / branch-switch auto-
- *     rescue): same policy.
- *   See `gcCheckpointRefs` in `shadow-repo.ts` for the retention numbers
- *   and SPEC §6 R7 for the motivation.
- * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
+ *     indefinitely — user-intentional permanent-history artifacts.
+ *   - `bridge-merge-loss` (observer Path B auto-rescue) and
+ *     `external-change-rescue` (reconcile-delete / branch-switch auto-rescue):
+ *     most-recent N per branch + TTL. See `gcCheckpointRefs` in `shadow-repo.ts`.
+ * - Branch rename: if old branch disappears and a new branch has the same
+ *   HEAD SHA, migrate refs.
  */
 
 import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -27,7 +23,7 @@ import { DEFAULT_CHECKPOINT_RETENTION, gcCheckpointRefs, shadowGit } from './sha
 /** Grace period before orphaned WIP refs are deleted (24 hours). */
 const GC_GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
-/** Per-writer inactivity TTL for session writers (agent-*, principal-*) on active branches (30 days, D54). */
+/** Per-writer inactivity TTL for session writers (agent-*, principal-*) on active branches. */
 const SESSION_WRITER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface GcResult {
@@ -36,8 +32,7 @@ interface GcResult {
   retainedBranches: string[];
   /**
    * Per-branch tally of checkpoint refs GC'd under the kind-aware retention
-   * policy (bridge-correctness review iteration 5). Entries with zero deletions
-   * are omitted. Keys are branch names; values are the raw `CheckpointGcResult`.
+   * policy. Entries with zero deletions are omitted.
    */
   checkpointGc: Record<
     string,
@@ -48,10 +43,7 @@ interface GcResult {
       retained: number;
     }
   >;
-  /**
-   * Count of stale session writer refs (agent-*, principal-*) deleted from
-   * active project branches due to 30-day inactivity TTL (US-019, D54, FR-18).
-   */
+  /** Count of stale session writer refs deleted due to 30-day inactivity TTL. */
   deletedStaleSessionRefs: number;
 }
 
@@ -270,9 +262,9 @@ export async function gcShadowBranches(
     }
   }
 
-  // Per-writer 30-day TTL: GC stale session refs on ACTIVE project branches (US-019, D54, FR-18).
+  // Per-writer 30-day TTL: GC stale session refs on ACTIVE project branches.
   // Classified writers (file-system, git-upstream, openknowledge-service) are NEVER GC'd.
-  // Unknown writers: log warning + preserve (defensive — sweepLegacyShadowRefs handles known-legacy).
+  // Unknown writers: log warning + preserve (sweepLegacyShadowRefs handles known-legacy).
   for (const branch of projectBranches) {
     const branchPrefix = `refs/wip/${branch}/`;
     const branchRefs = wipRefs.filter((r) => r.startsWith(branchPrefix));
