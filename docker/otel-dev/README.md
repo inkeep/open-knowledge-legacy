@@ -150,7 +150,7 @@ Attributes on every span are bounded-cardinality — paths are normalized to las
 
 Metrics emitted (Prometheus):
 - `http.server.request.duration` (histogram, seconds) — labels: `http.request.method`, `http.route`, `http.response.status_code`
-- `ok.persistence.load.duration` / `ok.persistence.store.duration` / `ok.persistence.git_commit.duration` (histograms, seconds) — label: `doc.name`
+- `ok.persistence.load.duration` / `ok.persistence.store.duration` / `ok.persistence.git_commit.duration` (histograms, seconds) — **no per-doc label** (bounded cardinality for Prometheus; spans still carry `doc.name` for filtering in Tempo)
 - `ok.file_watcher.events` (counter) — labels: `disk.kind`, `self` (true/false)
 
 Pino log records include `trace_id` / `span_id` / `trace_flags` (via `otelMixin` in `packages/server/src/logger.ts`). Click `trace_id=<hex>` in any log line in Loki → jump to the trace in Tempo (derived-fields rule in `grafana/provisioning/datasources/datasources.yaml`).

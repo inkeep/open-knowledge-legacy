@@ -7,13 +7,18 @@
 # Browse:      http://localhost:3001   (admin / anon; auth disabled for dev)
 #
 # Ports on the host:
-#   3001 — Grafana UI         (3000 avoided — collides with Next.js dev server)
-#   3100 — Loki HTTP          (direct Loki queries if needed)
-#   3200 — Tempo HTTP         (direct Tempo queries if needed)
-#   4317 — OTLP/gRPC in       (collector; configure app via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317)
-#   4318 — OTLP/HTTP in       (collector; configure app via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318)
-#   9090 — Prometheus UI
-#   8889 — Collector's Prom-exporter (scrape target for prometheus.yml)
+#   3001  — Grafana UI       (3000 avoided — collides with Next.js dev server)
+#   3100  — Loki HTTP        (direct Loki queries if needed)
+#   3200  — Tempo HTTP       (direct Tempo queries if needed)
+#   14317 — OTLP/gRPC in     (collector; configure app via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14317)
+#   14318 — OTLP/HTTP in     (collector; configure app via OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318)
+#   9090  — Prometheus UI
+#   18889 — Collector Prom-exporter (scrape target; remapped host-side only — container still listens on 8889 internally)
+#
+# Collector ports are remapped from OTel defaults 4317/4318 to 14317/14318 to
+# avoid colliding with other local OTel stacks (SignOz, Jaeger, another
+# project's collector). Edit the `ports:` block in the otel-collector service
+# below if you prefer defaults and don't have conflicts.
 #
 # The app + browser send OTLP to the collector. Collector fans out:
 #   traces  → Tempo

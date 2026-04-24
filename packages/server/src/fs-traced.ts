@@ -29,7 +29,7 @@ import { withSpan, withSpanSync } from './telemetry.ts';
  * Example: `/Users/alice/Documents/project/.git/open-knowledge/HEAD` →
  *          `.../open-knowledge/HEAD`
  */
-function normalizeFsPath(p: string): string {
+export function normalizeFsPath(p: string): string {
   const segments = p.split(sep).filter(Boolean);
   if (segments.length <= 2) return p;
   return `...${sep}${segments.slice(-2).join(sep)}`;
@@ -39,7 +39,7 @@ function normalizeFsPath(p: string): string {
  * Classify a path by logical role for span attributes. Avoids per-file
  * cardinality blow-up while keeping meaningful filtering in Grafana Tempo.
  */
-function classifyFsPath(p: string): string {
+export function classifyFsPath(p: string): string {
   if (p.includes(`${sep}.git${sep}open-knowledge${sep}`) || p.includes('shadow-repo')) {
     return 'shadow-repo';
   }

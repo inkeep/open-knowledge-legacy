@@ -26,6 +26,7 @@ import {
   registerDocExtension,
   stripDocExtension,
 } from './doc-extensions.ts';
+import { classifyFsPath, normalizeFsPath } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 import { isWithinContentDir } from './persistence.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
@@ -706,12 +707,16 @@ async function handleRawEvents(
       `[file-watcher] Dispatching: ${event.kind}`,
     );
     _fileWatcherEventsCounter().add(1, { 'disk.kind': event.kind, self: false });
+    // Normalize + classify the path to bound span-attribute cardinality
+    // (AGENTS.md STOP rule — raw paths blow up the trace index).
+    const rawPath = event.kind === 'rename' ? event.newPath : event.path;
     await withSpan(
       'file_watcher.process_event',
       {
         attributes: {
           'disk.kind': event.kind,
-          'disk.path': event.kind === 'rename' ? event.newPath : event.path,
+          'disk.path': normalizeFsPath(rawPath),
+          'disk.path.role': classifyFsPath(rawPath),
         },
       },
       async () => onDiskEvent(event),
