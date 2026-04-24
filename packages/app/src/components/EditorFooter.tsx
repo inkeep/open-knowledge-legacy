@@ -17,7 +17,8 @@ export function EditorFooter({ stats }: EditorFooterProps) {
         <span className="tabular-nums">{stats.chars.toLocaleString()}</span> chars
       </span>
       <span>
-        ~<span className="tabular-nums">{stats.tokens.toLocaleString()}</span> tokens
+        {stats.tokens > 0 ? '~' : ''}
+        <span className="tabular-nums">{stats.tokens.toLocaleString()}</span> tokens
       </span>
     </section>
   );

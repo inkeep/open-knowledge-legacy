@@ -31,9 +31,16 @@ function countWordsBySegmenter(text: string): number {
   return count;
 }
 
-/** Rough token estimate (~4 chars/token for English GPT-family tokenizers). */
-function estimateTokens(chars: number): number {
-  return Math.ceil(chars / 4);
+/**
+ * Rough token estimate. ~4 chars/token is the average for English under
+ * cl100k_base / o200k_base BPE; CJK tokenizes much denser (each ideograph is
+ * typically 1–2 tokens), so any document containing CJK / Thai / Khmer drops
+ * to ~1.5 chars/token. Mixed-script docs pick the denser ratio globally —
+ * coarse but matches the existing word-counting branch.
+ */
+function estimateTokens(text: string): number {
+  const ratio = NON_SPACE_SCRIPT_RE.test(text) ? 1.5 : 4;
+  return Math.ceil(text.length / ratio);
 }
 
 /**
@@ -41,7 +48,7 @@ function estimateTokens(chars: number): number {
  *
  * Frontmatter is excluded so counts match a writer's intuition ("how long is
  * my article?"). Handles CJK / Thai / Khmer via Intl.Segmenter when the input
- * contains non-space-separated scripts. Tokens are estimated as chars/4.
+ * contains non-space-separated scripts.
  */
 export function computeBodyStats(fullText: string): DocumentStats {
   if (!fullText) return { words: 0, chars: 0, tokens: 0 };
@@ -51,6 +58,5 @@ export function computeBodyStats(fullText: string): DocumentStats {
   const words = NON_SPACE_SCRIPT_RE.test(trimmed)
     ? countWordsBySegmenter(trimmed)
     : countWordsByWhitespace(trimmed);
-  const chars = trimmed.length;
-  return { words, chars, tokens: estimateTokens(chars) };
+  return { words, chars: trimmed.length, tokens: estimateTokens(trimmed) };
 }
