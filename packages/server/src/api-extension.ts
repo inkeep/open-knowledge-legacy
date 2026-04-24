@@ -133,6 +133,7 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
+import { applySeed, planSeed, type ScaffoldPlan, SeedPrerequisiteError } from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
@@ -5154,6 +5155,67 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
+  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
+  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
+  //
+  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
+  // three surfaces share `planSeed` / `applySeed` from the server seed module.
+  // Gated on `checkLocalOpSecurity` because the operation mutates the local
+  // filesystem; same contract as /api/local-op/* and /api/installed-agents.
+
+  async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const plan = await planSeed({ projectDir: contentDir });
+      json(res, 200, { ok: true, plan });
+    } catch (err) {
+      if (err instanceof SeedPrerequisiteError) {
+        json(res, 200, {
+          ok: false,
+          error: { kind: 'prerequisite-missing', message: err.message },
+        });
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
+  async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let plan: ScaffoldPlan;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { plan?: unknown };
+      if (!parsed.plan || typeof parsed.plan !== 'object') {
+        json(res, 400, { ok: false, error: 'Missing or invalid plan' });
+        return;
+      }
+      plan = parsed.plan as ScaffoldPlan;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await applySeed(plan, { projectDir: contentDir });
+      json(res, 200, { ok: true, result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5239,6 +5301,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/seed/plan': handleSeedPlan,
+    '/api/seed/apply': handleSeedApply,
   };
 
   if (enableTestRoutes) {

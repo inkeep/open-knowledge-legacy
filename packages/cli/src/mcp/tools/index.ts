@@ -1,7 +1,7 @@
 /**
  * MCP tool registry.
  *
- * Aggregates workflow tools (init-content, ingest, research, consolidate),
+ * Aggregates workflow tools (ingest, research, consolidate),
  * document tools (write_document, edit_document, rename_document,
  * undo_agent_edit, redo_agent_edit, list_documents), link-graph tools
  * (get_backlinks, get_forward_links, get_orphans, get_hubs, get_dead_links),
@@ -13,6 +13,10 @@
  * - Document tools make HTTP calls to Hocuspocus and require `serverUrl`.
  * - Enriched tools (read_document, search) need filesystem + catalog access
  *   plus (optionally) Hocuspocus for backlinks.
+ *
+ * Project-level scaffolding (folders + config.yml entries) is handled by
+ * the `ok seed` CLI, not via an MCP tool. The former `init-content` tool
+ * was removed per SPEC 2026-04-23-ok-seed-scaffold.
  *
  * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
  * `register(...)` export, then import and call it from here.
@@ -57,10 +61,6 @@ import {
 } from './get-preview-url.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
-  DESCRIPTION as INIT_CONTENT_DESCRIPTION,
-  register as registerInitContent,
-} from './init-content.ts';
-import {
   DESCRIPTION as LIST_DOCUMENTS_DESCRIPTION,
   register as registerListDocuments,
 } from './list-documents.ts';
@@ -93,9 +93,8 @@ import {
 } from './write-document.ts';
 
 /** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
-export const TOOL_DESCRIPTIONS = {
+const _TOOL_DESCRIPTIONS = {
   exec: EXEC_DESCRIPTION,
-  'init-content': INIT_CONTENT_DESCRIPTION,
   ingest: INGEST_DESCRIPTION,
   research: RESEARCH_DESCRIPTION,
   consolidate: CONSOLIDATE_DESCRIPTION,
@@ -174,10 +173,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   });
 
   // Workflow tools — return instructional text, no server connection needed
-  registerInitContent(registrationServer, {
-    config: opts.config,
-    resolveCwd: named('init-content'),
-  });
   registerIngest(registrationServer, { config: opts.config, resolveCwd: named('ingest') });
   registerResearch(registrationServer, { config: opts.config, resolveCwd: named('research') });
   registerConsolidate(registrationServer, {
