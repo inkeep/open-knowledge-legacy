@@ -179,11 +179,19 @@ test.describe('Agent Activity Panel — open, navigate, undo, live updates', () 
     await expect(undoLast).toBeVisible({ timeout: 5_000 });
     await undoLast.click();
 
-    // After undo dispatch, hash is unchanged + scroll unchanged.
-    await page.waitForTimeout(300);
-    expect(page.url()).toContain(`#/${docView}`);
-    const scrollAfter = await page.evaluate(() => window.scrollY);
-    expect(scrollAfter).toBe(scrollBefore);
+    // After undo dispatch, hash is unchanged + scroll unchanged. Poll for a
+    // stable interval rather than a fixed timeout — the POST /api/agent-undo
+    // round-trip + hook re-fetch should NEVER nudge hash/scroll, so we verify
+    // the invariant holds across several polls.
+    await expect
+      .poll(
+        async () => ({
+          url: page.url(),
+          scrollY: await page.evaluate(() => window.scrollY),
+        }),
+        { timeout: 2_000, intervals: [100, 250, 500] },
+      )
+      .toEqual({ url: expect.stringContaining(`#/${docView}`), scrollY: scrollBefore });
   });
 
   test('AC-P8: CC1 session-activity signal adds a new file row within the live-update window', async ({
@@ -285,11 +293,17 @@ test.describe('Agent Activity Panel — open, navigate, undo, live updates', () 
     const panel = page.locator('[data-testid="activity-panel"]');
     await expect(panel).toBeVisible({ timeout: 5_000 });
 
-    // (a) Click-outside — panel STAYS open. Click the editor area.
+    // (a) Click-outside — panel STAYS open. Click the editor area. The
+    // invariant is that the panel remains visible across a stable interval
+    // (a fixed wait would be a race against latent close logic). Poll for
+    // 1 s: a real close dispatches within one RAF; a 1 s window gives
+    // confident coverage of the no-close contract without introducing a
+    // banned waitForTimeout.
     const editor = page.locator('[data-slot="editor-pane"], main').first();
     await editor.click({ position: { x: 100, y: 100 }, force: true });
-    await page.waitForTimeout(200);
-    await expect(panel).toBeVisible();
+    await expect
+      .poll(async () => panel.isVisible(), { timeout: 1_000, intervals: [100, 250, 500] })
+      .toBe(true);
 
     // (b) X close button.
     await panel.locator('[data-testid="activity-panel-close"]').click();
