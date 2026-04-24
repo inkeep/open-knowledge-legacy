@@ -51,5 +51,6 @@ export function validateAgentId(rawAgentId: string | undefined | null): string |
  * validation happens at body parse time).
  */
 export function toBroadcasterKey(rawAgentId: string): string {
+  if (rawAgentId.startsWith('agent-')) return rawAgentId;
   return `agent-${rawAgentId}`;
 }

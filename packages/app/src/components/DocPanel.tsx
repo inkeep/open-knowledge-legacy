@@ -36,7 +36,7 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
  * The mode is chosen at this top level, NOT as a 6th tab — per-file tabs
  * and a per-agent tab violate a shared invariant (see D-T1 in that SPEC).
  */
-export type DocPanelMode = 'doc' | 'agent';
+type DocPanelMode = 'doc' | 'agent';
 
 export function loadGraphPanelModule() {
   return import('@/components/GraphPanel');

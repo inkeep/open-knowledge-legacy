@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useActivityPanel } from '@/lib/use-activity-panel';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
+import { AgentIcon } from './icons/AgentIcon';
 import { Button } from './ui/button';
 
 // ---------------------------------------------------------------
@@ -168,19 +169,13 @@ function AgentAvatar({
   agent: { displayName: string; color: string; icon?: string };
   size?: number;
 }): React.JSX.Element {
-  const initials = agent.displayName
-    .split(/\s+/)
-    .map((w) => w[0] ?? '')
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
   return (
     <span
-      className="inline-flex shrink-0 items-center justify-center rounded-full font-medium text-white ring-2 ring-background"
-      style={{ backgroundColor: agent.color, width: size, height: size, fontSize: size * 0.4 }}
+      className="inline-flex shrink-0 items-center justify-center rounded-full text-white ring-2 ring-background"
+      style={{ backgroundColor: agent.color, width: size, height: size }}
       aria-hidden="true"
     >
-      {initials}
+      <AgentIcon icon={agent.icon} width={size * 0.57} height={size * 0.57} />
     </span>
   );
 }
@@ -200,7 +195,7 @@ interface ActivityModeBodyProps {
   onUndoAll: (docName: string) => Promise<void>;
 }
 
-export function ActivityModeBody({
+function ActivityModeBody({
   data,
   status,
   error,

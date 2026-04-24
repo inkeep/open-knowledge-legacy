@@ -9,17 +9,11 @@ import {
   Rat,
   Shrimp,
   Snail,
-  Sparkles,
   Squirrel,
   Turtle,
 } from 'lucide-react';
-import { type FC, type SVGProps, useEffect, useRef, useState } from 'react';
-import { ClaudeIcon } from '@/components/icons/claude';
-import { ClineIcon } from '@/components/icons/cline';
-import { CodexIcon } from '@/components/icons/codex';
-import { CopilotIcon } from '@/components/icons/copilot';
-import { CursorIcon } from '@/components/icons/cursor';
-import { WindsurfIcon } from '@/components/icons/windsurf';
+import { type FC, useEffect, useRef, useState } from 'react';
+import { AgentIcon } from '@/components/icons/AgentIcon';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
@@ -63,17 +57,6 @@ const AGENT_DISPLAY_NAME: Record<string, string> = {
   cline: 'Cline',
   bot: 'Agent',
 };
-
-/** Map `icon` to a component. Falls back to Sparkles for unknown agents. */
-function AgentIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
-  if (icon === 'claude') return <ClaudeIcon {...props} />;
-  if (icon === 'cursor') return <CursorIcon {...props} />;
-  if (icon === 'windsurf') return <WindsurfIcon {...props} />;
-  if (icon === 'openai') return <CodexIcon {...props} />;
-  if (icon === 'cline') return <ClineIcon {...props} />;
-  if (icon === 'github') return <CopilotIcon {...props} />;
-  return <Sparkles strokeWidth={1.5} {...(props as LucideProps)} />;
-}
 
 function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipant['mode'] }) {
   const animal = user.name.split(' ')[1];

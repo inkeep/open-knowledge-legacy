@@ -19,6 +19,7 @@
  * + `Item.right` — both are publicly typed in `node_modules/yjs/dist/src/**`
  * and are the documented way to walk a Y.Text's Item chain.
  */
+import { AGENT_ICON_COLORS, colorFromSeed, iconFromClientName } from '@inkeep/open-knowledge-core';
 import { createPatch } from 'diff';
 import type * as Y from 'yjs';
 import { ContentString, Item, iterateDeletedStructs } from 'yjs';
@@ -271,12 +272,23 @@ export function listAgentActivity(
   for (const session of sessionManager.sessionsForConnection(connectionId)) {
     anySession = true;
     // Extract agent identity from origin context (frozen at session creation).
+    // `ctx.agent_type` holds the raw `clientName` (e.g. `"claude-code"`) per
+    // `_createSession`; icon + color are derived via the same helpers used
+    // by the presence bar + write handlers so all three surfaces render the
+    // same glyph for the same agent.
     if (!agentInfo) {
       const ctx = session.origin.context as Record<string, unknown> | undefined;
+      const clientName = typeof ctx?.agent_type === 'string' ? ctx.agent_type : undefined;
+      const colorSeed = typeof ctx?.color_seed === 'string' ? ctx.color_seed : connectionId;
+      const icon = iconFromClientName(clientName);
+      const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed);
       agentInfo = {
-        displayName: (ctx?.displayName as string) || (ctx?.agent_type as string) || connectionId,
-        color: (ctx?.color as string) || '#888888',
-        icon: ctx?.icon as string | undefined,
+        displayName:
+          (ctx?.display_name as string) ||
+          (typeof ctx?.agent_type === 'string' ? ctx.agent_type : undefined) ||
+          connectionId,
+        color,
+        icon,
         connectionId,
       };
     }

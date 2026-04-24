@@ -308,6 +308,8 @@ function createSessionOrigin(
   sessionId: string,
   agentType?: string,
   principalId?: string,
+  displayName?: string,
+  colorSeed?: string,
 ): PairedWriteOrigin {
   // precedent #1: typed transaction origin object (not string).
   // D23: deep-freeze both context and outer object so accidental mutation throws.
@@ -323,6 +325,10 @@ function createSessionOrigin(
   };
   if (agentType !== undefined) context.agent_type = agentType;
   if (principalId !== undefined) context.principal = principalId;
+  // display_name + color_seed are read by agent-activity's listAgentActivity
+  // so the Activity Panel shows the same name/color the presence bar does.
+  if (displayName !== undefined) context.display_name = displayName;
+  if (colorSeed !== undefined) context.color_seed = colorSeed;
   Object.freeze(context);
   const origin: PairedWriteOrigin = {
     source: 'local',
@@ -461,7 +467,13 @@ export class AgentSessionManager {
     // commit under that mismatched writerId.
     const rawSessionId = agentId.startsWith('agent-') ? agentId.slice('agent-'.length) : agentId;
     // F1 (D2): per-session frozen origin — object-identity-unique
-    const origin = createSessionOrigin(rawSessionId, agentType, identity?.principalId);
+    const origin = createSessionOrigin(
+      rawSessionId,
+      agentType,
+      identity?.principalId,
+      identity?.displayName,
+      identity?.colorSeed,
+    );
     // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
     const undoOrigin = createUndoOrigin(rawSessionId, agentType);
 

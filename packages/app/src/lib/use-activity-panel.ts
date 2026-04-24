@@ -45,14 +45,14 @@ export interface FileData {
   bursts: BurstData[];
 }
 
-export interface AgentHeader {
+interface AgentHeader {
   displayName: string;
   color: string;
   icon?: string;
   connectionId: string;
 }
 
-export interface ActivityPanelData {
+interface ActivityPanelData {
   sessionAlive: boolean;
   agent: AgentHeader | null;
   files: FileData[];
@@ -363,7 +363,7 @@ export function computeWritingDocs(
  * Deliberately mirrors the shape of `computeWritingDocs` so the same
  * systemProvider reference + null/undefined guards flow through.
  */
-export function hasActiveAgents(
+function hasActiveAgents(
   systemProvider: { awareness?: unknown } | null,
   now: number = Date.now(),
 ): boolean {
