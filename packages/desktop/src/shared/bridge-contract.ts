@@ -213,6 +213,43 @@ export interface OkDesktopBridge {
     apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
   };
 
+  /**
+   * Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship 1e). The renderer
+   * shows a React dialog explaining the 2-click install; these IPC channels
+   * implement the "concierge" actions the dialog takes.
+   */
+  skill: {
+    /**
+     * Returns true when Claude Desktop's config directory exists on this
+     * machine (macOS ~/Library/Application Support/Claude/ or Windows
+     * %APPDATA%/Claude/). False on Linux (unsupported upstream) and absent.
+     * Reuses `detectClaudeDesktopPresence` from the server package.
+     */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Download the pinned-version `openknowledge.skill` to the user's
+     * Downloads folder, then invoke the OS file association so Claude Desktop
+     * opens it (via its registered `.skill` CFBundleDocumentType on macOS /
+     * registry entry on Windows). Resolves with `{ok: true, path}` on success
+     * or `{ok: false, reason}` on any failure (network, filesystem, no
+     * association). Fire-and-forget from the renderer's perspective —
+     * Claude's own install dialog becomes the user's next surface.
+     */
+    downloadAndOpen(url: string): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason:
+            | 'invalid-url'
+            | 'download-failed'
+            | 'write-failed'
+            | 'open-failed'
+            | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
+  };
+
   update: {
     /** Invokes `autoUpdater.quitAndInstall()` in main. Triggered by Toast A's "Relaunch now" action. */
     relaunchNow(): Promise<void>;

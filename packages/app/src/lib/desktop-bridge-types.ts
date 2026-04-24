@@ -211,6 +211,29 @@ export interface OkDesktopBridge {
     plan(): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
+  skill: {
+    /** True when Claude Desktop's config dir exists on this machine. */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Download openknowledge.skill to the user's Downloads folder and invoke
+     * the OS file association (`.skill` → Claude Desktop). Fire-and-forget
+     * from the renderer perspective — Claude's native install dialog takes
+     * over the flow on `ok: true`.
+     */
+    downloadAndOpen(url: string): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason:
+            | 'invalid-url'
+            | 'download-failed'
+            | 'write-failed'
+            | 'open-failed'
+            | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
+  };
   update: {
     relaunchNow(): Promise<void>;
   };

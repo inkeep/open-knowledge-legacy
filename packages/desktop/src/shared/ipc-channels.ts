@@ -14,6 +14,7 @@
  */
 
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type { DownloadAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { OkDesktopConfig } from './bridge-contract.ts';
@@ -234,4 +235,26 @@ export interface RequestChannels {
    * Result is `undefined` — the renderer discards it.
    */
   'ok:mcp-wiring:renderer-ready': { args: []; result: undefined };
+
+  /**
+   * Returns true when Claude Desktop's config directory exists on this
+   * machine (macOS ~/Library/Application Support/Claude/ or Windows
+   * %APPDATA%/Claude/). Reuses the shared `detectClaudeDesktopPresence`
+   * helper so the init hint (CLI) and the install dialog (Electron) gate
+   * on the same signal. False on Linux (unsupported upstream).
+   * SPEC 2026-04-24 Ship 1e / D12.
+   */
+  'ok:skill:detect-claude-desktop': { args: []; result: boolean };
+
+  /**
+   * Download the pinned-version `openknowledge.skill` to the user's
+   * Downloads folder, then invoke `shell.openPath` to route it to Claude
+   * Desktop via the `.skill` CFBundleDocumentType association. Renderer
+   * treats any `ok: true` response as "Claude Desktop has taken over —
+   * show 'Follow prompts in Claude' copy and wait." URL is restricted to
+   * `https://github.com/inkeep/open-knowledge/releases/` at the handler
+   * level so this channel can't be abused to download arbitrary files.
+   * SPEC 2026-04-24 Ship 1e / FR11.
+   */
+  'ok:skill:download-and-open': { args: [url: string]; result: DownloadAndOpenResult };
 }

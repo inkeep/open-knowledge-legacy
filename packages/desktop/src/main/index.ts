@@ -61,6 +61,7 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleDetectClaudeDesktop, handleDownloadAndOpen } from './ipc/install-skill.ts';
 import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -693,6 +694,17 @@ function registerIpcHandlers() {
   });
   handle('ok:seed:apply', async (event, plan) => {
     return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
+  });
+
+  // Cowork skill install-dialog IPC — SPEC 2026-04-24 Ship 1e. Two channels:
+  // (1) detect Claude Desktop's presence (gate for showing the Install CTA),
+  // (2) download + invoke OS file association (the 2-click UX payload).
+  // See packages/desktop/src/main/ipc/install-skill.ts.
+  handle('ok:skill:detect-claude-desktop', async () => {
+    return handleDetectClaudeDesktop();
+  });
+  handle('ok:skill:download-and-open', async (_event, url) => {
+    return handleDownloadAndOpen({ app, shell }, url);
   });
 }
 

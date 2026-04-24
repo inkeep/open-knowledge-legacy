@@ -372,6 +372,35 @@ export interface OkDesktopBridge {
   };
 
   /**
+   * Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship 1e). Drives the
+   * 2-click install via Claude.app's `.skill` `CFBundleDocumentType`.
+   */
+  skill: {
+    /** True when Claude Desktop's config dir exists on this machine. */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Download openknowledge.skill to the user's Downloads folder and invoke
+     * the OS file association (`.skill` → Claude Desktop). Fire-and-forget
+     * from the renderer perspective — Claude's native install dialog takes
+     * over the flow on `ok: true`. URL is restricted to inkeep/open-knowledge
+     * releases at the handler level.
+     */
+    downloadAndOpen(url: string): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason:
+            | 'invalid-url'
+            | 'download-failed'
+            | 'write-failed'
+            | 'open-failed'
+            | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
+  };
+
+  /**
    * Auto-update control surface. M3 AC18 / D3 revised: Toast A's "Relaunch
    * now" button calls `relaunchNow()` which invokes
    * `autoUpdater.quitAndInstall()` in main.
