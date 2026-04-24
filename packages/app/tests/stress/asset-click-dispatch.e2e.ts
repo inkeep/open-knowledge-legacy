@@ -332,25 +332,20 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
       .toBeGreaterThan(0);
   });
 
-  test('P9.18: subdirectory PDF drop emits server-absolute href (Bug B URL shape)', async ({
+  test('P9.18: subdirectory PDF drop serves application/pdf inline through the serve middleware', async ({
     page,
     api,
   }) => {
-    // Bug B regression guard. Pre-fix: subdirectory PDF drops emitted
-    // `<a href="doc.pdf">` which the browser resolved against location
-    // under hash routing (`/` — the root), producing `/doc.pdf` instead of
-    // the real path `/docs/sub-xxx/doc.pdf`. Post-fix: `resolvedSrc =
-    // '/' + assetContentPath` so the chip emits a server-absolute href
-    // that survives hash routing.
+    // Bug B regression guard (upgraded 2026-04-24c from href-shape to
+    // full round-trip via page.request.get). Commit A's synchronous
+    // `/api/create-page` → `contentFilter.incrementMdDir` + `registerWrite`
+    // closed the file-watcher race that made the original round-trip
+    // assertion flaky. Now safe to assert the full server behavior.
     //
-    // We assert the *href shape* rather than the full round-trip (click →
-    // new tab → page.request.get). Whether the server then serves that
-    // URL as `application/pdf` vs falls through to Vite's SPA fallback
-    // depends on the content filter's sibling-asset rule (which is
-    // populated by the file-watcher after a propagation delay). Proving
-    // the chip's href is correct is enough to pin the client-side fix —
-    // server-side sirv / SPA fallback behavior is a separate surface
-    // covered by integration tests.
+    // Pre-fix: chip emitted `<a href="doc.pdf">` which resolved against
+    // `/` under hash routing → SPA fallback served `text/html`. Post-fix:
+    // chip href is `/docs/sub-xxx/doc.pdf`, server streams the PDF bytes
+    // with `Content-Disposition: inline` + `Content-Type: application/pdf`.
     const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
     await api.createPage(`${subdirDoc}.md`);
     await api.replaceDoc(subdirDoc, '# Subdir doc\n');
@@ -368,13 +363,17 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     const chip = page.locator('.ProseMirror a[data-wiki-embed]').first();
     await chip.waitFor({ state: 'visible', timeout: 5_000 });
 
-    // The chip's href must be server-absolute (`/`-prefixed). Pre-fix it
-    // was doc-relative (`doc.pdf`). The exact path depends on
-    // `upload.attachmentFolderPath` (default `./` → co-located with doc),
-    // so we assert the *shape* — absolute and ending with `/doc.pdf`.
     const href = await chip.getAttribute('href');
     expect(href).toMatch(/^\//);
     expect(href).toMatch(/\/doc\.pdf$/);
+
+    // Full round-trip assertion: fetch the chip's URL directly and
+    // verify the server serves the PDF correctly (not SPA-fallback HTML).
+    const res = await page.request.get(href ?? '');
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-type'] ?? '').toMatch(/^application\/pdf/);
+    expect(res.headers()['content-disposition']).toBe('inline');
+    expect(res.headers()['x-content-type-options']).toBe('nosniff');
   });
 
   test('P9.20: `.md` drop with case-preserved basename — chip resolves against existing doc', async ({
@@ -489,5 +488,41 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     expect(href).toMatch(/\/clip\.m4v$/);
     const nodeId = await chip.getAttribute('data-node-id');
     expect(nodeId).toMatch(/^wiki-link-embed-/);
+
+    // Full round-trip: fetching the chip's URL must stream the file bytes
+    // with Content-Disposition: inline (INLINE_RENDERABLE_EXTENSIONS
+    // member) — not fall through to Vite's SPA fallback as text/html.
+    // Content-Type for `.m4v` is empty (mrmime gap — future work), so we
+    // pin that `text/html` is NOT what comes back rather than asserting
+    // a specific video MIME. This is exactly the failure mode the user
+    // reported pre-2026-04-24b.
+    const res = await page.request.get(href ?? '');
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-disposition']).toBe('inline');
+    expect(res.headers()['x-content-type-options']).toBe('nosniff');
+    const contentType = res.headers()['content-type'] ?? '';
+    expect(contentType).not.toMatch(/^text\/html/);
+  });
+
+  test('P9.22: missing asset URL returns 404, not the SPA fallback editor shell (2026-04-24b)', async ({
+    page,
+  }) => {
+    // The exact regression the user surfaced on 2026-04-24: navigating
+    // directly to a non-existent asset URL returned HTML (the editor
+    // shell) instead of 404. Vite's `htmlFallbackMiddleware` serves
+    // index.html for any unmatched path; without my Commit A's 404
+    // guard, this falls through and the browser renders the app.
+    //
+    // Now asserted at the top test tier: any asset-extension path that
+    // the server can't serve MUST 404 with a non-HTML Content-Type. No
+    // setup required — just hit a URL that's guaranteed to not exist.
+    const res = await page.request.get('/definitely-not-there.m4v');
+    expect(res.status()).toBe(404);
+    const contentType = res.headers()['content-type'] ?? '';
+    expect(contentType).not.toMatch(/^text\/html/);
+    const body = await res.text();
+    // The editor shell HTML contains an app-root element; the 404 body
+    // should not.
+    expect(body).not.toContain('id="root"');
   });
 });
