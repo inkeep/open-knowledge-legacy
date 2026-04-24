@@ -161,7 +161,7 @@ export function parseRecursive(
       // parses clean, preserve it. This upgrades M2 from "zero whole-doc on
       // clean files" to "zero whole-doc wherever per-block split can recover."
       if (depth === 0) {
-        const perBlock = tryPerBlockFallback(source, parse, e);
+        const perBlock = tryPerBlockFallback(source, parse, e, budget);
         if (perBlock) return perBlock;
       }
       incrementWholeDocFallback();
@@ -565,6 +565,7 @@ function tryPerBlockFallback(
   source: string,
   parse: ParseFn,
   originalErr: unknown,
+  budget?: ParseBudget,
 ): JSONContent | null {
   const blocks = splitSourceIntoBlocks(source);
   // Single block means the whole source IS one block; per-block recovery
@@ -577,6 +578,13 @@ function tryPerBlockFallback(
   let hoistedRefDefs = '';
 
   for (const block of blocks) {
+    // Budget enforcement per block: without this, an adversarial doc with N
+    // pathological blocks defeats the top-level budget (each block calls
+    // `parse()` here without incrementing `budget.calls`). When the budget
+    // is exhausted mid-loop, bail out — the existing merge logic below
+    // returns what's been accumulated so far, which is always a valid PM doc.
+    if (budget && budgetExhausted(budget)) break;
+    if (budget) budget.calls += 1;
     const blockSource = hoistedRefDefs + block.src;
     try {
       const blockResult = parse(blockSource);

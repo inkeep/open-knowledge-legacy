@@ -93,8 +93,12 @@ const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 const KEEPALIVE_GRACE_MS = 10_000;
 
 // Gate the process.once('exit', ...) registration to avoid tripping
-// MaxListenersExceededWarning after ~10 Vite restarts.
+// MaxListenersExceededWarning after ~10 Vite restarts. The exit handler
+// reads `latestLockDir` inside its closure so a Vite restart that swaps
+// the resolved lockDir (content.dir edit, env flip) still releases the
+// current server's lock rather than the first invocation's.
 let exitHandlerRegistered = false;
+let latestLockDir: string | null = null;
 
 export function hocuspocusPlugin(): Plugin {
   return {
@@ -139,14 +143,17 @@ export function hocuspocusPlugin(): Plugin {
         quiet: true,
       });
 
+      latestLockDir = currentSrv.lockDir;
       if (!exitHandlerRegistered) {
         exitHandlerRegistered = true;
-        const lockDir = currentSrv.lockDir;
         // Fires for non-graceful exits where the close handler's
-        // `srv.destroy()` never runs. Ownership-guarded.
+        // `srv.destroy()` never runs. Ownership-guarded. Reads
+        // `latestLockDir` from module scope so a Vite restart that swapped
+        // the lockDir still releases the current server's lock.
         process.once('exit', () => {
+          if (latestLockDir === null) return;
           try {
-            releaseServerLock(lockDir);
+            releaseServerLock(latestLockDir);
           } catch {
             // Already released by close handler's destroy — fine.
           }

@@ -49,7 +49,7 @@ describe('createRegistry', () => {
       props: [
         { name: 'chartType', type: 'enum', enumValues: ['bar', 'line', 'pie'], required: true },
       ],
-      category: 'data',
+      category: 'content',
       description: 'Data visualization chart',
     };
     registry.set('DataViz', dataVizMeta);

@@ -1689,6 +1689,20 @@ button:active:not(:disabled) {
   pointer-events: auto;
 }
 
+/* Keyboard-selected parity with hover. Keyboard-only users who arrow-key
+   to a component (block-ux/keyboard-nav.ts NodeSelection) get the halo
+   via [data-selected]; this rule mirrors it so the chrome bar's Move /
+   Delete / Settings buttons are reachable without a mouse (WCAG 2.1.1
+   Keyboard). Innermost-wins uses [data-has-child-selected] written by
+   SelectionStatePlugin (precedent #34) — a plain attribute-presence
+   negation, so a parent whose descendant is the selected block doesn't
+   paint chrome on both the parent AND the child. */
+.jsx-component-wrapper[data-selected="true"]:not([data-has-child-selected="true"])
+> .jsx-component-chrome {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* Unconfigured hint — when the component has settable props AND at least one
    is empty/unset, surface the full-styled chrome pill with ONLY the gear
    button visible (arrows + destructive delete stay hidden until hover).

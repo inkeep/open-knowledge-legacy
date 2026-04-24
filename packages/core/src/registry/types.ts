@@ -73,8 +73,9 @@ export interface JsxComponentMeta {
   props: PropDef[];
   /** Slash menu icon name (resolved to Lucide in app). */
   icon?: string;
-  /** Slash menu grouping category. */
-  category?: 'content' | 'layout' | 'media' | 'data';
+  /** Slash menu grouping category. Precedent #9 keeps this add-only —
+   *  extending with new members is free; narrowing is permanent lock-in. */
+  category?: 'content' | 'media';
   /** Slash menu label. */
   displayName?: string;
   /** One-line summary for slash menu + MCP agent discovery. */

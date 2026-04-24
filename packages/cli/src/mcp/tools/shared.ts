@@ -29,7 +29,7 @@ export const ROUTED_CWD_DESCRIPTION =
  * Rejects payloads > 200 chars BEFORE they hit the HTTP boundary. Separate
  * from the server-side render cap (80) — see `MAX_SUMMARY_LENGTH`.
  */
-export const SUMMARY_TRANSPORT_CAP = 200;
+const SUMMARY_TRANSPORT_CAP = 200;
 
 /**
  * Shared Zod schema for the `summary` param on write_document, edit_document,

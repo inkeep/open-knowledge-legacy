@@ -37,7 +37,7 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: {
-      sourcemap: 'inline',
+      sourcemap: 'hidden',
       rollupOptions: {
         // Two entries in the main bundle: the main-process entry itself AND
         // the utility-process entry that main.forks. electron-vite's config
@@ -66,7 +66,7 @@ export default defineConfig({
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
-      sourcemap: 'inline',
+      sourcemap: 'hidden',
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/preload/index.ts') },
         // CommonJS, not ESM. Electron's sandboxed preload (webPreferences.sandbox: true,
@@ -132,7 +132,7 @@ export default defineConfig({
     },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),
-      sourcemap: 'inline',
+      sourcemap: 'hidden',
       rollupOptions: {
         input: resolve(appRoot, 'index.html'),
       },

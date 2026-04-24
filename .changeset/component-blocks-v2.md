@@ -60,13 +60,20 @@ Other improvements:
 
 Breaking changes:
 
-- The inline MDX element node (`jsxInline`) no longer stores `props`;
-  its text content IS the source of truth. This is a load-bearing
-  change for collaborative editing — clients on older versions
-  coexisting with this version in the same live session will see
-  inline MDX render as empty text. Upgrade all clients in a session
-  together. Persisted documents are unaffected; the on-disk MDX is
-  preserved.
+- Both the inline MDX element node (`jsxInline`) and the block MDX
+  component node (`jsxComponent`) changed PM-schema shape in this
+  release. `jsxInline` drops its `attributes` and `sourceRaw` attrs —
+  its text content IS the source of truth. `jsxComponent` widens from
+  an atom with a raw-content attr to a non-atom block with `block*`
+  children and new structured attrs (`componentName`, `kind`,
+  `attributes`, `sourceRaw`, `sourceDirty`, `props`). This is a
+  load-bearing change for collaborative editing — older clients
+  coexisting with this version in the same live session substitute
+  both nodes to `rawMdxFallback` (raw source preserved as editable
+  text) via the y-tiptap schema-throw substitution patch. Upgrade all
+  clients in a session together — both inline JSX authoring and
+  component-block authoring are affected, not just inline. Persisted
+  documents are unaffected; the on-disk MDX is preserved.
 - Content using component names that are no longer built in
   (`Tabs`, `Card`, `CardGroup`, `Steps`, `Banner`, `Files`,
   `TypeTable`, `InlineTOC`, `Mermaid`, `AudioPlaceholder`, `ImageZoom`)

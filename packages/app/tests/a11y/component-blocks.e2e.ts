@@ -15,6 +15,7 @@
  * directory. See `playwright.a11y.config.ts` header for migration history.
  */
 
+import { randomUUID } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import type { ApiHelpers } from '../stress/_helpers';
@@ -27,23 +28,22 @@ async function waitForProvider(page: Page) {
 }
 
 /**
- * Replace test-doc with the given content via the shared `api` fixture.
- * The fixture routes through `/api/agent-write-md` with the correct
- * `position: 'replace'` body key (not the `mode: 'replace'` shape the
- * previous inline helper used, which silently fell back to append per
- * PR #185's contract).
+ * Create an isolated per-test document, seed the content, and navigate to
+ * it. Matches the `seedDocs` / `setupDoc` pattern used across the rest of
+ * the Playwright suite — each test owns its own `docName` via
+ * `randomUUID()` so parallel workers (and future retries / reruns within
+ * the same worker) never share CRDT state. See AGENTS.md Testing section
+ * STOP rule on hardcoded `'test-doc'`.
  */
-async function writeContent(api: ApiHelpers, content: string, docName = 'test-doc') {
+async function setupDoc(page: Page, api: ApiHelpers, content: string): Promise<string> {
+  const docName = `a11y-${randomUUID().slice(0, 8)}`;
+  await api.createPage(`${docName}.md`);
   await api.replaceDoc(docName, content);
-}
-
-test.beforeEach(async ({ page, api }) => {
-  await api.testReset();
-  await page.goto('/');
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+  await page.goto(`/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
-});
+  return docName;
+}
 
 // ── A11Y01: PropPanel focus order ──────────────────────────────
 
@@ -51,7 +51,7 @@ test('A11Y01: Tab key cycles through PropPanel controls in visual DOM order', as
   page,
   api,
 }) => {
-  await writeContent(api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
+  await setupDoc(page, api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -91,7 +91,7 @@ test('A11Y01: Tab key cycles through PropPanel controls in visual DOM order', as
 // ── A11Y02: NodeSelection screen reader announcement ──────────
 
 test('A11Y02: NodeSelection announces component via aria-live region', async ({ page, api }) => {
-  await writeContent(api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
+  await setupDoc(page, api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -130,7 +130,7 @@ test('A11Y02: NodeSelection announces component via aria-live region', async ({ 
 // ── A11Y03: PropPanel Esc closes and returns focus ─────────────
 
 test('A11Y03: PropPanel Esc key closes and returns focus to block', async ({ page, api }) => {
-  await writeContent(api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
+  await setupDoc(page, api, '<Callout type="warning">\n\nTest content\n\n</Callout>');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -164,7 +164,7 @@ test('A11Y03: PropPanel Esc key closes and returns focus to block', async ({ pag
 
 test('A11Y05: rawMdxFallback nested CodeMirror has accessible label', async ({ page, api }) => {
   // Write broken MDX that will produce rawMdxFallback
-  await writeContent(api, '<BrokenTag attr="\n\nSome broken content\n');
+  await setupDoc(page, api, '<BrokenTag attr="\n\nSome broken content\n');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -220,7 +220,7 @@ test.skip('A11Y07: Empty-container placeholder activatable via keyboard — pend
 // ── A11Y09: Wildcard block chrome has accessible name ──────────
 
 test('A11Y09: Wildcard block chrome has accessible name', async ({ page, api }) => {
-  await writeContent(api, '<UnknownComponent prop="val">\n\nSome content\n\n</UnknownComponent>');
+  await setupDoc(page, api, '<UnknownComponent prop="val">\n\nSome content\n\n</UnknownComponent>');
   await page.waitForFunction(() => Boolean(window.__activeEditor?.state.doc.childCount), null, {
     timeout: 5000,
   });
@@ -295,7 +295,7 @@ test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contra
     'Some paragraph with normal text.',
   ].join('\n');
 
-  await writeContent(api, content);
+  await setupDoc(page, api, content);
   // Wait for the editor to actually render the fixture's top-level blocks
   // before running axe — otherwise axe scans an empty ProseMirror.
   await page.waitForFunction(() => (window.__activeEditor?.state.doc.childCount ?? 0) >= 5, null, {
@@ -342,7 +342,7 @@ test('A11Y11: javascript:/data: URL props render inert in the DOM', async ({ pag
     '',
     '<Image src="https://example.com/safe.png" alt="safe-image" />',
   ].join('\n');
-  await writeContent(api, malicious);
+  await setupDoc(page, api, malicious);
   // Wait until both <img> elements render — we assert on the two src values.
   await page.waitForFunction(
     () => document.querySelectorAll('.ProseMirror img[src]').length >= 2,

@@ -235,4 +235,47 @@ describe('SourceDirtyObserver origin guard', () => {
     const shifted = targetPos + (next.doc.firstChild?.nodeSize ?? 0);
     expect(isDirty(next, shifted)).toBe(false);
   });
+
+  test('fresh-insert with authoritative sourceRaw stays pristine (I12 guard positive path)', () => {
+    // Positive-path coverage for the fresh-insert pristine-preservation
+    // guard in source-dirty-observer: a jsxComponent arriving at a
+    // previously-empty position with a non-empty `sourceRaw` (the shape
+    // produced by mdast→PM parse handlers, on-blur rawMdxFallback upgrade,
+    // MDX paste, and slash-menu template inserts) must NOT be marked
+    // dirty. Marking dirty would force the serialize path to re-emit the
+    // component through the to-markdown handler's canonical form,
+    // clobbering the user's authored bytes (e.g., `<Foo>\ntext\n</Foo>`
+    // → `<Foo>\n\ntext\n\n</Foo>`).
+    //
+    // Append-at-end is the clean positive-path setup: the old-state
+    // position past content.size doesn't resolve to any existing
+    // jsxComponent, so `isFreshInsert` is true. Inserting at pos 0 would
+    // map back to the first existing jsxComponent and defeat the guard's
+    // `oldNode.type.name !== 'jsxComponent'` branch.
+    const plugin = getPlugin();
+    const initial = buildInitialState(plugin);
+    const insertPos = initial.doc.content.size;
+
+    const next = applyWithAppend(plugin, initial, (tr) => {
+      const node = schema.node(
+        'jsxComponent',
+        {
+          content: '',
+          componentName: 'Callout',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '<Callout type="info">\ntext\n</Callout>',
+          sourceDirty: false,
+          props: { type: 'info' },
+        },
+        [schema.node('paragraph', null, [schema.text('text')])],
+      );
+      return tr.insert(insertPos, node);
+    });
+
+    // The freshly-inserted jsxComponent arrived with an authoritative
+    // sourceRaw → guard fires → NOT dirty, even though the node has
+    // content AND non-empty props.
+    expect(isDirty(next, insertPos)).toBe(false);
+  });
 });
