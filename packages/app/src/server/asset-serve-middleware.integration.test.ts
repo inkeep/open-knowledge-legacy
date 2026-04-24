@@ -180,23 +180,40 @@ describe('asset-serve middleware (narrow integration)', () => {
       expect(res.headers.get('content-type')).toMatch(/^text\/csv/);
     });
 
-    test('M4V gets empty Content-Type (mrmime gap — current behavior pin)', async () => {
-      // `.m4v` is NOT in mrmime's default mime table. sirv emits empty
-      // Content-Type. With `X-Content-Type-Options: nosniff` this is
-      // safe (no inline script execution risk) but the browser's built-
-      // in video viewer can't decide to render. Documented as future
-      // work in the 2026-04-24b amendment — "Explicit
-      // application/octet-stream fallback for sirv+mrmime misses."
+    test('M4V gets video/mp4 (mrmime gap closed in asset-serve-middleware)', async () => {
+      // `.m4v` is NOT in mrmime's default mime table; we register it as
+      // `video/mp4` at module load in `asset-serve-middleware.ts`. Before
+      // that patch, sirv emitted empty Content-Type → Chromium rendered
+      // the binary bytes as garbled text (user-visible regression).
       //
-      // This test PINS the current behavior so a future mime-table
-      // extension is an intentional change rather than an invisible
-      // side effect. When the follow-up lands, flip this to the chosen
-      // fallback.
+      // Post-patch: Chromium's built-in video viewer plays the file
+      // inline in the new tab. Safe under nosniff — video/* is never
+      // treated as scriptable regardless of file contents.
+      //
+      // Pinning explicit video/mp4 here catches (a) accidental removal
+      // of the patch, (b) mrmime adopting a different upstream mapping
+      // in a future version.
       const res = await fetch(`${harness.baseURL}/docs/clip.m4v`);
       expect(res.status).toBe(200);
-      const ct = res.headers.get('content-type');
-      // Empty or null (sirv + mrmime behavior). Both safe under nosniff.
-      expect(ct === null || ct === '').toBe(true);
+      expect(res.headers.get('content-type')).toMatch(/^video\/mp4/);
+    });
+
+    test('MKV gets video/x-matroska', async () => {
+      // Similarly covered by the mrmime patch. De-facto mime type; no
+      // IANA-registered alternative exists.
+      mkdirSync(join(contentDir, 'docs'), { recursive: true });
+      writeFileSync(join(contentDir, 'docs', 'movie.mkv'), 'fake-mkv-bytes');
+      // Harness filter captured dirCount at construct time; `docs/` is
+      // already admitted. New file in an admitted dir is served.
+      const res = await fetch(`${harness.baseURL}/docs/movie.mkv`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toMatch(/^video\/x-matroska/);
+    });
+
+    test('FLAC gets audio/flac (RFC 9639)', async () => {
+      const res = await fetch(`${harness.baseURL}/docs/song.flac`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toMatch(/^audio\/flac/);
     });
   });
 

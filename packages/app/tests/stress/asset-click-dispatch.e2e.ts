@@ -489,19 +489,18 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     const nodeId = await chip.getAttribute('data-node-id');
     expect(nodeId).toMatch(/^wiki-link-embed-/);
 
-    // Full round-trip: fetching the chip's URL must stream the file bytes
-    // with Content-Disposition: inline (INLINE_RENDERABLE_EXTENSIONS
-    // member) — not fall through to Vite's SPA fallback as text/html.
-    // Content-Type for `.m4v` is empty (mrmime gap — future work), so we
-    // pin that `text/html` is NOT what comes back rather than asserting
-    // a specific video MIME. This is exactly the failure mode the user
-    // reported pre-2026-04-24b.
+    // Full round-trip: fetching the chip's URL streams the file bytes
+    // with `Content-Disposition: inline` + `Content-Type: video/mp4`
+    // (mrmime gap closed in `asset-serve-middleware.ts` at module load).
+    // Pre-2026-04-24b, the server served `text/html` SPA fallback.
+    // Pre-mrmime-patch (between 2026-04-24b initial landing and this
+    // commit), the Content-Type was empty → Chromium rendered the bytes
+    // as garbled text. This assertion pins both fixes together.
     const res = await page.request.get(href ?? '');
     expect(res.status()).toBe(200);
     expect(res.headers()['content-disposition']).toBe('inline');
     expect(res.headers()['x-content-type-options']).toBe('nosniff');
-    const contentType = res.headers()['content-type'] ?? '';
-    expect(contentType).not.toMatch(/^text\/html/);
+    expect(res.headers()['content-type'] ?? '').toMatch(/^video\/mp4/);
   });
 
   test('P9.22: missing asset URL returns 404, not the SPA fallback editor shell (2026-04-24b)', async ({
