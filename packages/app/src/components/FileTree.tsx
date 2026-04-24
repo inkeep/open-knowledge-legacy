@@ -59,11 +59,18 @@ import { resolveFileTreeSelection } from '@/components/file-tree-selection';
 import type { DocEntry } from '@/components/file-tree-utils';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRoot,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
-import { cn } from '@/lib/utils';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { contextRowHint } from './handoff/OpenInAgentContextSubmenu';
 import { computeRowState, TargetIcon } from './handoff/OpenInAgentMenuItem';
@@ -153,36 +160,6 @@ function asDirectoryHandle(
   return item as FileTreeDirectoryHandle;
 }
 
-function MenuButton({
-  children,
-  className,
-  disabled,
-  onClick,
-  variant = 'default',
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'default' | 'destructive';
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      className={cn(
-        'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm outline-none transition-colors',
-        'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:bg-sidebar-accent focus-visible:text-sidebar-accent-foreground',
-        'disabled:pointer-events-none disabled:opacity-45',
-        variant === 'destructive' &&
-          'text-destructive hover:bg-destructive/10 hover:text-destructive',
-        className,
-      )}
-      onClick={onClick}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
 function FileTreeMenu({
   item,
   context,
@@ -206,154 +183,174 @@ function FileTreeMenu({
 
   const closeForInlineSurface = () => context.close({ restoreFocus: false });
   const close = () => context.close();
-
   return (
-    <div
-      data-file-tree-context-menu-root="true"
-      className="min-w-52 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+    <DropdownMenuRoot
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
     >
-      {isFolder ? (
-        <>
-          <MenuButton
-            disabled={anyActionBusy}
-            onClick={() => {
-              closeForInlineSurface();
-              onStartCreating('file', treeDirectoryPathToFolderPath(item.path));
-            }}
-          >
-            <SquarePen className="size-4" aria-hidden="true" />
-            New File
-          </MenuButton>
-          <MenuButton
-            disabled={anyActionBusy}
-            onClick={() => {
-              closeForInlineSurface();
-              onStartCreating('folder', treeDirectoryPathToFolderPath(item.path));
-            }}
-          >
-            <FolderPlus className="size-4" aria-hidden="true" />
-            New Folder
-          </MenuButton>
-          <div className="my-1 h-px bg-border" />
-          <MenuButton
-            onClick={() => {
-              close();
-              onExpandSubtree(item.path);
-            }}
-          >
-            <UnfoldVertical className="size-4" aria-hidden="true" />
-            Expand All
-          </MenuButton>
-          <MenuButton
-            onClick={() => {
-              close();
-              onCollapseSubtree(item.path);
-            }}
-          >
-            <FoldVertical className="size-4" aria-hidden="true" />
-            Collapse All
-          </MenuButton>
-          <div className="my-1 h-px bg-border" />
-        </>
-      ) : null}
-      <MenuButton
-        disabled={anyActionBusy}
-        onClick={() => {
-          closeForInlineSurface();
-          model.startRenaming(item.path);
-        }}
+      <DropdownMenuTrigger asChild>
+        <span
+          aria-hidden="true"
+          data-file-tree-context-menu-root="true"
+          className="block size-px"
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        portal={false}
+        sideOffset={0}
+        align="start"
+        data-file-tree-context-menu-root="true"
+        className="min-w-52"
       >
-        <Pencil className="size-4" aria-hidden="true" />
-        Rename
-      </MenuButton>
-      <MenuButton
-        disabled={!workspace}
-        onClick={() => {
-          if (!workspace) return;
-          close();
-          const full = joinWorkspacePath(
-            workspace.contentDir,
-            relativePathForTreeItem(item),
-            workspace.pathSeparator,
-          );
-          void copyToClipboard(full, 'full path');
-        }}
-      >
-        <Copy className="size-4" aria-hidden="true" />
-        Copy Full Path
-      </MenuButton>
-      <MenuButton
-        onClick={() => {
-          close();
-          void copyToClipboard(relativePathForTreeItem(item), 'relative path');
-        }}
-      >
-        <Copy className="size-4" aria-hidden="true" />
-        Copy Relative Path
-      </MenuButton>
-      {!isFolder ? (
-        <>
-          <div className="my-1 h-px bg-border" />
-          <div className="px-2 py-1 text-muted-foreground text-xs">
-            <Sparkles className="mr-1 inline size-3" aria-hidden="true" />
-            Open in
-          </div>
-          {KNOWN_TARGETS.map((knownTarget) => {
-            const installState = handoff.installStates[knownTarget.id];
-            const rowState = computeRowState({
-              target: knownTarget,
-              installState,
-              isElectronHost: handoff.isElectronHost,
-            });
-            const inputMissing = handoffInput === null;
-            const enabled = rowState.enabled && !inputMissing;
-            const hint = contextRowHint(
-              knownTarget,
-              installState,
-              handoff.isElectronHost,
-              inputMissing,
+        {isFolder ? (
+          <>
+            <DropdownMenuItem
+              disabled={anyActionBusy}
+              onSelect={(event) => {
+                event.preventDefault();
+                closeForInlineSurface();
+                onStartCreating('file', treeDirectoryPathToFolderPath(item.path));
+              }}
+            >
+              <SquarePen aria-hidden="true" />
+              New File
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={anyActionBusy}
+              onSelect={(event) => {
+                event.preventDefault();
+                closeForInlineSurface();
+                onStartCreating('folder', treeDirectoryPathToFolderPath(item.path));
+              }}
+            >
+              <FolderPlus aria-hidden="true" />
+              New Folder
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => {
+                close();
+                onExpandSubtree(item.path);
+              }}
+            >
+              <UnfoldVertical aria-hidden="true" />
+              Expand All
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                close();
+                onCollapseSubtree(item.path);
+              }}
+            >
+              <FoldVertical aria-hidden="true" />
+              Collapse All
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        <DropdownMenuItem
+          disabled={anyActionBusy}
+          onSelect={(event) => {
+            event.preventDefault();
+            closeForInlineSurface();
+            model.startRenaming(item.path);
+          }}
+        >
+          <Pencil aria-hidden="true" />
+          Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!workspace}
+          onSelect={() => {
+            if (!workspace) return;
+            close();
+            const full = joinWorkspacePath(
+              workspace.contentDir,
+              relativePathForTreeItem(item),
+              workspace.pathSeparator,
             );
-            return (
-              <MenuButton
-                key={knownTarget.id}
-                disabled={!enabled}
-                aria-label={
-                  hint
-                    ? `Open in ${knownTarget.displayName}, ${hint}`
-                    : `Open in ${knownTarget.displayName}`
-                }
-                data-testid={`file-tree-open-in-${knownTarget.id}`}
-                onClick={() => {
-                  if (!enabled || !handoffInput) return;
-                  close();
-                  void handoff.dispatch(knownTarget.id, handoffInput);
-                }}
-              >
-                <TargetIcon id={knownTarget.id} aria-hidden="true" />
-                <span className="flex-1">{knownTarget.displayName}</span>
-                {hint ? (
-                  <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
-                    {hint}
-                  </span>
-                ) : null}
-              </MenuButton>
-            );
-          })}
-        </>
-      ) : null}
-      <div className="my-1 h-px bg-border" />
-      <MenuButton
-        variant="destructive"
-        disabled={anyActionBusy}
-        onClick={() => {
-          close();
-          onDelete(target);
-        }}
-      >
-        <Trash2 className="size-4" aria-hidden="true" />
-        Delete
-      </MenuButton>
-    </div>
+            void copyToClipboard(full, 'full path');
+          }}
+        >
+          <Copy aria-hidden="true" />
+          Copy Full Path
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            close();
+            void copyToClipboard(relativePathForTreeItem(item), 'relative path');
+          }}
+        >
+          <Copy aria-hidden="true" />
+          Copy Relative Path
+        </DropdownMenuItem>
+        {!isFolder ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">
+              <Sparkles aria-hidden="true" />
+              Open in
+            </DropdownMenuLabel>
+            {KNOWN_TARGETS.map((knownTarget) => {
+              const installState = handoff.installStates[knownTarget.id];
+              const rowState = computeRowState({
+                target: knownTarget,
+                installState,
+                isElectronHost: handoff.isElectronHost,
+              });
+              const inputMissing = handoffInput === null;
+              const enabled = rowState.enabled && !inputMissing;
+              const hint = contextRowHint(
+                knownTarget,
+                installState,
+                handoff.isElectronHost,
+                inputMissing,
+              );
+              return (
+                <DropdownMenuItem
+                  key={knownTarget.id}
+                  disabled={!enabled}
+                  aria-label={
+                    hint
+                      ? `Open in ${knownTarget.displayName}, ${hint}`
+                      : `Open in ${knownTarget.displayName}`
+                  }
+                  data-testid={`file-tree-open-in-${knownTarget.id}`}
+                  onSelect={() => {
+                    if (!enabled || !handoffInput) return;
+                    close();
+                    void handoff.dispatch(knownTarget.id, handoffInput);
+                  }}
+                >
+                  <TargetIcon id={knownTarget.id} aria-hidden="true" />
+                  <span className="flex-1">{knownTarget.displayName}</span>
+                  {hint ? (
+                    <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+                      {hint}
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </>
+        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+          disabled={anyActionBusy}
+          onSelect={() => {
+            close();
+            onDelete(target);
+          }}
+        >
+          <Trash2 aria-hidden="true" />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }
 
