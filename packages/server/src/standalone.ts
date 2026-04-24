@@ -1447,6 +1447,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                 log.error({ err: e }, '[branch-switch] detached cleanup failed');
               }
             }
+
+            // Notify connected clients that the branch scope changed so they can
+            // invalidate their IDB persistence caches. Emit AFTER all server-side
+            // state transitions (Y.Doc reset, backlink rebuild, WIP restore,
+            // detached-ref cleanup) so a client's recycle-triggered reconnect
+            // synchronizes against the new branch's fully-settled state.
+            cc1Broadcaster?.emitBranchSwitched(newBranch);
           }
 
           // Record upstream import if HEAD moved AND content files were affected.

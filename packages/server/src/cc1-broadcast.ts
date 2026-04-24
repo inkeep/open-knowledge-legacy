@@ -27,10 +27,24 @@ export interface CC1Signal {
    * defense flow.
    */
   serverInstanceId?: string;
+  /**
+   * Only populated on `ch === 'branch-switched'` broadcasts. Carries the
+   * target branch name so clients can confirm the invalidation scope
+   * matches the server's new HEAD.
+   */
+  branch?: string;
 }
 
 /** CC1 channel for the server-info broadcast (per-process instance ID). */
 const CC1_CHANNEL_SERVER_INFO = 'server-info';
+
+/**
+ * CC1 channel for the branch-switched broadcast. Fired when the server
+ * normalizes to a new branch (cross-branch checkout). Clients invalidate
+ * their IDB persistence caches on receipt because the new branch's
+ * markdown-rebuilt state is the only valid source.
+ */
+export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched';
 
 export class CC1Broadcaster {
   private readonly hocuspocus: Hocuspocus;
@@ -124,6 +138,45 @@ export class CC1Broadcaster {
       setCC1LastSeq(CC1_CHANNEL_SERVER_INFO, 0);
     } catch (err) {
       this.log.error({ err }, '[cc1] emitServerInfo failed');
+    }
+  }
+
+  /**
+   * Broadcast a `branch-switched` CC1 signal. Fired on the server's
+   * cross-branch normalization path so clients can invalidate their
+   * IDB persistence caches — after a branch switch the new branch's
+   * markdown-rebuilt Y.Doc is the only valid source, and any cached
+   * IDB state from the prior branch would produce a phantom merge
+   * if replayed.
+   *
+   * Emit is synchronous (no debounce): cross-branch switches are
+   * discrete, non-coalescable events and clients need the signal
+   * before they send a stale sync-vector to the new state.
+   */
+  emitBranchSwitched(branch: string): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn({}, `[cc1] __system__ document not found at emitBranchSwitched — dropped`);
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const seq = (this.seqs.get(CC1_CHANNEL_BRANCH_SWITCHED) ?? 0) + 1;
+      this.seqs.set(CC1_CHANNEL_BRANCH_SWITCHED, seq);
+      const payload: CC1Signal = {
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_BRANCH_SWITCHED,
+        seq,
+        branch,
+      };
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_BRANCH_SWITCHED, seq);
+    } catch (err) {
+      this.log.error({ err }, '[cc1] emitBranchSwitched failed');
     }
   }
 

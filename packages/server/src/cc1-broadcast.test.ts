@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
+  CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
   type CC1Signal,
@@ -162,5 +163,72 @@ describe('CC1Broadcaster', () => {
     expect(payload).toHaveProperty('seq');
     expect(typeof payload.seq).toBe('number');
     expect(Object.keys(payload).sort()).toEqual(['ch', 'seq', 'v']);
+  });
+
+  test('CC1_CHANNEL_BRANCH_SWITCHED exported as "branch-switched"', () => {
+    expect(CC1_CHANNEL_BRANCH_SWITCHED).toBe('branch-switched');
+  });
+
+  test('emitBranchSwitched publishes payload with branch + seq=1 on first call', () => {
+    broadcaster.emitBranchSwitched('main');
+    expect(broadcasts).toHaveLength(1);
+    const payload = JSON.parse(broadcasts[0]);
+    expect(payload).toEqual({
+      v: 1,
+      ch: CC1_CHANNEL_BRANCH_SWITCHED,
+      seq: 1,
+      branch: 'main',
+    });
+  });
+
+  test('emitBranchSwitched emits synchronously — no debounce', () => {
+    broadcaster.emitBranchSwitched('feature-x');
+    // No wait — branch switches are discrete events, emit immediately.
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitBranchSwitched seq increments monotonically across calls', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('feature-x');
+    broadcaster.emitBranchSwitched('feature-y');
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map((b) => (JSON.parse(b) as CC1Signal).seq);
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitBranchSwitched carries the supplied branch name', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('detached-abc123');
+    broadcaster.emitBranchSwitched('feature/user-auth');
+    const branches = broadcasts.map((b) => (JSON.parse(b) as { branch: string }).branch);
+    expect(branches).toEqual(['main', 'detached-abc123', 'feature/user-auth']);
+  });
+
+  test('emitBranchSwitched broadcasts on __system__ doc', () => {
+    // Remove __system__ — emit must be a no-op (graceful degradation like signal()).
+    mockHocuspocus.documents.clear();
+    broadcaster.emitBranchSwitched('main');
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitBranchSwitched updates cc1LastSeq metric for branch-switched channel', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('feature-x');
+    const m = getMetrics();
+    expect(m.cc1LastSeq[CC1_CHANNEL_BRANCH_SWITCHED]).toBe(2);
+    expect(m.cc1BroadcastCount).toBe(2);
+  });
+
+  test('emitBranchSwitched seq independent from signal()-driven channels', async () => {
+    broadcaster.signal('files');
+    await wait(120);
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.signal('files');
+    await wait(120);
+
+    const payloads = broadcasts.map((b) => JSON.parse(b) as CC1Signal);
+    expect(payloads[0]).toMatchObject({ ch: 'files', seq: 1 });
+    expect(payloads[1]).toMatchObject({ ch: CC1_CHANNEL_BRANCH_SWITCHED, seq: 1, branch: 'main' });
+    expect(payloads[2]).toMatchObject({ ch: 'files', seq: 2 });
   });
 });
