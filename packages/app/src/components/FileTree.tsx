@@ -74,6 +74,7 @@ import {
 } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 import { cancelHoverPrewarm, scheduleHoverPrewarm } from './sidebar-hover-prewarm';
+import { useSidebar } from './ui/sidebar';
 
 function navigateTo(targetPath: string) {
   window.location.hash = hashFromDocName(targetPath);
@@ -159,7 +160,9 @@ function MenuButton({
   onClick,
   variant = 'default',
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'default' | 'destructive' }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'default' | 'destructive';
+}) {
   return (
     <button
       type="button"
@@ -195,7 +198,10 @@ function FileTreeMenu({
   const target = treeItemToTarget(item);
   const isFolder = item.kind === 'directory';
   const handoffInput = !isFolder
-    ? buildHandoffInput({ docName: treeFilePathToDocName(item.path), workspace })
+    ? buildHandoffInput({
+        docName: treeFilePathToDocName(item.path),
+        workspace,
+      })
     : null;
 
   const closeForInlineSurface = () => context.close({ restoreFocus: false });
@@ -445,7 +451,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         (entry) => docNameToTreePath(entry.docName) === item.path,
       );
       if (doc?.isSymlink) {
-        return { text: 'link', title: doc.targetPath ? `Symlink to ${doc.targetPath}` : 'Symlink' };
+        return {
+          text: 'link',
+          title: doc.targetPath ? `Symlink to ${doc.targetPath}` : 'Symlink',
+        };
       }
       if (isAgentTreePath(item.path)) return { text: 'agent', title: 'Agent configuration file' };
       return null;
@@ -484,7 +493,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   const resetModelToDocuments = (nextDocuments?: readonly DocEntry[]) => {
     const nextPaths = documentsToTreePaths(nextDocuments ?? documentsRef.current);
-    model.resetPaths(nextPaths, { initialExpandedPaths: activeAncestorTreePathsRef.current });
+    model.resetPaths(nextPaths, {
+      initialExpandedPaths: activeAncestorTreePathsRef.current,
+    });
   };
 
   const markNextDocumentsAsApplied = (nextDocuments: readonly DocEntry[]) => {
@@ -545,7 +556,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           typeof data.contentDir === 'string' &&
           (data.pathSeparator === '/' || data.pathSeparator === '\\')
         ) {
-          setWorkspace({ contentDir: data.contentDir, pathSeparator: data.pathSeparator });
+          setWorkspace({
+            contentDir: data.contentDir,
+            pathSeparator: data.pathSeparator,
+          });
         }
       })
       .catch((err) => {
@@ -646,7 +660,11 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           if (current.some((doc) => doc.docName === docName)) return current;
           const next = [
             ...current,
-            { docName, modified: new Date().toISOString(), size: 0 } satisfies DocEntry,
+            {
+              docName,
+              modified: new Date().toISOString(),
+              size: 0,
+            } satisfies DocEntry,
           ];
           markNextDocumentsAsApplied(next);
           return next;
