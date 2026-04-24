@@ -362,11 +362,17 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
 
-**Preview.** If a write-tool response includes `warning: { action: "attach-preview-once", previewUrl }`, open the URL in your preview browser. Otherwise, do nothing.
+**Preview — open the browser at session start if it is not already open.** The user watches edits land live in the preview pane; if it is not open, your work is invisible. Treat opening the preview as your first OK action of the session, before reads or writes.
 
 - Claude Code Desktop: `preview_start("open-knowledge-ui")`.
-- Cursor: use the host's open-URL tool with the `previewUrl`.
-- Other hosts: use whatever command opens a URL.
+- Cursor: use the host's open-URL tool with a `previewUrl` from any write response.
+- Other hosts: use whatever command opens a URL (macOS: `open <url>`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat.
+
+**How to know if it is already open.** You usually cannot pre-check. Three signals:
+
+1. You already opened it earlier this session → don't reopen.
+2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning: { action: "attach-preview-once" }` → a browser is attached somewhere; do nothing.
+3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → no browser is attached; open immediately, one-shot. The hint fires only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
 
 If the server isn't running, start it (`open-knowledge start` or `preview_start("open-knowledge-ui")`), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` from tool responses.
 
