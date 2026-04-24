@@ -21,8 +21,6 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
-  '',
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
@@ -114,8 +112,8 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       if (noPreviewAnywhere) {
         lines.push(
           preview
-            ? `No preview attached. Open ${preview.url} in your preview browser once to watch future edits.`
-            : `No preview attached. Start the UI to watch future edits.`,
+            ? `Open ${preview.url} in your preview browser.`
+            : `No preview attached. Start the UI.`,
         );
       }
       if (summaryHint) lines.push(summaryHint);
@@ -137,7 +135,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       }
       if (noPreviewAnywhere) {
         structured.warning = {
-          message: `No preview attached. Open the URL once to watch future edits.`,
+          message: `Open the previewUrl in your preview browser.`,
           action: 'attach-preview-once' as const,
           previewUrl: preview?.url ?? null,
         };

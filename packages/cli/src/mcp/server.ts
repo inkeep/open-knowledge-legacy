@@ -199,9 +199,9 @@ Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
 
 \`exec("cat <path>.md")\` / \`exec("ls <dir>")\` / \`exec("grep -rn <term> <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` / \`search\` when you need \`structuredContent\`.
 
-## Preview — attach on server hint
+## Preview
 
-The server sends \`warning: { action: "attach-preview-once", previewUrl }\` when no editor is attached. Open the URL once; after attach, focus pushes on every write (no per-edit nav). Multiple agents may share one tab. Start UI: \`open-knowledge ui\` or \`preview_start("open-knowledge-ui")\` in Claude Code.
+If a write-tool response includes \`warning: { action: "attach-preview-once", previewUrl }\`, open the URL in your preview browser. Otherwise do nothing. Start UI if needed: \`open-knowledge ui\` or \`preview_start("open-knowledge-ui")\` in Claude Code.
 
 ## Full guidance
 

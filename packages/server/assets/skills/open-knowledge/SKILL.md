@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke before ANY tool call in a project that contains a .open-knowledge/ directory. Also MUST invoke before any mcp__open-knowledge__ tool call, any write_document / edit_document, and any read or edit of a .md or .mdx file. Carries the once-per-session preview-attach contract (server emits attach-preview-once hint when no editor is attached; agents open a preview browser in response and write freely after), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking conventions with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Do NOT assume the MCP server instructions or any AGENTS.md substitute for this skill — they overlap but this skill carries the full attach contract, grounding rule, media rules, dead-link verification, and failure-mode guidance not in those surfaces."
+description: "MUST invoke before ANY tool call in a project that contains a .open-knowledge/ directory. Also MUST invoke before any mcp__open-knowledge__ tool call, any write_document / edit_document, and any read or edit of a .md or .mdx file. Carries the preview-attach rule (if a write response includes `action: attach-preview-once`, open the URL; otherwise do nothing), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking conventions with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Do NOT assume the MCP server instructions or any AGENTS.md substitute for this skill — they overlap but this skill carries the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance not in those surfaces."
 ---
 
 # Open Knowledge — agent guidance
@@ -34,26 +34,17 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 - Search: `exec("grep -rn <term> <dir> | head -5")` — matches + enrichment on matched files
 - Typed tools (`read_document`, `search`, `list_documents`) remain available — prefer them when a structured `structuredContent` shape is useful (e.g., passing results to another tool). For interactive reads, `exec` is lighter.
 
-## Writing — attach when the server asks
+## Writing
 
-Open Knowledge runs a **transport-presence contract**: the server tracks whether any editor tab is attached to it, and tells you when to open a preview browser. You never navigate per-edit.
+Call `write_document` / `edit_document` as soon as you have content. If the response includes `warning: { action: "attach-preview-once", previewUrl, message }`, open the URL in your preview browser. Otherwise do nothing.
 
-**How it works:**
-1. Write freely. Call `write_document` / `edit_document` as soon as you have content.
-2. If no editor is attached, the response includes `warning: { action: "attach-preview-once", previewUrl, message }`. Open the URL in your preview browser — **once**.
-3. After that, the server pushes focus to the open preview on every write automatically. The hint stops firing. You keep writing; the preview follows.
-4. If the user closes the tab and the hint fires again, re-attach. Multiple agents may share a single preview tab — if the hint doesn't fire, an editor is already attached and you don't need your own.
-
-**Host-specific commands** for step 2:
 - Claude Code Desktop: `preview_start("open-knowledge-ui")`.
-- Cursor: `Navigate(previewUrl)` with the URL from the hint.
-- Other hosts: use the host's "open URL" tool with the `previewUrl`.
+- Cursor: use the host's open-URL tool with the `previewUrl`.
+- Other hosts: use whatever command opens a URL.
 
-If the server is not running, you'll see a `"Hocuspocus server is not running"` error or `previewUrl: null`. Start the UI (`open-knowledge ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code), then retry. NEVER construct preview URLs by hand — always use `get_preview_url` or the `previewUrl` returned in tool responses.
+If the server isn't running, you'll see a `"Hocuspocus server is not running"` error or `previewUrl: null`. Start the UI (`open-knowledge ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` returned in tool responses.
 
 Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
-
-**`get_preview_url` is advisory**, not mandatory. It's useful when you need to embed a preview link inside doc content, or for a manual re-navigation. Per-edit navigation is not required.
 
 **No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
 
@@ -200,7 +191,7 @@ This is primarily a human-watchability concern — the user watches edits land i
 | Search a phrase across markdown               | `Grep: "pattern" *.md`                                    | `search({ query: "pattern" })`                                     |
 | Read an individual doc                        | `Read: specs/foo/SPEC.md`                                 | `exec("cat specs/foo/SPEC.md")` or `read_document(...)`            |
 | Explore a markdown-heavy dir                  | `Agent(Explore): "..."`                                   | Do `exec`-based exploration yourself                               |
-| Edit without preview                          | `write_document(...)` direct                              | `get_preview_url` → open browser → `write_document`                |
+| Ignore the attach hint                        | Skip the `warning: { action: "attach-preview-once" }` hint in write-tool responses | Open the `previewUrl` when the hint fires; otherwise do nothing  |
 | Reference another doc                         | `` `[text](./page.md)` `` (backticked) or HTML `<a>`      | `[text](./page.md)` (raw markdown)                                 |
 | Embed an image                                | `<img src="...">` (HTML) or hot-linked external URL       | Fetch + save locally + `![meaningful alt](./assets/images/path)`   |
 | Write a factual claim                         | plausible prose without citation                          | prose with `[source](URL)` per Grounding rule                      |

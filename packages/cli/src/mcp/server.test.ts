@@ -115,7 +115,6 @@ describe('registerAllTools', () => {
       'get_orphans',
       'get_hubs',
       'get_dead_links',
-      'get_preview_url',
     ] as const;
     for (const toolName of routedTools) {
       expect(toolSchemas.get(toolName)).toBeDefined();

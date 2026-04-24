@@ -250,12 +250,12 @@ describe('edit_document MCP tool', () => {
       previewUrlSource: 'env',
       warning: {
         action: 'attach-preview-once',
-        message: 'No preview attached. Open the URL once to watch future edits.',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: 'https://env.example/#/notes',
       },
     });
     expect(result.content[0]?.text).toContain(
-      'Open https://env.example/#/notes in your preview browser once',
+      'Open https://env.example/#/notes in your preview browser.',
     );
   });
 
@@ -275,7 +275,7 @@ describe('edit_document MCP tool', () => {
     expect(result.structuredContent).toMatchObject({
       warning: {
         action: 'attach-preview-once',
-        message: 'No preview attached. Open the URL once to watch future edits.',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: null,
       },
     });

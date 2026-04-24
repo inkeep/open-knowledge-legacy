@@ -165,12 +165,12 @@ describe('write_document — previewUrl emission', () => {
       previewUrlSource: 'env',
       warning: {
         action: 'attach-preview-once',
-        message: 'No preview attached. Open the URL once to watch future edits.',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: 'https://env.example/#/docs/test',
       },
     });
     expect(result.content[0]?.text).toContain(
-      'Open https://env.example/#/docs/test in your preview browser once',
+      'Open https://env.example/#/docs/test in your preview browser.',
     );
   });
 
@@ -189,7 +189,7 @@ describe('write_document — previewUrl emission', () => {
     expect(result.structuredContent).toMatchObject({
       warning: {
         action: 'attach-preview-once',
-        message: 'No preview attached. Open the URL once to watch future edits.',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: null,
       },
     });

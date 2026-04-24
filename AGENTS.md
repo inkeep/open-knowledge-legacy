@@ -362,20 +362,15 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 
 **Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
 
-**Preview — attach on server hint.** The server runs a transport-presence contract: it tells you when to open a preview browser, and you don't navigate per edit.
+**Preview.** If a write-tool response includes `warning: { action: "attach-preview-once", previewUrl }`, open the URL in your preview browser. Otherwise, do nothing.
 
-1. Write freely. Call `write_document` / `edit_document` as soon as you have content.
-2. If no editor is attached to the server, the response includes `warning: { action: "attach-preview-once", previewUrl, message }`. Open the URL in your preview browser **once**.
-   - Claude Code Desktop: `preview_start("open-knowledge-ui")`.
-   - Cursor: `Navigate(previewUrl)`.
-   - Other hosts: use the host's "open URL" tool with the `previewUrl`.
-3. After that, the server pushes focus to the open preview on every write automatically. The hint stops firing. Keep writing; the preview follows.
+- Claude Code Desktop: `preview_start("open-knowledge-ui")`.
+- Cursor: use the host's open-URL tool with the `previewUrl`.
+- Other hosts: use whatever command opens a URL.
 
-If the user closes the tab, the hint will re-fire on the next write — re-attach once. Multiple agents may share a single preview tab; if the hint doesn't fire, an editor is already attached and you don't need your own.
+If the server isn't running, start it (`open-knowledge start` or `preview_start("open-knowledge-ui")`), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` from tool responses.
 
-If the server isn't running, you'll see `previewUrl: null` or a Hocuspocus-not-running error. Start the UI (`open-knowledge start` or `preview_start("open-knowledge-ui")`), then retry. NEVER construct preview URLs by hand — always use `get_preview_url` or the `previewUrl` from tool responses.
-
-`get_preview_url` is advisory: use it when embedding a preview link inside doc content, or for a manual re-navigation. Per-edit navigation is not required. See [[specs/2026-04-24-preview-attach-once-per-session/SPEC]] for the contract; the old per-edit mandate in [[specs/2026-04-15-preview-url-pre-edit/SPEC]] is superseded.
+See [[specs/2026-04-24-preview-attach-once-per-session/SPEC]] for the contract; the old per-edit mandate in [[specs/2026-04-15-preview-url-pre-edit/SPEC]] is superseded.
 
 **No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
 
