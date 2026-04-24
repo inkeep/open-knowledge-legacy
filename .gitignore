@@ -1,6 +1,8 @@
 node_modules/
 dist/
 
+# (intentional no-op edit on branch ci/test-claude-review-debug to verify v1.0.105 + DEBUG_CLAUDE_AGENT_SDK)
+
 # Per-package lockfiles — only root bun.lock should exist in monorepo
 packages/*/bun.lock
 
