@@ -54,7 +54,18 @@ export interface WriterIdentity {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const GIT_TIMEOUT_MS = 30_000;
+/**
+ * Per-op timeout for shadow-repo git invocations. Default 30s. Override via
+ * `OK_GIT_TIMEOUT_MS` for slow storage (NFS, heavily-used filesystems) or
+ * intentionally-low values in tests that exercise timeout failure paths.
+ * Invalid / non-positive values fall back to the 30s default.
+ */
+const GIT_TIMEOUT_MS = (() => {
+  const raw = process.env.OK_GIT_TIMEOUT_MS;
+  if (!raw) return 30_000;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30_000;
+})();
 
 /** Create a simple-git instance pointed at the shadow bare repo. */
 export function shadowGit(shadow: ShadowHandle) {

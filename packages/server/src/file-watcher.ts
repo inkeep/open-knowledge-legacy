@@ -924,6 +924,13 @@ export async function startWatcher(
   return {
     async unsubscribe() {
       clearInterval(evictionInterval);
+      // Clear the module-level writeTracker on unsubscribe so test suites
+      // that spin up successive watchers don't accumulate stale entries
+      // across instances. Production: unsubscribe = shutdown, no consumers
+      // remain. Tests: next startWatcher sees an empty tracker, which is
+      // the correct starting state for a fresh isolation boundary.
+      writeTracker.clear();
+      lastKnownHash.clear();
       return originalUnsubscribe();
     },
     getFileIndex() {

@@ -484,6 +484,25 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }
   }
 
+  /**
+   * Exponential backoff delay for the next commit attempt.
+   *
+   * Happy path (0 failures): fires at `commitDebounceMs` exactly — matches
+   * the pre-backoff behavior that tests + callers depend on.
+   *
+   * Under sustained git lock contention (N consecutive failures),
+   * multiplies by `2^min(N, 5)` and adds 0–25% jitter. Cap at 5 doublings
+   * ⇒ 32× base (e.g., 30s base → 16min ceiling). Jitter decorrelates
+   * retry storms if multiple processes hit the same lock.
+   */
+  function computeCommitDelay(failures: number): number {
+    if (failures <= 0) return commitDebounceMs;
+    const exponent = Math.min(failures, 5);
+    const multiplier = 2 ** exponent;
+    const jitter = Math.random() * 0.25 * commitDebounceMs;
+    return commitDebounceMs * multiplier + jitter;
+  }
+
   function scheduleGitCommit(): void {
     if (!gitEnabled) return;
     if (isBatchInProgress()) return;
@@ -501,7 +520,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           scheduleGitCommit();
         }
       });
-    }, commitDebounceMs);
+    }, computeCommitDelay(consecutiveGitFailures));
   }
 
   /** Flush pending L1 writes by forcing the Hocuspocus store cycle. */
