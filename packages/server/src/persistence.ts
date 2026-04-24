@@ -24,6 +24,7 @@ import {
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
@@ -55,7 +56,7 @@ import {
   SERVICE_WRITER,
   shadowGit,
 } from './shadow-repo.ts';
-import { writeSidecar } from './sidecar.ts';
+import { deleteSidecar, readSidecar, writeSidecar } from './sidecar.ts';
 import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 
 const log = getLogger('persistence');
@@ -569,6 +570,98 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     });
   }
 
+  /**
+   * Try to restore `document` from its Yjs binary sidecar at load time
+   * (US-004 / Commit 6). Returns `true` iff the sidecar was present,
+   * loaded cleanly, and produced content that converges with the on-disk
+   * markdown `body`. Returns `false` (and deletes the sidecar when
+   * applicable) in every other case so the caller can fall through to
+   * the markdown-only path.
+   *
+   * Strategy A — the decision-tree is intentionally explicit rather than
+   * nested ternaries so each branch's telemetry event is greppable:
+   *   - `sidecar-load-failed` — corruption, timeout, or post-apply
+   *     assertion failure. Sidecar deleted.
+   *   - `sidecar-divergent-reload` — sidecar content disagrees with
+   *     disk markdown. Sidecar deleted; caller loads from disk. This is
+   *     the "markdown is source of truth" safety valve (precedent #1).
+   *
+   * Divergence comparison uses `normalizeBridge` (same helper Observer A
+   * uses for bridge-invariant compare) so whitespace variance doesn't
+   * produce false positives. Happy path: `Y.applyUpdate` runs against
+   * the live doc with the sidecar's preserved clientIDs intact.
+   */
+  async function tryLoadFromSidecar(
+    contentDir: string,
+    documentName: string,
+    liveDoc: Y.Doc,
+    diskBody: string,
+  ): Promise<boolean> {
+    const sidecarResult = await readSidecar(contentDir, documentName);
+    if (!sidecarResult) return false;
+
+    // Validate via a throwaway Y.Doc — if the sidecar diverges from disk
+    // we don't want its content leaked into the live Y.Doc before we
+    // decide to fall through.
+    const tempDoc = new Y.Doc();
+    try {
+      const applyOk = await sidecarResult.applyFn(tempDoc);
+      if (!applyOk) {
+        await deleteSidecar(contentDir, documentName);
+        console.warn(
+          JSON.stringify({
+            event: 'sidecar-load-failed',
+            docName: documentName,
+            reason: 'apply-timeout-or-throw',
+          }),
+        );
+        return false;
+      }
+
+      // Post-apply invariant: fragment must be non-empty when disk
+      // markdown is non-empty. Empty-fragment-on-nonempty-markdown is
+      // a structural signal that the sidecar is stale or mis-serialized.
+      const tempFrag = tempDoc.getXmlFragment('default');
+      if (diskBody.length > 0 && tempFrag.length === 0) {
+        await deleteSidecar(contentDir, documentName);
+        console.warn(
+          JSON.stringify({
+            event: 'sidecar-load-failed',
+            docName: documentName,
+            reason: 'empty-fragment-with-nonempty-markdown',
+          }),
+        );
+        return false;
+      }
+
+      // Divergence check: serialize the sidecar's fragment and compare
+      // to disk markdown (body, without frontmatter) under normalizeBridge.
+      const tempMd = mdManager.serialize(
+        yXmlFragmentToProseMirrorRootNode(tempFrag, schema).toJSON(),
+      );
+      if (normalizeBridge(tempMd) !== normalizeBridge(diskBody)) {
+        await deleteSidecar(contentDir, documentName);
+        console.warn(
+          JSON.stringify({
+            event: 'sidecar-divergent-reload',
+            docName: documentName,
+            reason: 'disk-differs-from-sidecar',
+          }),
+        );
+        return false;
+      }
+
+      // Happy path: apply to the live Y.Doc. Sidecar's clientIDs are
+      // preserved intact — this is what keeps the tab's in-memory
+      // cached state from mismatching after a restart.
+      Y.applyUpdate(liveDoc, sidecarResult.bodyBytes);
+      return true;
+    } finally {
+      tempDoc.destroy();
+    }
+  }
+
+
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
@@ -610,18 +703,56 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             metaMap.set('frontmatter', frontmatter);
           }
 
-          // parseWithFallback — never throws (R6). On parse failure with position
-          // info, degrades to block-level rawMdxFallback preserving surrounding
-          // structure. On position-less error, splits at blank-line boundaries
-          // per-block. Only falls through to whole-doc raw text when every block
-          // fails — strictly better than parse() throwing on broken MDX.
-          const json = mdManager.parseWithFallback(body);
-
           const xmlFragment = document.getXmlFragment('default');
           log.info(
             { documentName, fragmentLength: xmlFragment.length },
             `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
           );
+
+          // CRDT server-restart recovery (US-004 / Commit 6): Jupyter-style
+          // Strategy A — sidecar preferred when valid AND content converges
+          // with disk markdown. Validate via a throwaway Y.Doc so we can
+          // refuse a divergent sidecar without polluting the live Y.Doc with
+          // state we're about to discard.
+          //
+          // Four paths:
+          //   1. Sidecar absent → markdown-only load (existing behavior).
+          //   2. Sidecar corrupt / applyFn-timeout → delete + markdown fallback.
+          //   3. Sidecar loads but post-apply assertion fails → same.
+          //   4. Sidecar loads AND content matches disk (modulo whitespace via
+          //      normalizeBridge) → apply to live Y.Doc, skip markdown path.
+          //      This is the happy path that preserves CRDT clientID identity
+          //      across restart — the root fix the plan is landing.
+          //
+          // See reports/crdt-server-restart-recovery/ for full rationale.
+          if (xmlFragment.length === 0) {
+            const sidecarLoaded = await tryLoadFromSidecar(
+              contentDir,
+              documentName,
+              document,
+              body,
+            );
+            if (sidecarLoaded) {
+              const normalizedBody = mdManager.serialize(
+                yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+              );
+              setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+              log.info(
+                { filePath, children: xmlFragment.length },
+                `[persistence] Loaded ${filePath} from sidecar (${xmlFragment.length} children)`,
+              );
+              return;
+            }
+          }
+
+          // Fall-through markdown path. parseWithFallback — never throws (R6).
+          // On parse failure with position info, degrades to block-level
+          // rawMdxFallback preserving surrounding structure. On position-less
+          // error, splits at blank-line boundaries per-block. Only falls
+          // through to whole-doc raw text when every block fails — strictly
+          // better than parse() throwing on broken MDX.
+          const json = mdManager.parseWithFallback(body);
+
           if (xmlFragment.length === 0) {
             const pmNode = schema.nodeFromJSON(json);
             updateYFragment(document, xmlFragment, pmNode, {

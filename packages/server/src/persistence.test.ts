@@ -10,12 +10,21 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import * as Y from 'yjs';
 import { contentHash, isSelfWrite, registerWrite } from './file-watcher';
 import { isWithinContentDir, resolveWriterFromOrigin, safeContentPath } from './persistence';
 import { FILE_SYSTEM_WRITER, GIT_UPSTREAM_WRITER, SERVICE_WRITER } from './shadow-repo';
+import {
+  CURRENT_FORMAT_VARIANT,
+  CURRENT_SCHEMA_VERSION,
+  CURRENT_YJS_VERSION,
+  SIDECAR_DIR,
+  writeSidecar,
+} from './sidecar';
+import { createServer } from './standalone';
 
 describe('safeContentPath', () => {
   const contentDir = '/app/content';
@@ -360,4 +369,232 @@ describe('resolveWriterFromOrigin', () => {
     const writer = resolveWriterFromOrigin(origin, () => null);
     expect(writer?.name).toBe('Local User');
   });
+});
+
+// ---------------------------------------------------------------------------
+// US-004 / Commit 6 — sidecar load path integration tests. Spin a real
+// createServer(), seed markdown + sidecar on disk, openDirectConnection to
+// force onLoadDocument, assert the resulting Y.Doc state + sidecar file
+// state. Uses console.warn capture for the structured-event telemetry.
+// ---------------------------------------------------------------------------
+
+interface WarnCall {
+  args: unknown[];
+}
+
+function captureConsoleWarn(): { calls: WarnCall[]; restore: () => void } {
+  const calls: WarnCall[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    calls.push({ args });
+  };
+  return {
+    calls,
+    restore: () => {
+      console.warn = original;
+    },
+  };
+}
+
+function findWarnEvent(calls: WarnCall[], event: string): Record<string, unknown> | null {
+  for (const call of calls) {
+    const first = call.args[0];
+    if (typeof first !== 'string') continue;
+    try {
+      const parsed = JSON.parse(first) as Record<string, unknown>;
+      if (parsed.event === event) return parsed;
+    } catch {
+      // Not a structured-warn line — skip.
+    }
+  }
+  return null;
+}
+
+describe('onLoadDocument — sidecar load paths (US-004 / Commit 6)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-sidecar-load-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('sidecar-happy — sidecar matches disk → applies preserved clientIDs to live Y.Doc', async () => {
+    const MARKDOWN = '# Sidecar Happy\n\nContent that the sidecar also carries.\n';
+    writeFileSync(join(tmpDir, 'test-doc.md'), MARKDOWN, 'utf-8');
+
+    // Build a sidecar whose serialized content matches the disk markdown.
+    // Shortcut: run the fixture through a disposable server's onLoad path
+    // by opening the doc once, letting onStoreDocument write the sidecar,
+    // then snapshot the state into a second tmpDir... too involved. Simpler:
+    // build a throwaway Y.Doc with the same text content, write its state.
+    const sidecarDoc = new Y.Doc();
+    // Populate fragment by round-tripping markdown through mdManager + schema.
+    const { mdManager, schema } = await import('./md-manager');
+    const { updateYFragment } = await import('@tiptap/y-tiptap');
+    const json = mdManager.parseWithFallback(MARKDOWN);
+    const pmNode = schema.nodeFromJSON(json);
+    const frag = sidecarDoc.getXmlFragment('default');
+    updateYFragment(sidecarDoc, frag, pmNode, { mapping: new Map(), isOMark: new Map() });
+    await writeSidecar(tmpDir, 'test-doc', sidecarDoc);
+    const preservedClientId = sidecarDoc.clientID;
+
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const conn = await server.hocuspocus.openDirectConnection('test-doc');
+      // Release the DirectConnection's hold on the document before destroy
+      // so flushPendingStores can unload the doc without hanging. Fetched
+      // via hocuspocus.documents.get — matches the pattern in standalone.test.ts.
+      const releaseConn = () => {
+        const d = server.hocuspocus.documents.get('test-doc');
+        d?.removeDirectConnection();
+      };
+      // Read the loaded Y.Doc state.
+      await conn.transact((doc) => {
+        const loadedFrag = doc.getXmlFragment('default');
+        expect(loadedFrag.length).toBeGreaterThan(0);
+        // Sidecar's clientID is present in the loaded doc's store.
+        const knownClients = [...doc.store.clients.keys()];
+        expect(knownClients.includes(preservedClientId)).toBe(true);
+      });
+      releaseConn();
+    } finally {
+      await server.destroy();
+    }
+
+    // Sidecar remains on disk after a successful load.
+    expect(existsSync(join(tmpDir, SIDECAR_DIR, 'test-doc.bin'))).toBe(true);
+  }, 30_000);
+
+  test('sidecar-missing-fallback — no sidecar → markdown load', async () => {
+    writeFileSync(join(tmpDir, 'test-doc.md'), '# Only markdown\n\nno sidecar\n', 'utf-8');
+
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const conn = await server.hocuspocus.openDirectConnection('test-doc');
+      // Release the DirectConnection's hold on the document before destroy
+      // so flushPendingStores can unload the doc without hanging. Fetched
+      // via hocuspocus.documents.get — matches the pattern in standalone.test.ts.
+      const releaseConn = () => {
+        const d = server.hocuspocus.documents.get('test-doc');
+        d?.removeDirectConnection();
+      };
+      await conn.transact((doc) => {
+        const frag = doc.getXmlFragment('default');
+        expect(frag.length).toBeGreaterThan(0);
+      });
+      releaseConn();
+    } finally {
+      await server.destroy();
+    }
+
+    // No sidecar was ever created.
+    expect(existsSync(join(tmpDir, SIDECAR_DIR, 'test-doc.bin'))).toBe(false);
+  }, 30_000);
+
+  test('sidecar-corrupt-fallback — malformed sidecar → deleted, markdown loaded, warn emitted', async () => {
+    const MARKDOWN = '# Corrupt Sidecar\n\nmarkdown has content\n';
+    writeFileSync(join(tmpDir, 'test-doc.md'), MARKDOWN, 'utf-8');
+
+    // Write a corrupt sidecar (valid header, invalid Yjs body bytes).
+    const sidecarPath = join(tmpDir, SIDECAR_DIR, 'test-doc.bin');
+    await mkdir(dirname(sidecarPath), { recursive: true });
+    const header = JSON.stringify({
+      yjsVersion: CURRENT_YJS_VERSION,
+      formatVariant: CURRENT_FORMAT_VARIANT,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      writtenAt: new Date().toISOString(),
+    });
+    const headerBytes = Buffer.from(header, 'utf-8');
+    const prefix = Buffer.alloc(4);
+    prefix.writeUInt32BE(headerBytes.byteLength, 0);
+    const garbageBody = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    writeFileSync(sidecarPath, Buffer.concat([prefix, headerBytes, garbageBody]));
+
+    const capture = captureConsoleWarn();
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const conn = await server.hocuspocus.openDirectConnection('test-doc');
+      // Release the DirectConnection's hold on the document before destroy
+      // so flushPendingStores can unload the doc without hanging. Fetched
+      // via hocuspocus.documents.get — matches the pattern in standalone.test.ts.
+      const releaseConn = () => {
+        const d = server.hocuspocus.documents.get('test-doc');
+        d?.removeDirectConnection();
+      };
+      await conn.transact((doc) => {
+        const frag = doc.getXmlFragment('default');
+        expect(frag.length).toBeGreaterThan(0);
+      });
+      releaseConn();
+    } finally {
+      await server.destroy();
+      capture.restore();
+    }
+
+    // Corrupt sidecar was deleted + load-failed event emitted.
+    expect(existsSync(sidecarPath)).toBe(false);
+    const event = findWarnEvent(capture.calls, 'sidecar-load-failed');
+    expect(event).not.toBeNull();
+    expect(event?.docName).toBe('test-doc');
+  }, 30_000);
+
+  test('sidecar-divergent-delete-and-fallback — sidecar content ≠ disk → deleted, markdown loaded, warn emitted', async () => {
+    const MARKDOWN = '# Disk Truth\n\nThis is on disk.\n';
+    writeFileSync(join(tmpDir, 'test-doc.md'), MARKDOWN, 'utf-8');
+
+    // Build a sidecar with DIFFERENT content than the markdown on disk.
+    const { mdManager, schema } = await import('./md-manager');
+    const { updateYFragment } = await import('@tiptap/y-tiptap');
+    const sidecarDoc = new Y.Doc();
+    const SIDECAR_CONTENT = '# Stale Sidecar\n\nsomething the disk no longer has\n';
+    const json = mdManager.parseWithFallback(SIDECAR_CONTENT);
+    const pmNode = schema.nodeFromJSON(json);
+    const frag = sidecarDoc.getXmlFragment('default');
+    updateYFragment(sidecarDoc, frag, pmNode, { mapping: new Map(), isOMark: new Map() });
+    await writeSidecar(tmpDir, 'test-doc', sidecarDoc);
+    const sidecarPath = join(tmpDir, SIDECAR_DIR, 'test-doc.bin');
+    expect(existsSync(sidecarPath)).toBe(true);
+
+    const capture = captureConsoleWarn();
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const conn = await server.hocuspocus.openDirectConnection('test-doc');
+      // Release the DirectConnection's hold on the document before destroy
+      // so flushPendingStores can unload the doc without hanging. Fetched
+      // via hocuspocus.documents.get — matches the pattern in standalone.test.ts.
+      const releaseConn = () => {
+        const d = server.hocuspocus.documents.get('test-doc');
+        d?.removeDirectConnection();
+      };
+      await conn.transact((doc) => {
+        const loadedFrag = doc.getXmlFragment('default');
+        expect(loadedFrag.length).toBeGreaterThan(0);
+        // The loaded content reflects the DISK markdown, not the stale sidecar.
+        // (Fragment shape varies by serialization — check via serialize round-trip.)
+        const nodeJson = (
+          doc.getXmlFragment('default') as unknown as { toJSON(): unknown }
+        ).toJSON();
+        const serialized = JSON.stringify(nodeJson);
+        expect(serialized.includes('Disk Truth')).toBe(true);
+        expect(serialized.includes('Stale Sidecar')).toBe(false);
+      });
+      releaseConn();
+    } finally {
+      await server.destroy();
+      capture.restore();
+    }
+
+    // Divergent sidecar was deleted + divergent-reload event emitted.
+    expect(existsSync(sidecarPath)).toBe(false);
+    const event = findWarnEvent(capture.calls, 'sidecar-divergent-reload');
+    expect(event).not.toBeNull();
+    expect(event?.docName).toBe('test-doc');
+    expect(event?.reason).toBe('disk-differs-from-sidecar');
+  }, 30_000);
 });
