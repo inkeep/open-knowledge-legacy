@@ -30,7 +30,7 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
  */
 type DocPanelMode = 'doc' | 'agent';
 
-export function loadGraphPanelModule() {
+function loadGraphPanelModule() {
   return import('@/components/GraphPanel');
 }
 
