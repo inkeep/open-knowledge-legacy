@@ -104,7 +104,11 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      const noPreviewAttached = subscriberCount === 0;
+      // Once-per-session attach hint — see write-document.ts for rationale.
+      const systemSubscriberCount =
+        typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
+      const noPreviewAnywhere = systemSubscriberCount === 0;
+      const noPreviewOnThisDoc = subscriberCount === 0;
 
       const summaryResult =
         result.summary && typeof result.summary === 'object'
@@ -114,17 +118,17 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
 
       const lines: string[] = ['Edit applied successfully.'];
       if (preview) lines.push(`Preview: ${preview.url}`);
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         lines.push(
           preview
-            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
-            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+            ? `No preview attached. Open ${preview.url} in your preview browser once to watch future edits.`
+            : `No preview attached. Start the UI to watch future edits.`,
         );
       }
       if (summaryHint) lines.push(summaryHint);
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached && !summaryResult) {
+      if (!preview && !noPreviewAnywhere && !noPreviewOnThisDoc && !summaryResult) {
         return textResult(text);
       }
 
@@ -133,9 +137,10 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
         structured.previewUrl = preview.url;
         structured.previewUrlSource = preview.source;
       }
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         structured.warning = {
-          message: `No preview attached to ${normalized.docName}.`,
+          message: `No preview attached. Open the URL once to watch future edits.`,
+          action: 'attach-preview-once' as const,
           previewUrl: preview?.url ?? null,
         };
       }
