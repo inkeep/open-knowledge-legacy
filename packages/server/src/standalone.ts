@@ -66,6 +66,7 @@ import {
   saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { deleteSidecarsForBranch } from './sidecar.ts';
 import { SyncEngine } from './sync-engine.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
@@ -1206,6 +1207,25 @@ export function createServer(options: ServerOptions): ServerInstance {
           // Gate new L1/L2 writes BEFORE the park loop so any onStoreDocument
           // calls that fire during the async parkBranch are blocked (D39).
           setBatchInProgress(true);
+
+          // CRDT server-restart recovery (US-005 / Commit 7): delete all
+          // sidecars under `.open-knowledge/ystate/` before the branch
+          // switch. Sidecars are branch-scoped state — a switch to a
+          // different branch makes them obsolete. Fresh sidecars
+          // regenerate on the first post-switch L1 debounce. Design A
+          // (delete-on-switch) per reports/crdt-server-restart-recovery/
+          // — simpler than per-branch sidecar dirs and matches T5's
+          // existing passing semantics (branch-switch-live-client test).
+          try {
+            await deleteSidecarsForBranch(contentDir);
+          } catch (sidecarErr) {
+            console.warn(
+              JSON.stringify({
+                event: 'sidecar-branch-delete-failed',
+                reason: (sidecarErr as Error).message ?? String(sidecarErr),
+              }),
+            );
+          }
 
           // Park current branch's Y.Doc state to shadow refs
           if (shadowRef.current) {
