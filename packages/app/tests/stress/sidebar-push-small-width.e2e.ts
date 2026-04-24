@@ -266,4 +266,77 @@ test.describe('sidebar push-mode (small width)', () => {
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
+
+  test('picking a file in FileTree pulses the inset, then clears via animationend', async ({
+    page,
+    api,
+  }) => {
+    await api.seedDocs([
+      { name: 'l1', markdown: '# Doc L1\n\nBody.' },
+      { name: 'l2', markdown: '# Doc L2\n\nBody.' },
+    ]);
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await page.goto('/#/l1');
+
+    // Open the sidebar.
+    await page.locator('[data-sidebar="trigger"]').click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+
+    const inset = page.locator('[data-slot="sidebar-inset"]');
+    // Precondition: the inset has no pulse attribute.
+    await expect(inset).not.toHaveAttribute('data-push-pulse', '');
+
+    // Click the other file in the tree to fire navigateToWithPulse.
+    await page.getByRole('button', { name: 'l2.md' }).click();
+
+    // Pulse fires within ~50ms of the click; assert it appears.
+    await expect(inset).toHaveAttribute('data-push-pulse', '', { timeout: 1500 });
+    // Pulse clears via onAnimationEnd; the keyframe is 700ms.
+    await expect(inset).not.toHaveAttribute('data-push-pulse', '', { timeout: 2000 });
+  });
+
+  test('prefers-reduced-motion suppresses the pulse-hint entirely', async ({ page, api }) => {
+    await api.seedDocs([
+      { name: 'm1', markdown: '# Doc M1\n\nBody.' },
+      { name: 'm2', markdown: '# Doc M2\n\nBody.' },
+    ]);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await page.goto('/#/m1');
+
+    await page.locator('[data-sidebar="trigger"]').click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+
+    // Click the other file. With reduced motion, no pulse attribute appears.
+    await page.getByRole('button', { name: 'm2.md' }).click();
+
+    // Hash changed (proving navigation actually fired); pulse never appears.
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('m2');
+    const hadPulse = await page.evaluate(() => {
+      const el = document.querySelector('[data-slot="sidebar-inset"]');
+      return el?.hasAttribute('data-push-pulse');
+    });
+    expect(hadPulse).toBe(false);
+  });
+
+  test('clicking a non-trigger button in EditorHeader at small width DOES dismiss (pinned)', async ({
+    page,
+    api,
+  }) => {
+    // Pins the SPEC D12 / QA-005 trade-off: any click on the inset (other
+    // than the SidebarTrigger) closes the sidebar at small width — including
+    // editor toolbar buttons. If a future change narrows the dismiss zone,
+    // this test fails and forces a spec re-review.
+    await api.seedDocs([{ name: 'n', markdown: '# Doc N\n\nBody.' }]);
+    await page.setViewportSize(SMALL_VIEWPORT);
+    await page.goto('/#/n');
+
+    await page.locator('[data-sidebar="trigger"]').click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(true);
+
+    // The Visual/Markdown editor-mode toggle lives in EditorHeader and is
+    // inside the inset; clicking it must close the sidebar per spec.
+    await page.getByRole('radio', { name: 'Markdown source' }).click();
+    await expect.poll(() => isSidebarOpen(page)).toBe(false);
+  });
 });

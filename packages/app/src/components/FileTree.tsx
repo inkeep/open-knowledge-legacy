@@ -731,6 +731,10 @@ export interface FileTreeHandle {
   collapseAll(): void;
 }
 
+/**
+ * Must be mounted inside a `SidebarProvider` — `useSidebar()` throws otherwise.
+ * Today only `FileSidebar` mounts it, which is always inside the provider.
+ */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { addPage } = usePageList();
