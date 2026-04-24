@@ -2,9 +2,9 @@
  * Audio — DIY renderer for the 5-pack foundation (SPEC 2026-04-23-cb-v2-md-foundation,
  * FR-4 + FR-6).
  *
- * Pure HTML5 `<audio>` wrapper. Renders the descriptor's 7-prop surface:
- * `src`, `title`, `autoPlay`, `loop`, `muted`, `preload` (+ `children` for
- * `<source>` / `<track>` passthrough).
+ * Pure HTML5 `<audio>` wrapper. Self-closing leaf descriptor symmetric with
+ * Video. Renders the descriptor's 6-prop surface: `src`, `title`,
+ * `autoPlay`, `loop`, `muted`, `preload`.
  *
  * ── Why `controls` is not a prop ─────────────────────────────────────────────
  *
@@ -13,17 +13,18 @@
  * write a raw `<audio>` element in MDX rather than using this descriptor.
  * The descriptor-dispatched Audio is always a user-visible player.
  *
- * ── `children` semantics ─────────────────────────────────────────────────────
+ * ── Why self-closing (no `<source>` / `<track>` passthrough) ─────────────────
  *
- * `hasChildren: true` on the descriptor. The JsxComponentView renders the
- * PM content slot (NodeViewContent) and passes it as children, so authored
- * `<source>` / `<track>` tags round-trip as PM children and stay editable.
- * At runtime, the browser sees whatever DOM shape PM renders inside
- * `<audio>` — typically a wrapper div with the track/source children nested
- * inside. Fallback-source rendering depends on browser tolerance of this
- * nesting; we prioritize editability + γ byte-identity over runtime
- * media-semantics here (QA-010 is best-effort). Matches the Video.tsx
- * contract (US-007) for the same fidelity reason.
+ * HTML5 requires `<source>` and `<track>` as direct children of `<audio>`.
+ * ProseMirror NodeViews mandate a wrapper DOM element to host the content
+ * hole (`NodeViewContent`). The two contracts are structurally
+ * incompatible — see Video.tsx's comment block for the full rationale.
+ *
+ * Audio is a leaf descriptor. Authors who need codec fallback sources
+ * write raw `<audio>` + `<source>` HTML in MDX, which flows through the
+ * wildcard / rawMdxFallback path (byte-preserving, editable as MDX
+ * source). NG31 tracks the additive replacement: typed `sources:
+ * Array<SourceDef>` prop, gated on an `array`-typed PropDef extension.
  *
  * Zero upstream-docs-lib React imports (D-MF2 / FR-6).
  *
@@ -32,15 +33,6 @@
  * `src` flows through `sanitizeComponentProps` at the JsxComponentView
  * boundary (it is in `URL_PROP_NAMES`) — the Audio component trusts its
  * incoming URL props at render time.
- *
- * ── Pre-US-008 state ─────────────────────────────────────────────────────────
- *
- * The pre-US-008 inline Audio function in `componentMap.tsx` wrapped the
- * `<audio>` in a titled container div with a stray empty `<track
- * kind="captions" />` child. The container div was removable styling, and
- * the empty track element broke subtitle rendering on browsers that tried
- * to load it. This module drops both: the renderer is now a pure HTML5
- * wrapper, and any author-provided tracks flow via the `children` slot.
  */
 
 interface AudioProps {
@@ -50,7 +42,6 @@ interface AudioProps {
   loop?: boolean;
   muted?: boolean;
   preload?: 'none' | 'metadata' | 'auto';
-  children?: React.ReactNode;
 }
 
 /**
@@ -67,8 +58,6 @@ export function Audio(props: AudioProps) {
       loop={props.loop}
       muted={props.muted}
       preload={props.preload}
-    >
-      {props.children}
-    </audio>
+    />
   );
 }

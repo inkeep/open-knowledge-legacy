@@ -270,14 +270,19 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('Video has `hasChildren: true` for <track>/<source> passthrough (D-MF12)', () => {
-    // Per FR-3: `children` is a reactnode for <track> / <source> passthrough.
-    // Editability + γ round-trip over runtime media semantics (QA-009 is
-    // best-effort). The descriptor MUST NOT flip to self-closing — that
-    // would strip authored track/source tags on re-serialize.
+  test('Video is a self-closing leaf (no PM children; NG31 for tracks/sources)', () => {
+    // Per FR-3 post-QA-resolution: Video is a self-closing leaf descriptor
+    // symmetric with Image. HTML5 `<track>` / `<source>` require direct-
+    // child placement under `<video>`, but PM NodeViews mandate a wrapper
+    // DOM element — the two contracts are structurally incompatible, so
+    // promising children passthrough was a category error. Authors who
+    // need captions / codec fallback write raw `<video>` + `<track>` HTML
+    // in MDX, which flows through rawMdxFallback. NG31 (Future Work)
+    // tracks the additive replacement: typed `tracks` / `sources` props
+    // gated on an `array` PropDef extension.
     const video = builtInComponents.find((m) => m.name === 'Video');
-    expect(video?.hasChildren).toBe(true);
-    expect(video?.isSelfClosing).toBeUndefined();
+    expect(video?.hasChildren).toBe(false);
+    expect(video?.isSelfClosing).toBe(true);
   });
 
   test('Video has no `start` prop (D-MF12 — matches Mintlify / Fumadocs)', () => {
@@ -289,11 +294,12 @@ describe('builtInComponents manifest', () => {
     expect(start).toBeUndefined();
   });
 
-  test('Audio exposes the 7-prop FR-4 surface', () => {
-    // US-008 widens Audio from the pre-narrow 2-prop shape (src/title) to
-    // the FR-4 7-prop shape (src/title/autoPlay/loop/muted/preload +
-    // children). Order-insensitive — a future PropPanel reshuffle should
-    // not break this guard. Fix-pass 2 (post-Pass-1 review) standardized on
+  test('Audio exposes the 6-prop FR-4 surface', () => {
+    // Post-QA-resolution: Audio is a self-closing leaf descriptor (6 props).
+    // Drops `children` from the prop list alongside the Video refactor —
+    // see the hasChildren/isSelfClosing test below for rationale.
+    // Order-insensitive — a future PropPanel reshuffle should not break
+    // this guard. Fix-pass 2 (post-Pass-1 review) standardized on
     // camelCase `autoPlay` to match Video (FR-3) + React MDX-JSX canon.
     const audio = builtInComponents.find((m) => m.name === 'Audio');
     expect(audio).toBeDefined();
@@ -313,14 +319,16 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('Audio has `hasChildren: true` for <source>/<track> passthrough (FR-4)', () => {
-    // Per FR-4: `children` is a reactnode for <source> / <track> passthrough.
-    // Pre-US-008 state was a bug — the inline renderer passed children but
-    // the descriptor declared `hasChildren: false` + `isSelfClosing: true`.
-    // US-008 flips both flags to match the rendered behavior.
+  test('Audio is a self-closing leaf (symmetric with Video; NG31 for sources)', () => {
+    // Audio follows the same self-closing contract as Video — see the
+    // corresponding Video test above for the PM-vs-HTML5-direct-child
+    // rationale. The pre-QA state declared `hasChildren: true` but the
+    // shipped rendering path couldn't deliver native `<source>` as a
+    // direct child of `<audio>` through the PM NodeView wrapper; the
+    // descriptor is now honest about the contract.
     const audio = builtInComponents.find((m) => m.name === 'Audio');
-    expect(audio?.hasChildren).toBe(true);
-    expect(audio?.isSelfClosing).toBeUndefined();
+    expect(audio?.hasChildren).toBe(false);
+    expect(audio?.isSelfClosing).toBe(true);
   });
 
   test('Audio has no `controls` prop (FR-4 — controls always on, NG7)', () => {

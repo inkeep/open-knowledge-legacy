@@ -138,35 +138,54 @@ scope for this guide).
 
 ### Video
 
-Pure HTML5 `<video>` wrapper with native controls. Matches Mintlify's
-explicit-iframe pattern for embedded services: **no YouTube / Vimeo URL
-auto-promotion**, no iframe emission. Authors embedding service videos
-write a raw `<iframe>` in MDX directly.
+Pure HTML5 `<video>` wrapper with native controls. Self-closing leaf
+(symmetric with Image). Matches Mintlify's explicit-iframe pattern for
+embedded services: **no YouTube / Vimeo URL auto-promotion**, no iframe
+emission. Authors embedding service videos write a raw `<iframe>` in
+MDX directly.
 
-**Props** (10): `src` (required), `title` (tooltip), `controls`
+**Props** (9): `src` (required), `title` (tooltip), `controls`
 (default `true`), `autoPlay`, `muted`, `loop`, `playsInline`, `poster`,
-`preload` (`'none'` \| `'metadata'` \| `'auto'`), and `children` —
-`<track>` / `<source>` tags round-trip via the children slot.
+`preload` (`'none'` \| `'metadata'` \| `'auto'`).
 
 ```mdx title="Video with poster + autoplay"
 <Video src="/clip.mp4" poster="/p.jpg" autoPlay muted loop />
 ```
 
+**Captions and codec fallback.** For `<track>` caption sources or
+`<source>` codec fallbacks, write a raw HTML5 `<video>` element in MDX
+directly:
+
+```html title="Raw HTML5 video with captions (flows through rawMdxFallback)"
+<video src="/clip.mp4" controls>
+  <track kind="captions" src="/clip.en.vtt" srclang="en" label="English" default />
+  <source src="/clip.webm" type="video/webm" />
+</video>
+```
+
+This takes the rawMdxFallback path — bytes preserved on disk, editable
+as MDX source, renders natively in the browser. A typed `tracks` +
+`sources` array prop on the `<Video>` descriptor is tracked as future
+work when ProseMirror's descriptor system grows an array-of-structured-
+records prop type.
+
 ### Audio
 
 HTML5 `<audio>` wrapper with native controls always on (no way to hide
-the chrome — per the "no confidently-broken UI" rule).
+the chrome — per the "no confidently-broken UI" rule). Self-closing
+leaf (symmetric with Video).
 
-**Props** (7): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
-`preload` (`'none'` \| `'metadata'` \| `'auto'`), and `children` —
-`<source>` / `<track>` tags round-trip via the children slot.
+**Props** (6): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
+`preload` (`'none'` \| `'metadata'` \| `'auto'`).
 
 ```mdx title="Audio with preload hint"
 <Audio src="/clip.mp3" autoPlay loop preload="metadata" />
 ```
 
-Authors who want background audio with no visible controls write a raw
-`<audio>` element in MDX — the descriptor always renders controls.
+Authors who want background audio with no visible controls, or who need
+`<source>` codec fallback elements, write a raw `<audio>` element in
+MDX (same escape hatch as Video above) — the descriptor-dispatched
+`<Audio>` always renders controls and has no children slot.
 
 ### Accordion
 

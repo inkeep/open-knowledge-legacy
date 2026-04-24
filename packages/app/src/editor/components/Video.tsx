@@ -2,9 +2,10 @@
  * Video — DIY renderer for the 5-pack foundation (SPEC 2026-04-23-cb-v2-md-foundation,
  * FR-3 + FR-6 + D-MF12).
  *
- * Pure HTML5 `<video>` wrapper. Renders the descriptor's 9-prop surface:
- * `src`, `title`, `controls`, `autoPlay`, `muted`, `loop`, `playsInline`,
- * `poster`, `preload` (+ `children` for `<track>` / `<source>` passthrough).
+ * Pure HTML5 `<video>` wrapper. Self-closing leaf descriptor symmetric with
+ * Image. Renders the descriptor's 8-prop surface: `src`, `title`,
+ * `controls`, `autoPlay`, `muted`, `loop`, `playsInline`, `poster`,
+ * `preload`.
  *
  * ── D-MF12 constraints (load-bearing) ────────────────────────────────────────
  *
@@ -18,16 +19,21 @@
  *     confidently-broken chrome"). The wrapping `.ok-video` class only
  *     handles layout (max-width, rounded corners, display:block).
  *
- * ── `children` semantics ─────────────────────────────────────────────────────
+ * ── Why self-closing (no `<track>` / `<source>` passthrough) ─────────────────
  *
- * `hasChildren: true` on the descriptor. The JsxComponentView renders the
- * PM content slot (NodeViewContent) and passes it as children, so authored
- * `<track>` / `<source>` tags round-trip as PM children and stay editable.
- * At runtime, the browser sees whatever DOM shape PM renders inside
- * `<video>` — typically a wrapper div with the track children nested
- * inside. Subtitle rendering depends on browser tolerance of this nesting;
- * we prioritize editability + γ byte-identity over runtime media-semantics
- * here (QA-009 is best-effort).
+ * HTML5 requires `<track>` and `<source>` as direct children of `<video>`.
+ * ProseMirror NodeViews mandate a wrapper DOM element to host the content
+ * hole (`NodeViewContent`). The two contracts are structurally
+ * incompatible — any PM-children passthrough would wrap the native
+ * elements in an intermediate div, which the HTML5 spec does not allow.
+ *
+ * The fix is to stop promising the passthrough: Video is a leaf
+ * descriptor. Authors who need captions or codec fallback sources write
+ * raw `<video>` + `<track>` HTML in MDX, which flows through the
+ * wildcard / rawMdxFallback path (byte-preserving, editable as MDX
+ * source). NG31 tracks the additive replacement: typed `tracks:
+ * Array<TrackDef>` / `sources: Array<SourceDef>` props, gated on an
+ * `array`-typed PropDef extension.
  *
  * Zero upstream-docs-lib React imports (D-MF2 / FR-6).
  *
@@ -48,7 +54,6 @@ interface VideoProps {
   playsInline?: boolean;
   poster?: string;
   preload?: 'none' | 'metadata' | 'auto';
-  children?: React.ReactNode;
 }
 
 /**
@@ -76,8 +81,6 @@ export function Video(props: VideoProps) {
       playsInline={props.playsInline}
       poster={props.poster}
       preload={props.preload}
-    >
-      {props.children}
-    </video>
+    />
   );
 }

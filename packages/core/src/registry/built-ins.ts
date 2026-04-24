@@ -189,11 +189,20 @@ const imageProps: PropDef[] = [
 //
 // FR-3 (SPEC 2026-04-23-cb-v2-md-foundation): pure HTML5 `<video>` wrapper per
 // D-MF12 — matches Mintlify's explicit-iframe pattern (Fumadocs has no Video
-// component at all). 9-prop surface: `src` + `title` + `controls` (default
-// true) + `autoPlay` + `muted` + `loop` + `playsInline` + `poster` + `preload`
-// (enum) + children (reactnode, for `<track>` passthrough).
+// component at all). 8-prop self-closing leaf: `src` + `title` + `controls`
+// (default true) + `autoPlay` + `muted` + `loop` + `playsInline` + `poster` +
+// `preload` (enum).
 //
-// Explicitly out-of-scope (per D-MF12 / NG27 / NG28):
+// Self-closing, no children slot. The HTML5 spec requires `<track>` and
+// `<source>` as direct children of `<video>`, but ProseMirror NodeViews
+// mandate a wrapper DOM element to host the content hole — the two
+// contracts are structurally incompatible. Rather than pretend otherwise,
+// Video is a leaf descriptor symmetric with Image. Authors who need
+// captions or codec fallback sources write raw `<video>` + `<track>` HTML
+// in MDX, which flows through the wildcard / rawMdxFallback path
+// (byte-preserving, editable).
+//
+// Explicitly out-of-scope (per D-MF12 / NG27 / NG28 / NG31):
 //   - YouTube / Vimeo URL sniffing → users author raw `<iframe>` for service
 //     embeds; future NG27 promotes auto-detection when authoring friction
 //     surfaces. Cheap to add later (~40 LoC render-time URL sniff) and
@@ -202,11 +211,10 @@ const imageProps: PropDef[] = [
 //     runtime behavior, not a persisted authoring prop.
 //   - Custom player chrome → HTML5 native controls are the UX; matches the
 //     NG7 "no confidently-broken chrome" rule.
-//
-// `children` is declared (`hasChildren: true`) so authored `<track>` /
-// `<source>` tags round-trip as PM children. Runtime subtitle rendering
-// depends on browser tolerance of the NodeView wrapper — fidelity-first;
-// editability over runtime-media semantics (QA-009 best-effort).
+//   - Typed `tracks: Array<TrackDef>` / `sources: Array<SourceDef>` props
+//     → NG31 Future Work; requires extending PropDef with an `array` type
+//     of structured records (PropPanel UX, γ serialization, empty-array
+//     default all need design). Ship today: raw-HTML escape hatch.
 
 const videoProps: PropDef[] = [
   {
@@ -270,23 +278,19 @@ const videoProps: PropDef[] = [
 // ── Audio (US-008) ───────────────────────────────────────────────────────────
 //
 // FR-4 (SPEC 2026-04-23-cb-v2-md-foundation): HTML5 `<audio>` wrapper with
-// native controls always on (NG7 "no confidently-broken chrome"). 7-prop
-// surface: `src` + `title` + `autoPlay` + `loop` + `muted` + `preload` (enum)
-// + children (reactnode, for `<source>` / `<track>` passthrough).
+// native controls always on (NG7 "no confidently-broken chrome"). 6-prop
+// self-closing leaf: `src` + `title` + `autoPlay` + `loop` + `muted` +
+// `preload` (enum).
 //
 // No `controls` prop — per FR-4, controls are always on. Authors who want a
 // chrome-less audio (background loop) would need to write a raw `<audio>`
 // element in MDX; descriptor-dispatched Audio always renders controls.
 //
-// `children` is declared (`hasChildren: true`) so authored `<source>` /
-// `<track>` tags round-trip as PM children and stay editable — same QA-009
-// best-effort semantics as Video (runtime browser tolerance of the
-// NodeViewContent wrapper; fidelity-first, not runtime-media-first).
-//
-// Pre-US-008 state was a bug: the inline Audio renderer passed `children` but
-// the descriptor declared `hasChildren: false` + `isSelfClosing: true`. US-008
-// flips both flags to match the rendered behavior (Q-MF4 DELEGATED: grep
-// confirmed no downstream consumer keyed off `hasChildren: false`).
+// Self-closing, no children slot (symmetric with Video — see Video's comment
+// block for the full PM-vs-HTML5-direct-child rationale). Authors who need
+// `<source>` codec fallback write raw `<audio>` + `<source>` HTML in MDX,
+// which flows through the wildcard / rawMdxFallback path. Typed `sources:
+// Array<SourceDef>` is NG31 Future Work (paired with Video tracks).
 
 const audioProps: PropDef[] = [
   {
@@ -450,22 +454,24 @@ export const builtInComponents: JsxComponentMeta[] = [
   },
   {
     name: 'Video',
-    hasChildren: true,
+    hasChildren: false,
+    isSelfClosing: true,
     props: videoProps,
     icon: 'Film',
     category: 'media',
     displayName: 'Video',
-    description: 'HTML5 video player with native controls (track/source passthrough via children)',
+    description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
   },
   {
     name: 'Audio',
-    hasChildren: true,
+    hasChildren: false,
+    isSelfClosing: true,
     props: audioProps,
     icon: 'Volume2',
     category: 'media',
     displayName: 'Audio',
-    description: 'HTML5 audio player with native controls (source/track passthrough via children)',
+    description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
   },
 
