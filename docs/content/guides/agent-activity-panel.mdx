@@ -1,0 +1,74 @@
+---
+title: Agent Activity Panel
+description: Click any agent's avatar in the presence bar to see every file they've edited this session — per-burst diffs, filename-click nav, and selective per-file rollback.
+---
+
+The Agent Activity Panel is the primary surface for reviewing what an agent has been doing across your knowledge base. Where the presence bar tells you *an agent exists* and the inline margin bursts show *what changed on the doc you're viewing*, the Activity Panel answers the bigger question: *what has this agent done in its session across every file?*
+
+The panel is a right-side slide-in. The editor stays interactive behind it — clicks on the editor do not close the panel.
+
+## Opening the panel
+
+Click any agent's avatar in the presence bar. This works for agents on your current doc AND for agents editing elsewhere (cross-doc agents shown in the dimmed section to the right of the divider). Clicking the same avatar closes the panel; clicking a different avatar swaps to that agent.
+
+The panel is keyed to a single agent. Observing two agents side by side is not supported in v1.
+
+## Anatomy
+
+### Header
+
+- **Avatar + display name.** Identifies the agent this panel is for.
+- **Status chip.** "Active" while the agent's session is alive. "Ended" when their MCP keep-alive connection has closed past the grace window and the per-session state has been garbage-collected.
+- **Close (×).** Closes the panel. Esc also closes.
+
+### File list
+
+One row per file the agent has touched in this session, ordered by most-recent activity descending.
+
+- **Carrot (▸ / ▾).** Toggles the file row between collapsed and expanded.
+- **Filename.** A clickable link. Clicking navigates the main editor to that doc and leaves the panel open with the expanded state preserved. This is the only affordance in the panel that navigates — opening the panel, expanding rows, and dispatching undo never move the main editor.
+- **Cumulative diff stat (`+N −M`).** Sum across every burst for this file.
+- **Most-recent-burst timestamp.** How long since the agent last wrote to this file.
+- **Writing indicator.** When the agent is currently writing to this specific file, the row shows a subtle `writing…` label with a soft pulse.
+
+### Bursts
+
+Each expanded file row lists that session's **bursts** — one per captured `Y.UndoManager` StackItem. Rapid-fire writes within 500 ms merge into a single burst (matching Y.UndoManager's default capture window); sequential tool calls with normal LLM / network latency map 1:1 to bursts.
+
+Each burst row shows a timestamp and its own `+N −M` stat. Clicking a burst row expands it to reveal the inline unified diff for just that burst — what the agent inserted (green) and deleted (red), with three lines of context around each hunk.
+
+Bursts are display-only. All undo lives at the file row, not at individual bursts.
+
+## Undoing agent edits
+
+Two buttons live at the bottom of each expanded file row:
+
+| Button | What it does |
+| --- | --- |
+| **Undo last edit on this file** | Pops exactly one StackItem from the agent's per-file session stack — the most recent burst. Low blast-radius, no confirmation. |
+| **Undo all edits on this file** | Drains the agent's entire stack for this file, reverting every change they made to this doc in this session. Shows a confirmation dialog first. |
+
+Both buttons are safe under concurrent writers. The panel only touches Items this specific agent's session owns — another agent's writes on the same file, or your own WYSIWYG edits, are never affected.
+
+Both buttons are disabled when the session has ended or the stack is empty.
+
+After an undo, the panel re-fetches automatically. When a file row has zero remaining bursts, the row disappears.
+
+## When a session ends
+
+Once an agent's MCP connection closes past the grace window (about 30 seconds), the server garbage-collects their per-session state. Clicking that agent's (now-greyed) avatar opens the panel with a **Session ended** banner; undo buttons within any residual rows render disabled. Historical review across ended sessions is future work — the Activity Panel is a live-session surface.
+
+## Live updates
+
+The panel subscribes to a push signal on the server's `__system__` Y.Doc. When the agent you're watching writes to a new file, a new row appears within roughly half a second of the write landing — no polling, no refresh.
+
+## What the panel does NOT do
+
+- **It never auto-navigates.** Opening the panel, expanding rows, and dispatching undo all leave the main editor's active doc and scroll position untouched. Only an explicit filename click navigates.
+- **It does not decorate the sidebar.** No badges, no "this file was touched" markers on the filetree. The panel is the review surface; the sidebar stays focused on your own navigation.
+- **It does not follow the agent.** If you want to tail what the agent is doing, click the avatar, watch the panel, and keep your editor wherever you like.
+
+## See also
+
+- [[timeline]] — historical view of every revision on the current document, across all writers.
+- [[collaboration-recovery]] — how the editor protects content when concurrent writes collide.
