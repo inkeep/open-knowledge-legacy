@@ -180,7 +180,7 @@ function AgentAvatar({
  * based assertions (portals emit nothing in SSR). This body component has
  * no portal, so all state branches are inspectable via renderToString.
  */
-export interface AgentActivityPanelBodyProps {
+interface AgentActivityPanelBodyProps {
   data: ReturnType<typeof useActivityPanel>['data'];
   status: ReturnType<typeof useActivityPanel>['status'];
   error: ReturnType<typeof useActivityPanel>['error'];

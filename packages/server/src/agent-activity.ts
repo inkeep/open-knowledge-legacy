@@ -81,13 +81,13 @@ function* walkYTextItems(ytext: Y.Text): IterableIterator<Item> {
 // Exported public types
 // ------------------------------------------------------------------
 
-export interface DiffSpan {
+interface DiffSpan {
   position: number;
   content: string;
   length: number;
 }
 
-export interface StackItemDiff {
+interface StackItemDiff {
   insertions: DiffSpan[];
   deletions: DiffSpan[];
 }
@@ -191,7 +191,7 @@ export function synthesizeStackItemDiffText(
 // Activity listing
 // ------------------------------------------------------------------
 
-export interface BurstStat {
+interface BurstStat {
   /** Index into `undoStack`: 0 = oldest, undoStack.length-1 = newest. */
   stackIndex: number;
   /** Capture timestamp in ms (stamped by `agent-sessions.ts`'s stack-item-added hook). */
@@ -200,7 +200,7 @@ export interface BurstStat {
   deletions: number;
 }
 
-export interface AgentFileStat {
+interface AgentFileStat {
   docName: string;
   additionsTotal: number;
   deletionsTotal: number;
@@ -208,7 +208,7 @@ export interface AgentFileStat {
   bursts: BurstStat[];
 }
 
-export interface AgentActivityResult {
+interface AgentActivityResult {
   sessionAlive: boolean;
   agent: { displayName: string; color: string; icon?: string; connectionId: string } | null;
   files: AgentFileStat[];

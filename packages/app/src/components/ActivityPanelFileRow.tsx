@@ -29,7 +29,7 @@ import {
 import type { FileData } from '@/lib/use-activity-panel';
 import { ActivityPanelBurstRow } from './ActivityPanelBurstRow';
 
-export interface ActivityPanelFileRowProps {
+interface ActivityPanelFileRowProps {
   file: FileData;
   sessionAlive: boolean;
   isWriting: boolean;

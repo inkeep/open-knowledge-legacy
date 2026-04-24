@@ -60,9 +60,9 @@ export interface ActivityPanelData {
   writingDocs: Set<string>;
 }
 
-export type ActivityPanelStatus = 'idle' | 'loading' | 'ready' | 'error';
+type ActivityPanelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-export interface UseActivityPanelResult {
+interface UseActivityPanelResult {
   data: ActivityPanelData | null;
   status: ActivityPanelStatus;
   error: string | null;

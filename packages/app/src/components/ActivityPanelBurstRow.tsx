@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import type { BurstData } from '@/lib/use-activity-panel';
 import { ActivityPanelDiffView } from './ActivityPanelDiffView';
 
-export interface ActivityPanelBurstRowProps {
+interface ActivityPanelBurstRowProps {
   burst: BurstData;
   docName: string;
   fetchBurstDiff: (docName: string, stackIndex: number) => Promise<string>;

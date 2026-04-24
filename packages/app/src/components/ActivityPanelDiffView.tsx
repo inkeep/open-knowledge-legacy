@@ -16,7 +16,7 @@
 import type * as React from 'react';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 
-export interface ActivityPanelDiffViewProps {
+interface ActivityPanelDiffViewProps {
   diff: string;
 }
 
