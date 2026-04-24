@@ -79,6 +79,53 @@ export interface UseActivityPanelResult {
 
 const REFETCH_DEBOUNCE_MS = 500;
 
+/**
+ * Cap the burst-diff cache so long-lived agent sessions (many bursts × many
+ * files) don't grow renderer memory unboundedly. Sized to match the
+ * `ProviderPool` precedent (`MAX_POOL = 10`) × ~6 bursts typical for a mid-
+ * sized file = 60; rounded up. Beyond the cap, LRU eviction drops the
+ * least-recently-fetched entry.
+ */
+const BURST_DIFF_CACHE_LIMIT = 64;
+
+/**
+ * LRU-bounded cache for burst-diff strings keyed by `${docName}\0${stackIndex}`.
+ * Read-hits re-insert to move the key to the most-recently-used end; writes
+ * evict the oldest entry when the limit is exceeded. Ref-held + mutated in
+ * place by the hook — never exposed outside.
+ */
+class BurstDiffCache {
+  private readonly map = new Map<string, string>();
+
+  get(key: string): string | undefined {
+    const value = this.map.get(key);
+    if (value === undefined) return undefined;
+    // Re-insert to mark as most-recently-used (Map iteration order is
+    // insertion-order in JS / V8 / JSC).
+    this.map.delete(key);
+    this.map.set(key, value);
+    return value;
+  }
+
+  set(key: string, value: string): void {
+    if (this.map.has(key)) this.map.delete(key);
+    this.map.set(key, value);
+    while (this.map.size > BURST_DIFF_CACHE_LIMIT) {
+      const oldestKey = this.map.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.map.delete(oldestKey);
+    }
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}
+
 // ---------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------
@@ -139,10 +186,11 @@ export function useActivityPanel(connectionId: string | null): UseActivityPanelR
   const [status, setStatus] = useState<ActivityPanelStatus>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  // Burst-diff cache — keyed by `${docName}\0${stackIndex}`. Cleared when
-  // connectionId changes so stale cache entries from the previous agent's
-  // session can never leak into the new one's view.
-  const diffCacheRef = useRef(new Map<string, string>());
+  // Burst-diff cache — keyed by `${docName}\0${stackIndex}`. LRU-bounded at
+  // BURST_DIFF_CACHE_LIMIT so long-lived agent sessions can't exhaust
+  // renderer memory. Cleared when connectionId changes so stale entries
+  // from the previous agent's session can never leak into the new view.
+  const diffCacheRef = useRef<BurstDiffCache>(new BurstDiffCache());
 
   // Token ref: each reload() call bumps this. Inflight responses compare
   // against the current token; mismatched = stale = discarded. Survives
@@ -266,7 +314,17 @@ function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
   return true;
 }
 
-function computeWritingDocs(
+/**
+ * Compute the set of doc names the given agent is currently writing to, by
+ * reading the `agentPresence` map off the `__system__` provider's awareness.
+ * Accepts either the prefixed broadcaster-key form (`agent-<raw>`) or the
+ * raw connectionId — tries both against the map so callers don't need to
+ * know which form the presence map stores.
+ *
+ * Exported so unit tests can verify the prefix-normalization + filter logic
+ * without rendering a React tree.
+ */
+export function computeWritingDocs(
   systemProvider: { awareness?: unknown } | null,
   connectionId: string,
 ): Set<string> {

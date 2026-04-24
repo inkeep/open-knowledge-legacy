@@ -167,9 +167,24 @@ describe('synthesizeStackItemDiffText', () => {
 // listAgentActivity
 // ---------------------------------------------------------------------------
 
-/** Minimal mock of AgentSessionManager with controlled sessions map. */
+/**
+ * Minimal mock of `AgentSessionManager` — exposes the two public accessors
+ * `listAgentActivity` consumes (`sessionsForConnection`, `getLiveSession`).
+ * Tests seed sessions by (docName, agentId) in the key shape the real
+ * AgentSessionManager uses: `${docName}\0${agentId}`.
+ */
 function makeSessionManager(sessions: Map<string, unknown>): AgentSessionManager {
-  return { sessions } as unknown as AgentSessionManager;
+  return {
+    *sessionsForConnection(connectionId: string) {
+      const suffix = `\0${connectionId}`;
+      for (const [key, session] of sessions) {
+        if (key.endsWith(suffix)) yield session;
+      }
+    },
+    getLiveSession(docName: string, agentId: string) {
+      return sessions.get(`${docName}\0${agentId}`);
+    },
+  } as unknown as AgentSessionManager;
 }
 
 describe('listAgentActivity', () => {

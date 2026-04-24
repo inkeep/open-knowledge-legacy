@@ -373,6 +373,37 @@ export class AgentSessionManager {
   }
 
   /**
+   * Read-only iterator over live `SessionRecord`s whose session key ends with
+   * the `\0${connectionId}` suffix. Returns sessions in insertion order.
+   *
+   * This is the typed public surface for the Agent Activity Panel's
+   * `listAgentActivity` (SPEC 2026-04-23-agent-activity-panel §6). Reaching
+   * into `this.sessions` directly via `(as any)` is discouraged — callers
+   * should use this accessor so future refactors (e.g. splitting the
+   * (docName, agentId)-keyed map into separate per-agent and per-doc
+   * indices) can evolve without silent breakage at consumer call sites.
+   */
+  public *sessionsForConnection(connectionId: string): IterableIterator<SessionRecord> {
+    const suffix = `\0${connectionId}`;
+    for (const [key, session] of this.sessions) {
+      if (key.endsWith(suffix)) yield session;
+    }
+  }
+
+  /**
+   * Lookup a single session by its (docName, agentId) composite key. Returns
+   * `undefined` when no session is live — callers must guard (e.g. the
+   * Activity Panel's `GET /api/agent-burst-diff` returns 404 in that case).
+   *
+   * Equivalent to `hasSession(docName, agentId) ? sessions.get(key) : null`
+   * but returns the record directly instead of forcing a separate get after
+   * the existence check.
+   */
+  public getLiveSession(docName: string, agentId: string): SessionRecord | undefined {
+    return this.sessions.get(this.sessionKey(docName, agentId));
+  }
+
+  /**
    * Get or create a per-agent SessionRecord (DirectConnection + per-session origin).
    *
    * F1 (D2): each new session creates a frozen LocalTransactionOrigin via

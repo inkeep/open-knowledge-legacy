@@ -43,7 +43,6 @@ function renderBody(overrides: {
       reload={() => {}}
       fetchBurstDiff={noopFetch}
       closeActivityPanel={() => {}}
-      connectionId="agent-abc"
       onNavigate={() => {}}
       onUndoLast={noopAsync}
       onUndoAll={noopAsync}

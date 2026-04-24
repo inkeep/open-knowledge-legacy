@@ -86,7 +86,7 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
+import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -2371,9 +2371,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const agentId = url.searchParams.get('agentId');
-      if (!agentId || agentId.trim() === '') {
-        json(res, 400, { ok: false, error: 'agentId required' });
+      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
+      // POST handler) — consistent identity shape across all surfaces per
+      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
+      const agentId = validateAgentId(url.searchParams.get('agentId'));
+      if (agentId === null) {
+        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
         return;
       }
       const result = listAgentActivity(sessionManager, agentId);
@@ -2397,16 +2400,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const agentId = url.searchParams.get('agentId');
-      const docName = url.searchParams.get('docName');
+      const agentId = validateAgentId(url.searchParams.get('agentId'));
+      const rawDocName = url.searchParams.get('docName');
       const stackIndexStr = url.searchParams.get('stackIndex');
 
-      if (!agentId || agentId.trim() === '') {
-        json(res, 400, { ok: false, error: 'agentId required' });
+      if (agentId === null) {
+        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
         return;
       }
-      if (!docName || docName.trim() === '') {
+      if (!rawDocName || rawDocName.trim() === '') {
         json(res, 400, { ok: false, error: 'docName required' });
+        return;
+      }
+      // Same docName validator every mutating POST handler uses — parity with
+      // the rest of the API surface (path traversal, reserved names).
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
       if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
@@ -2419,11 +2433,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Look up session directly — no getSession (avoids creating a new session).
-      // biome-ignore lint/suspicious/noExplicitAny: accessing internal sessions map
-      const sessionsMap: Map<string, any> = (sessionManager as any).sessions;
-      const sessionKey = `${docName}\0${agentId}`;
-      const session = sessionsMap.get(sessionKey);
+      // Typed accessor — no `(as any).sessions` bypass.
+      const session = sessionManager.getLiveSession(docName, agentId);
       if (!session) {
         json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
         return;
@@ -2438,10 +2449,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const stackItem = um.undoStack[stackIndex];
+      // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
+      const stackItem = um.undoStack[stackIndex] as any;
       const ytext = session.dc.document.getText('source');
       const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
-      json(res, 200, { ok: true, diff, asOf: Date.now() });
+      // `generatedAt` is the server's wall clock at response time (used for
+      // client-side cache staleness). The StackItem's capture timestamp is
+      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
+      // to duplicate it here.
+      json(res, 200, { ok: true, diff, generatedAt: Date.now() });
     } catch (e) {
       log.error({ err: e }, '[agent-burst-diff] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });

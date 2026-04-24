@@ -19,6 +19,7 @@
  * On success, `reload()` fires to refresh the file list.
  */
 import { AlertCircle, Loader2, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useActivityPanel } from '@/lib/use-activity-panel';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
@@ -178,7 +179,6 @@ export interface AgentActivityPanelBodyProps {
   reload: () => void;
   fetchBurstDiff: (docName: string, stackIndex: number) => Promise<string>;
   closeActivityPanel: () => void;
-  connectionId: string | null;
   onNavigate: (docName: string) => void;
   onUndoLast: (docName: string) => Promise<void>;
   onUndoAll: (docName: string) => Promise<void>;
@@ -297,8 +297,12 @@ export function AgentActivityPanel(): React.JSX.Element | null {
       });
       reload();
     } catch (err) {
-      // Non-fatal — re-fetch anyway to recover ground truth.
-      console.warn('[activity-panel] undo-last failed', err);
+      // Surface the failure — `Undo all` has a confirmation dialog, but
+      // `Undo last` is inline. Either silently failing is user-hostile
+      // (repo convention per sonner pattern in handoff components).
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Undo failed: ${message}`);
+      // Non-fatal — re-fetch to recover ground truth.
       reload();
     }
   };
@@ -312,9 +316,14 @@ export function AgentActivityPanel(): React.JSX.Element | null {
         scope: 'file',
         agentName: data?.agent?.displayName,
       });
+      // `Undo all` has a confirmation dialog (D-P16) — the blast-radius
+      // asymmetry applies to feedback too. Positive confirmation closes
+      // the loop for the user.
+      toast.success(`Undone all edits on ${docName}`);
       reload();
     } catch (err) {
-      console.warn('[activity-panel] undo-all failed', err);
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Undo all failed: ${message}`);
       reload();
     }
   };
@@ -355,7 +364,6 @@ export function AgentActivityPanel(): React.JSX.Element | null {
           reload={reload}
           fetchBurstDiff={fetchBurstDiff}
           closeActivityPanel={closeActivityPanel}
-          connectionId={activityPanelAgentId}
           onNavigate={onNavigate}
           onUndoLast={onUndoLast}
           onUndoAll={onUndoAll}
