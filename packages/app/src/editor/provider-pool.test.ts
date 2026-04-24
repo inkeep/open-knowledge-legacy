@@ -223,6 +223,20 @@ describe('ProviderPool disconnect recycling', () => {
     expect(recycled?.docName).toBe('doc1');
   });
 
+  // MECHANISM-ONLY test.
+  //
+  // This test asserts the pool's internal behavior — "the provider reference is
+  // preserved when unsynced local changes exist at disconnect time." It does
+  // NOT check whether the resulting Y.Doc is correct after reconnect. Behavior-
+  // level coverage (i.e. "does the document content survive a reconnect without
+  // duplication or loss?") lives in
+  // `packages/app/tests/integration/provider-pool-reconnect.test.ts` under the
+  // T4 scenario ("unsynced local changes during disconnect/restart").
+  //
+  // Important: a green "mechanism" test here does NOT imply the feature works.
+  // The CRDT clientID-mismatch bug class at T4 currently fails despite this
+  // mechanism test passing. /tdd "coverage is not a quality signal" — verify
+  // behavior, not mechanism, when judging whether a change is safe.
   test('keeps the provider when disconnect occurs with unsynced local changes', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     const entry = pool.open('doc1');
@@ -393,6 +407,19 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(onChangeCalls).toBeGreaterThanOrEqual(1);
   });
 
+  // MECHANISM-ONLY test.
+  //
+  // This test asserts the debounce timer is cancelled when the provider
+  // reconnects (emits `synced` before `RECYCLE_DEBOUNCE_MS` fires). It does
+  // NOT check whether the resulting Y.Doc content is correct after reconnect.
+  //
+  // Behavior-level coverage of the same code path (and its consequences when
+  // the server underneath has been restarted with a fresh clientID) lives in
+  // `packages/app/tests/integration/provider-pool-reconnect.test.ts` under
+  // the T1 scenario ("fast server restart <4s"). T1 currently fails because
+  // cancelling the recycle on fast reconnect exposes the CRDT clientID-
+  // mismatch bug class. A green state on THIS test is not a green state on T1.
+  // Verify the integration test before concluding the feature is correct.
   test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
     pool = new ProviderPool(3, DUMMY_WS, 200);
     const entry = pool.open('doc1');
