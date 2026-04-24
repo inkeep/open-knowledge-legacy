@@ -62,11 +62,12 @@ concurrency:
 
 jobs:
   build-macos-dmg:
-    # macos-14 is Apple Silicon. Required for Universal DMG lipo merging
-    # (arm64 + x64 → universal) per D29. A universal DMG built on an
-    # Intel-only runner has historically produced broken arm64 slices —
-    # see electron-builder #6891 for the reference case.
-    runs-on: macos-14
+    # macos-26 is Apple Silicon (Tahoe). Required for Universal DMG lipo
+    # merging (arm64 + x64 → universal) and for the macOS 26 icon
+    # generation toolchain. A universal DMG built on an Intel-only runner
+    # has historically produced broken arm64 slices — see electron-builder
+    # #6891 for the reference case.
+    runs-on: macos-26
     # 45 min budget. Local `bun run build:mac:unsigned` baseline on M3 Max
     # is ~3-4 min wall-clock; CI runners are ~2× slower; signing +
     # notarization adds 2-5 min of Apple round-trip on top. 45 min leaves
