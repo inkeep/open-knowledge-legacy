@@ -170,3 +170,17 @@ A same-`contentDir` collision (e.g. `bun run dev` while `ok start` is alive) fai
 ```
 
 **Bottom line:** exactly two modes give you true fast-refresh — **`bun run dev`** for web-side iteration, and **`electron-vite dev --watch`** for desktop-side iteration. Everything else serves frozen bundles or has no UI.
+
+---
+
+## 5. Cross-install version drift — the surface this map exposes
+
+Everything above is a map of *paths*. What it does not show is that those paths can hold *different versions* of the code at the same moment. The CLI and DMG are each bundled artifacts (intra-install drift does not exist), but between installs, any of these can happen:
+
+- A CLI `ok start` holding `server.lock` can be driven over WS by an Electron DMG of a different version (attach mode, entry #5).
+- Editor MCP configs written by `ok init` carry bare `npx @inkeep/open-knowledge mcp` args — every editor launch re-resolves, so MCP children can drift version silently over weeks.
+- A crash-killed server from a newer binary can leave durable on-disk state (shadow repo, `.open-knowledge/`) that an older binary reads blind on cold start.
+
+`server.lock` today carries `{pid, hostname, port, startedAt, worktreeRoot}` — no version, no protocol, no state-schema. Desktop attach gates on liveness only. There is no cold-start state-compatibility gate.
+
+The countermeasure — add version metadata to `server.lock`, add `.open-knowledge/state.json` for cold-start schema compatibility, gate desktop attach on protocol match, and reconcile mismatches via a user-consented kill-and-restart with directional asymmetry — is scoped in the companion spec: [`specs/2026-04-24-cross-install-version-handshake/SPEC.md`](../../specs/2026-04-24-cross-install-version-handshake/SPEC.md).
