@@ -248,7 +248,7 @@ jobs:
       - name: Build Agent Skill artifact
         if: steps.changesets.outputs.published == 'true'
         shell: bash
-        run: bash scripts/build-skill-zip.sh openknowledge.skill
+        run: bun run build:skill-zip
 
       - name: Create GitHub Release
         if: steps.changesets.outputs.published == 'true'
