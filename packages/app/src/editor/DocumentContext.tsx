@@ -127,6 +127,23 @@ interface DocumentContextValue {
     | null;
   /** Reset retry state — exits terminal mode, resumes polling. */
   retryCollab: () => void;
+  /**
+   * Agent Activity Panel — connectionId of the agent whose Activity Panel is
+   * currently open, or null when no panel is open. Per SPEC FR-P21 this state
+   * is tab-scoped (not persisted across tabs / reloads), so it lives here in
+   * React state rather than localStorage.
+   */
+  activityPanelAgentId: string | null;
+  /**
+   * Open (or swap) the Activity Panel to a new agent. Calling with the same
+   * connectionId as the currently-open panel is a toggle (closes it) to
+   * match FR-P3: "clicking the same avatar closes; a different avatar swaps".
+   * The hook `useActivityPanel` resets burst-cache and expand state on
+   * connectionId change, so swap semantics (FR-P22) fall out naturally.
+   */
+  openActivityPanel: (connectionId: string) => void;
+  /** Close the Activity Panel. No-op when already closed. */
+  closeActivityPanel: () => void;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -229,6 +246,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
   const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
+  const [activityPanelAgentId, setActivityPanelAgentId] = useState<string | null>(null);
   const {
     collabUrl,
     terminal: collabTerminal,
@@ -450,6 +468,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     collabTerminal,
     collabLastError,
     retryCollab,
+    activityPanelAgentId,
+    openActivityPanel: (connectionId: string) => {
+      setActivityPanelAgentId((prev) => (prev === connectionId ? null : connectionId));
+    },
+    closeActivityPanel: () => setActivityPanelAgentId(null),
   };
 
   return <DocumentContext value={value}>{children}</DocumentContext>;

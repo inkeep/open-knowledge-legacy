@@ -18,6 +18,7 @@ import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { AgentActivityPanel } from './AgentActivityPanel';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
 import { ConflictBanner } from './ConflictBanner';
@@ -293,6 +294,14 @@ export function EditorPane() {
           setAuthModalOpen(true);
         }}
       />
+      {/*
+        Activity Panel (SPEC 2026-04-23-agent-activity-panel). Always mounted
+        at the EditorPane root so its open/close lifecycle is independent of
+        doc navigation (FR-P24). The Sheet is non-modal — the editor stays
+        interactive behind it. Opens via `useDocumentContext().openActivityPanel`
+        from PresenceBar avatar clicks (US-008).
+      */}
+      <AgentActivityPanel />
     </>
   );
 }
