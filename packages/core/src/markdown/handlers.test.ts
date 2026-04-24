@@ -247,3 +247,92 @@ describe('Tier A: passthrough', () => {
     expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
   });
 });
+
+// Bug B/C regression guard (2026-04-24): `handlers.wikiLinkEmbed` dispatches
+// `![[file.ext]]` to PM image (image ext) or PM text+link (non-image). The
+// `src`/`href` attr on those PM nodes comes from `resolveEmbed(target,
+// sourcePath)` which returns a **contentDir-relative** path (e.g.
+// `stories/X/IMG.PNG`). Under hash routing the browser's `location.pathname`
+// is `/`, so `<img src="stories/X/IMG.PNG">` resolves to
+// `http://localhost/stories/X/IMG.PNG` (correct path) only if the src starts
+// with `/`. Today the dispatch emits `src: 'stories/X/IMG.PNG'` (no leading
+// slash) which resolves correctly at root-level docs but breaks in subdir
+// docs where the current-page URL's directory is different. The fix is to
+// emit server-absolute URLs (`/stories/X/IMG.PNG`) so the browser always
+// resolves against `http://localhost/<contentDir-relative>` regardless of
+// the editor's hash-routed URL.
+//
+// These tests pin the contract: `handlers.wikiLinkEmbed` MUST emit
+// server-absolute src/href when `resolveEmbed` returns a non-null path.
+describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', () => {
+  test('image wiki-embed emits server-absolute src when resolveEmbed provides contentDir-relative path', () => {
+    const json = mdManager.parse('![[IMG.PNG]]\n', {
+      resolveEmbed: (target: string, _source: string) => {
+        if (target === 'IMG.PNG') return 'stories/wiki-links-next/IMG.PNG';
+        return null;
+      },
+      sourcePath: 'stories/wiki-links-next/README.md',
+    });
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    // Server-absolute: the src must start with `/` so the browser resolves
+    // it against location.origin regardless of the editor's hash path.
+    expect(image?.attrs?.src).toMatch(/^\//);
+    expect(image?.attrs?.src).toBe('/stories/wiki-links-next/IMG.PNG');
+  });
+
+  test('non-image wiki-embed (PDF) emits server-absolute href on the link mark', () => {
+    const json = mdManager.parse('![[doc.pdf]]\n', {
+      resolveEmbed: (target: string, _source: string) => {
+        if (target === 'doc.pdf') return 'docs/sub/doc.pdf';
+        return null;
+      },
+      sourcePath: 'docs/sub/notes.md',
+    });
+    const linkMark = findMarkInJson(json, 'link');
+    expect(linkMark).not.toBeNull();
+    expect(linkMark?.attrs?.href).toMatch(/^\//);
+    expect(linkMark?.attrs?.href).toBe('/docs/sub/doc.pdf');
+  });
+
+  test('video wiki-embed (MP4) emits server-absolute href on the link mark', () => {
+    const json = mdManager.parse('![[clip.mp4]]\n', {
+      resolveEmbed: (target: string, _source: string) => {
+        if (target === 'clip.mp4') return 'media/clip.mp4';
+        return null;
+      },
+      sourcePath: 'notes.md',
+    });
+    const linkMark = findMarkInJson(json, 'link');
+    expect(linkMark).not.toBeNull();
+    expect(linkMark?.attrs?.href).toBe('/media/clip.mp4');
+  });
+
+  test('unresolved embed (resolveEmbed returns null) falls back to bare target', () => {
+    // When the basename index doesn't know about the target, the handler
+    // falls back to the bare target string. This matches today's behavior
+    // for unresolved refs and is correct — the browser would 404 anyway,
+    // so the server-absolute contract applies only to resolved refs.
+    const json = mdManager.parse('![[missing.png]]\n', {
+      resolveEmbed: () => null,
+      sourcePath: 'notes.md',
+    });
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    expect(image?.attrs?.src).toBe('missing.png');
+  });
+
+  test('image dispatch preserves sourceForm="wikiembed" marker alongside absolute src', () => {
+    // sourceForm=wikiembed is load-bearing for round-trip: without it the
+    // PM → mdast path would serialize as `![alt](src)` not `![[file]]`.
+    // Must be preserved when the src shape changes to absolute.
+    const json = mdManager.parse('![[photo.png]]\n', {
+      resolveEmbed: () => 'assets/photo.png',
+      sourcePath: 'notes.md',
+    });
+    const image = findInJson(json, 'image');
+    expect(image).not.toBeNull();
+    expect(image?.attrs?.sourceForm).toBe('wikiembed');
+    expect(image?.attrs?.src).toBe('/assets/photo.png');
+  });
+});
