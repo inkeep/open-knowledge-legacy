@@ -57,6 +57,7 @@ function createFakeServer() {
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
 let mockSubscriberCount: number | undefined = 1;
+let mockSystemSubscriberCount: number | undefined = 1;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -69,6 +70,9 @@ beforeAll(() => {
           ok: true,
           timestamp: '2026-04-15T00:00:00.000Z',
           ...(mockSubscriberCount !== undefined ? { subscriberCount: mockSubscriberCount } : {}),
+          ...(mockSystemSubscriberCount !== undefined
+            ? { systemSubscriberCount: mockSystemSubscriberCount }
+            : {}),
         });
       }
       return new Response('Not found', { status: 404 });
@@ -89,6 +93,7 @@ beforeEach(async () => {
   originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   mockSubscriberCount = 1;
+  mockSystemSubscriberCount = 1;
 });
 
 afterEach(async () => {
@@ -142,9 +147,10 @@ describe('write_document — previewUrl emission', () => {
     expect(result.content[0]?.text).toBe('Written successfully (replace).');
   });
 
-  test('emits warning with previewUrl when subscriberCount=0', async () => {
+  test('emits attach-preview-once hint with previewUrl when systemSubscriberCount=0', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
     mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 0;
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
@@ -158,15 +164,57 @@ describe('write_document — previewUrl emission', () => {
       previewUrl: 'https://env.example/#/docs/test',
       previewUrlSource: 'env',
       warning: {
-        message: 'No preview attached to docs/test.',
+        action: 'attach-preview-once',
+        message: 'Open the previewUrl in your preview browser.',
         previewUrl: 'https://env.example/#/docs/test',
       },
     });
-    expect(result.content[0]?.text).toContain('Warning: no preview is currently attached');
+    expect(result.content[0]?.text).toContain(
+      'Open https://env.example/#/docs/test in your preview browser.',
+    );
   });
 
-  test('no warning when server omits subscriberCount (legacy server)', async () => {
+  test('emits attach-preview-once hint with null previewUrl when systemSubscriberCount=0 and no resolver', async () => {
+    mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 0;
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'docs/test',
+      markdown: 'hello',
+      position: 'append',
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      warning: {
+        action: 'attach-preview-once',
+        message: 'Open the previewUrl in your preview browser.',
+        previewUrl: null,
+      },
+    });
+    expect(result.structuredContent).not.toHaveProperty('previewUrl');
+  });
+
+  test('no warning when systemSubscriberCount>0 even if per-doc subscriberCount=0 (second doc, server-push follows)', async () => {
+    mockSubscriberCount = 0;
+    mockSystemSubscriberCount = 1;
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'docs/second',
+      markdown: 'hello',
+      position: 'append',
+    });
+
+    expect(result.structuredContent?.warning).toBeUndefined();
+    expect(result.content[0]?.text).not.toContain('No preview attached');
+  });
+
+  test('no warning when server omits systemSubscriberCount (legacy server)', async () => {
     mockSubscriberCount = undefined;
+    mockSystemSubscriberCount = undefined;
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 

@@ -35,6 +35,7 @@ import {
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  SYSTEM_DOC_NAME,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import {
@@ -163,6 +164,19 @@ function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHisto
     });
   }
   return _httpDurationHist;
+}
+
+// Lazy-init so the counter registers against a real meter post-initTelemetry
+// (not the pre-init no-op). Matches the httpDurationHist pattern above.
+let _hintEmittedCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
+function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_hintEmittedCounter) {
+    _hintEmittedCounter = getMeter().createCounter('ok.preview_attach.hint_emitted', {
+      description:
+        'Count of attach-preview-once hints emitted on write-tool responses when no editor is attached to __system__',
+    });
+  }
+  return _hintEmittedCounter;
 }
 
 /**
@@ -815,14 +829,36 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * Return the number of live browser/editor connections currently subscribed
    * to the given Hocuspocus document. Zero means the agent is writing to a
-   * room nobody is watching — the MCP tool surfaces that as a warning so the
-   * user can open the preview.
+   * room nobody is watching. Under the once-per-session preview-attach
+   * contract, this is a per-doc diagnostic — the hint threshold is
+   * `getSystemSubscriberCount()` (transport-presence on `__system__`).
    *
    * Never throws: a Hocuspocus introspection failure is silent (returns 0).
    */
   function getSubscriberCount(docName: string): number {
     try {
       const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Return the number of live connections to the `__system__` Y.Doc — the
+   * shared awareness channel every editor tab subscribes to. Zero means no
+   * editor is attached to this server anywhere; non-zero means at least one
+   * tab is watching (and will follow agent writes via `AgentFocusBroadcaster`).
+   *
+   * This is the correct signal for the once-per-session preview-attach hint:
+   * the per-doc count flips on every new doc even when the user's tab is open
+   * and following, which would produce spurious "attach" hints.
+   *
+   * Never throws.
+   */
+  function getSystemSubscriberCount(): number {
+    try {
+      const doc = hocuspocus.documents.get(SYSTEM_DOC_NAME);
       return doc?.connections.size ?? 0;
     } catch {
       return 0;
@@ -1561,11 +1597,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const hints = computeOrphanHints(resolvedDocName);
 
       const subscriberCount = getSubscriberCount(resolvedDocName);
+      const systemSubscriberCount = getSystemSubscriberCount();
+
+      // Once-per-session attach hint counter: fires when no editor is attached
+      // to `__system__` (transport-presence = false). Labels are bounded-
+      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
+      // is always `agent` at this call site (`handleAgentWriteMd`), and
+      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
+      if (systemSubscriberCount === 0) {
+        hintEmittedCounter().add(1, {
+          'shadow.writer': 'agent',
+          'agent.type': resolveAgentType(clientName),
+        });
+      }
 
       json(res, 200, {
         ok: true,
         timestamp,
         subscriberCount,
+        systemSubscriberCount,
         ...(hints ? { hints } : {}),
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
@@ -2151,6 +2201,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       onAgentWrite?.();
 
       const subscriberCount = getSubscriberCount(docName);
+      const systemSubscriberCount = getSystemSubscriberCount();
+
+      // Once-per-session attach hint counter (matches handleAgentWriteMd).
+      if (systemSubscriberCount === 0) {
+        hintEmittedCounter().add(1, {
+          'shadow.writer': 'agent',
+          'agent.type': resolveAgentType(clientName),
+        });
+      }
 
       const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
 
@@ -2158,6 +2217,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ok: true,
         timestamp,
         subscriberCount,
+        systemSubscriberCount,
         ...(summaryResponse ? { summary: summaryResponse } : {}),
       });
     } catch (e) {

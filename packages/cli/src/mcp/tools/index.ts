@@ -55,10 +55,6 @@ import {
   DESCRIPTION as GET_ORPHANS_DESCRIPTION,
   register as registerGetOrphans,
 } from './get-orphans.ts';
-import {
-  DESCRIPTION as GET_PREVIEW_URL_DESCRIPTION,
-  register as registerGetPreviewUrl,
-} from './get-preview-url.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as LIST_DOCUMENTS_DESCRIPTION,
@@ -113,7 +109,6 @@ const _TOOL_DESCRIPTIONS = {
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
-  get_preview_url: GET_PREVIEW_URL_DESCRIPTION,
 } as const;
 
 /**
@@ -263,11 +258,5 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('get_dead_links'),
-  });
-
-  // Preview URL — no Hocuspocus dependency; reads config + server.lock directly.
-  registerGetPreviewUrl(registrationServer, {
-    resolveCwd: named('get_preview_url'),
-    config: opts.config,
   });
 }
