@@ -1,0 +1,84 @@
+---
+title: Install in Claude Desktop / Cowork
+description: Download-and-double-click install path for getting Open Knowledge into Claude Desktop and Claude Cowork, via the `.skill` file-association handoff. Covers the install flow, mount-bug workaround, and Team+ provisioning.
+---
+
+Claude Desktop (including **Claude Cowork** mode) doesn't read MCP server config for Skills, and isn't covered by `npx skills add` — its per-session VM runs its own isolated filesystem. This guide is the install path for the Desktop/Cowork surface.
+
+<Callout type="info" title="Claude Code users: no action needed">
+If you only use **Claude Code** (CLI or the Code tab inside Claude Desktop), `ok init` already installs the Open Knowledge skill for you via `npx skills` — see [Getting started](/guides/getting-started). This page is for adding the skill to Claude Desktop Chat or Claude Cowork.
+</Callout>
+
+## Install the skill (two clicks)
+
+<Steps>
+
+<Step>
+### Download the `.skill` file
+
+<Cards>
+  <Card title="Download openknowledge.skill" href="https://github.com/inkeep/open-knowledge/releases/latest/download/openknowledge.skill">
+    Direct download of the latest release asset.
+  </Card>
+</Cards>
+
+Each `@inkeep/open-knowledge` release ships an `openknowledge.skill` asset. The file is Anthropic's native skill format — a ZIP archive that Claude Desktop knows how to install when you double-click it.
+</Step>
+
+<Step>
+### Double-click the file
+
+In Finder (macOS) or Explorer (Windows), double-click `openknowledge.skill`. Claude Desktop opens automatically and presents its native "Install Skill" confirmation dialog.
+
+If nothing happens on double-click (rare), right-click the file → **Open With** → **Claude**.
+</Step>
+
+<Step>
+### Confirm the install
+
+Claude's dialog shows the skill name + description. Click **Install**. The skill appears in your Skills list under **Customize → Skills** and toggles on automatically.
+
+That's it. Chat with Claude in Cowork; it uses Open Knowledge's conventions.
+</Step>
+
+</Steps>
+
+<Callout type="info" title="Prerequisite">
+If **Customize → Skills** isn't visible in Claude's sidebar, enable it first under **Settings → Capabilities → Code execution and file creation**.
+</Callout>
+
+## If the skill "appears installed but doesn't work"
+
+Claude Cowork has an [open bug class](https://github.com/anthropics/claude-code/issues/26254) where a custom skill's metadata registers in the UI but its content isn't mounted in the session VM at runtime. Symptom: the skill shows as enabled in **Customize → Skills** and Claude references it by name, but trying to use it produces *"it looks like there isn't a `[skill]` skill available in your current setup"* or silently does nothing.
+
+**The reliable workaround:**
+
+1. In **Customize → Skills**, delete the `open-knowledge` skill.
+2. Download and double-click `openknowledge.skill` again.
+3. Start a fresh Cowork session.
+
+There's a related bug ([#46836](https://github.com/anthropics/claude-code/issues/46836)) where "Save and Replace" on a same-name skill silently no-ops — same workaround: delete in the UI first, then re-install.
+
+<Callout type="warn" title="Cowork session persistence is currently unreliable for custom skills">
+Until Anthropic resolves the mount-bug class ([#26254](https://github.com/anthropics/claude-code/issues/26254), [#31542](https://github.com/anthropics/claude-code/issues/31542), [#39400](https://github.com/anthropics/claude-code/issues/39400)), uploaded skills may need to be re-installed after Desktop restarts or session resets. This affects every third-party Cowork skill, not just Open Knowledge.
+</Callout>
+
+## For Team / Enterprise admins
+
+If your organization is on a **Team** or **Enterprise** plan, you can provision Open Knowledge org-wide via **Organization settings → Skills → + Add** — upload the same `openknowledge.skill` and every org member sees it in their Skills list by default. No per-user install required.
+
+**A note on GitHub-sync:** Anthropic's Team+ *plugin* marketplace (`Organization settings → Plugins → Add → GitHub`) pulls from a GitHub repo on push. This exists for **plugins** (bundles that include MCP + skills), not standalone Skills. Open Knowledge ships as a standalone Skill today, so the org-wide path is direct upload to Organization settings. The plugin-marketplace path is on our radar but has two open Anthropic bugs ([#39400](https://github.com/anthropics/claude-code/issues/39400), [#38429](https://github.com/anthropics/claude-code/issues/38429)) that make it less reliable than direct upload right now.
+
+## Related
+
+<Cards>
+  <Card title="Getting started" href="/guides/getting-started">
+    Initialize a project and wire MCP across Claude Code, Cursor, Codex, and Windsurf.
+  </Card>
+  <Card title="MCP integration" href="/guides/mcp-integration">
+    How the MCP server connects agents to the knowledge base (Claude Code, Cursor, Codex).
+  </Card>
+  <Card title="Open in Agent Desktop" href="/guides/open-in-agent-desktop">
+    Hand off a single doc to Claude, Codex, or Cursor via URL-scheme dispatch.
+  </Card>
+</Cards>
