@@ -259,9 +259,9 @@ test.describe('sidebar push-mode (small width)', () => {
     // User actions at small width must NOT propagate back to the desktop `open`
     // state. If a future refactor adds bidirectional sync, this test fails and
     // forces a re-review.
-    await api.seedDocs([{ name: 'k', markdown: '# Doc K\n\nBody.' }]);
+    await api.seedDocs([{ name: 'o', markdown: '# Doc O\n\nBody.' }]);
     await page.setViewportSize(DESKTOP_VIEWPORT);
-    await page.goto('/#/k');
+    await page.goto('/#/o');
 
     // Desktop sidebar starts open (defaultOpen=true).
     await expect.poll(() => isSidebarOpen(page)).toBe(true);
