@@ -461,6 +461,14 @@ export class ProviderPool {
 
     for (const [docName, poolEntry] of snapshot) {
       if (poolEntry.tearingDown) continue;
+      // No sync baseline → we have nothing to compute a delta against. Any
+      // Y.Doc state at this point came from IDB hydration of a prior session
+      // whose server is, by definition, a different instance than the one we
+      // just failed to authenticate against — preserving it would duplicate
+      // content when the fresh provider syncs from markdown-rebuilt state.
+      // A tab typing within the 50–500 ms window before first sync can lose
+      // those keystrokes here; that's the accepted trade-off (SPEC §6).
+      if (poolEntry.lastServerSyncedSV === null) continue;
       const unsynced = computeUnsyncedUpdate(
         poolEntry.provider.document,
         poolEntry.lastServerSyncedSV,

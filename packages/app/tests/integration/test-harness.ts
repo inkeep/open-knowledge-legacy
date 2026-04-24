@@ -392,6 +392,100 @@ export async function resetFakeIndexedDB(): Promise<void> {
 }
 
 /**
+ * Pre-populate the fake-IDB database at `ok-ydoc:${docName}` with the given
+ * Y.Doc updates, simulating a browser tab that had previously connected and
+ * persisted some content. Used by T14 (populated-IDB meets stale server) to
+ * stage the precondition.
+ *
+ * Spins up an ephemeral `ClientPersistenceProvider`, applies each update via
+ * `Y.applyUpdate`, lets the upstream y-indexeddb `_storeUpdate` listener
+ * flush to IDB, then cleanly destroys the provider + doc. On return the IDB
+ * data survives — the next `new IndexeddbPersistence(sameName, ...)` will
+ * hydrate from it.
+ *
+ * NOTE: updates must be valid Yjs update bytes (from `Y.encodeStateAsUpdate`
+ * or listening on `doc.on('update', ...)`). Malformed bytes are best-effort
+ * applied; use the helpers in `client-persistence.ts` to construct them.
+ */
+export async function seedClientPersistenceState(
+  docName: string,
+  updates: Uint8Array[],
+): Promise<void> {
+  const { asDocName, createClientPersistence } = await import(
+    '../../src/editor/client-persistence'
+  );
+  const doc = new Y.Doc();
+  const persistence = createClientPersistence(asDocName(docName), doc);
+  try {
+    await persistence.whenSynced;
+    for (const update of updates) {
+      Y.applyUpdate(doc, update);
+    }
+    // Let the y-indexeddb `_storeUpdate` listener flush pending writes to
+    // fake-indexeddb before we tear down — otherwise destroy() can race the
+    // last addAutoKey.
+    await wait(0);
+  } finally {
+    await persistence.destroy();
+    doc.destroy();
+  }
+}
+
+/**
+ * Assert that the fake-IDB database at `ok-ydoc:${docName}` is empty — either
+ * the database doesn't exist at all (the `clearData` happy path: `deleteDB`
+ * removed it), or it exists but has zero records in the `updates` store
+ * (defensive: if a schema quirk leaves the DB with a fresh empty store).
+ *
+ * Throws if the DB exists AND has at least one persisted update, with a
+ * count in the error message.
+ */
+export async function assertIDBEmpty(docName: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
+  const dbName = `ok-ydoc:${docName}`;
+  const dbs = await indexedDB.databases();
+  const info = dbs.find((d) => d.name === dbName);
+  if (info === undefined) return;
+
+  const count = await new Promise<number>((resolve, reject) => {
+    const req = indexedDB.open(dbName);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('updates')) {
+        db.close();
+        resolve(0);
+        return;
+      }
+      try {
+        const tx = db.transaction('updates', 'readonly');
+        const store = tx.objectStore('updates');
+        const countReq = store.count();
+        countReq.onsuccess = () => {
+          db.close();
+          resolve(countReq.result);
+        };
+        countReq.onerror = () => {
+          db.close();
+          reject(countReq.error);
+        };
+      } catch (err) {
+        db.close();
+        if ((err as Error)?.name === 'NotFoundError') {
+          resolve(0);
+          return;
+        }
+        reject(err);
+      }
+    };
+  });
+
+  if (count !== 0) {
+    throw new Error(`assertIDBEmpty: expected ${dbName} to have 0 updates, found ${count}`);
+  }
+}
+
+/**
  * Structural quiescence gate — resolves once the doc has NO in-flight
  * transactions AND no `afterAllTransactions` listener fires for N
  * consecutive microtasks. Use instead of wall-clock `wait(ms)` when a test
