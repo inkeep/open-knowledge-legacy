@@ -7,9 +7,13 @@
  * lives on the file-row action area (FR-P18, FR-P19).
  */
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { BurstData } from '@/lib/use-activity-panel';
-import { ActivityPanelDiffView } from './ActivityPanelDiffView';
+
+const LazyActivityPanelDiffView = lazy(async () => {
+  const mod = await import('./ActivityPanelDiffView');
+  return { default: mod.ActivityPanelDiffView };
+});
 
 interface ActivityPanelBurstRowProps {
   burst: BurstData;
@@ -89,7 +93,13 @@ export function ActivityPanelBurstRow({
           ) : loadError ? (
             <div className="px-4 py-2 text-xs text-destructive">Failed: {loadError}</div>
           ) : diff !== null ? (
-            <ActivityPanelDiffView diff={diff} />
+            <Suspense
+              fallback={
+                <div className="px-4 py-2 text-xs text-muted-foreground italic">Loading diff…</div>
+              }
+            >
+              <LazyActivityPanelDiffView diff={diff} />
+            </Suspense>
           ) : (
             <div className="px-4 py-2 text-xs text-muted-foreground italic">No diff.</div>
           )}

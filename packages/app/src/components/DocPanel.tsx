@@ -1,7 +1,6 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
 import { lazy, Suspense } from 'react';
-import { ActivityModeContent } from '@/components/ActivityModeContent';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
@@ -37,6 +36,11 @@ function loadGraphPanelModule() {
 const LazyGraphPanel = lazy(async () => {
   const mod = await loadGraphPanelModule();
   return { default: mod.GraphPanel };
+});
+
+const LazyActivityModeContent = lazy(async () => {
+  const mod = await import('@/components/ActivityModeContent');
+  return { default: mod.ActivityModeContent };
 });
 
 interface DocPanelProps {
@@ -130,7 +134,15 @@ export function DocPanel({
         </div>
       ) : (
         <div className="min-h-0 flex-1">
-          <ActivityModeContent />
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading agent activity…
+              </div>
+            }
+          >
+            <LazyActivityModeContent />
+          </Suspense>
         </div>
       )}
     </>

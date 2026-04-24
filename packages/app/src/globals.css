@@ -1,50 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "react-diff-view/style/index.css";
 @plugin "tailwind-scrollbar";
-
-/* --- Activity Panel unified-diff styling (react-diff-view) ---
-   The library renders diff hunks with `.diff-code-insert`, `.diff-code-delete`,
-   `.diff-gutter-insert`, `.diff-gutter-delete` class roots. Scoping under
-   `.activity-panel-diff` keeps the tokens from leaking into the main DiffView
-   (which uses @codemirror/merge, a different DOM entirely). */
-.activity-panel-diff table.diff-table {
-  @apply w-full table-fixed;
-}
-.activity-panel-diff .diff-gutter {
-  @apply text-muted-foreground text-[10px] select-none;
-}
-.activity-panel-diff .diff-code {
-  @apply font-mono text-xs leading-5 whitespace-pre-wrap break-all;
-}
-.activity-panel-diff .diff-code-insert {
-  @apply bg-green-100/60 text-green-900;
-}
-.activity-panel-diff .diff-code-delete {
-  @apply bg-red-100/60 text-red-900;
-}
-.dark .activity-panel-diff .diff-code-insert {
-  @apply bg-green-900/40 text-green-200;
-}
-.dark .activity-panel-diff .diff-code-delete {
-  @apply bg-red-900/40 text-red-200;
-}
-.activity-panel-diff .diff-gutter-insert {
-  @apply bg-green-100/40 text-green-800;
-}
-.activity-panel-diff .diff-gutter-delete {
-  @apply bg-red-100/40 text-red-800;
-}
-.dark .activity-panel-diff .diff-gutter-insert {
-  @apply bg-green-900/30 text-green-300;
-}
-.dark .activity-panel-diff .diff-gutter-delete {
-  @apply bg-red-900/30 text-red-300;
-}
-.activity-panel-diff .diff-hunk-header {
-  @apply bg-muted text-muted-foreground text-[10px] leading-5;
-}
 
 /*
  * Explicit source roots for Tailwind v4 content scanning.

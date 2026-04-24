@@ -11,10 +11,15 @@
  * returns `diff: ""`. Render a subtle "No changes" placeholder rather than
  * an empty hunk.
  *
- * Dark-mode colours are defined in globals.css under `.activity-panel-diff`.
+ * Diff table colours come from `react-diff-view`'s stylesheet, loaded only
+ * with this lazy module.
  */
 import type * as React from 'react';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
+
+if (typeof window !== 'undefined') {
+  void import('react-diff-view/style/index.css');
+}
 
 interface ActivityPanelDiffViewProps {
   diff: string;
