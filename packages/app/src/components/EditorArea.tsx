@@ -46,7 +46,14 @@ function EditorAreaInner({
   onEntrySelect,
   selectedSha,
 }: EditorAreaProps) {
-  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
+  const {
+    activeDocName,
+    activeProvider,
+    activeTarget,
+    recycleDocument,
+    docPanelMode,
+    docPanelExpandSignal,
+  } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
@@ -89,6 +96,24 @@ function EditorAreaInner({
       }
     }
   }, [autoCollapse, docPanelLayout, panelRef]);
+
+  // SPEC-24 FR-T10: expand-on-avatar-click. `docPanelExpandSignal` is a
+  // monotonic counter incremented by `DocumentContext.openActivityPanel`
+  // (called from `PresenceBar` avatar clicks and the mode-toggle button).
+  // When it increments, expand/open the panel in whichever layout mode
+  // is active. Initial 0 → 0 transition (mount) is harmless — calling
+  // `expand` when already expanded is a no-op in react-resizable-panels.
+  useEffect(() => {
+    if (docPanelExpandSignal === 0) return;
+    if (isSheetMode) {
+      setSheetOpen(true);
+    } else {
+      // Panel mode — clear the user-collapsed sticky flag so the
+      // expand call isn't immediately fought by a later layout effect.
+      userCollapsedRef.current = false;
+      panelRef.current?.expand();
+    }
+  }, [docPanelExpandSignal, isSheetMode, panelRef]);
 
   // Track the previously-active docName for DocumentErrorBoundary's
   // "Back to previous document" affordance. Updated AFTER render (effect) so
@@ -336,6 +361,7 @@ function EditorAreaInner({
               onActiveTabChange={setActiveTab}
               onEntrySelect={onEntrySelect}
               selectedSha={selectedSha}
+              mode={docPanelMode}
             />
           </SheetContent>
         </Sheet>
@@ -371,6 +397,7 @@ function EditorAreaInner({
             onActiveTabChange={setActiveTab}
             onEntrySelect={onEntrySelect}
             selectedSha={selectedSha}
+            mode={docPanelMode}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

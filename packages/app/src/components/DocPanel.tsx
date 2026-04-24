@@ -18,13 +18,29 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'timeline', label: 'Timeline', icon: Clock },
 ];
 
-export function loadGraphPanelModule() {
+/**
+ * Top-level mode for the DocPanel container. Two values:
+ *   - `'doc'`:   existing per-document info tabs (outline / backlinks / …).
+ *   - `'agent'`: Agent Activity view keyed to a `connectionId`.
+ *
+ * The mode is a drill-in, not a persistent toggle: agent avatar click enters
+ * `'agent'` mode; the back arrow (shown only in `'agent'` mode) returns to
+ * `'doc'` mode via `closeActivityPanel()`.
+ */
+type DocPanelMode = 'doc' | 'agent';
+
+function loadGraphPanelModule() {
   return import('@/components/GraphPanel');
 }
 
 const LazyGraphPanel = lazy(async () => {
   const mod = await loadGraphPanelModule();
   return { default: mod.GraphPanel };
+});
+
+const LazyActivityModeContent = lazy(async () => {
+  const mod = await import('@/components/ActivityModeContent');
+  return { default: mod.ActivityModeContent };
 });
 
 interface DocPanelProps {
@@ -34,6 +50,8 @@ interface DocPanelProps {
   onActiveTabChange: (tab: PanelTab) => void;
   onEntrySelect?: (entry: TimelineEntry) => void;
   selectedSha?: string;
+  /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
+  mode: DocPanelMode;
 }
 
 export function DocPanel({
@@ -43,66 +61,90 @@ export function DocPanel({
   onActiveTabChange,
   onEntrySelect,
   selectedSha,
+  mode,
 }: DocPanelProps) {
   return (
     <>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        value={activeTab}
-        onValueChange={(value: PanelTab) => {
-          if (value) onActiveTabChange(value);
-        }}
-        className="mx-auto p-2"
-        aria-label="Document panels"
-      >
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <Tooltip key={id}>
-            <ToggleGroupItem
-              value={id}
-              role="tab"
-              id={`tab-${id}`}
-              aria-controls={`panel-${id}`}
-              aria-label={label}
-              asChild
-            >
-              <TooltipTrigger>
-                <Icon />
-              </TooltipTrigger>
-            </ToggleGroupItem>
-            <TooltipContent side="bottom">{label}</TooltipContent>
-          </Tooltip>
-        ))}
-      </ToggleGroup>
+      {/* In `'doc'` mode: the 5 info sub-tabs render as the panel header.
+          In `'agent'` mode: no header row — `ActivityModeContent` owns its
+          own header (avatar + back-arrow), which eliminates the empty-row
+          footprint the standalone back-arrow used to have. */}
+      {mode === 'doc' ? (
+        <div className="flex flex-row items-center justify-center gap-3 border-b border-border/60 p-2">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={activeTab}
+            onValueChange={(value: PanelTab) => {
+              if (value) onActiveTabChange(value);
+            }}
+            aria-label="Document panels"
+          >
+            {TABS.map(({ id, label, icon: Icon }) => (
+              <Tooltip key={id}>
+                <ToggleGroupItem
+                  value={id}
+                  role="tab"
+                  id={`tab-${id}`}
+                  aria-controls={`panel-${id}`}
+                  aria-label={label}
+                  asChild
+                >
+                  <TooltipTrigger>
+                    <Icon />
+                  </TooltipTrigger>
+                </ToggleGroupItem>
+                <TooltipContent side="bottom">{label}</TooltipContent>
+              </Tooltip>
+            ))}
+          </ToggleGroup>
+        </div>
+      ) : null}
 
-      <div
-        role="tabpanel"
-        id={`panel-${activeTab}`}
-        aria-labelledby={`tab-${activeTab}`}
-        className="min-h-0 flex-1"
-      >
-        {activeTab === 'outline' && <OutlinePanel docName={docName} isSourceMode={isSourceMode} />}
-        {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
-        {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
-        {activeTab === 'graph' && (
+      {mode === 'doc' ? (
+        <div
+          role="tabpanel"
+          id={`panel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+          className="min-h-0 flex-1"
+        >
+          {activeTab === 'outline' && (
+            <OutlinePanel docName={docName} isSourceMode={isSourceMode} />
+          )}
+          {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
+          {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
+          {activeTab === 'graph' && (
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  Loading graph…
+                </div>
+              }
+            >
+              <LazyGraphPanel activeDocName={docName} />
+            </Suspense>
+          )}
+          {activeTab === 'timeline' && (
+            <TimelineContent
+              docName={docName}
+              onEntrySelect={onEntrySelect}
+              selectedSha={selectedSha}
+            />
+          )}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1">
           <Suspense
             fallback={
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                Loading graph…
+                Loading agent activity…
               </div>
             }
           >
-            <LazyGraphPanel activeDocName={docName} />
+            <LazyActivityModeContent />
           </Suspense>
-        )}
-        {activeTab === 'timeline' && (
-          <TimelineContent
-            docName={docName}
-            onEntrySelect={onEntrySelect}
-            selectedSha={selectedSha}
-          />
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 }
