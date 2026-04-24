@@ -80,9 +80,9 @@ informs:
 ### Anchor + mount
 
 - **FR-P1** — **Anchor is the presence-bar avatar.** Any agent avatar in [[packages/app/src/presence/PresenceBar.tsx]] is a click target. Clicking opens the panel keyed to that agent's `connectionId`.
-- **FR-P2** — **Mount is a right-side slide-in** (shadcn `Sheet` with `side="right"`, width ≈ 480 px, non-modal). Overlays without reflowing the editor.
-- **FR-P3** — **Click-to-toggle.** Clicking the same avatar closes. Clicking a different avatar swaps contents.
-- **FR-P4** — **Explicit close affordances.** `×` button in header; `Esc` key; click-outside does NOT close.
+- **FR-P2** — **Mount is a right-side slide-in** (shadcn `Sheet` with `side="right"`, width ≈ 480 px, non-modal). Overlays without reflowing the editor.<br>_[Corrected 2026-04-24 post-ship: mount moved inside `DocPanel` as the `'agent'` mode content; `react-resizable-panels` owns width now (default 25%, min 300 px, max 40%). Authoritative fix in [[specs/2026-04-24-activity-panel-to-docpanel-mode-toggle/SPEC]].]_
+- **FR-P3** — **Click-to-toggle.** Clicking the same avatar closes. Clicking a different avatar swaps contents.<br>_[Corrected 2026-04-24 post-ship: "closes" = "flips DocPanel back to `'doc'` mode"; swap preserves new scoped agent in `'agent'` mode. Same pointer as FR-P2.]_
+- **FR-P4** — **Explicit close affordances.** `×` button in header; `Esc` key; click-outside does NOT close.<br>_[Corrected 2026-04-24 post-ship: obsolete — `DocPanel` is a layout panel, not a modal. Close = collapse via the editor's existing panel-toggle button (top-right of editor area). No Esc / X / click-outside semantics. Same pointer as FR-P2.]_
 - **FR-P5** — **Panel never moves the main editor automatically.** The ONLY panel affordance that navigates is explicit filename click.
 
 ### Data source
@@ -244,9 +244,9 @@ Both undo paths:
 - **D-P9 — LOCKED. Click-on-avatar = open panel.**
 - **D-P10 — LOCKED. Filename click = navigate; carrot = expand/collapse file row; burst-row click = expand that burst's diff.** Three distinct click zones, no overloading.
 - **D-P11 — LOCKED. Live updates via CC1 push, not polling.** `ch:'session-activity'` fired from L2 drain on any `agent-<connId>` `commitWip`. Audit confirmed emission site and that both `applyAgentMarkdownWrite` and `applyAgentUndo` land in the same L2 drain.
-- **D-P12 — DIRECTED. Right-side `Sheet`, non-modal, 480 px.**
-- **D-P13 — DIRECTED. Single-panel, swap-on-avatar-click.**
-- **D-P14 — DIRECTED. Click-outside does NOT close.**
+- **D-P12 — DIRECTED. Right-side `Sheet`, non-modal, 480 px.**<br>_[Corrected 2026-04-24 post-ship: obsolete — the host is now `DocPanel` (already right-side, already resizable via `react-resizable-panels`). Authoritative fix in [[specs/2026-04-24-activity-panel-to-docpanel-mode-toggle/SPEC]].]_
+- **D-P13 — DIRECTED. Single-panel, swap-on-avatar-click.**<br>_[Corrected 2026-04-24 post-ship: single-DocPanel-with-two-modes supersedes single-Sheet-with-one-agent. Swap semantics preserved mechanically. Same pointer as D-P12.]_
+- **D-P14 — DIRECTED. Click-outside does NOT close.**<br>_[Corrected 2026-04-24 post-ship: obsolete — `DocPanel` is a layout panel; click-outside isn't a semantic that applies. Same pointer as D-P12.]_
 - **D-P15 — DIRECTED. `react-diff-view` as renderer.**
 - **D-P16 — DIRECTED. *"Undo all"* requires confirmation; *"Undo last"* inline.** Blast-radius asymmetry.
 - **D-P17 — DIRECTED. Burst diff lazy-loaded on burst-row expand.** Avoids N round-trips on file-row open.

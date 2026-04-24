@@ -128,22 +128,46 @@ interface DocumentContextValue {
   /** Reset retry state — exits terminal mode, resumes polling. */
   retryCollab: () => void;
   /**
-   * Agent Activity Panel — connectionId of the agent whose Activity Panel is
-   * currently open, or null when no panel is open. Per SPEC FR-P21 this state
-   * is tab-scoped (not persisted across tabs / reloads), so it lives here in
-   * React state rather than localStorage.
+   * DocPanel mode — which scope the right-rail panel is showing.
+   *   - `'doc'`:   existing 5-tab info pane keyed to `activeDocName`.
+   *   - `'agent'`: Activity view keyed to `docPanelAgentId` (one agent session).
+   *
+   * Default is `'doc'` on every fresh tab. Tab-scoped state (not persisted),
+   * per SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle FR-T11.
    */
-  activityPanelAgentId: string | null;
+  docPanelMode: 'doc' | 'agent';
   /**
-   * Open (or swap) the Activity Panel to a new agent. Calling with the same
-   * connectionId as the currently-open panel is a toggle (closes it) to
-   * match FR-P3: "clicking the same avatar closes; a different avatar swaps".
-   * The hook `useActivityPanel` resets burst-cache and expand state on
-   * connectionId change, so swap semantics (FR-P22) fall out naturally.
+   * connectionId of the agent the panel is scoped to when in `'agent'` mode.
+   * Preserved across mode flips (FR-T12) — flipping `agent → doc → agent`
+   * still shows the previously-scoped agent. Cleared only by explicit
+   * `closeActivityPanel()` or swap to a different agent.
+   */
+  docPanelAgentId: string | null;
+  /**
+   * Monotonic expand-request counter. `openActivityPanel` increments this
+   * in the same setState pass that flips `docPanelMode`. `EditorArea`
+   * observes the counter via `useEffect` and calls `panel.expand()` (desktop)
+   * or `setSheetOpen(true)` (mobile) on each increment — idempotent if the
+   * panel is already visible. Implements FR-T10 (auto-expand on avatar click).
+   */
+  docPanelExpandSignal: number;
+  /**
+   * Open (or swap, or toggle off) the DocPanel's agent mode:
+   *   - Panel is doc mode, or agent mode with a different agent → flip to
+   *     agent mode, scope to this connectionId, increment expand signal.
+   *   - Panel is agent mode with this SAME connectionId → flip back to doc
+   *     mode. Agent id is preserved so flipping back via the mode toggle
+   *     resumes the same session (toggle semantics; preserves SPEC-23 FR-P3).
+   *
+   * Method name preserved from SPEC-23 so the `PresenceBar` call site does
+   * not change. The hook `useActivityPanel` resets burst-cache and expand
+   * state on connectionId change, so swap semantics fall out naturally.
    */
   openActivityPanel: (connectionId: string) => void;
-  /** Close the Activity Panel. No-op when already closed. */
+  /** Explicit "show the doc info again" affordance. Clears agent id too. */
   closeActivityPanel: () => void;
+  /** Imperative mode setter (for the DocPanel mode-toggle button). */
+  setDocPanelMode: (mode: 'doc' | 'agent') => void;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -246,7 +270,9 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
   const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
-  const [activityPanelAgentId, setActivityPanelAgentId] = useState<string | null>(null);
+  const [docPanelMode, setDocPanelModeState] = useState<'doc' | 'agent'>('doc');
+  const [docPanelAgentId, setDocPanelAgentId] = useState<string | null>(null);
+  const [docPanelExpandSignal, setDocPanelExpandSignal] = useState<number>(0);
   const {
     collabUrl,
     terminal: collabTerminal,
@@ -468,11 +494,35 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     collabTerminal,
     collabLastError,
     retryCollab,
-    activityPanelAgentId,
+    docPanelMode,
+    docPanelAgentId,
+    docPanelExpandSignal,
     openActivityPanel: (connectionId: string) => {
-      setActivityPanelAgentId((prev) => (prev === connectionId ? null : connectionId));
+      // Toggle / swap / open-with-expand, per SPEC-24 FR-T6/T7/T8/T9.
+      // Same agent already scoped AND already in agent mode → flip back
+      // to doc mode (toggle). Anything else → go/stay in agent mode with
+      // the new (or same) id AND bump the expand signal so `EditorArea`
+      // expands a collapsed panel.
+      if (docPanelMode === 'agent' && docPanelAgentId === connectionId) {
+        setDocPanelModeState('doc');
+        return;
+      }
+      setDocPanelAgentId(connectionId);
+      setDocPanelModeState('agent');
+      setDocPanelExpandSignal((prev) => prev + 1);
     },
-    closeActivityPanel: () => setActivityPanelAgentId(null),
+    closeActivityPanel: () => {
+      setDocPanelModeState('doc');
+      setDocPanelAgentId(null);
+    },
+    setDocPanelMode: (mode: 'doc' | 'agent') => {
+      setDocPanelModeState(mode);
+      // Toggling INTO agent mode via the mode-toggle button (not via an
+      // avatar click) should also ensure the panel is visible — matches
+      // FR-T10 intent. Toggling to doc mode is not a "request to see";
+      // user just wants the info tabs, so no expand needed.
+      if (mode === 'agent') setDocPanelExpandSignal((prev) => prev + 1);
+    },
   };
 
   return <DocumentContext value={value}>{children}</DocumentContext>;

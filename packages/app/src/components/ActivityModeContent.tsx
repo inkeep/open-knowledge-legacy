@@ -1,33 +1,33 @@
 /**
- * AgentActivityPanel — the right-side Sheet shell for the Activity Panel
- * (SPEC FR-P1 to FR-P5, FR-P22 to FR-P24).
+ * ActivityModeContent — the DocPanel's `'agent'` mode content.
  *
- * Reads `activityPanelAgentId` from `useDocumentContext()` and binds the
- * panel's open state to it. When null, Sheet is closed. When set, the hook
- * fetches `/api/agent-activity` for that agent and the body renders one
- * <ActivityPanelFileRow> per file.
+ * Replaces the standalone `AgentActivityPanel` Sheet (SPEC 2026-04-23).
+ * SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle embeds the panel
+ * inside `DocPanel`, so this component no longer provides its own
+ * container chrome — it's rendered directly as the body of the `'agent'`
+ * mode branch. No Sheet, no width hook, no resize handle.
  *
- * Non-modal by design (modal={false}) — the editor stays interactive behind
- * the panel. `onInteractOutside` is suppressed so clicks on the editor do
- * NOT close the panel (FR-P4). Close affordances: `×` button in header,
- * Esc key, swapping to a different avatar.
+ * Responsibilities:
+ *   - Fetches per-agent activity via `useActivityPanel(connectionId)`.
+ *   - Dispatches `POST /api/agent-undo` (`'last'` / `'file'` scope) with
+ *     user-visible success / error toasts.
+ *   - Filename-click navigates the main editor without flipping mode
+ *     (preserved from SPEC-23 FR-P24 intent — doc-nav does not reset
+ *     the scoped agent).
+ *   - Renders every state branch: loading / error / no-agent-selected /
+ *     empty / session-ended / populated.
  *
- * Filename click in a row fires `openDocumentTransition(docName)` + sets
- * `window.location.hash`; matches the navigateToDoc helper in PresenceBar.
- *
- * Undo dispatch: POST /api/agent-undo with { connectionId, docName, scope }.
- * On success, `reload()` fires to refresh the file list.
+ * Test contract: the inner `ActivityModeBody` is factored out so it can
+ * be unit-tested via `renderToString` without any portal / context /
+ * fetch dependencies. The outer wrapper owns the hook + callbacks.
  */
-import { AlertCircle, Loader2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { AlertCircle, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useActivityPanel } from '@/lib/use-activity-panel';
-import { useActivityPanelWidth } from '@/lib/use-activity-panel-width';
 import { ActivityPanelFileRow } from './ActivityPanelFileRow';
-import { ActivityPanelResizeHandle } from './ActivityPanelResizeHandle';
 import { Button } from './ui/button';
-import { Sheet, SheetContent, SheetTitle } from './ui/sheet';
 
 // ---------------------------------------------------------------
 // HTTP: undo dispatch
@@ -117,15 +117,29 @@ function EmptyState(): React.JSX.Element {
   );
 }
 
+/** SPEC-24 FR-T15: visible hint when mode is `'agent'` but no agent is scoped. */
+function NoAgentSelectedState(): React.JSX.Element {
+  return (
+    <div
+      className="flex h-full items-center justify-center p-6 text-muted-foreground"
+      data-testid="activity-panel-no-agent"
+    >
+      <p className="text-center text-sm italic">
+        Click an agent's avatar in the presence bar to view their session.
+      </p>
+    </div>
+  );
+}
+
 function SessionEndedBanner({ lastTs }: { lastTs: number | null }): React.JSX.Element {
-  // `Date.now()` is impure — React Compiler rejects direct render calls.
-  // Hoist via useState + 30 s tick so the "Xm ago" copy stays fresh.
-  const [now, setNow] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-  const ago = lastTs ? formatAgo(now - lastTs) : null;
+  // `Date.now()` is impure — calling it in render violates React Compiler's
+  // purity contract. Hoist behind a lazy-init useState so it's captured
+  // exactly once at mount. The displayed value only needs "when session
+  // ended" minute precision, so we skip the setInterval tick used by
+  // ActivityPanelFileRow (the session isn't going to un-end; a paint-once
+  // "2m ago" that drifts slightly while the user lingers is acceptable).
+  const [mountedAt] = useState<number>(() => Date.now());
+  const ago = lastTs ? formatAgo(mountedAt - lastTs) : null;
   return (
     <div
       className="border-b border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground"
@@ -172,50 +186,37 @@ function AgentAvatar({
 }
 
 // ---------------------------------------------------------------
-// Main panel component
+// Body — pure presentational (testable via renderToString)
 // ---------------------------------------------------------------
 
-/**
- * AgentActivityPanelBody — the panel's inner content, factored out so it can
- * be unit-tested independently of the Sheet/portal machinery. Radix Sheet
- * renders its content through a React Portal; that breaks renderToString-
- * based assertions (portals emit nothing in SSR). This body component has
- * no portal, so all state branches are inspectable via renderToString.
- */
-interface AgentActivityPanelBodyProps {
+interface ActivityModeBodyProps {
   data: ReturnType<typeof useActivityPanel>['data'];
   status: ReturnType<typeof useActivityPanel>['status'];
   error: ReturnType<typeof useActivityPanel>['error'];
   reload: () => void;
   fetchBurstDiff: (docName: string, stackIndex: number) => Promise<string>;
-  closeActivityPanel: () => void;
   onNavigate: (docName: string) => void;
   onUndoLast: (docName: string) => Promise<void>;
   onUndoAll: (docName: string) => Promise<void>;
 }
 
-export function AgentActivityPanelBody({
+export function ActivityModeBody({
   data,
   status,
   error,
   reload,
   fetchBurstDiff,
-  closeActivityPanel,
   onNavigate,
   onUndoLast,
   onUndoAll,
-}: AgentActivityPanelBodyProps): React.JSX.Element {
+}: ActivityModeBodyProps): React.JSX.Element {
   const lastTs = data?.files?.[0]?.lastTs ?? null;
-  // NOTE: We use plain <h2> / <div> here rather than <SheetHeader>/<SheetTitle>.
-  // The Radix Sheet primitives (internally Dialog.Title/.Description) throw
-  // when rendered outside a <Sheet> ancestor — which is intentional for a11y
-  // but prevents unit-testing the body in isolation via renderToString. Since
-  // the heading is already wrapped in the semantically-equivalent <Sheet>
-  // role="dialog" by the outer AgentActivityPanel, a plain heading here is
-  // safe + testable. Radix's screen-reader announcement contract is satisfied
-  // by the Sheet wrapper, not by the inner heading element.
   return (
-    <>
+    <section
+      className="flex h-full min-h-0 flex-col"
+      data-testid="activity-panel"
+      aria-label="Agent activity"
+    >
       <div className="flex flex-row items-center gap-3 border-b border-border px-4 py-3 shrink-0">
         {data?.agent ? (
           <>
@@ -235,17 +236,6 @@ export function AgentActivityPanelBody({
             <h2 className="truncate text-sm font-medium">Agent activity</h2>
           </div>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          onClick={closeActivityPanel}
-          aria-label="Close activity panel"
-          data-testid="activity-panel-close"
-        >
-          <X className="size-4" aria-hidden="true" />
-        </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto" data-testid="activity-panel-body">
@@ -277,20 +267,25 @@ export function AgentActivityPanelBody({
           </>
         )}
       </div>
-    </>
+    </section>
   );
 }
 
-export function AgentActivityPanel(): React.JSX.Element | null {
-  const { activityPanelAgentId, closeActivityPanel } = useDocumentContext();
-  const { openDocumentTransition } = useDocumentTransition();
-  const { data, status, error, reload, fetchBurstDiff } = useActivityPanel(activityPanelAgentId);
-  const { width, setWidth } = useActivityPanelWidth();
+// ---------------------------------------------------------------
+// Outer component — owns hook + callbacks
+// ---------------------------------------------------------------
 
-  // FR-P3: open state is the presence of `activityPanelAgentId`. The Sheet's
-  // `onOpenChange(false)` fires on Esc + the header X; we reuse
-  // closeActivityPanel for both.
-  const open = activityPanelAgentId !== null;
+export function ActivityModeContent(): React.JSX.Element {
+  const { docPanelAgentId } = useDocumentContext();
+  const { openDocumentTransition } = useDocumentTransition();
+  const { data, status, error, reload, fetchBurstDiff } = useActivityPanel(docPanelAgentId);
+
+  // FR-T15: when mode is `'agent'` but no agent is scoped (edge case: user
+  // flipped via the mode toggle without ever clicking an avatar), render a
+  // discoverable hint rather than silently showing an empty panel.
+  if (docPanelAgentId === null) {
+    return <NoAgentSelectedState />;
+  }
 
   const onNavigate = (docName: string): void => {
     openDocumentTransition(docName);
@@ -298,10 +293,9 @@ export function AgentActivityPanel(): React.JSX.Element | null {
   };
 
   const onUndoLast = async (docName: string): Promise<void> => {
-    if (!activityPanelAgentId) return;
     try {
       await postAgentUndo({
-        connectionId: activityPanelAgentId,
+        connectionId: docPanelAgentId,
         docName,
         scope: 'last',
         agentName: data?.agent?.displayName,
@@ -309,8 +303,7 @@ export function AgentActivityPanel(): React.JSX.Element | null {
       reload();
     } catch (err) {
       // Surface the failure — `Undo all` has a confirmation dialog, but
-      // `Undo last` is inline. Either silently failing is user-hostile
-      // (repo convention per sonner pattern in handoff components).
+      // `Undo last` is inline. Either silently failing is user-hostile.
       const message = err instanceof Error ? err.message : String(err);
       toast.error(`Undo failed: ${message}`);
       // Non-fatal — re-fetch to recover ground truth.
@@ -319,17 +312,15 @@ export function AgentActivityPanel(): React.JSX.Element | null {
   };
 
   const onUndoAll = async (docName: string): Promise<void> => {
-    if (!activityPanelAgentId) return;
     try {
       await postAgentUndo({
-        connectionId: activityPanelAgentId,
+        connectionId: docPanelAgentId,
         docName,
         scope: 'file',
         agentName: data?.agent?.displayName,
       });
-      // `Undo all` has a confirmation dialog (D-P16) — the blast-radius
-      // asymmetry applies to feedback too. Positive confirmation closes
-      // the loop for the user.
+      // `Undo all` has a confirmation dialog (SPEC-23 D-P16) — the
+      // blast-radius asymmetry applies to feedback too.
       toast.success(`Undone all edits on ${docName}`);
       reload();
     } catch (err) {
@@ -340,54 +331,15 @@ export function AgentActivityPanel(): React.JSX.Element | null {
   };
 
   return (
-    <Sheet
-      open={open}
-      modal={false}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) closeActivityPanel();
-      }}
-    >
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        // FR-P4: click-outside does NOT close. The Sheet primitive defers to
-        // radix's onInteractOutside which fires on any off-panel pointerdown;
-        // we preventDefault unconditionally so clicks on the editor stay
-        // non-destructive. `onEscapeKeyDown` does NOT need suppression — Esc
-        // is an explicit close affordance per FR-P4.
-        onInteractOutside={(event) => event.preventDefault()}
-        onPointerDownOutside={(event) => event.preventDefault()}
-        // Width is user-adjustable via the left-edge resize handle (see
-        // ActivityPanelResizeHandle). Inline style wins over the shadcn
-        // Sheet's baked-in `data-[side=right]:sm:max-w-sm` (= 384 px) by
-        // specificity. `maxWidth` is set to match so the max-w rule is
-        // overridden symmetrically — otherwise the slide-in animation's
-        // `max-width` would cap us at the class's value.
-        style={{ width: `${width}px`, maxWidth: `${width}px` }}
-        className="p-0 flex flex-col"
-        data-testid="activity-panel"
-      >
-        <ActivityPanelResizeHandle width={width} onChangeWidth={setWidth} />
-        {/*
-          Radix Dialog/Sheet requires a DialogTitle as direct descendant for
-          a11y (screen-reader announcement). We render a visually-hidden one
-          here so the user-visible heading can stay inside
-          AgentActivityPanelBody as a plain <h2>, which in turn lets the body
-          be unit-tested in isolation via renderToString.
-        */}
-        <SheetTitle className="sr-only">{data?.agent?.displayName ?? 'Agent activity'}</SheetTitle>
-        <AgentActivityPanelBody
-          data={data}
-          status={status}
-          error={error}
-          reload={reload}
-          fetchBurstDiff={fetchBurstDiff}
-          closeActivityPanel={closeActivityPanel}
-          onNavigate={onNavigate}
-          onUndoLast={onUndoLast}
-          onUndoAll={onUndoAll}
-        />
-      </SheetContent>
-    </Sheet>
+    <ActivityModeBody
+      data={data}
+      status={status}
+      error={error}
+      reload={reload}
+      fetchBurstDiff={fetchBurstDiff}
+      onNavigate={onNavigate}
+      onUndoLast={onUndoLast}
+      onUndoAll={onUndoAll}
+    />
   );
 }

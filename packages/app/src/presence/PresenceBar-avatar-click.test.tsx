@@ -31,8 +31,11 @@ mock.module('@/editor/DocumentContext', () => ({
     activeDocName: null,
     systemProvider: null,
     openActivityPanel,
-    activityPanelAgentId: null,
+    docPanelMode: 'doc',
+    docPanelAgentId: null,
+    docPanelExpandSignal: 0,
     closeActivityPanel: () => {},
+    setDocPanelMode: () => {},
   }),
 }));
 

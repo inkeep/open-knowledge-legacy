@@ -5,15 +5,13 @@ description: Click any agent's avatar in the presence bar to see every file they
 
 The Agent Activity Panel is the primary surface for reviewing what an agent has been doing across your knowledge base. Where the presence bar tells you *an agent exists* and the inline margin bursts show *what changed on the doc you're viewing*, the Activity Panel answers the bigger question: *what has this agent done in its session across every file?*
 
-The panel is a right-side slide-in. The editor stays interactive behind it — clicks on the editor do not close the panel.
-
-## Resizing
-
-Drag the thin rail on the left edge of the panel to resize. Width is remembered across tabs and reloads. If you prefer the keyboard, tab focus to the rail and use Arrow keys (16 px step, 64 px with Shift) or Home / End to jump to the widest / narrowest allowed size. The panel opens at 480 px on first use and stays within [320, 900] px so it never hides the entire editor.
+The panel lives inside the **document panel** on the right (the same panel that houses the outline, backlinks, graph, and timeline tabs). At the top of the document panel is a mode toggle: **Document** (the default — shows info about the file you're currently viewing) and **Activity** (shows an agent's session). Click the mode toggle at any time to flip between the two; click the panel's collapse button in the editor header to hide the panel entirely.
 
 ## Opening the panel
 
-Click any agent's avatar in the presence bar. This works for agents on your current doc AND for agents editing elsewhere (cross-doc agents shown in the dimmed section to the right of the divider). Clicking the same avatar closes the panel; clicking a different avatar swaps to that agent.
+Click any agent's avatar in the presence bar. This flips the document panel to **Activity** mode and scopes it to that agent. If the panel is currently collapsed, it auto-expands. Clicking the same avatar a second time flips back to **Document** mode. Clicking a different agent's avatar swaps the scoped agent (stays in Activity mode).
+
+The **Activity** mode button is disabled when no agents have active sessions — you'll see a tooltip `"No active agents"`.
 
 The panel is keyed to a single agent. Observing two agents side by side is not supported in v1.
 
@@ -60,7 +58,7 @@ After an undo, the panel re-fetches automatically. When a file row has zero rema
 
 ## When a session ends
 
-Once an agent's MCP connection closes past the grace window (about 30 seconds), the server garbage-collects their per-session state. Clicking that agent's (now-greyed) avatar opens the panel with a **Session ended** banner; undo buttons within any residual rows render disabled. Historical review across ended sessions is future work — the Activity Panel is a live-session surface.
+Once an agent's MCP connection closes past the grace window (about 30 seconds), the server garbage-collects their per-session state. Clicking that agent's (now-greyed) avatar flips the panel to Activity mode with a **Session ended** banner; undo buttons within any residual rows render disabled. Historical review across ended sessions is future work — the Activity Panel is a live-session surface.
 
 ## Live updates
 
