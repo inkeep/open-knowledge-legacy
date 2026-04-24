@@ -92,7 +92,7 @@ const APPLY_UPDATE_TIMEOUT_MS = 1000;
  * - `clientIdToWriter`: optional map for the future attribution-clean-up
  *   feature (out-of-scope for v1, included as a forward-compat hint).
  */
-export const SidecarHeaderSchema = z.object({
+const SidecarHeaderSchema = z.object({
   yjsVersion: z.string(),
   formatVariant: z.literal('v1'),
   schemaVersion: z.number().int(),
@@ -100,7 +100,7 @@ export const SidecarHeaderSchema = z.object({
   clientIdToWriter: z.record(z.string(), z.string()).optional(),
 });
 
-export type SidecarHeader = z.infer<typeof SidecarHeaderSchema>;
+type SidecarHeader = z.infer<typeof SidecarHeaderSchema>;
 
 function sidecarPathFor(contentDir: string, docName: string): string {
   return join(contentDir, SIDECAR_DIR, `${docName}.bin`);
@@ -164,7 +164,7 @@ export async function writeSidecar(contentDir: string, docName: string, doc: Y.D
  * the caller decides which live doc to apply into — Hocuspocus owns the
  * live Y.Doc identity and we don't want to build a disposable copy.
  */
-export interface SidecarReadResult {
+interface SidecarReadResult {
   header: SidecarHeader;
   bodyBytes: Uint8Array;
   /**

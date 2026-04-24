@@ -30,7 +30,7 @@ export interface CC1Signal {
 }
 
 /** CC1 channel for the server-info broadcast (per-process instance ID). */
-export const CC1_CHANNEL_SERVER_INFO = 'server-info';
+const CC1_CHANNEL_SERVER_INFO = 'server-info';
 
 export class CC1Broadcaster {
   private readonly hocuspocus: Hocuspocus;

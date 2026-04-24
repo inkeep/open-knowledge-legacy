@@ -47,7 +47,7 @@ export function parseCC1Signal(payload: string): CC1Signal | null {
  * derived-view channel doesn't accidentally create a channel whose
  * downstream treats an instance-ID payload as a cache-invalidation hint.
  */
-export interface CC1ServerInfoSignal {
+interface CC1ServerInfoSignal {
   serverInstanceId: string;
 }
 
