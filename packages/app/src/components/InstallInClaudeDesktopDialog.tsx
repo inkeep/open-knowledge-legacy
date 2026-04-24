@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, ExternalLink, Loader2, MousePointer2 } from 'lucide-react';
+import { CheckCircle2, Copy, Download, ExternalLink, Loader2, MousePointer2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -17,28 +17,20 @@ import {
  * App**. Distinct from Claude Code (CLI / Code tab) which is already covered
  * by `ok init`'s `npx skills add` flow.
  *
- * Implements SPEC 2026-04-24 FR9-FR14. Two-click install via the `.skill`
- * `CFBundleDocumentType` registered by Claude.app (D21):
- *
- *   1. User clicks "Install" in this dialog → we (Electron) download the
- *      `openknowledge.skill` to ~/Downloads and `shell.openPath(...)` routes
- *      it to the Claude Desktop App via the OS file association. Web mode:
- *      trigger a browser download; user double-clicks the file in their
- *      downloads folder.
- *   2. The Claude Desktop App's own native install dialog appears; user
- *      clicks Install there. Our dialog transitions to a "follow prompts in
- *      Claude" state.
+ * Implements SPEC 2026-04-24 FR9-FR14 with the Ship 1j local-build
+ * simplification: no GitHub Releases dependency. The `.skill` is built from
+ * the app's own bundled SKILL.md (Electron) or the user runs the CLI
+ * command themselves (web).
  *
  * Runtime branches on `'okDesktop' in window`:
- *   - Electron: `window.okDesktop.skill.downloadAndOpen(pinnedUrl)` resolves
- *     once Claude has been handed the file.
- *   - Web: anchor-download the always-latest release asset. No handoff —
- *     user completes the install themselves.
+ *   - Electron: calls `window.okDesktop.skill.buildAndOpen()` — main process
+ *     builds + saves to ~/Downloads + invokes `shell.openPath`. Claude
+ *     Desktop's native install dialog takes over.
+ *   - Web: shows the `npx @inkeep/open-knowledge install-skill` command
+ *     with a copy button. User runs it in their terminal.
  */
 
-const LATEST_RELEASE_ASSET_URL =
-  'https://github.com/inkeep/open-knowledge/releases/latest/download/openknowledge.skill';
-
+const INSTALL_COMMAND = 'npx @inkeep/open-knowledge install-skill';
 const DOCS_URL = 'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork';
 
 interface InstallInClaudeDesktopDialogProps {
@@ -61,9 +53,13 @@ export function InstallInClaudeDesktopDialog({
   onOpenChange,
 }: InstallInClaudeDesktopDialogProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  const [commandCopied, setCommandCopied] = useState(false);
 
   useEffect(() => {
-    if (!open) setPhase({ kind: 'idle' });
+    if (!open) {
+      setPhase({ kind: 'idle' });
+      setCommandCopied(false);
+    }
   }, [open]);
 
   async function handleInstallElectron() {
@@ -76,7 +72,7 @@ export function InstallInClaudeDesktopDialog({
       });
       return;
     }
-    const result = await bridge.downloadAndOpen(LATEST_RELEASE_ASSET_URL);
+    const result = await bridge.buildAndOpen();
     if (result.ok) {
       setPhase({ kind: 'handed-off', path: result.path });
     } else {
@@ -92,19 +88,14 @@ export function InstallInClaudeDesktopDialog({
     }
   }
 
-  function handleInstallWeb() {
-    // Anchor-download: browsers treat the href + download attribute as a
-    // hint to save the file rather than navigate. GitHub's /releases/latest/
-    // /download/ URL 302s to the versioned asset; the redirect preserves the
-    // download-attribute intent.
-    const anchor = document.createElement('a');
-    anchor.href = LATEST_RELEASE_ASSET_URL;
-    anchor.download = 'openknowledge.skill';
-    anchor.rel = 'noopener';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setPhase({ kind: 'handed-off' });
+  async function handleCopyCommand() {
+    try {
+      await navigator.clipboard.writeText(INSTALL_COMMAND);
+      setCommandCopied(true);
+      setTimeout(() => setCommandCopied(false), 2000);
+    } catch (err) {
+      toast.error(`Couldn't copy: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const isElectron = isElectronHost();
@@ -128,47 +119,66 @@ export function InstallInClaudeDesktopDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-3 py-2">
-          {phase.kind === 'idle' && (
-            <>
-              <ol className="ml-4 list-decimal space-y-1 text-sm">
-                <li>
-                  Click <strong>Install</strong> below.
-                </li>
-                {isElectron ? (
-                  <li>
-                    We'll download <code>openknowledge.skill</code> and hand it off to the{' '}
-                    <strong>Claude Desktop App</strong> automatically.
-                  </li>
-                ) : (
-                  <li>
-                    Your browser will download <code>openknowledge.skill</code>. Double-click it in
-                    your Downloads folder to hand it to the <strong>Claude Desktop App</strong>.
-                  </li>
-                )}
-                <li>Confirm the install in Claude's native install dialog.</li>
-                <li>
-                  Skill appears in <strong>Customize → Skills</strong> — available in Chat & Cowork
-                  sessions.
-                </li>
-              </ol>
-              {!isElectron && (
-                <p className="text-xs text-muted-foreground">
-                  If nothing happens on double-click, right-click the file → <em>Open With</em> →{' '}
-                  <em>Claude</em>.
-                </p>
-              )}
-            </>
+          {phase.kind === 'idle' && isElectron && (
+            <ol className="ml-4 list-decimal space-y-1 text-sm">
+              <li>
+                Click <strong>Install</strong> below.
+              </li>
+              <li>
+                We'll build <code>openknowledge.skill</code> and hand it off to the{' '}
+                <strong>Claude Desktop App</strong> automatically.
+              </li>
+              <li>Confirm the install in Claude's native install dialog.</li>
+              <li>
+                Skill appears in <strong>Customize → Skills</strong> — available in Chat & Cowork
+                sessions.
+              </li>
+            </ol>
+          )}
+
+          {phase.kind === 'idle' && !isElectron && (
+            <div className="flex flex-col gap-3 text-sm">
+              <p>
+                Run this in your terminal to build + install the skill. The command opens the{' '}
+                <strong>Claude Desktop App</strong> automatically when done:
+              </p>
+              <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+                <code className="flex-1 font-mono text-xs">{INSTALL_COMMAND}</code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyCommand}
+                  aria-label="Copy command"
+                  className="h-7 gap-1"
+                >
+                  {commandCopied ? (
+                    <>
+                      <CheckCircle2 aria-hidden="true" className="h-3 w-3" />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy aria-hidden="true" className="h-3 w-3" />
+                      Copy
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                No separate install needed — <code>npx</code> fetches and runs the CLI directly.
+                Requires Node.js or Bun.
+              </p>
+            </div>
           )}
 
           {phase.kind === 'downloading' && (
             <div className="flex items-center gap-2 text-sm">
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Downloading <code>openknowledge.skill</code> and handing off to the Claude Desktop
-              App…
+              Building <code>openknowledge.skill</code> and handing off to the Claude Desktop App…
             </div>
           )}
 
-          {phase.kind === 'handed-off' && isElectron && (
+          {phase.kind === 'handed-off' && (
             <div className="flex items-start gap-2 text-sm">
               <MousePointer2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
               <span>
@@ -179,17 +189,6 @@ export function InstallInClaudeDesktopDialog({
                     Saved to <code>{phase.path}</code>.
                   </span>
                 )}
-              </span>
-            </div>
-          )}
-
-          {phase.kind === 'handed-off' && !isElectron && (
-            <div className="flex items-start gap-2 text-sm">
-              <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
-              <span>
-                Download started. Find <code>openknowledge.skill</code> in your browser's downloads
-                and double-click it. The Claude Desktop App will open its install dialog — confirm
-                there to enable the skill for Chat & Cowork.
               </span>
             </div>
           )}
@@ -210,14 +209,30 @@ export function InstallInClaudeDesktopDialog({
         </div>
 
         <DialogFooter>
-          {(phase.kind === 'idle' || phase.kind === 'error') && (
+          {phase.kind === 'idle' && isElectron && (
             <>
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => (isElectron ? handleInstallElectron() : handleInstallWeb())}>
+              <Button onClick={handleInstallElectron}>
                 <Download aria-hidden="true" className="mr-2 h-4 w-4" />
                 Install
+              </Button>
+            </>
+          )}
+          {phase.kind === 'idle' && !isElectron && (
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          )}
+          {phase.kind === 'error' && isElectron && (
+            <>
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleInstallElectron}>
+                <Download aria-hidden="true" className="mr-2 h-4 w-4" />
+                Try again
               </Button>
             </>
           )}

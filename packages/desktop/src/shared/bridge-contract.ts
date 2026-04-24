@@ -227,24 +227,19 @@ export interface OkDesktopBridge {
      */
     detectClaudeDesktop(): Promise<boolean>;
     /**
-     * Download the pinned-version `openknowledge.skill` to the user's
-     * Downloads folder, then invoke the OS file association so Claude Desktop
-     * opens it (via its registered `.skill` CFBundleDocumentType on macOS /
-     * registry entry on Windows). Resolves with `{ok: true, path}` on success
-     * or `{ok: false, reason}` on any failure (network, filesystem, no
-     * association). Fire-and-forget from the renderer's perspective —
-     * Claude's own install dialog becomes the user's next surface.
+     * Build `openknowledge.skill` from the bundled SKILL.md source, save to
+     * the user's Downloads folder, then invoke the OS file association so
+     * the Claude Desktop App opens it (via its registered `.skill`
+     * CFBundleDocumentType on macOS / registry entry on Windows). Resolves
+     * with `{ok: true, path}` on success. Fire-and-forget from the
+     * renderer's perspective — Claude's own install dialog becomes the
+     * user's next surface. Local build: no network, no GitHub Releases.
      */
-    downloadAndOpen(url: string): Promise<
+    buildAndOpen(): Promise<
       | { ok: true; path: string }
       | {
           ok: false;
-          reason:
-            | 'invalid-url'
-            | 'download-failed'
-            | 'write-failed'
-            | 'open-failed'
-            | 'no-downloads-dir';
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
           message?: string;
         }
     >;

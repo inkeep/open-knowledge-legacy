@@ -517,18 +517,12 @@ describe('runInit', () => {
       const result = await runInitForTest();
       const output = formatInitResult(result, testDir);
 
-      // Hint names both the Desktop App (so users know the target) and
-      // Chat & Cowork (so they don't think it's a Claude Code duplicate).
+      // Hint names the Desktop App + Chat & Cowork (distinguishes from
+      // Claude Code) and points at the `ok install-skill` command —
+      // users install the skill locally, no GitHub download in the loop.
       expect(output).toContain('Claude Desktop App detected.');
       expect(output).toContain('Claude Chat & Cowork');
       expect(output).toContain('ok install-skill');
-      expect(output).toContain(
-        'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork',
-      );
-      // Pinned-version release URL shape — version is read from constants.ts.
-      expect(output).toMatch(
-        /https:\/\/github\.com\/inkeep\/open-knowledge\/releases\/download\/v\d+\.\d+\.\d+\/openknowledge\.skill/,
-      );
     });
 
     it('omits the Cowork install hint when Claude Desktop is absent', async () => {

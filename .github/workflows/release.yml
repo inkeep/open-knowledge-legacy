@@ -212,44 +212,6 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           HUSKY: 0
 
-      # Version alignment assertion — catches drift between the CLI
-      # package (whose version the release tag tracks) and the server
-      # package (whose version `installUserSkill` reads to manage the
-      # sidecar idempotency file). Changesets' `fixed` group in
-      # .changeset/config.json keeps them synced by construction; this
-      # is a safety net against misconfiguration. Also asserts SKILL.md
-      # metadata.version matches. See spec 2026-04-24 Ship 1d / D5.
-      - name: Assert version alignment
-        if: steps.changesets.outputs.published == 'true'
-        shell: bash
-        run: |
-          CLI_VERSION=$(jq -r '.version' packages/cli/package.json)
-          SERVER_VERSION=$(jq -r '.version' packages/server/package.json)
-          SKILL_VERSION=$(awk '/^metadata:/{found=1} found && /^  version:/{gsub(/["'\'' ]/, "", $2); print $2; exit}' packages/server/assets/skills/open-knowledge/SKILL.md)
-
-          echo "cli.version    = $CLI_VERSION"
-          echo "server.version = $SERVER_VERSION"
-          echo "skill.metadata.version = $SKILL_VERSION"
-
-          if [[ "$CLI_VERSION" != "$SERVER_VERSION" ]]; then
-            echo "::error::@inkeep/open-knowledge ($CLI_VERSION) != @inkeep/open-knowledge-server ($SERVER_VERSION) — changesets fixed-group sync broke"
-            exit 1
-          fi
-          if [[ "$SKILL_VERSION" != "$CLI_VERSION" ]]; then
-            echo "::error::SKILL.md metadata.version ($SKILL_VERSION) != cli version ($CLI_VERSION) — run 'bash scripts/sync-skill-version.sh' after 'bun run changeset version'"
-            exit 1
-          fi
-
-      # Build the Agent Skill artifact for Claude Desktop / Cowork distribution.
-      # Runs BEFORE release creation so the .skill file can be attached as a
-      # release asset. See spec 2026-04-24-skill-dual-track-install/SPEC.md
-      # (Ship 1a, FR1-FR4). The build script runs bash smoke-tests inline and
-      # exits non-zero on any structural failure.
-      - name: Build Agent Skill artifact
-        if: steps.changesets.outputs.published == 'true'
-        shell: bash
-        run: bun run build:skill-zip
-
       - name: Create GitHub Release
         if: steps.changesets.outputs.published == 'true'
         shell: bash
@@ -264,13 +226,9 @@ jobs:
           CHANGELOG=$(echo "$PR_BODY" | sed -n '/^# Releases/,$p' | sed '1s/^# Releases/# Changelog/')
 
           # Pin the release tag to the exact commit that was built and published.
-          # Attach openknowledge.skill as a release asset so users running the
-          # Claude Desktop / Cowork manual-upload flow can download via a pinned
-          # URL (https://github.com/inkeep/open-knowledge/releases/download/v${VERSION}/openknowledge.skill).
           gh release create "v${VERSION}" \
             --target "${{ github.sha }}" \
             --title "${RELEASE_DATE}" \
-            --notes "$CHANGELOG" \
-            openknowledge.skill
+            --notes "$CHANGELOG"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

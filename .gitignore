@@ -62,11 +62,6 @@ packages/core/tests/perf/results.*.json
 
 /test-doc.md
 
-# Agent Skill release artifact — built at release time, attached to GitHub
-# Release by the release workflow. Local builds via `bun run build:skill-zip`
-# produce this file in the repo root; never commit it.
-/openknowledge.skill
-
 # Open Knowledge per-machine runtime state — tokens never live here, but
 # sync state, server locks, and derived caches are local-only.
 .open-knowledge/sync-state.json

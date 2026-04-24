@@ -24,7 +24,7 @@ import {
 } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
-import { MCP_SERVER_NAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
 import { accent, warning } from '../ui/colors.ts';
@@ -792,19 +792,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     }
   }
 
-  // Cowork install hint (SPEC 2026-04-24 FR5 / D12). Surfaced only when
-  // Claude Desktop App's config dir exists on this machine. `npx skills`
-  // covers Claude Code (including the Code tab inside the Desktop App) but
-  // not Claude Chat or Claude Cowork modes — those read from a separate,
-  // isolated Skills list and need a manual `.skill` install.
+  // Chat & Cowork install hint (SPEC 2026-04-24 FR5 / D12). Surfaced only
+  // when the Claude Desktop App's config dir exists on this machine.
+  // `npx skills` covers Claude Code (including the Code tab inside the
+  // Desktop App) but not Claude Chat or Claude Cowork modes — those read
+  // from a separate, isolated Skills list and need a manual `.skill`
+  // install via `ok install-skill`.
   if (result.claudeDesktopDetected) {
-    const pinnedZipUrl = `https://github.com/inkeep/open-knowledge/releases/download/v${PACKAGE_VERSION}/openknowledge.skill`;
-    const docsUrl = 'https://inkeep.github.io/open-knowledge/guides/install-claude-cowork';
     lines.push('');
     lines.push(
-      `Claude Desktop App detected. To enable in Claude Chat & Cowork: run ${accent('ok install-skill')} or see ${docsUrl}`,
+      `Claude Desktop App detected. To enable in Claude Chat & Cowork, run: ${accent('ok install-skill')}`,
     );
-    lines.push(`  (Direct download: ${pinnedZipUrl})`);
   }
 
   // Content preview block (between MCP and Next steps)

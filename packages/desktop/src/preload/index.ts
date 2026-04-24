@@ -133,7 +133,7 @@ const bridge: OkDesktopBridge = {
 
   skill: {
     detectClaudeDesktop: () => invoke('ok:skill:detect-claude-desktop'),
-    downloadAndOpen: (url: string) => invoke('ok:skill:download-and-open', url),
+    buildAndOpen: () => invoke('ok:skill:build-and-open'),
   },
 
   update: {
