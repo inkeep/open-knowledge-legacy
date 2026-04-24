@@ -65,6 +65,7 @@ import {
   shadowGit,
 } from './shadow-repo.ts';
 import { SyncEngine } from './sync-engine.ts';
+import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -181,6 +182,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   } = options;
 
   const log = getLogger('server');
+
+  // Initialize OpenTelemetry before any spans could be emitted. No-op when
+  // OTEL_SDK_DISABLED != 'false' (default — zero overhead). Idempotent; safe
+  // to call multiple times (bootServer also calls it, but dev-plugin path
+  // bypasses bootServer and enters createServer directly).
+  initTelemetry();
 
   // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
   // HTTP listen, etc.). Collides fast with another running server in the same
@@ -959,6 +966,17 @@ export function createServer(options: ServerOptions): ServerInstance {
             error: err instanceof Error ? err.message : String(err),
           });
           log.error({ err }, '[server] shutdown phase-6 releaseServerLock failed');
+        }
+        // Telemetry shutdown runs outside the lock-release try so a telemetry
+        // flush failure can never prevent the lock from being released. 5s
+        // internal timeout prevents a hung OTLP exporter from stalling teardown.
+        try {
+          await shutdownTelemetry();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'telemetry-shutdown',
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     })();
