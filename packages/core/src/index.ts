@@ -35,6 +35,7 @@ export {
   type EmitFormat,
   EXECUTABLE_BLOCKLIST_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from './constants/upload.ts';
 

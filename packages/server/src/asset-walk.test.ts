@@ -33,7 +33,10 @@ describe('seedBasenameIndex — initial walk (no filter)', () => {
     write('docs/meeting.md');
     write('docs/photo.png');
     write('docs/diagram.svg');
-    write('docs/notes.txt'); // unknown extension
+    // Genuinely unknown extension (outside ASSET_EXTENSIONS). `.txt` is now
+    // in the widened asset set (2026-04-24b amendment), so use `.xyz` as a
+    // novel-extension placeholder.
+    write('docs/arbitrary.xyz');
     write('archive/old.png');
 
     const idx = createBasenameIndex();
@@ -43,7 +46,7 @@ describe('seedBasenameIndex — initial walk (no filter)', () => {
     expect(idx.resolveEmbed('diagram.svg', 'docs/meeting.md')).toBe('docs/diagram.svg');
     expect(idx.resolveEmbed('old.png', 'archive/anything.md')).toBe('archive/old.png');
     expect(idx.resolveEmbed('meeting.md', 'docs/meeting.md')).toBeNull();
-    expect(idx.resolveEmbed('notes.txt', 'docs/meeting.md')).toBeNull();
+    expect(idx.resolveEmbed('arbitrary.xyz', 'docs/meeting.md')).toBeNull();
   });
 
   test('empty contentDir produces empty index without throwing', () => {

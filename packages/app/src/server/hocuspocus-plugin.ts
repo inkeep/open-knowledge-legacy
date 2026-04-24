@@ -13,7 +13,12 @@
  * wired to a soon-to-be-destroyed srv.
  */
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { extname, relative, resolve } from 'node:path';
+import {
+  ASSET_EXTENSIONS,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
 import {
   createServer,
   ensureProjectGit,
@@ -402,13 +407,51 @@ export function hocuspocusPlugin(): Plugin {
 
       // Use the same filter createServer() passes to the file watcher so
       // HTTP asset serving and CRDT loading agree on what's excluded.
+      //
+      // 2026-04-24b amendment — Content-Disposition dispatch + fail-closed
+      // 404 guard. Enforces SPEC D-M "accept-all" end-to-end:
+      //   - `INLINE_RENDERABLE_EXTENSIONS` (image/pdf/video/audio subset) →
+      //     `Content-Disposition: inline`. Browser renders in the new tab's
+      //     built-in viewer.
+      //   - Everything else admitted by the content filter (office docs,
+      //     archives, fonts, tabular/text data) → `Content-Disposition:
+      //     attachment`. Browser prompts download rather than rendering
+      //     ambiguously (HedgeDoc GHSA-x74j-jmf9-534w posture).
+      //   - `.md`/`.mdx` direct-URL requests bypass the dispatch — they're
+      //     edge cases (normal editor flow uses hash routing), and forcing
+      //     attachment would break any dev-tool that happens to `curl` a
+      //     markdown path.
+      //   - sirv fall-through (file not found on disk) for asset-extension
+      //     OR executable-blocklist paths → 404. Prevents Vite's
+      //     `htmlFallbackMiddleware` from returning `index.html` as
+      //     `text/html` for a missing asset URL (the exact failure the
+      //     user reported for `.m4v` before this amendment).
       const contentFilter = currentSrv.contentFilter;
       const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
       server.middlewares.use((req, res, next) => {
         const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
         if (!rel || contentFilter.isExcluded(rel)) return next();
         res.setHeader('X-Content-Type-Options', 'nosniff');
-        contentSirv(req, res, next);
+        const ext = extname(rel).slice(1).toLowerCase();
+        const isDocExt = ext === 'md' || ext === 'mdx';
+        if (!isDocExt) {
+          if (INLINE_RENDERABLE_EXTENSIONS.has(ext)) {
+            res.setHeader('Content-Disposition', 'inline');
+          } else {
+            res.setHeader('Content-Disposition', 'attachment');
+          }
+        }
+        contentSirv(req, res, () => {
+          if (
+            !res.headersSent &&
+            (ASSET_EXTENSIONS.has(ext) || EXECUTABLE_BLOCKLIST_EXTENSIONS.has(ext))
+          ) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          next();
+        });
       });
 
       // Close handler is pinned to THIS invocation's `currentSrv` so each
