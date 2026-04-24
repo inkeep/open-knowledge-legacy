@@ -42,6 +42,7 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
+        'y-indexeddb', // imported by client-persistence.ts (added in next story); knip can't see ahead
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
