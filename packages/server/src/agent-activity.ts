@@ -241,6 +241,11 @@ export function listAgentActivity(
   // biome-ignore lint/suspicious/noExplicitAny: accessing internal AgentSessionManager sessions
   const sessionsMap: Map<string, any> = (sessionManager as any).sessions;
 
+  // AgentSessionManager.sessionKey uses the agentId as-passed; all call sites
+  // pass the broadcaster-key form (`agent-<raw>` via `extractAgentIdentity`
+  // in api-extension.ts), so session keys have shape `${docName}\0agent-<raw>`.
+  // Clients (presence bar, direct callers) pass the same broadcaster-key form
+  // to listAgentActivity — match directly without normalization.
   const suffix = `\0${connectionId}`;
   const matchingKeys = [...sessionsMap.keys()].filter((k) => k.endsWith(suffix));
 

@@ -23,7 +23,6 @@ import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { hashFromDocName } from '@/lib/doc-hash';
 import type { AwarenessUser } from './identity.ts';
 import {
   type AgentParticipant,
@@ -31,22 +30,6 @@ import {
   type Participant,
   usePresence,
 } from './use-presence';
-
-/**
- * Navigate to a doc from a user-initiated click (e.g. the cross-doc tooltip
- * wiki-link). Uses the hash-based nav pattern — matches other user-initiated
- * nav sites (FileTree, FolderOverview, EditorHeader). NavigationHandler
- * picks up the hashchange and calls `openTargetTransition`, which drives
- * the Activity/Suspense render path.
- *
- * Distinct from `openDocumentTransition` which only updates the provider
- * pool; hash-setting is the canonical flow when we want the URL to reflect
- * the new location.
- */
-function navigateToDoc(docName: string): void {
-  window.location.hash = hashFromDocName(docName);
-}
-
 import { useSyncStatus } from './use-sync-status';
 import { useSyncToasts } from './use-sync-toasts';
 
@@ -204,33 +187,30 @@ function useWritingPulse(mode: AgentPresenceEntry['mode']): boolean {
 function AgentAvatar({
   participant,
   crossDoc,
-  onNavigate,
+  onClickAgent,
 }: {
   participant: AgentParticipant;
   crossDoc: boolean;
-  onNavigate: (docName: string) => void; // injected for testability; defaults to hash-set
+  /**
+   * Handler invoked when the avatar is clicked. Receives the agent's
+   * connectionId (the presence map key — the `agent-<raw>` form).
+   *
+   * Post-2026-04-23 Activity Panel (SPEC D-P9 LOCKED): every agent avatar
+   * is a click target that opens the Activity Panel keyed to this agent.
+   * The panel's filename-click affordance replaces the old cross-doc
+   * nav-on-avatar-click UX (now one more click, much richer info).
+   */
+  onClickAgent: (connectionId: string) => void;
 }) {
-  const { presence } = participant;
+  const { presence, agentId } = participant;
   const tooltipName = agentTooltipName(presence);
-  // Invariant: `navigable` (cross-doc → interactive `<button>`) and
-  // `writing` (pulsing ring) are mutually exclusive by construction. Lock
-  // that at the predicate level so a future product change ("show pulse
-  // on cross-doc writing") cannot silently compose `animate-pulse` onto
-  // the navigable `<button>` — pulsing pointer avatars break touch
-  // hit-testing on mobile Safari (precedent #20).
-  const navigable = crossDoc && presence.currentDoc !== null;
   const heldWriting = useWritingPulse(presence.mode);
-  const writing = !navigable && !crossDoc && heldWriting;
-  // a11y contract: cross-doc avatars are the navigation affordance (per
-  // Radix guidance, interactive content does NOT live inside TooltipContent —
-  // keyboard users never reach it). When `navigable`, render a real
-  // <button> so it joins the tab sequence, announces as a button to screen
-  // readers, and handles Enter/Space natively. The tooltip stays as a
-  // descriptive overlay for mouse users. Current-doc avatars render as a
-  // non-interactive `<div role="img">` (no nav — it's the active doc).
+  // Writing pulse only for current-doc agents (crossDoc avatars are dimmed +
+  // grayscaled by a parent wrapper; composing animate-pulse on top of that
+  // is visually noisy). Precedent #20 bans pulsing on touch targets.
+  const writing = !crossDoc && heldWriting;
   const sharedClasses = [
-    'inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2 ring-background',
-    navigable ? 'cursor-pointer' : 'cursor-default',
+    'inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2 ring-background cursor-pointer',
     writing ? 'ring-primary/40 animate-pulse' : '',
   ]
     .filter(Boolean)
@@ -241,34 +221,22 @@ function AgentAvatar({
     'data-presence-crossdoc': crossDoc ? 'true' : undefined,
   };
 
-  const avatar = navigable ? (
-    // The native <button> role already announces activation semantics; the
-    // browser/AT layer handles Enter AND Space without us naming either.
-    // Embedding "Press Enter to open" in aria-label doubled the
-    // announcement on NVDA/JAWS/VoiceOver and misled Space-only users.
-    // WAI-ARIA APG button pattern: do not restate role-provided info.
+  const ariaLabel =
+    crossDoc && presence.currentDoc
+      ? `Open activity panel for ${tooltipName}, editing ${presence.currentDoc}`
+      : `Open activity panel for ${tooltipName}`;
+
+  const avatar = (
     <button
       type="button"
       {...dataAttrs}
-      aria-label={`${tooltipName}, editing ${presence.currentDoc}`}
+      aria-label={ariaLabel}
       className={sharedClasses}
       style={{ backgroundColor: presence.color }}
-      onClick={() => {
-        if (presence.currentDoc) onNavigate(presence.currentDoc);
-      }}
+      onClick={() => onClickAgent(agentId)}
     >
       <AgentIcon icon={presence.icon} width={16} height={16} className="text-white" />
     </button>
-  ) : (
-    <div
-      {...dataAttrs}
-      role="img"
-      aria-label={tooltipName}
-      className={sharedClasses}
-      style={{ backgroundColor: presence.color }}
-    >
-      <AgentIcon icon={presence.icon} width={16} height={16} className="text-white" />
-    </div>
   );
 
   return (
@@ -277,10 +245,9 @@ function AgentAvatar({
       <TooltipContent className="flex flex-col gap-0.5">
         <span className="font-medium">{tooltipName}</span>
         {crossDoc && presence.currentDoc ? (
-          // Descriptive text only — the click affordance lives on the avatar
-          // itself (keyboard-accessible, screen-reader-announced). Keeping
-          // the wiki-link-shaped label here so mouse users still see the
-          // familiar wiki-link visual cue.
+          // Descriptive text only — click affordance is on the avatar itself.
+          // Keeping the wiki-link-shaped label so mouse users still see the
+          // familiar visual cue, but note it is no longer a nav target.
           <span className="text-xs text-muted-foreground">editing [[{presence.currentDoc}]]</span>
         ) : null}
       </TooltipContent>
@@ -296,12 +263,12 @@ function OverflowChip({
   count,
   remainder,
   crossDoc,
-  onNavigate,
+  onClickAgent,
 }: {
   count: number;
   remainder: Participant[];
   crossDoc: boolean;
-  onNavigate: (docName: string) => void; // injected for testability; defaults to hash-set
+  onClickAgent: (connectionId: string) => void;
 }) {
   return (
     <Popover>
@@ -327,7 +294,7 @@ function OverflowChip({
                 key={p.agentId}
                 participant={p}
                 crossDoc={crossDoc}
-                onNavigate={onNavigate}
+                onClickAgent={onClickAgent}
               />
             );
           })}
@@ -339,19 +306,19 @@ function OverflowChip({
 
 function renderParticipant(
   p: Participant,
-  onNavigate: (docName: string) => void,
+  onClickAgent: (connectionId: string) => void,
   crossDoc: boolean,
 ) {
   if (p.kind === 'human') {
     return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
   }
   return (
-    <AgentAvatar key={p.agentId} participant={p} crossDoc={crossDoc} onNavigate={onNavigate} />
+    <AgentAvatar key={p.agentId} participant={p} crossDoc={crossDoc} onClickAgent={onClickAgent} />
   );
 }
 
 export function PresenceBar() {
-  const { activeProvider, activeDocName, systemProvider } = useDocumentContext();
+  const { activeProvider, activeDocName, systemProvider, openActivityPanel } = useDocumentContext();
   const { current, crossDoc } = usePresence(activeProvider, systemProvider, activeDocName);
   const syncStatus = useSyncStatus(activeProvider);
   useSyncToasts(syncStatus, activeDocName);
@@ -361,16 +328,22 @@ export function PresenceBar() {
   const crossDocPrimary = crossDoc.slice(0, K_CROSSDOC_PRIMARY);
   const crossDocRemainder = crossDoc.slice(K_CROSSDOC_PRIMARY);
 
+  // D-P9 LOCKED: every agent avatar opens the Activity Panel keyed to that
+  // agent's connectionId. The old cross-doc nav-on-click behavior is
+  // replaced — the panel's filename click provides equivalent nav with
+  // richer context.
+  const onClickAgent = openActivityPanel;
+
   return (
     <div data-slot="presence-bar" className="flex items-center px-1 py-1.5">
       <div className="flex items-center gap-1.5" data-presence-section="current">
-        {currentPrimary.map((p) => renderParticipant(p, navigateToDoc, false))}
+        {currentPrimary.map((p) => renderParticipant(p, onClickAgent, false))}
         {currentRemainder.length > 0 ? (
           <OverflowChip
             count={currentRemainder.length}
             remainder={currentRemainder}
             crossDoc={false}
-            onNavigate={navigateToDoc}
+            onClickAgent={onClickAgent}
           />
         ) : null}
       </div>
@@ -382,13 +355,13 @@ export function PresenceBar() {
             className="flex items-center gap-1.5 opacity-60 grayscale"
             data-presence-section="crossdoc"
           >
-            {crossDocPrimary.map((p) => renderParticipant(p, navigateToDoc, true))}
+            {crossDocPrimary.map((p) => renderParticipant(p, onClickAgent, true))}
             {crossDocRemainder.length > 0 ? (
               <OverflowChip
                 count={crossDocRemainder.length}
                 remainder={crossDocRemainder}
                 crossDoc={true}
-                onNavigate={navigateToDoc}
+                onClickAgent={onClickAgent}
               />
             ) : null}
           </div>
