@@ -428,4 +428,66 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await expect(page.getByText('Wiki link').first()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText('Page not found')).not.toBeVisible();
   });
+
+  test('P9.21: `.m4v` drop renders through FR-A5 NodeView + chip dispatches on click (2026-04-24b)', async ({
+    page,
+    api,
+  }) => {
+    // SPEC §Post-finalization amendment (2026-04-24b) regression guard.
+    // Pre-fix: user dropped `.m4v`, click opened a new tab whose URL fell
+    // through to Vite's SPA fallback as text/html (editor shell rendered
+    // inside the tab). Three defects underlay the symptom:
+    //   (1) `.m4v` NOT in `ASSET_EXTENSIONS` → content-filter refused
+    //       serve → SPA fallback.
+    //   (2) FR-A5 `createNodeInteractionBridgePlugin` never landed → the
+    //       drop-time wikiLinkEmbed chip had no renderer-side dispatcher
+    //       wiring; click fell through to browser default.
+    //   (3) `classifyMarkdownHref` treated `/vale_15.m4v` as `external`
+    //       not `asset` → post-reload clicks opened PropPanel instead of
+    //       the file.
+    // This test exercises the drop-time path (defect 2). The chip MUST
+    // render via the app-layer `wiki-link-embed.ts` NodeView with a
+    // `data-node-id` InteractionLayer-addressable attribute AND a server-
+    // absolute `href`. Serve-side + classifier fixes covered by P9.17 +
+    // P9.20 respectively; cycle 14 E2E hardening carries this set.
+    const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
+    await api.createPage(`${subdirDoc}.md`);
+    await api.replaceDoc(subdirDoc, '# Video doc\n');
+    await page.goto(`/#/${subdirDoc}`);
+    await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
+    await page.click('.ProseMirror');
+
+    // Minimal M4V bytes — the ISO-BMFF signature at offset 4 is enough for
+    // file-type sniff (`ftypM4V ` branded MP4 variant). Content-Type
+    // dispatch happens at sirv via mrmime; the test asserts HREF SHAPE
+    // only (full round-trip Content-Type requires the filewatcher's
+    // dirCount to propagate — a timing-dependent surface).
+    const TINY_M4V_BYTES = Array.from(
+      Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypM4V '), Buffer.alloc(8, 0)]),
+    );
+    await dropFileIntoEditor(page, TINY_M4V_BYTES, 'clip.m4v', 'video/mp4');
+
+    await expect
+      .poll(async () => await getSourceText(page), { timeout: 5_000 })
+      .toContain('clip.m4v');
+
+    // The FR-A5 NodeView renders the non-image chip as `<a data-wiki-embed>`
+    // with `data-node-id` (InteractionLayer-addressable). Pre-FR-A5, the
+    // chip had `data-wiki-embed` but no `data-node-id` — layer couldn't
+    // route clicks to `handlePrimary`. This selector pins both.
+    const chip = page.locator('a[data-wiki-embed][data-node-id]').first();
+    await chip.waitFor({ state: 'visible', timeout: 5_000 });
+
+    // Href must be server-absolute (`/docs/sub-xxx/clip.m4v`). Pre-
+    // 2026-04-24a, it was doc-relative (broken under hash routing). The
+    // `data-node-id` has the `wiki-link-embed-` prefix from the
+    // app-layer NodeView's counter — this distinguishes FR-A5-landed
+    // from the pre-fix `<a>` that had no data-node-id at all.
+    const href = await chip.getAttribute('href');
+    expect(href).toMatch(/^\//);
+    expect(href).toMatch(/\/clip\.m4v$/);
+    const nodeId = await chip.getAttribute('data-node-id');
+    expect(nodeId).toMatch(/^wiki-link-embed-/);
+  });
 });

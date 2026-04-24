@@ -35,6 +35,7 @@
  */
 import {
   classifyMarkdownHref,
+  extractAssetExtension,
   LinkFidelity,
   resolveAssetProjectPath,
 } from '@inkeep/open-knowledge-core';
@@ -118,20 +119,35 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
           const href = info?.attrs?.href;
           if (typeof href !== 'string' || !href) return false;
 
-          // Asset dispatch branch (SPEC 2026-04-23 amendment FR-A4).
-          // Fires on BOTH bare click AND Cmd/Ctrl+click — asset hrefs
-          // never open the PropPanel. Cmd+click forces OS delegation
-          // (D-A6 escape hatch). The classifier returns `asset` kind
-          // when the href has a non-md/mdx extension AND is relative;
-          // `sourceForm === 'wikiembed'` is the post-roundtrip marker
-          // kept for defensive coverage if a future mark shape ever
-          // diverges from the classifier. Both checks route the same
-          // way so adding one doesn't widen coverage twice.
+          // Asset dispatch branch (SPEC 2026-04-23 amendment FR-A4,
+          // softened 2026-04-24b). Fires on BOTH bare click AND
+          // Cmd/Ctrl+click — asset hrefs never open the PropPanel.
+          // Cmd+click forces OS delegation (D-A6 escape hatch).
+          //
+          // Two paths enter this branch:
+          //   1. `classifyMarkdownHref` returned `kind: 'asset'` — the
+          //      href is a plain relative path with a non-md/mdx
+          //      extension.
+          //   2. `sourceForm === 'wikiembed'` + the href shape looks
+          //      asset-like (has an extension). This captures post-
+          //      roundtrip `![[file.ext]]` refs that Commit 3 of the
+          //      2026-04-24a amendment flipped to server-absolute
+          //      (`/file.ext`) — classifier returns `external` for
+          //      leading-slash paths, but the `sourceForm` tag tells us
+          //      unambiguously that this came from a wiki-embed.
+          //      Without this branch, post-reload clicks on server-
+          //      absolute asset hrefs open the PropPanel instead of the
+          //      file. `resolveAssetProjectPath` handles the leading
+          //      slash (2026-04-24b).
           const sourceForm = info?.attrs?.sourceForm;
           const target = classifyMarkdownHref(href, docName);
-          if (target?.kind === 'asset' || sourceForm === 'wikiembed') {
-            if (target?.kind !== 'asset') return false;
-            const projectRelPath = resolveAssetProjectPath(target.url, docName);
+          const hrefExt = extractAssetExtension(href);
+          const isAssetShape =
+            target?.kind === 'asset' || (sourceForm === 'wikiembed' && hrefExt !== null);
+          if (isAssetShape) {
+            const url = target?.kind === 'asset' ? target.url : href;
+            const ext = target?.kind === 'asset' ? target.ext : (hrefExt ?? '');
+            const projectRelPath = resolveAssetProjectPath(url, docName);
             if (!projectRelPath) {
               // Path-escape detected at the renderer boundary — fall
               // through to PropPanel so the author sees the suspicious
@@ -140,10 +156,10 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
               return false;
             }
             void dispatchAssetClick({
-              url: target.url,
+              url,
               projectRelPath,
-              ext: target.ext,
-              title: projectRelPath.split('/').pop() ?? target.url,
+              ext,
+              title: projectRelPath.split('/').pop() ?? url,
               forceOsDelegation: newTab,
             });
             return true;

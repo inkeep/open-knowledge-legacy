@@ -41,7 +41,7 @@ const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
  * fragment, no query). Returns null for extensionless paths. Anchor/query
  * stripped because extension lives before them.
  */
-function extractAssetExtension(href: string): string | null {
+export function extractAssetExtension(href: string): string | null {
   const pathOnly = href.split(/[?#]/)[0] ?? href;
   const match = pathOnly.match(/\.([a-z0-9]+)$/i);
   return match ? (match[1] ?? '').toLowerCase() : null;
@@ -117,8 +117,18 @@ export function classifyWikiLinkTarget(
 }
 
 /**
- * Resolve a relative asset href (like `./meeting.pdf`, `../shared/photo.png`)
- * against the source doc's dirname to produce a project-root-relative path.
+ * Resolve a relative or server-absolute asset href to a project-root-
+ * relative path.
+ *
+ * Three input shapes supported:
+ *   - Relative, same-dir: `./meeting.pdf` → `<sourceDocDir>/meeting.pdf`
+ *   - Relative, parent-walking: `../shared/photo.png` → resolves by
+ *     walking the source doc's dirname
+ *   - Server-absolute (2026-04-24b amendment): `/vale_15.m4v` → stripped
+ *     leading slash + resolved from project root. Emitted by the
+ *     drop-time + post-roundtrip paths after the 2026-04-24a server-
+ *     absolute URL fix so hash routing doesn't resolve against the wrong
+ *     base.
  *
  * Used by the asset-click dispatcher's Electron branch (`shell.openAsset`
  * expects a project-relative path) and by the right-click context menu
@@ -126,26 +136,35 @@ export function classifyWikiLinkTarget(
  * the file extension (non-md/mdx) rather than stripping it.
  *
  * Refuses paths that escape the project root — returns `null` if `..`
- * pops past the source doc's top-level directory. This is the renderer-
- * side "eager refusal" before IPC; the main-process `isPathWithinProject`
- * + `realpath` in `openAssetSafely` is the authoritative defense-in-depth.
+ * pops past the source doc's top-level directory (relative form) or
+ * below the project root (server-absolute form). This is the renderer-
+ * side "eager refusal" before IPC; the main-process
+ * `isPathWithinProject` + `realpath` in `openAssetSafely` is the
+ * authoritative defense-in-depth.
  *
  * Contract:
- *   - Input `href` MUST be relative (no scheme, no `//`, no leading `/`)
- *     and non-empty. Inputs that violate this return `null`.
- *   - `#anchor` and `?query` suffixes are preserved in the input form but
- *     stripped from the returned project-relative path (the path is the
- *     canonical filesystem location; anchor/query are URL concerns).
- *   - Source doc at the root (no `/` in `sourceDocName`) means `dirParts`
- *     starts empty; any `..` pops fail → returns `null`.
+ *   - Input `href` MUST be non-empty, non-scheme (`http://`, `file://`,
+ *     etc.), non-`//` (protocol-relative), non-anchor-only (`#foo`).
+ *     These return `null`.
+ *   - `#anchor` and `?query` suffixes are preserved in the input form
+ *     but stripped from the returned project-relative path (the path is
+ *     the canonical filesystem location; anchor/query are URL concerns).
+ *   - Source doc at the root (no `/` in `sourceDocName`) with a relative
+ *     `..` pop fails → returns `null`.
+ *   - Server-absolute `/..` pops into negative territory → returns
+ *     `null`.
  */
 export function resolveAssetProjectPath(href: string, sourceDocName: string): string | null {
   const trimmed = href.trim();
   if (!trimmed) return null;
 
-  // External / anchor-only / absolute → not a resolvable relative asset.
+  // External URL schemes (http, https, file, mailto, etc.) — never a
+  // project-relative asset.
   if (URI_SCHEME_RE.test(trimmed)) return null;
-  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
+  // Protocol-relative (`//host/path`) — external origin, reject.
+  if (trimmed.startsWith('//')) return null;
+  // Anchor-only — no path component.
+  if (trimmed.startsWith('#')) return null;
 
   // Strip anchor + query from the path portion (same-shape as
   // `resolveInternalHref`). The returned project-rel-path is a filesystem
@@ -155,9 +174,18 @@ export function resolveAssetProjectPath(href: string, sourceDocName: string): st
   const cleanPath = (pathPart.split('?')[0] ?? '').trim();
   if (!cleanPath) return null;
 
-  const dirParts = sourceDocName.includes('/') ? sourceDocName.split('/').slice(0, -1) : [];
+  // Server-absolute hrefs are project-root-relative: strip the leading
+  // slash + start from an empty `dirParts` (not the source doc's dir).
+  // Relative hrefs resolve against the source doc's dirname.
+  const isServerAbsolute = cleanPath.startsWith('/');
+  const effectivePath = isServerAbsolute ? cleanPath.slice(1) : cleanPath;
+  const dirParts: string[] = isServerAbsolute
+    ? []
+    : sourceDocName.includes('/')
+      ? sourceDocName.split('/').slice(0, -1)
+      : [];
 
-  for (const seg of cleanPath.split('/')) {
+  for (const seg of effectivePath.split('/')) {
     if (seg === '..') {
       if (dirParts.length === 0) return null;
       dirParts.pop();

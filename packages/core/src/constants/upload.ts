@@ -285,6 +285,7 @@ export const DEFAULT_DEDUP_UI: DedupUIMode = 'toast';
  * server mdast→PM pipeline via `Array.from(WIKI_EMBED_EXTENSIONS)`.
  */
 export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
+  // Images
   'png',
   'jpg',
   'jpeg',
@@ -292,12 +293,26 @@ export const WIKI_EMBED_EXTENSIONS: ReadonlySet<string> = new Set([
   'webp',
   'avif',
   'svg',
+  // Documents
   'pdf',
+  // Video — 2026-04-24b amendment widened to common browser-renderable
+  // video containers. Each here renders inline via the FR-A5 NodeView's
+  // chip + the sirv middleware's `Content-Disposition: inline` (from
+  // INLINE_RENDERABLE_EXTENSIONS). Extensions like .avi / .wmv / .flv
+  // that ARE admitted to serve (ASSET_EXTENSIONS) but NOT inline-
+  // renderable by browsers stay OUT of this wiki-embed emit set — they
+  // emit as markdown-link so the text shape reflects their opaque nature.
   'mp4',
   'webm',
   'mov',
+  'm4v',
+  'mkv',
+  // Audio
   'mp3',
   'wav',
   'ogg',
   'm4a',
+  'flac',
+  'aac',
+  'opus',
 ]);

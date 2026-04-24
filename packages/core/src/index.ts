@@ -191,6 +191,7 @@ export {
   classifyWikiLinkTarget,
   type DocLinkTarget,
   type ExternalLinkTarget,
+  extractAssetExtension,
   isExternalHref,
   resolveAssetProjectPath,
 } from './utils/link-targets.ts';
