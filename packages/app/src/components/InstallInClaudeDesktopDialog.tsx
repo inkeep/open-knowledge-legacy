@@ -44,27 +44,49 @@ function isElectronHost(): boolean {
 }
 
 /**
- * Small reusable block explaining what happens AFTER the Claude Desktop App
- * shows its install confirmation — "where will I find this, how do I use
- * it". Same content in Electron and web modes; renders in idle (preview) +
- * handed-off (confirmation) states.
+ * The Claude Desktop App upload path — shared across Electron and web
+ * modes. This is the MANUAL click-sequence inside the Claude Desktop App
+ * that the user has to do after we've put `openknowledge.skill` in their
+ * Downloads folder. Double-clicking the `.skill` file opens the Claude
+ * Desktop App but does NOT auto-install; users upload via the Customize
+ * → Skills UI.
  */
-function PostInstallNote() {
+function UploadSteps() {
   return (
-    <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-      <p className="mb-1 text-foreground">
-        <strong>After you click Install in Claude's dialog:</strong>
+    <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+      <p className="mb-2 font-medium text-foreground">
+        Then in the Claude Desktop App, upload the file:
       </p>
-      <ul className="ml-4 list-disc space-y-0.5">
+      <ol className="ml-4 list-decimal space-y-1 text-foreground">
         <li>
-          The skill appears under <strong>Customize → Skills</strong> in the Claude Desktop App
-          sidebar (enabled by default).
+          Open <strong>Customize</strong> (sidebar) → <strong>Skills</strong>.
         </li>
         <li>
-          Use it in any <strong>Claude Chat</strong> or <strong>Claude Cowork</strong> session — ask
-          Claude to "use the open-knowledge skill" and it will.
+          Click the <strong>+</strong> button.
         </li>
-      </ul>
+        <li>
+          Click <strong>Create skill</strong>.
+        </li>
+        <li>
+          Click <strong>Upload skill</strong>.
+        </li>
+        <li>
+          Pick <code>openknowledge.skill</code> from your <strong>Downloads</strong> folder.
+        </li>
+      </ol>
+      <p className="mt-2 text-xs text-muted-foreground">
+        The skill toggles on by default. Use it in any{' '}
+        <strong className="text-foreground">Claude Chat</strong> or{' '}
+        <strong className="text-foreground">Claude Cowork</strong> session — ask Claude to "use the
+        open-knowledge skill".
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        If <strong>Customize → Skills</strong> isn't visible, enable{' '}
+        <strong className="text-foreground">
+          Settings → Capabilities → Code execution and file creation
+        </strong>{' '}
+        first.
+      </p>
     </div>
   );
 }
@@ -149,22 +171,13 @@ export function InstallInClaudeDesktopDialog({
                   We build <code>openknowledge.skill</code> from the bundled skill content.
                 </li>
                 <li>
-                  The file saves to <code>~/Downloads/openknowledge.skill</code> (so you can
-                  re-upload later if needed).
+                  The file saves to <code>~/Downloads/openknowledge.skill</code>.
                 </li>
                 <li>
-                  Your OS hands the file to the <strong>Claude Desktop App</strong> via its{' '}
-                  <code>.skill</code> file association.
-                </li>
-                <li>
-                  Claude Desktop shows its native <strong>"Install Skill"</strong> confirmation
-                  dialog.
-                </li>
-                <li>
-                  Click <strong>Install</strong> in Claude's dialog. Done.
+                  We open the <strong>Claude Desktop App</strong> for you.
                 </li>
               </ol>
-              <PostInstallNote />
+              <UploadSteps />
             </div>
           )}
 
@@ -201,28 +214,14 @@ export function InstallInClaudeDesktopDialog({
                 <li>
                   Paste + run it in your terminal. You'll see{' '}
                   <code>Built ~/Downloads/openknowledge.skill</code> — that means the file is ready.
-                </li>
-                <li>
-                  The <strong>Claude Desktop App</strong> opens automatically (via the{' '}
-                  <code>.skill</code> file association) and shows its native{' '}
-                  <strong>"Install Skill"</strong> confirmation dialog.
-                </li>
-                <li>
-                  Click <strong>Install</strong> in Claude's dialog.
+                  The <strong>Claude Desktop App</strong> opens automatically.
                 </li>
               </ol>
-              <PostInstallNote />
-              <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                <p className="mb-1">
-                  <strong className="text-foreground">Requires:</strong> Node.js or Bun on your
-                  PATH. <code>npx</code> fetches and runs the CLI — no separate install.
-                </p>
-                <p>
-                  <strong className="text-foreground">If nothing opens</strong> after step 2, open{' '}
-                  <code>~/Downloads/</code>, double-click <code>openknowledge.skill</code>, or
-                  right-click it → <em>Open With</em> → <em>Claude</em>.
-                </p>
-              </div>
+              <UploadSteps />
+              <p className="text-xs text-muted-foreground">
+                <strong className="text-foreground">Requires:</strong> Node.js or Bun on your PATH.{' '}
+                <code>npx</code> fetches and runs the CLI — no separate install.
+              </p>
             </div>
           )}
 
@@ -230,7 +229,7 @@ export function InstallInClaudeDesktopDialog({
           {phase.kind === 'downloading' && (
             <div className="flex items-center gap-2 text-sm">
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Building <code>openknowledge.skill</code> and handing off to the Claude Desktop App…
+              Building <code>openknowledge.skill</code> and opening the Claude Desktop App…
             </div>
           )}
 
@@ -240,7 +239,9 @@ export function InstallInClaudeDesktopDialog({
               <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
                 <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-foreground">File saved to Downloads</span>
+                  <span className="font-medium text-foreground">
+                    File saved & Claude Desktop App opened
+                  </span>
                   {phase.path ? (
                     <code className="text-xs text-muted-foreground">{phase.path}</code>
                   ) : (
@@ -250,18 +251,7 @@ export function InstallInClaudeDesktopDialog({
                   )}
                 </div>
               </div>
-              <p className="font-medium">Next — in the Claude Desktop App:</p>
-              <ol className="ml-4 list-decimal space-y-1">
-                <li>
-                  The <strong>Claude Desktop App</strong> should have opened and be showing its{' '}
-                  <strong>"Install Skill"</strong> dialog. Click <strong>Install</strong> there.
-                </li>
-                <li>
-                  If it didn't open: open <code>~/Downloads/</code>, double-click{' '}
-                  <code>openknowledge.skill</code>.
-                </li>
-              </ol>
-              <PostInstallNote />
+              <UploadSteps />
             </div>
           )}
 
@@ -271,23 +261,13 @@ export function InstallInClaudeDesktopDialog({
               <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
                 <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-foreground">Command triggered download</span>
+                  <span className="font-medium text-foreground">Download started</span>
                   <span className="text-xs text-muted-foreground">
-                    The file will save to <code>~/Downloads/openknowledge.skill</code>.
+                    File saves to <code>~/Downloads/openknowledge.skill</code>.
                   </span>
                 </div>
               </div>
-              <p className="font-medium">In the Claude Desktop App:</p>
-              <ol className="ml-4 list-decimal space-y-1">
-                <li>
-                  The <strong>Claude Desktop App</strong> opens automatically and shows its{' '}
-                  <strong>"Install Skill"</strong> dialog. Click <strong>Install</strong>.
-                </li>
-                <li>
-                  If it didn't open: double-click <code>~/Downloads/openknowledge.skill</code>.
-                </li>
-              </ol>
-              <PostInstallNote />
+              <UploadSteps />
             </div>
           )}
 
