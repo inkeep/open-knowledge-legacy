@@ -85,7 +85,11 @@ export function DocPanel({
   const agentToggleDisabled = !hasActiveAgents && mode !== 'agent';
   return (
     <>
-      <div className="flex flex-col gap-2 border-b border-border/60 p-2">
+      {/* Single-row header: compact icon-only mode toggle on the LEFT,
+          followed (in `'doc'` mode only) by the sub-tab bar for Outline /
+          Backlinks / Outgoing / Graph / Timeline. Tooltips carry the text
+          that used to sit next to the mode icons. */}
+      <div className="flex flex-row items-center justify-center gap-3 border-b border-border/60 p-2">
         <ToggleGroup
           type="single"
           variant="outline"
@@ -96,7 +100,6 @@ export function DocPanel({
             // mode is always one of the two values, no neutral state.
             if (value === 'doc' || value === 'agent') onModeChange(value);
           }}
-          className="mx-auto"
           aria-label="Panel mode"
           data-testid="docpanel-mode-toggle"
         >
@@ -109,7 +112,6 @@ export function DocPanel({
             >
               <TooltipTrigger>
                 <FileText />
-                <span className="ml-1 text-xs">Document</span>
               </TooltipTrigger>
             </ToggleGroupItem>
             <TooltipContent side="bottom">Document info</TooltipContent>
@@ -124,7 +126,6 @@ export function DocPanel({
             >
               <TooltipTrigger>
                 <Activity />
-                <span className="ml-1 text-xs">Activity</span>
               </TooltipTrigger>
             </ToggleGroupItem>
             <TooltipContent side="bottom">
@@ -141,7 +142,6 @@ export function DocPanel({
             onValueChange={(value: PanelTab) => {
               if (value) onActiveTabChange(value);
             }}
-            className="mx-auto"
             aria-label="Document panels"
           >
             {TABS.map(({ id, label, icon: Icon }) => (
