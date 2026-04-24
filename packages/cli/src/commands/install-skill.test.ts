@@ -32,6 +32,16 @@ function makeFakeSpawn(capture: {
   }) as unknown as typeof spawn;
 }
 
+// picocolors emits ANSI codes when it detects color support (TTY or
+// FORCE_COLOR=1, both common in CI). The composed message wraps individual
+// words like `Customize` and `Skills` in their own `accent()` calls, which
+// breaks contiguous-substring matching when codes are present. Strip codes
+// before substring checks so the assertions are color-agnostic.
+function stripAnsi(s: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
+  return s.replace(/\[[0-9;]*m/g, '');
+}
+
 describe('runInstallSkill', () => {
   let testDir: string;
 
@@ -74,9 +84,14 @@ describe('runInstallSkill', () => {
     expect(capture.args).toEqual([outPath]);
     // Post-handoff message includes the 5-click upload sequence
     // (.skill opens the Claude Desktop App but doesn't auto-install).
-    expect(result.message).toContain('Claude Desktop App opened');
-    expect(result.message).toContain('Customize (sidebar) → Skills');
-    expect(result.message).toContain('Upload skill');
+    // Strip ANSI before substring checks: `Customize` and `Skills` are
+    // each in their own `accent()` call, so colored output splits the
+    // contiguous phrase. CI runs with FORCE_COLOR=1 / TTY; local typically
+    // runs without — strip to make assertions color-agnostic.
+    const plain = stripAnsi(result.message);
+    expect(plain).toContain('Claude Desktop App opened');
+    expect(plain).toContain('Customize (sidebar) → Skills');
+    expect(plain).toContain('Upload skill');
   });
 
   it('spawns `cmd /c start` on win32', async () => {
