@@ -346,6 +346,19 @@ All three live as exported constants in `packages/server/src/version-constants.t
 - **Q3 — Impact on integration-test harness + Playwright.** `createTestServer()` and the Playwright per-worker fixture both create `server.lock` files. They will need to write the new version fields. Low-risk mechanical change, but worth a CI pass to confirm no test-harness assumption that the lock is a stable shape breaks.
 - **Q4 — Telemetry on kill-and-restart events.** If / when telemetry lands per [`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`](../2026-04-20-cli-distribution-and-install-ux/SPEC.md), should mismatched-attach + kill-and-restart events be emitted? Useful signal for "are users actually hitting cross-version drift in the wild" — feeds NG6 (re-exec revisit) decision.
 - **Q5 — `executablePath` in the lock: any security implications?** The field carries an absolute path written by the lock holder. A downstream consumer (desktop, MCP) should NEVER execute it (NG6 — that was the rejected re-exec proposal). It's a diagnostic breadcrumb only. Worth a code-review note on the PR so no one innocently `spawn()`s it later.
+- **Q6 — Upgrade path for pinned MCP configs.** `ok init --pin` writes an absolute `process.argv[1]` into editor MCP configs (G7). The spec acknowledges the tradeoff (NG2, D8) but does not specify how a pinned config gets upgraded when the underlying CLI is upgraded. Concretely:
+  - **Stable-path pin** (`/usr/local/bin/ok` via M6 bundled CLI, global npm bin shim): upgrade-in-place works; no user action needed.
+  - **Volatile-path pin** (worktree `dist/cli.mjs`, npx cache path): silently stale after reinstall — pinned MCP either runs the old version (→ G6 protocol-mismatch exit 1) or fails with ENOENT.
+  - **Missing-path pin:** spawn fails ENOENT; editor surfaces "MCP disconnected" with no actionable guidance.
+  On protocol mismatch, G6's stderr diagnostic currently says *"reconcile versions"* — it does not tell a pinned-config user the specific remediation is to re-run `ok init --pin`.
+  
+  Candidate resolutions to scope:
+  1. Add `ok mcp` preflight: if `process.argv[1]` != what the user most recently ran `ok init --pin` from (tracked somewhere — maybe `.open-knowledge/state.json.lastPinnedBy`?), warn.
+  2. Extend G6's diagnostic to branch: if the MCP child's own `process.argv[1]` is pinned (heuristic: absolute path, not an npx cache path), suggest *"re-run `ok init --pin` from your current install to refresh"*. If unpinned, suggest *"upgrade your globally-installed CLI"*.
+  3. Add an acceptance criterion (E5) covering `ok mcp` with a pinned, no-longer-existent path: exit 1 with a diagnostic that names the missing path AND suggests `ok init --pin` to refresh.
+  4. Document the "stable-path pin" vs "volatile-path pin" taxonomy in the spec (§6.5 or new §6.6) so users choosing `--pin` know which paths are upgrade-safe.
+  
+  Defer until: the first real user report of pinned-path drift, OR M6's bundled-CLI shim ships and makes `--pin` a more commonly recommended path. Not blocking for initial rollout because the default is unpinned (self-healing via `npx`), but the gap exists the moment anyone opts in.
 
 ---
 
