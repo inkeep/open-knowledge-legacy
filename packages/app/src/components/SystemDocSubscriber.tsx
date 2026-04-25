@@ -13,7 +13,7 @@ import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documen
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { collabUrl, setSystemProvider, updateServerInstanceId, onBranchSwitched } =
+  const { collabUrl, setSystemProvider, updateServerInstanceId, onBranchSwitched, observeBranch } =
     useDocumentContext();
 
   // Ref pattern: dispatchers are re-created per-render in DocumentContext's `value`
@@ -22,12 +22,16 @@ export function SystemDocSubscriber() {
   // keeping the effect's deps stable.
   const updateServerInstanceIdRef = useRef(updateServerInstanceId);
   const onBranchSwitchedRef = useRef(onBranchSwitched);
+  const observeBranchRef = useRef(observeBranch);
   useEffect(() => {
     updateServerInstanceIdRef.current = updateServerInstanceId;
   }, [updateServerInstanceId]);
   useEffect(() => {
     onBranchSwitchedRef.current = onBranchSwitched;
   }, [onBranchSwitched]);
+  useEffect(() => {
+    observeBranchRef.current = observeBranch;
+  }, [observeBranch]);
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -38,13 +42,18 @@ export function SystemDocSubscriber() {
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
         // CC1 stateless channel multiplexes three payload shapes:
-        //   server-info → updates pool's cachedServerInstanceId
+        //   server-info → updates pool's cachedServerInstanceId; piggybacks
+        //                 currentBranch as the `branch-switched` late-join
+        //                 backstop, dispatched via observeBranch.
         //   branch-switched → triggers handleBranchSwitched (clearData + recycle)
         //   derived-view (files/backlinks/graph/sync-status/session-activity) → invalidates queries
         // Schemas are mutually exclusive by `ch`; check in order, short-circuit on match.
         const serverInfo = parseCC1ServerInfo(payload);
         if (serverInfo) {
           updateServerInstanceIdRef.current(serverInfo.serverInstanceId);
+          if (serverInfo.currentBranch !== undefined) {
+            void observeBranchRef.current(serverInfo.currentBranch);
+          }
           return;
         }
         const branchSwitched = parseCC1BranchSwitched(payload);

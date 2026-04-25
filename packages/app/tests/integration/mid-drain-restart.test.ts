@@ -107,10 +107,19 @@ describe('T11: Mid-drain server restart', () => {
     const postRestartDisk = readFileSync(join(contentDir, 'test-doc.md'), 'utf-8');
     expect(postRestartDisk.includes(DURABILITY_MARKER)).toBe(true);
 
-    // Client sees the content. Because of the bug class (unfixed), we accept
-    // that the marker may appear MORE than once — that's T1's duplication,
-    // not T11's concern. The invariant for T11 is "marker appears AT LEAST
-    // once" — content is not lost.
+    // T11's contract is durability, not deduplication. The basic restart
+    // case (T1) asserts `===1` — buffer-and-replay + clearData ordering keep
+    // markers from doubling. Mid-drain restart is a different path: the
+    // server crashes between L1 disk flush and L2 git-commit, so the
+    // post-restart server's markdown rebuild includes the freshly-written
+    // line, the client's IDB hydrate replays its own copy, and the union
+    // produces 2-3 marker occurrences. That residual duplication is out of
+    // scope for this PR — the user-visible content IS preserved (which is
+    // the durability contract this test codifies). A future fix would need
+    // to coordinate L2 drain checkpointing with the recycle flow.
+    //
+    // Bounded upper assertion keeps regressions visible: if the count grows
+    // beyond the empirically-observed ceiling we want to know.
     const clientText = firstProvider.document.getText('source').toString();
     const markerCountClient = (clientText.match(new RegExp(DURABILITY_MARKER, 'g')) ?? []).length;
     const markerCountDisk = (postRestartDisk.match(new RegExp(DURABILITY_MARKER, 'g')) ?? [])
@@ -123,6 +132,8 @@ describe('T11: Mid-drain server restart', () => {
     });
 
     expect(markerCountClient).toBeGreaterThanOrEqual(1);
+    expect(markerCountClient).toBeLessThanOrEqual(3);
     expect(markerCountDisk).toBeGreaterThanOrEqual(1);
+    expect(markerCountDisk).toBeLessThanOrEqual(3);
   }, 30_000);
 });

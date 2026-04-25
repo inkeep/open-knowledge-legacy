@@ -32,17 +32,25 @@ import type { ProviderPool } from './provider-pool';
 export const BranchSwitchedClearFailedLogSchema = z.object({
   event: z.literal('ok-branch-switched-clear-failed'),
   branch: z.string(),
-  docName: z.string().optional(),
-  reason: z.string().optional(),
+  docName: z.string(),
+  reason: z.string(),
 });
 type BranchSwitchedClearFailedLog = z.infer<typeof BranchSwitchedClearFailedLogSchema>;
 
 /**
- * Wipe every open provider's IndexedDB persistence and recycle the
- * providers. Accepts a `branch` label for structured observability — not
- * acted on for dedup because the server's `emitBranchSwitched` only fires
- * on the cross-branch normalization path (SPEC §Phase 4.1), so every
- * signal already represents a real branch change.
+ * Wipe every open provider's IndexedDB persistence, drop any in-memory
+ * replay buffers, and recycle the providers. Accepts a `branch` label for
+ * structured observability — not acted on for dedup because the server's
+ * `emitBranchSwitched` only fires on the cross-branch normalization path
+ * (SPEC §Phase 4.1), so every signal already represents a real branch
+ * change.
+ *
+ * Buffer drain is load-bearing: a prior `server-instance-mismatch` recycle
+ * may have populated `pool.bufferedUpdates` for non-active docs; without
+ * `clearBufferedUpdates()` those bytes (captured against branch A's Y.Doc)
+ * would replay onto branch B the next time the user opened the affected
+ * doc. The branch-switch policy is "discard, don't preserve" — apply it
+ * to the in-memory buffer slot, not just the IDB layer.
  *
  * `clearData` failures are caught per-entry and logged as structured
  * `ok-branch-switched-clear-failed` warn events so the recycle still
@@ -66,5 +74,6 @@ export async function handleBranchSwitched(pool: ProviderPool, branch: string): 
     );
   }
   await Promise.all(clears);
+  pool.clearBufferedUpdates();
   pool.recycleAllEntries();
 }

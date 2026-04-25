@@ -50,13 +50,21 @@ export const DerivedViewChannelSchema = z.enum([
 ]);
 export type DerivedViewChannel = z.infer<typeof DerivedViewChannelSchema>;
 
-/** `server-info` broadcast shape. */
+/** `server-info` broadcast shape.
+ *
+ * `currentBranch` is the late-join backstop for the cross-branch
+ * invalidation flow — clients reconnecting after a branch switch
+ * compare it against their last-observed branch and trigger
+ * `handleBranchSwitched` on mismatch (`branch-switched` is stateless
+ * and has no replay). Optional for backwards compat with non-git
+ * deployments. */
 export const CC1ServerInfoPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),
     ch: z.literal(CC1_CHANNEL_SERVER_INFO),
     seq: z.number(),
     serverInstanceId: z.string().min(1),
+    currentBranch: z.string().min(1).optional(),
   })
   .loose();
 export type CC1ServerInfoPayload = z.infer<typeof CC1ServerInfoPayloadSchema>;

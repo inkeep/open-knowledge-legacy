@@ -131,6 +131,7 @@ import {
 } from './metrics.ts';
 import {
   deleteReconciledBase,
+  getActiveBranch,
   isWithinContentDir,
   safeContentPath,
   setReconciledBase,
@@ -3255,17 +3256,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * GET /api/server-info
    *
-   * Returns `{ ok: true, serverInstanceId }`. Called by the client's
-   * `ProviderPool` as a boot-time warmup BEFORE any WebSocket provider opens,
-   * so the first provider's auth token can carry `expectedServerInstanceId`
-   * on the very first connect (avoiding one "null-claim accept → broadcast
-   * → populate cache → next connect claim" cycle on cold start).
+   * Returns `{ ok: true, serverInstanceId, currentBranch? }`. Called by
+   * the client's `ProviderPool` as a boot-time warmup BEFORE any
+   * WebSocket provider opens, so the first provider's auth token can
+   * carry `expectedServerInstanceId` on the very first connect (avoiding
+   * one "null-claim accept → broadcast → populate cache → next connect
+   * claim" cycle on cold start).
    *
-   * Public by design (no loopback / Host-header gate). The UUID is not
-   * sensitive — it's explicitly advertised to any client that may
-   * reconnect after restart. Cross-origin / LAN peers reading it gain no
-   * capability; the worst they can do is correctly predict their own
-   * connections will be rejected after a server restart.
+   * `currentBranch` is the late-join backstop for CC1's `branch-switched`
+   * stateless broadcast — disconnected clients reconnecting compare the
+   * current value against their last-observed branch and trigger
+   * `handleBranchSwitched` on mismatch. Omitted when git tracking is
+   * disabled.
+   *
+   * Public by design (no loopback / Host-header gate). Neither field is
+   * sensitive — both are explicitly advertised to any client that may
+   * reconnect. Cross-origin / LAN peers reading them gain no capability.
    */
   async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
@@ -3273,7 +3279,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    json(res, 200, { ok: true, serverInstanceId });
+    const currentBranch = getActiveBranch();
+    json(res, 200, { ok: true, serverInstanceId, currentBranch });
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {

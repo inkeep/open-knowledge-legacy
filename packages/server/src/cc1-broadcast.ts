@@ -95,7 +95,7 @@ export class CC1Broadcaster {
    * (Hocuspocus's awareness replay covers late joiners without us
    * needing to re-broadcast, but a re-broadcast is cheap and idempotent).
    */
-  emitServerInfo(serverInstanceId: string): void {
+  emitServerInfo(serverInstanceId: string, currentBranch?: string): void {
     try {
       const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
       if (!doc) {
@@ -111,6 +111,7 @@ export class CC1Broadcaster {
         ch: CC1_CHANNEL_SERVER_INFO,
         seq: 0,
         serverInstanceId,
+        ...(currentBranch !== undefined ? { currentBranch } : {}),
       });
       doc.broadcastStateless(JSON.stringify(payload));
       incrementCC1Broadcast();

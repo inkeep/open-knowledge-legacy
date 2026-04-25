@@ -1181,7 +1181,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       // late-arriving client that subscribes to the channel gets the current
       // serverInstanceId (part of the CRDT restart-recovery defense — clients
       // cache this + claim it in their auth token on every connect).
-      cc1Broadcaster?.emitServerInfo(serverInstanceId);
+      cc1Broadcaster?.emitServerInfo(serverInstanceId, getActiveBranch());
     } catch (err) {
       log.error(
         { err },

@@ -237,6 +237,38 @@ export class ProviderPool {
     this.cachedServerInstanceId = id;
   }
 
+  /**
+   * Last-observed git branch reported by the server (via `/api/server-info`
+   * boot fetch + CC1 `server-info` broadcasts). Used by the late-join
+   * backstop in `branch-invalidation.ts` to detect a missed live
+   * `branch-switched` broadcast: a reconnect that surfaces a different
+   * branch replays `handleBranchSwitched` client-side.
+   */
+  private lastObservedBranch: string | null = null;
+
+  /**
+   * Update the observed branch without triggering invalidation. Called by
+   * `handleBranchSwitched` after the live broadcast has already fired the
+   * recycle, so the comparison path on the next `server-info` frame
+   * doesn't double-invalidate.
+   */
+  setObservedBranch(branch: string): void {
+    this.lastObservedBranch = branch;
+  }
+
+  /**
+   * Compare-and-set the observed branch. Returns `true` when the supplied
+   * branch differs from the previously-observed value (signalling the
+   * caller should run `handleBranchSwitched`); returns `false` on first
+   * observation or matching branch. Always advances `lastObservedBranch`
+   * to the supplied value.
+   */
+  compareAndUpdateObservedBranch(branch: string): boolean {
+    const prior = this.lastObservedBranch;
+    this.lastObservedBranch = branch;
+    return prior !== null && prior !== branch;
+  }
+
   /** Register a callback that fires whenever pool state changes. */
   setOnChange(cb: PoolChangeCallback | null): void {
     this.onChange = cb;
@@ -579,11 +611,27 @@ export class ProviderPool {
     this.destroyEntry(entry);
     this.entries.delete(docName);
     this.lruOrder = this.lruOrder.filter((n) => n !== docName);
+    // Explicit close discards any pending replay buffer — the user closed
+    // the tab; resurrecting unsynced edits later would surprise them.
+    this.bufferedUpdates.delete(docName);
 
     if (this.activeDocName === docName) {
       this.activeDocName = null;
     }
     this.notify();
+  }
+
+  /**
+   * Drop every entry's pending replay buffer. Called by the
+   * `branch-switched` invalidation flow (`branch-invalidation.ts`) so that
+   * cross-branch policy ("edits authored against branch A are NOT valid
+   * against branch B") applies to the in-memory buffer slot — not just the
+   * IDB layer. Without this, a non-active doc's buffer populated by a
+   * prior `server-instance-mismatch` would replay onto the post-switch
+   * branch B Y.Doc the next time the user opened that doc.
+   */
+  clearBufferedUpdates(): void {
+    this.bufferedUpdates.clear();
   }
 
   /** Set the active document. Must already be open. */

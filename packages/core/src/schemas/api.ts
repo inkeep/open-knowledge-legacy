@@ -17,18 +17,26 @@ import { z } from 'zod';
 /**
  * Response shape for `GET /api/server-info`.
  *
- * Matches construction at `api-extension.ts:handleServerInfo`, which
- * writes `{ ok: true, serverInstanceId }`. The per-process
- * `serverInstanceId` is a UUID generated at server start; the client's
- * `ProviderPool` caches it and uses it in `expectedServerInstanceId`
- * claims on every WebSocket reconnect. Mismatch triggers the
- * client-side restart-recovery recycle path (see
+ * The per-process `serverInstanceId` is a UUID generated at server start;
+ * the client's `ProviderPool` caches it and uses it in
+ * `expectedServerInstanceId` claims on every WebSocket reconnect.
+ * Mismatch triggers the client-side restart-recovery recycle path (see
  * `provider-pool.ts:handleServerInstanceMismatch`).
+ *
+ * `currentBranch` is the late-join backstop for the CC1 `branch-switched`
+ * stateless broadcast. Stateless frames have no replay, so a client
+ * briefly offline during a branch switch silently re-syncs against the
+ * new branch with stale-branch IDB. The boot fetch and every reconnect
+ * fetch compare against the last-observed branch; a change triggers
+ * `handleBranchSwitched` exactly as the live broadcast would. Optional
+ * for backwards-compat with non-git deployments where branch is
+ * meaningless.
  */
 export const ServerInfoResponseSchema = z
   .object({
     ok: z.literal(true),
     serverInstanceId: z.string().min(1),
+    currentBranch: z.string().min(1).optional(),
   })
   .loose();
 export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;

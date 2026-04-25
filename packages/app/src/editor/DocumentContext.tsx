@@ -125,6 +125,15 @@ interface DocumentContextValue {
    */
   onBranchSwitched: (branch: string) => Promise<void>;
   /**
+   * Late-join backstop for CC1 `branch-switched`. Called whenever a
+   * channel reports the current branch (boot HTTP `/api/server-info`
+   * fetch + every CC1 `server-info` frame on `__system__` connect /
+   * reconnect). First call seeds the observed value; subsequent
+   * mismatches replay `handleBranchSwitched` client-side, covering the
+   * window where the live broadcast was missed.
+   */
+  observeBranch: (branch: string) => Promise<void>;
+  /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
    * while `server.lock` is absent — consumers that also need the URL
@@ -342,6 +351,14 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         const result = ServerInfoResponseSchema.safeParse(info);
         if (result.success) {
           p.setExpectedServerInstanceId(result.data.serverInstanceId);
+          // Seed the late-join backstop. First call seeds without
+          // invalidating; subsequent mismatches via CC1 server-info
+          // replay handleBranchSwitched client-side.
+          if (result.data.currentBranch !== undefined) {
+            if (p.compareAndUpdateObservedBranch(result.data.currentBranch)) {
+              void handleBranchSwitched(p, result.data.currentBranch);
+            }
+          }
         }
       })
       .catch(() => {
@@ -535,7 +552,17 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     onBranchSwitched: async (branch: string) => {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
+      p.setObservedBranch(branch);
       await handleBranchSwitched(p, branch);
+    },
+    observeBranch: async (branch: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      // First observation seeds the pool's branch state without invalidating;
+      // subsequent mismatches replay handleBranchSwitched client-side.
+      if (p.compareAndUpdateObservedBranch(branch)) {
+        await handleBranchSwitched(p, branch);
+      }
     },
     collabUrl,
     collabTerminal,
