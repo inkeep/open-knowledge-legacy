@@ -42,6 +42,11 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install --frozen-lockfile
+      # `knip` loads `packages/app/vite.config.ts`, which imports
+      # `@inkeep/open-knowledge-server`. The conditional exports map
+      # resolves to `dist/index.mjs` under Node's default conditions, so
+      # core + server must be built before knip can introspect the graph.
+      - run: bunx turbo run build --filter=@inkeep/open-knowledge-server --filter=@inkeep/open-knowledge-core
       - run: bun run knip
       - run: bun run lint
 
