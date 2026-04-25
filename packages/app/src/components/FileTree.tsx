@@ -129,9 +129,9 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
         'list.activeSelectionBackground': 'var(--sidebar-accent)',
         'list.activeSelectionForeground': 'var(--sidebar-accent-foreground)',
         'list.hoverBackground': 'var(--sidebar-hover)',
-        focusBorder: 'var(--sidebar-ring)',
-        'input.background': 'var(--sidebar)',
-        'input.border': 'var(--sidebar-border)',
+        focusBorder: 'var(--color-primary)',
+        'input.background': 'var(--input)',
+        'input.border': 'var(--border)',
       },
     }),
     '--trees-font-family-override': 'var(--font-sans)',
@@ -593,6 +593,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   useEffect(() => {
     return model.subscribe(() => {
+      if (model.isSearchOpen()) return;
       for (const ancestor of activeAncestorTreePathsRef.current) {
         const item = asDirectoryHandle(model.getItem(ancestor));
         if (item && !item.isExpanded()) item.expand();
