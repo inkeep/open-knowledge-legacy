@@ -41,7 +41,13 @@ export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched' as const;
  * backlink graph, hub graph, sync-status). Debounced + seq-incrementing
  * on the server; invalidates TanStack Query caches on the client.
  */
-export const DerivedViewChannelSchema = z.enum(['files', 'backlinks', 'graph', 'sync-status']);
+export const DerivedViewChannelSchema = z.enum([
+  'files',
+  'backlinks',
+  'graph',
+  'sync-status',
+  'session-activity',
+]);
 export type DerivedViewChannel = z.infer<typeof DerivedViewChannelSchema>;
 
 /** `server-info` broadcast shape. */

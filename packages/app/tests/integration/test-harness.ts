@@ -96,6 +96,13 @@ export interface CreateTestServerOptions {
    * Integration tests pass a small value (e.g. 150) for fast teardown.
    */
   keepaliveGraceMs?: number;
+  /**
+   * Enable shadow-repo git commits. Default false (avoids git overhead in most tests).
+   * Pass true to test paths gated on gitEnabled (e.g. CC1 session-activity signal).
+   */
+  gitEnabled?: boolean;
+  /** Git commit debounce in ms. Only relevant when gitEnabled: true. Default 200 for tests. */
+  commitDebounceMs?: number;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -125,7 +132,14 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     quiet: true,
     debounce: options.debounce ?? 200,
     maxDebounce: options.maxDebounce ?? 1000,
-    gitEnabled: false,
+    gitEnabled: options.gitEnabled ?? false,
+    commitDebounceMs: options.commitDebounceMs ?? 200,
+    // When gitEnabled: true, the test-harness contentDir IS the tmpdir root (no
+    // `content/` subdir). Persistence defaults contentRoot to 'content' when
+    // `relative(projectDir, contentDir)` is empty — which breaks the
+    // `git add content` call in buildWipTree. Override to '.' so the shadow-repo
+    // pathspec matches the single-directory layout tests use.
+    contentRoot: options.gitEnabled === true ? '.' : undefined,
     enableTestRoutes: true,
   });
 

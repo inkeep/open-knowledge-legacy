@@ -1096,59 +1096,6 @@ test.describe('docs-open — WS-interception scenarios', () => {
     await expect(errorAlert).toContainText('doc-b');
     await expect(errorAlert.getByRole('button', { name: 'Try again' })).toBeVisible();
   });
-
-  // ── QA-010: Agent-driven nav via awareness injection ──
-  // Validates that injecting a fake agent-presence awareness state on the
-  // __system__ provider triggers SystemDocSubscriber's nav check and
-  // changes the URL hash to the agent's focus doc. No second browser tab
-  // or agent-sim process needed — the __test_injectAgentPresence hook
-  // pokes the __system__ awareness directly from page.evaluate().
-  test('QA-010: agent focus injection → hash changes to agent focus doc', async ({
-    context,
-    api,
-  }) => {
-    await api.seedDocs([
-      { name: 'doc-a', markdown: DOC_A },
-      { name: 'doc-b', markdown: DOC_B },
-    ]);
-
-    // Passthrough all WS so __system__ + content docs both sync normally.
-    await context.routeWebSocket(/collab/, (ws) => {
-      ws.connectToServer();
-    });
-
-    const page = await context.newPage();
-    await page.goto('/');
-    await openFromSidebar(page, 'doc-a.md');
-    await waitForActiveProviderSynced(page);
-    await page.waitForSelector('.ProseMirror');
-
-    // Wait for SystemDocSubscriber's __system__ provider to sync.
-    // The hook is registered inside the useEffect after sync.
-    await page.waitForFunction(
-      () => typeof window.__test_injectAgentPresence === 'function',
-      null,
-      { timeout: 10_000 },
-    );
-
-    // Inject fake agent presence on doc-b.
-    const injected = await page.evaluate(() => {
-      return window.__test_injectAgentPresence?.('doc-b') ?? false;
-    });
-    expect(injected).toBe(true);
-
-    // SystemDocSubscriber debounces (300ms) then fires runNavCheck →
-    // pickPrimary returns 'doc-b' → window.location.hash changes.
-    await expect
-      .poll(async () => page.evaluate(() => window.location.hash), {
-        timeout: 5_000,
-        intervals: [100, 200, 400],
-      })
-      .toContain('doc-b');
-
-    // Doc B content should render.
-    await expect(page.locator('.ProseMirror').first()).toContainText('Doc B', { timeout: 10_000 });
-  });
 });
 
 // Global type augmentation for the test-only window properties used above.

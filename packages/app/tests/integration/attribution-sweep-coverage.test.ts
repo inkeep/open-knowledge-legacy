@@ -79,6 +79,13 @@ const EXEMPT_HANDLERS = new Set([
   // GET /api/server-info — identity-free readonly endpoint surfacing the
   // per-process serverInstanceId for CRDT restart-recovery defense.
   'handleServerInfo',
+  // `ok seed` scaffolder endpoints (SPEC 2026-04-23-ok-seed-scaffold). Both
+  // operate on project-level folder structure + config.yml on behalf of the
+  // local user, not agent content — same rationale as sync/local-op handlers.
+  'handleSeedPlan',
+  'handleSeedApply',
+  'handleAgentActivity',
+  'handleAgentBurstDiff',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

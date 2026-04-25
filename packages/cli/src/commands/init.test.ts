@@ -57,8 +57,19 @@ describe('runInit', () => {
     runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
     port: 3000,
   });
+  /**
+   * Stubbed installUserSkill used by every test unless overridden. Prevents
+   * the real `npx skills` subprocess from firing in the test suite, keeping
+   * runs hermetic + fast.
+   */
+  const defaultInstallUserSkill = async () => 'installed' as const;
   const runInitForTest = async (options: Parameters<typeof runInit>[0] = {}) =>
-    runInit({ cwd: testDir, home: fakeHome, ...options });
+    runInit({
+      cwd: testDir,
+      home: fakeHome,
+      installUserSkill: defaultInstallUserSkill,
+      ...options,
+    });
 
   beforeEach(() => {
     testDir = resolve(
@@ -94,9 +105,11 @@ describe('runInit', () => {
     const result = await runInitForTest();
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
-    // Post-V0-24.2 scaffold: config-only, no content subdirs
+    // Post-V0-24.2 scaffold: config-only, no content subdirs.
+    // Per SPEC 2026-04-22 (FR2): the internal .open-knowledge/AGENTS.md
+    // README is no longer scaffolded.
     expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'articles'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'external-sources'))).toBe(false);
@@ -248,7 +261,6 @@ describe('runInit', () => {
     expect(existsSync(claudeConfigPath())).toBe(false);
 
     // But the .open-knowledge/ config scaffold IS created
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
@@ -276,7 +288,7 @@ describe('runInit', () => {
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
     // Config scaffold should still have been created
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -477,6 +489,48 @@ describe('runInit', () => {
       expect(result.editors[0].error).toMatch(
         /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
       );
+    });
+
+    // Cowork install hint — SPEC 2026-04-24-skill-dual-track-install FR5 / D12.
+    // When Claude Desktop's config dir exists, `ok init` appends a one-line
+    // hint pointing at the docs + the pinned-version .skill release asset.
+    it('flags claudeDesktopDetected=true when Claude config dir exists', async () => {
+      // Create the config-dir parent that detectClaudeDesktopPresence probes.
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(true);
+    });
+
+    it('flags claudeDesktopDetected=false when Claude config dir is absent', async () => {
+      // No Claude config dir created — fakeHome/.claude exists (from beforeEach)
+      // but not the Application Support/Claude dir.
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(false);
+    });
+
+    it('renders the Cowork install hint when Claude Desktop is detected', async () => {
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      // Hint names the Desktop App + Chat & Cowork (distinguishes from
+      // Claude Code) and points at the `ok install-skill` command —
+      // users install the skill locally, no GitHub download in the loop.
+      expect(output).toContain('Claude Desktop App detected.');
+      expect(output).toContain('Claude Chat & Cowork');
+      expect(output).toContain('ok install-skill');
+    });
+
+    it('omits the Cowork install hint when Claude Desktop is absent', async () => {
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      expect(output).not.toContain('Claude Desktop detected. For Cowork:');
+      expect(output).not.toContain('openknowledge.skill');
     });
   });
 
@@ -829,72 +883,151 @@ describe('runInit', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Per-editor instruction file injection (from main)
+  // Zero project-root file writes (SPEC 2026-04-22 G1 / D2 / FR1)
   // -----------------------------------------------------------------------
 
-  describe('per-editor instruction file injection', () => {
-    it('writes CLAUDE.md when claude editor is selected', async () => {
-      const result = await runInitForTest({ editors: ['claude'] });
+  describe('zero project-root file writes', () => {
+    it('does not create root AGENTS.md when claude editor is selected', async () => {
+      await runInitForTest({ editors: ['claude'] });
 
-      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
-      expect(readFileSync(join(testDir, 'CLAUDE.md'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      const agentsEntry = result.rootInstructions.find((r) => r.file === 'AGENTS.md');
-      const claudeEntry = result.rootInstructions.find((r) => r.file === 'CLAUDE.md');
-      expect(agentsEntry?.action).toBe('created');
-      expect(claudeEntry?.action).toBe('created');
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(false);
     });
 
-    it('writes only AGENTS.md for cursor (no rule-file scaffolding)', async () => {
-      const result = await runInitForTest({ mcp: false, editors: ['cursor'] });
+    it('does not create AGENTS.md for cursor', async () => {
+      await runInitForTest({ mcp: false, editors: ['cursor'] });
 
-      // AGENTS.md is the tool-agnostic instruction surface; Cursor picks it up natively.
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes only AGENTS.md for windsurf (no rule-file scaffolding)', async () => {
+    it('does not create AGENTS.md for windsurf', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
-      const result = await runInitForTest({ mcp: false, editors: ['windsurf'] });
+      await runInitForTest({ mcp: false, editors: ['windsurf'] });
 
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes no extra instruction files for vscode (no instructionsPath)', async () => {
-      const result = await runInitForTest({ mcp: false, editors: ['vscode'] });
+    it('does not create AGENTS.md for vscode', async () => {
+      await runInitForTest({ mcp: false, editors: ['vscode'] });
 
-      // Only AGENTS.md — vscode has no instructionsPath
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.vscoderules'))).toBe(false);
     });
 
-    it('writes AGENTS.md + CLAUDE.md for claude + cursor + windsurf combined', async () => {
+    it('does not create any root-level agent files for claude + cursor + windsurf combined', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
-      const result = await runInitForTest({
+      await runInitForTest({
         mcp: false,
         editors: ['claude', 'cursor', 'windsurf'],
       });
 
-      // Only Claude has an instructionsPath (CLAUDE.md). Cursor + Windsurf read
-      // the root AGENTS.md natively, so no extra files are scaffolded for them.
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
-      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Legacy-injection non-interference (SPEC 2026-04-22 FR8 / D3 / US-011 / QA-007)
+  // -----------------------------------------------------------------------
+
+  describe('legacy-injection non-interference', () => {
+    it('leaves pre-existing open-knowledge marker blocks byte-identical in CLAUDE.md and AGENTS.md', async () => {
+      const legacyClaudeBody = [
+        '# My Project',
+        '',
+        'Some pre-existing content the user wrote themselves.',
+        '',
+        '<!-- open-knowledge:begin -->',
+        '## Legacy Open Knowledge section',
+        'Pretend this was injected by an older ok init version.',
+        '<!-- open-knowledge:end -->',
+        '',
+        'Post-section notes.',
+        '',
+      ].join('\n');
+      const legacyAgentsBody = [
+        '<!-- open-knowledge:begin -->',
+        '## Legacy section in AGENTS.md',
+        '<!-- open-knowledge:end -->',
+        '',
+        '# Project agents notes',
+        '',
+      ].join('\n');
+
+      const claudePath = join(testDir, 'CLAUDE.md');
+      const agentsPath = join(testDir, 'AGENTS.md');
+      writeFileSync(claudePath, legacyClaudeBody, 'utf-8');
+      writeFileSync(agentsPath, legacyAgentsBody, 'utf-8');
+
+      const beforeClaude = readFileSync(claudePath, 'utf-8');
+      const beforeAgents = readFileSync(agentsPath, 'utf-8');
+
+      // Run init with a no-op skill install so we don't shell out to `npx skills`.
+      await runInitForTest({ installUserSkill: async () => 'skip-current' });
+
+      // Byte-identical pre/post — the new init code does NOT touch legacy injections.
+      expect(readFileSync(claudePath, 'utf-8')).toBe(beforeClaude);
+      expect(readFileSync(agentsPath, 'utf-8')).toBe(beforeAgents);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // installUserSkill wiring (SPEC 2026-04-22 FR6 / US-008 / QA-002 / QA-004)
+  // -----------------------------------------------------------------------
+
+  describe('installUserSkill wiring', () => {
+    it('returns skillInstall = "installed" when the install succeeds', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'installed',
+      });
+      expect(result.skillInstall).toBe('installed');
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('User-global skill:');
+      expect(output).toContain('installed to detected agent hosts');
+    });
+
+    it('returns skillInstall = "skip-current" when the sidecar is current', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'skip-current',
+      });
+      expect(result.skillInstall).toBe('skip-current');
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('User-global skill:');
+      expect(output).toContain('already installed at current version');
+    });
+
+    it('returns skillInstall = "failed" without throwing — init still exits 0 (QA-004)', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'failed',
+      });
+      expect(result.skillInstall).toBe('failed');
+      // MCP config still written successfully
+      expect(result.mcpAction).toBe('written');
+      // Manual-install hint surfaces in the summary
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('install failed');
+      expect(output).toContain('npx skills');
+    });
+
+    it('passes opts.home through to installUserSkill (D15)', async () => {
+      let capturedHome: string | undefined;
+      await runInitForTest({
+        installUserSkill: async (opts) => {
+          capturedHome = opts?.home;
+          return 'installed';
+        },
+      });
+      expect(capturedHome).toBe(fakeHome);
     });
   });
 

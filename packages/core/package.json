@@ -5,14 +5,20 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.mjs"
     },
     "./shadow-repo-layout": {
+      "development": "./src/shadow-repo-layout.ts",
       "types": "./src/shadow-repo-layout.ts",
-      "default": "./src/shadow-repo-layout.ts"
+      "default": "./dist/shadow-repo-layout.mjs"
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@handlewithcare/remark-prosemirror": "0.1.5",
     "@tiptap/core": "^3.22.3",
@@ -52,6 +58,7 @@
     "zod": "^4.3.6"
   },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "bun test src/",
     "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
@@ -74,6 +81,7 @@
     "commonmark.json": "^0.31.0",
     "fast-check": "^4.6.0",
     "mdast-util-to-hast": "^13.2.1",
+    "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
 }

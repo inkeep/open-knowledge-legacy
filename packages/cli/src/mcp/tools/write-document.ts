@@ -21,8 +21,6 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
-  '',
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
@@ -92,7 +90,14 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      const noPreviewAttached = subscriberCount === 0;
+      // Once-per-session attach hint: fires only when no editor is attached
+      // to `__system__` at all — not when the current doc happens to have
+      // zero subscribers (which is normal for an agent's second+ doc before
+      // server-push carries the open tab there).
+      const systemSubscriberCount =
+        typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
+      const noPreviewAnywhere = systemSubscriberCount === 0;
+      const noPreviewOnThisDoc = subscriberCount === 0;
 
       const hints = Array.isArray(result.hints) ? result.hints : undefined;
 
@@ -104,11 +109,11 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
 
       const lines: string[] = [`Written successfully (${args.position}).`];
       if (preview) lines.push(`Preview: ${preview.url}`);
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         lines.push(
           preview
-            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
-            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+            ? `Open ${preview.url} in your preview browser.`
+            : `No preview attached. Start the UI.`,
         );
       }
       if (summaryHint) lines.push(summaryHint);
@@ -119,7 +124,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       }
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached && !hints && !summaryResult) {
+      if (!preview && !noPreviewAnywhere && !noPreviewOnThisDoc && !hints && !summaryResult) {
         return textResult(text);
       }
 
@@ -128,9 +133,10 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         structured.previewUrl = preview.url;
         structured.previewUrlSource = preview.source;
       }
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         structured.warning = {
-          message: `No preview attached to ${normalized.docName}.`,
+          message: `Open the previewUrl in your preview browser.`,
+          action: 'attach-preview-once' as const,
           previewUrl: preview?.url ?? null,
         };
       }

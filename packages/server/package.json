@@ -5,10 +5,15 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.mjs"
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@hocuspocus/server": "4.0.0-rc.1",
     "@inkeep/open-knowledge-core": "workspace:*",
@@ -35,6 +40,9 @@
     "pino-pretty": "^13.1.3",
     "simple-git": "^3.36.0",
     "ws": "^8.20.0",
+    "y-protocols": "^1.0.7",
+    "yaml": "^2.7.1",
+    "yazl": "^3.3.1",
     "yjs": "^13.6.30",
     "zod": "^4.3.6"
   },
@@ -42,12 +50,15 @@
     "@parcel/watcher": "^2.5.6"
   },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
   "devDependencies": {
     "@types/picomatch": "^4.0.3",
     "@types/ws": "^8.18.1",
+    "@types/yazl": "^2.4.6",
+    "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
 }

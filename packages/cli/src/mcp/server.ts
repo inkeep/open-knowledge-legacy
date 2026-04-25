@@ -22,11 +22,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
-import { PREVIEW_GUIDANCE } from '../content/init.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import type { AgentIdentity } from './agent-identity.ts';
 import { createMcpLogger, type McpLogger } from './logger.ts';
-import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
+import { registerAllTools } from './tools/index.ts';
 import type { ConfigOrResolver, ServerUrlOrResolver } from './tools/shared.ts';
 
 interface McpServerOptions {
@@ -172,117 +171,45 @@ export function createKeepaliveProjectState(
 /** Module-level logger; initialized in `startMcpServer`. */
 let logger: McpLogger | undefined;
 
-export function buildInstructions(config: Config, opts?: { dynamicConfig?: boolean }): string {
+/**
+ * MCP `instructions` handshake string — emitted on `initialize`.
+ *
+ * Compressed to ≤ 1,500 bytes per SPEC 2026-04-22 (FR3 / §9) so it fits
+ * under Claude Code's 2 KB per-server cap without truncation. Front-loads
+ * the STOP rules on native `Read`/`Grep`/`Glob`/`Edit` + preview-before-edit
+ * contract; full behavioral guidance lives in the user-global Agent Skill
+ * (bundled at `packages/server/assets/skills/open-knowledge/SKILL.md` and
+ * installed via `installUserSkill` from `@inkeep/open-knowledge-server`).
+ *
+ * Per-tool descriptions reach clients via `tools/list` — we do NOT inline
+ * them here (SPEC D13).
+ */
+export function buildInstructions(config: Config, _opts?: { dynamicConfig?: boolean }): string {
   const { dir, include, exclude } = config.content;
   const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
-  const configScopeHeading = opts?.dynamicConfig
-    ? '## Startup Project Content Layout (Informational)'
-    : "## This project's content layout (live config)";
-  const configScopeNote = opts?.dynamicConfig
-    ? `**Multi-project note:** tool calls resolve \`.open-knowledge/config.yml\` from the **effective cwd** for that invocation (explicit tool \`cwd\` → exactly one client root → error). The values below describe the MCP process startup project only; they are not a routing fallback.`
-    : `**Path contract (\`config.yml\`):** \`.open-knowledge/config.yml\` (plus optional \`~/.open-knowledge/config.yml\`, with CLI/env overrides) owns the \`content\` keys. The table above is **this MCP session's resolved view** of that contract — same rules, no guessing from folder names. A file is an Open Knowledge document iff it lives under **Content directory**, matches at least one **Include glob**, and is not removed by **Exclude globs** or \`.gitignore\`.`;
+  const includeLine = include.map((p) => `\`${p}\``).join(', ');
 
-  return `# MCP Instructions v2 — exec-primary (2026-04-13)
+  return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-${configScopeHeading}
+**STOP — native tools on in-scope \`.md\` / \`.mdx\`.** Do NOT use host-native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on markdown inside the content dir. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
 
-- **Content directory:** \`${dir}\`
-- **Include globs:** ${include.map((p) => `\`${p}\``).join(', ')}
-- **Exclude globs:** ${excludeLine}
+**Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
-${configScopeNote}
+Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
 
-Paths in \`exec\` commands are resolved relative to the content directory. The sandbox prevents paths escaping it.
+## Reads
 
-**Default rule:** with the usual \`**/*.md\` + \`**/*.mdx\` globs from repo root, **every** such file under the content directory is an Open Knowledge document unless \`.gitignore\` or \`content.exclude\` drops it. Folder names (\`specs/\`, \`reports/\`, …) do not matter. If \`content.include\` was narrowed, only matching paths use \`exec\`.
+\`exec("cat <path>.md")\` / \`exec("ls <dir>")\` / \`exec("grep -rn <term> <dir>")\` — primary; returns contents + enrichment. Typed \`read_document\` / \`search\` when you need \`structuredContent\`.
 
-## Navigation — \`exec\` is **mandatory** for Open Knowledge \`.md\` / \`.mdx\` (this server is registered)
+## Preview — open at session start
 
-**STOP:** Do not use the host IDE's \`Read\`, \`Grep\`, or \`Glob\` on in-scope \`.md\` / \`.mdx\` — use \`exec\` (or typed \`read_document\` / \`search\` when you need fixed \`structuredContent\`). Native file tools skip frontmatter, backlinks, shadow-repo activity, and project git history; reserve them for **source code and non-markdown** paths.
+Claude Code Desktop: \`preview_start("open-knowledge-ui")\`. Other hosts: open-URL tool or \`open <url>\`. If a write response lacks the \`attach-preview-once\` warning, a browser is attached — do nothing. Server not running: \`open-knowledge ui\`.
 
-**MCP clients differ:** Your agent host may expose these tools directly or only through its MCP integration (server name from \`tools/list\`, user-chosen label). **That still counts as this server being available.** Invoke \`exec\` / \`search\` / \`read_document\` the way **your product's docs** describe — not native \`Grep\` on in-scope markdown. Missing a top-level symbol named \`exec\` is not an excuse.
+## Full guidance
 
-\`exec\` provides the same enrichment as the typed tools plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them. **Escape hatch:** only if this MCP server is **not** registered for the workspace, or after an MCP **call** failed — say \`Open Knowledge MCP unavailable:\`. Never use the hatch to skip trying MCP first.
+Detailed conventions (wiki-link authoring, frontmatter, anti-patterns) live in the installed \`open-knowledge\` Agent Skill. If missing, run \`npx @inkeep/open-knowledge init\`.
 
-For paths **outside** the include globs above, use native tools.
-
-Examples:
-
-- Read a file: \`exec("cat <path>.md")\` — returns file contents + rich enrichment
-- List a directory: \`exec("ls <dir>")\` — each result comes with per-file enrichment in \`structuredContent.enrichedPaths\`
-- Search: \`exec("grep -rn <term> <dir>")\` — matches + enrichment per matched file
-- Combine: \`exec("grep -rn <term> <dir> | head -5")\` — top 5 matches with full enrichment
-
-Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, \`wc\`, \`sort\`, \`uniq\`, \`cut\`. Pipes (\`|\`) work between stages. Redirections, subshells, and writes are rejected with a category-specific error telling you the next step.
-
-### Scope searches — \`grep\` and \`find\` can be slow if unscoped
-
-Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For reads inside the content tree, scope deliberately:
-
-- **Filter to markdown:** \`grep -rn TERM --include="*.md" <dir>\` — skips every non-md file.
-- **Scope to a known knowledge dir:** \`grep -rn TERM reports/ specs/\` (or whatever folders the project uses) beats \`grep -rn TERM .\`.
-- **Bail early:** pipe through \`| head -20\` for bounded output. The server waits for the pipeline to finish before returning, so unscoped commands block on the slowest stage.
-- **Existence vs. enumeration:** "does X exist in any tracked doc?" is \`grep -rl PATTERN <dir>\` (list matching files, unbounded) — NOT \`grep -rn PATTERN <dir> | head -N\`. When \`head\` truncates, alphabetically-earlier files dominate the output and later files silently go missing. The server surfaces a banner when \`head\` / \`tail\` hits its cap, but the fix is to pick the right command up front.
-- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, \`.claude\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
-
-### Why \`exec\` over typed tools
-
-\`exec\` is the default because it subsumes \`read_document\` and \`search\` enrichment paths (same shared helper under the hood) and adds bash composition. The typed tools remain registered as **Typed call sites (advanced)** — present for callers that consume \`structuredContent\` with fixed shapes — but they're not recommended for common agent reads.
-
-## Writing
-
-Agent writes to in-scope \`.md\` / \`.mdx\` (paths under \`content.include\`) **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
-
-${PREVIEW_GUIDANCE}
-
-## Linking — lean on \`[[wiki-links]]\` aggressively
-
-**When writing or editing any document, link liberally to every other document it relates to.** Open Knowledge's value compounds with link density: backlinks surface cross-document context in every \`exec("cat X.md")\` read, \`get_hubs\` / \`get_orphans\` reveal structure, and agents (you, next session) navigate the knowledge base by following links the way you'd navigate a wiki. A document with no outbound links is an island; an island in a knowledge base is worse than no document at all.
-
-**Defaults when writing:**
-
-- **Every noun-phrase that names another document is a link.** If you mention a concept, project, decision, or entity that has (or should have) its own page, write it as \`[[Page Title]]\` instead of plain prose. Don't stop to check whether the target exists first — a redlink signals "this should exist" to future work. Over-linking is the goal, not the failure mode.
-- **Cross-link siblings.** When you create a document in a folder, skim the siblings (\`exec("ls <folder>")\`) and link to the 2–3 most related ones. A "See also" section at the bottom is fine; inline links woven through the prose are better.
-- **Link back to sources.** If a document is derived from research, spec decisions, external sources, or prior reports, link to them — don't re-summarize. The reader can follow.
-- **Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\`.** Wiki-links resolve by docName (file path minus \`.md\`) and participate in the backlinks index. Markdown links to other wiki files don't.
-- **Update both sides when possible.** If you add an important link from A → B, consider whether B should link back to A or to a landing page that lists documents like A.
-
-**Rule of thumb:** if a human reader would want to click a term to learn more, make it a link. Err on the side of too many links.
-
-## Cadence — maintain hubs as you create children
-
-When you create or meaningfully edit a doc inside a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before moving to the next child. Write one child → update hub → write next child. Don't batch five children and then the hub.
-
-**Why:** the browser follows your focus in real time via push-nav on every write. Hub-as-you-go makes your work legible to the human watching — each pulse is a complete thought (child → hub → child → hub), and the hub doc itself functions as the live progress bar. Batched writes make the nav flicker, flatten the narrative, and hide the structure you're building.
-
-When \`write_document\` creates a doc with zero incoming backlinks and a hub candidate exists in the folder tree, the response includes a \`hints: [{type: 'orphan', parentCandidates: [...], message: ...}]\` entry — that's the soft nudge to interleave the hub update next. Pair with the link-as-you-write discipline above.
-
-## Frontmatter conventions
-
-Open Knowledge has two metadata surfaces that merge at read time:
-
-1. **Per-file frontmatter** — YAML at the top of each \`.md\` / \`.mdx\`: \`title\` (required), \`description\` (required), \`tags\` (recommended). This is where a file's own identity lives.
-2. **Folder-level defaults via \`.open-knowledge/config.yml\` \`folders:\`** — declare \`title\` / \`description\` / \`tags\` defaults keyed by glob \`match:\`. Rules apply in declaration order; later matches override earlier scalars. Tags concatenate across ALL matching rules (in declaration order), with file tags appended last, and first-occurrence preserved on dedup. The file's own frontmatter wins per-scalar; folder defaults fill in blanks.
-
-Folder metadata lives in \`config.yml\`, **not** in content files — this is intentionally different from the rejected \`INDEX.md\`-inside-content pattern. The merge happens on every \`exec\` / \`read_document\` / \`search\` call and is never written back to disk.
-
-## Tools
-
-**Primary:**
-- \`exec\` — read-only bash with enriched output (see above).
-
-**Workflow (instructional tools):**
-- \`init-content\`, \`ingest\`, \`research\`, \`consolidate\` — each returns structured instructions you follow. Output text includes the live \`content.dir\` value (${dir}) so you don't need to re-read the config.
-
-**Writes:**
-- \`write_document\`, \`edit_document\`, \`rename_document\`, \`undo_agent_edit\`, \`redo_agent_edit\` — mutate the CRDT through the server; attribution captured.
-
-**Typed call sites (advanced) — prefer \`exec\` for common reads:**
-- \`read_document\`, \`search\`, \`list_documents\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`.
-
-${Object.entries(TOOL_DESCRIPTIONS)
-  .map(([name, desc]) => `### \`${name}\`\n${desc}`)
-  .join('\n\n')}
+**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed ONLY when no OK MCP is registered, or immediately after an OK MCP call failed — then begin your sentence with \`Open Knowledge MCP unavailable:\`. Non-markdown: native tools always.
 `;
 }
 

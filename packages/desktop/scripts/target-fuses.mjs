@@ -41,9 +41,19 @@ import { FuseState, FuseV1Options } from '@electron/fuses';
 //     (already a full-compromise scenario). Gatekeeper notarization ticket
 //     validates on download (quarantine bit path); local tampering is out of
 //     scope for the code-signing threat model.
+// EnableCookieEncryption is DISABLED. Audit (specs/2026-04-24-desktop-
+// packaging-first-boot/SPEC.md §6 D5) found exactly one cookie in the
+// packaged Cookies SQLite store — shadcn's `sidebar_state=true|false`
+// open/closed flag set from a file:// page. file:// cookies have
+// `is_secure: 0` so Chromium's cookie-encryption path never engages on
+// them (it gates on is_secure: 1). The fuse-on path was a no-op for our
+// actual cookie traffic while triggering a Keychain prompt at every
+// first launch — defense-in-depth that defended nothing. Re-enable when
+// a feature actually stores a secret in a cookie (would coincide with
+// adding a webview to a third-party service).
 export const targetFuses = {
   [FuseV1Options.RunAsNode]: true,
-  [FuseV1Options.EnableCookieEncryption]: true,
+  [FuseV1Options.EnableCookieEncryption]: false,
   [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
   [FuseV1Options.EnableNodeCliInspectArguments]: true,
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
