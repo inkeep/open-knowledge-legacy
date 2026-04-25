@@ -1,20 +1,18 @@
 /**
- * Dev-plugin middleware that serves contentDir assets via sirv with a
+ * Middleware that serves contentDir assets via sirv with a
  * Content-Disposition policy and a fail-closed 404 guard.
  *
- * In production the equivalent policy is served by `ok ui`
- * (`packages/cli/src/commands/ui.ts:178-282`) using the same sirv
- * + `isScriptedDocumentExtension` attachment guard pattern. `bun run dev`
- * combines Vite + collab + asset serving on one port, so it needs its
- * own middleware that layers the same attachment-vs-inline dispatch.
+ * Both surfaces consume this single implementation:
+ *   - `bun run dev` Vite plugin (combines Vite + collab + asset serving
+ *     on one port) — `packages/app/src/server/hocuspocus-plugin.ts`.
+ *   - `ok ui` production server — `packages/cli/src/commands/ui.ts`.
  *
  * Extracted as a pure factory so it can be unit-tested without spinning
- * up Vite. Mirrors the `api-config-handler.ts` extraction precedent. The
- * Vite plugin supplies the real `contentFilter` + sirv instance; tests
- * supply stubs (unit tier) or a real filter + sirv against a tmpdir
- * (narrow-integration tier).
+ * up an HTTP server. The consumer supplies the real `contentFilter` +
+ * sirv instance; tests supply stubs (unit tier) or a real filter + sirv
+ * against a tmpdir (narrow-integration tier).
  *
- * Policy (enforces SPEC 2026-04-24b — D-M accept-all + R7 alignment):
+ * Policy:
  *   1. Reject paths excluded by the content filter → fall through to
  *      `next()` so the next middleware (Vite's static serve, then SPA
  *      fallback) can handle them. This is load-bearing for `/src/...`
@@ -23,24 +21,18 @@
  *   3. For `.md` / `.mdx` direct-URL requests: skip Content-Disposition
  *      dispatch entirely. Normal editor flow uses hash routing; forcing
  *      `attachment` would break dev-tool `curl` of markdown paths.
- *   4. For `INLINE_RENDERABLE_EXTENSIONS` members (images, PDF, video,
- *      audio): `Content-Disposition: inline` → browser renders in the
- *      new-tab built-in viewer.
+ *   4. For inline-renderable extensions (images, PDF, video, audio):
+ *      `Content-Disposition: inline` → browser renders in the new-tab
+ *      built-in viewer.
  *   5. For everything else admitted by the content filter (office docs,
  *      archives, fonts, tabular/text data): `Content-Disposition:
  *      attachment` → browser prompts download rather than rendering
  *      ambiguously. Aligns with HedgeDoc's GHSA-x74j-jmf9-534w posture.
- *   6. sirv fall-through (file not found on disk) for `ASSET_EXTENSIONS`
- *      or `EXECUTABLE_BLOCKLIST_EXTENSIONS` paths → explicit `404`
- *      BEFORE calling `next()`. Prevents Vite's `htmlFallbackMiddleware`
- *      from returning `index.html` as `text/html` for missing asset
- *      URLs (the exact failure the user surfaced for `.m4v` before this
- *      amendment).
- *
- * @see packages/app/src/server/hocuspocus-plugin.ts — the consumer
- * @see packages/app/src/server/asset-serve-middleware.test.ts — unit tier
- * @see packages/app/src/server/asset-serve-middleware.integration.test.ts
- *   — narrow-integration tier (real sirv + http.createServer + fetch)
+ *   6. sirv fall-through (file not found on disk) for asset-extension
+ *      or executable-blocklist paths → explicit `404` BEFORE calling
+ *      `next()`. Prevents Vite's `htmlFallbackMiddleware` (or sirv's
+ *      `single: true` SPA fallback in `ok ui`) from returning
+ *      `index.html` as `text/html` for missing asset URLs.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';

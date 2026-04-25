@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import {
   type AgentDirectConnection,
   AgentSessionManager,
+  applyAgentMarkdownWrite,
   applyAgentUndo,
   iconFromClientName,
 } from './agent-sessions.ts';
@@ -351,5 +352,53 @@ describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
     expect(session.um.undoStack.length).toBe(0);
     expect(applyAgentUndo(session, 'session')).toBe(false);
     expect(applyAgentUndo(session, 'last')).toBe(false);
+  });
+
+  test('post-undo XmlFragment uses embedResolver for `![[file]]` refs', async () => {
+    // Composition-equivalence with applyAgentMarkdownWrite: the post-undo
+    // body re-parse must use the same resolver so PM image `src` lands as
+    // the resolved disk path, not the literal target. Without this, the
+    // editor renders the inline image with a broken src until the next
+    // round-trip.
+    const session = await manager.getSession('doc-resolve.md', 'agent-resolve');
+    const xmlFragment = session.dc.document.getXmlFragment('default');
+    const ytext = session.dc.document.getText('source');
+
+    const embedResolver = {
+      resolveEmbed: (basename: string) =>
+        basename === 'photo.png' ? 'attachments/photo.png' : null,
+      sourcePath: 'doc-resolve.md',
+    };
+
+    // Write 1: body containing `![[photo.png]]`
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '![[photo.png]]\n', 'replace', embedResolver);
+    }, session.origin);
+    session.um.stopCapturing();
+
+    // Write 2: a different body so 'last' undo brings us back to Write 1.
+    session.dc.document.transact(() => {
+      applyAgentMarkdownWrite(session.dc.document, '# Heading\n', 'replace', embedResolver);
+    }, session.origin);
+
+    // Sanity: post-write-2 ytext is the heading, no embed.
+    expect(ytext.toString()).toContain('# Heading');
+
+    // Undo 'last' restores the wiki-embed body. Pass embedResolver so the
+    // re-parse maps `photo.png` → `attachments/photo.png` on the PM image.
+    const undone = applyAgentUndo(session, 'last', embedResolver);
+    expect(undone).toBe(true);
+
+    // The server-side mdast→PM dispatch emits a PM `image` (NOT a
+    // `wikiLinkEmbed` node) for image-extension embeds — handler dispatch
+    // covers this in packages/core/src/markdown/index.ts. Y.XmlFragment's
+    // `toJSON()` returns the XML serialization, so we assert the resolved
+    // src landed on the image element's `src` attribute. Without the
+    // resolver fix the post-undo XmlFragment would carry `src="photo.png"`
+    // (literal target), diverging from a fresh-load shape.
+    const xmlString = xmlFragment.toJSON();
+    expect(xmlString).toContain('<image');
+    expect(xmlString).toContain('src="/attachments/photo.png"');
+    expect(xmlString).not.toContain('src="photo.png"');
   });
 });

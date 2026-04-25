@@ -18,6 +18,11 @@ export {
   ROLLBACK_ORIGIN,
   safeSubdir,
 } from './api-extension.ts';
+export {
+  type AssetServeFilter,
+  createAssetServeMiddleware,
+  type SirvLikeMiddleware,
+} from './asset-serve-middleware.ts';
 export { seedBasenameIndex } from './asset-walk.ts';
 export {
   type BacklinkEntry,

@@ -33,9 +33,9 @@ import {
   EXECUTABLE_BLOCKLIST_EXTENSIONS,
   INLINE_RENDERABLE_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
-import { createContentFilter } from '@inkeep/open-knowledge-server';
 import sirv from 'sirv';
 import { createAssetServeMiddleware } from './asset-serve-middleware.ts';
+import { createContentFilter } from './content-filter.ts';
 
 interface Harness {
   baseURL: string;

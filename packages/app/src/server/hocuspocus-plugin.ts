@@ -20,6 +20,7 @@ import {
   INLINE_RENDERABLE_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
 import {
+  createAssetServeMiddleware,
   createServer,
   ensureProjectGit,
   handleCollabSocketError,
@@ -33,7 +34,6 @@ import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
 import { computeDevApiConfigResponse } from './api-config-handler.ts';
-import { createAssetServeMiddleware } from './asset-serve-middleware.ts';
 
 // Counts `configureServer` invocations so the warn-on-restart message can
 // name the count. Referenced in `[collab]` diagnostic logs — see the

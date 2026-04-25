@@ -1,25 +1,14 @@
 /**
- * App-layer WikiLinkEmbed extension — V2 plain-DOM NodeView routed via the
- * shared InteractionLayer (FR-A5, finally landed 2026-04-24b).
+ * App-layer WikiLinkEmbed extension — plain-DOM NodeView routed via the
+ * shared InteractionLayer.
  *
- * FR-A5 was originally scoped in the 2026-04-23 asset-click amendment but
- * its `createNodeInteractionBridgePlugin` was never landed — the drop-time
- * `wikiLinkEmbed` atom node had no renderer-side dispatcher wiring, so
- * clicks on drop-time chips (`<a target="_blank">` from core
- * `renderHTML`) fell through to the browser's default new-window path. In
- * Electron the `setWindowOpenHandler` intercept checked
- * `matchAssetUrl` against `ASSET_EXTENSIONS` and returned
- * `{action: 'deny'}` silently for any extension outside the narrow set —
- * dropping `.m4v` and clicking produced nothing, no error, no feedback.
- *
- * This NodeView mirrors the `wiki-link.ts` pattern (atom-node +
- * module-level counter + InteractionLayer registration + in-place DOM
- * update). Key difference: image extensions render as `<img>` (matching
- * the core `renderHTML` output) and do NOT register with the layer —
- * clicking an inline image is a PM-selection operation, not an asset
- * dispatch. Non-image extensions render as a clickable `<a>` chip +
- * register `handlePrimary` → `dispatchAssetClick`, giving both web-tab
- * and Electron-shell-open the correct routing.
+ * Mirrors the `wiki-link.ts` pattern (atom-node + module-level counter +
+ * InteractionLayer registration + in-place DOM update). Image extensions
+ * render as `<img>` (matching the core `renderHTML` output) and do NOT
+ * register with the layer — clicking an inline image is a PM-selection
+ * operation, not an asset dispatch. Non-image extensions render as a
+ * clickable `<a>` chip + register `handlePrimary` → `dispatchAssetClick`,
+ * giving both web-tab and Electron-shell-open the correct routing.
  *
  * Post-roundtrip, the `wikiLinkEmbed` atom is converted by Observer B to
  * PM text + link-mark with `sourceForm: 'wikiembed'`, which routes

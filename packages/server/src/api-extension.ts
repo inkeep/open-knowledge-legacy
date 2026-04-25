@@ -2611,7 +2611,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        undone = applyAgentUndo(session, scope);
+        // Pass embedResolver so the post-undo body re-parse maps
+        // `![[photo.png]]` → resolved src on PM image nodes — matching
+        // applyAgentMarkdownWrite's composition contract so the XmlFragment
+        // shape stays equivalent to a fresh load of the same body.
+        undone = applyAgentUndo(
+          session,
+          scope,
+          options.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+            : undefined,
+        );
         // FR-5 / D42: record attribution for the undo write so the shadow-repo
         // L2 drain fans it out under this session's writer-id. Skip when the
         // UM stack was empty — a no-op undo has no mutation to attribute.

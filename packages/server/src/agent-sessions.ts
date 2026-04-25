@@ -216,7 +216,22 @@ function applyAgentMarkdownWriteInner(
  *
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
  */
-export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): boolean {
+export function applyAgentUndo(
+  session: SessionRecord,
+  scope: 'last' | 'session',
+  /**
+   * Embed-resolver context for `mdManager.parseWithFallback` — same shape
+   * `applyAgentMarkdownWrite` accepts. Required for parity: the post-undo
+   * body re-parse maps `![[photo.png]]` → resolved disk path so the
+   * XmlFragment shape matches what `onLoadDocument` would produce on a
+   * fresh load. Omitting it leaves PM image `src` as the literal target,
+   * which renders as a broken inline preview until the next round-trip.
+   */
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
+): boolean {
   return withSpanSync(
     'agent.applyAgentUndo',
     {
@@ -226,14 +241,21 @@ export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'
       },
     },
     () => {
-      const undone = applyAgentUndoInner(session, scope);
+      const undone = applyAgentUndoInner(session, scope, embedResolver);
       setActiveSpanAttributes({ 'agent.undo_effective': undone });
       return undone;
     },
   );
 }
 
-function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'): boolean {
+function applyAgentUndoInner(
+  session: SessionRecord,
+  scope: 'last' | 'session',
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
+): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
@@ -261,7 +283,7 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
     const fullMd = ytext.toString();
     const { body, frontmatter: newFm } = stripFrontmatter(fullMd);
 
-    const parsedJson = mdManager.parseWithFallback(body);
+    const parsedJson = mdManager.parseWithFallback(body, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);

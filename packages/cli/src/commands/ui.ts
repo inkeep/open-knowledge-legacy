@@ -28,40 +28,19 @@
  * forgotten UI doesn't linger overnight. Cancelled by `handle.release()`.
  */
 import type { Server as HttpServer, ServerResponse } from 'node:http';
-import { defaultScheduler, type Scheduler } from '@inkeep/open-knowledge-core';
+import {
+  ASSET_EXTENSIONS,
+  defaultScheduler,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+  type Scheduler,
+} from '@inkeep/open-knowledge-core';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
 
 /** 12 hours — D-025 default safety-net interval. */
 export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
-
-/**
- * Extensions that browsers execute inline as scripted documents when
- * served from contentDir under the editor's same origin. Serving these
- * with `Content-Disposition: attachment` flips top-level navigation from
- * "execute" to "download" — a planted `xss.html` cannot run against the
- * editor's `/api/*` endpoints. `<img src>` / `<link rel=stylesheet>` tags
- * still render (Content-Disposition is ignored for subresources), so
- * wiki-embedded SVG images keep working per NFR-3.
- */
-const SCRIPTED_DOCUMENT_EXTENSIONS = new Set([
-  'html',
-  'htm',
-  'xhtml',
-  'xml',
-  'mhtml',
-  'svg',
-  'svgz',
-]);
-
-function isScriptedDocumentExtension(urlPath: string): boolean {
-  const questionMark = urlPath.indexOf('?');
-  const clean = questionMark >= 0 ? urlPath.slice(0, questionMark) : urlPath;
-  const dotIdx = clean.lastIndexOf('.');
-  if (dotIdx < 0) return false;
-  return SCRIPTED_DOCUMENT_EXTENSIONS.has(clean.slice(dotIdx + 1).toLowerCase());
-}
 
 export interface UiServerHandle {
   /**
@@ -134,9 +113,14 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   const { existsSync } = await import('node:fs');
   const { createServer: createHttpServer } = await import('node:http');
   const { resolve } = await import('node:path');
-  const { acquireUiLock, readServerLock, releaseUiLock, updateUiLockPort } = await import(
-    '@inkeep/open-knowledge-server'
-  );
+  const {
+    acquireUiLock,
+    createAssetServeMiddleware,
+    createContentFilter,
+    readServerLock,
+    releaseUiLock,
+    updateUiLockPort,
+  } = await import('@inkeep/open-knowledge-server');
   const { default: sirv } = await import('sirv');
   const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
 
@@ -160,7 +144,10 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     ? sirv(assetDir, { single: true, gzip: true, immutable: true, extensions: [] })
     : null;
 
-  // Filter-aware content asset serving (matches start.ts behavior pre-split).
+  // Filter-aware content asset serving — shared `createAssetServeMiddleware`
+  // applies the same Content-Disposition policy + 404 fail-closed guard the
+  // dev-plugin path uses, so dev and prod cannot diverge on serve semantics.
+  //
   // Use `dev: true` so sirv resolves files lazily instead of recursively
   // crawling the entire content root at boot. Repo-root content dirs often
   // include huge trees (`node_modules`, build artifacts) and can contain
@@ -168,15 +155,30 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // fail before it has served a single request.
   //
   // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
-  // `extensions: []` disables sirv's default `['html', 'htm']` fallback.
-  // Stored-XSS defense under D-M accept-all: without this, a request to
-  // `/docs/evil` transparently resolves `docs/evil.html` and serves it as
-  // `text/html`, bypassing the `isScriptedDocumentExtension` gate below
-  // (the gate matches on the requested URL's extension via lastIndexOf('.')
-  // which is -1 for extensionless URLs). Refusing extension inference
-  // confines lookup to the literal requested URL.
-  const contentSirv = existsSync(contentDir)
-    ? sirv(contentDir, { dotfiles: false, dev: true, extensions: [] })
+  // `extensions: []` disables sirv's default `['html', 'htm']` fallback —
+  // without this, a request to `/docs/evil` transparently resolves
+  // `docs/evil.html` and serves it as `text/html`, bypassing the
+  // Content-Disposition dispatch (which matches on the requested URL's
+  // extension). Refusing extension inference confines lookup to the
+  // literal requested URL.
+  //
+  // The asset-serve middleware itself only fires when `contentSirv` is
+  // present; if `contentDir` is missing we skip filter construction and
+  // route everything through the SPA static handler (matches the
+  // pre-middleware behavior for missing-contentDir setups).
+  const assetServeMiddleware = existsSync(contentDir)
+    ? createAssetServeMiddleware({
+        contentFilter: createContentFilter({
+          projectDir: opts.cwd,
+          contentDir,
+          includePatterns: opts.config.content.include,
+          excludePatterns: opts.config.content.exclude,
+        }),
+        contentSirv: sirv(contentDir, { dotfiles: false, dev: true, extensions: [] }),
+        inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+        assetExtensions: ASSET_EXTENSIONS,
+        blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+      })
     : null;
 
   // Resolved port — filled in after listen(). /api/config reads from this so
@@ -252,28 +254,13 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       return;
     }
 
-    // Content files (markdown etc.) served via filter-aware sirv.
-    // Malformed percent-encoding (`/%`, `/%E0%A4`) throws URIError — catch
-    // and fall through to the SPA handler rather than surfacing an
-    // unhandled error.
-    let rel: string;
-    try {
-      rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
-    } catch {
-      rel = '';
-    }
-    if (rel && contentSirv) {
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      // Stored-XSS defense: D-M accept-all lets users drop any file into
-      // contentDir, so an attacker-planted `.html` / `.svg` would execute
-      // same-origin with the editor if served inline. Force download for
-      // scripted-document extensions — browsers still honor Content-Type
-      // when the tag is `<img src>` (SVG still renders inline via <img>),
-      // but a top-level navigation downloads instead of executing.
-      if (isScriptedDocumentExtension(rel)) {
-        res.setHeader('Content-Disposition', 'attachment');
-      }
-      contentSirv(req, res, () => {
+    // Content files (markdown + assets) served via the shared asset-serve
+    // middleware — same Content-Disposition policy (inline / attachment) +
+    // fail-closed 404 guard that the dev plugin uses. Falls through to the
+    // SPA static handler when the content filter excludes the path or sirv
+    // doesn't recognize it.
+    if (assetServeMiddleware) {
+      assetServeMiddleware(req, res, () => {
         if (staticHandler) {
           staticHandler(req, res);
         } else {
