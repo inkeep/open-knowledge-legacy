@@ -192,7 +192,48 @@ jobs:
             echo "::notice::CSC_LINK absent — running build:mac:unsigned. Artifact will be labeled 'unsigned'."
           fi
 
+      # DEBUG: split build:mac:unsigned into electron-vite then electron-builder
+      # so we can checkpoint between them.
+      - name: DEBUG run electron-vite build (split from build:mac)
+        if: steps.signmode.outputs.mode == 'unsigned'
+        working-directory: packages/desktop
+        run: bun run build:desktop
+
+      - name: DEBUG dump state pre-electron-builder
+        if: steps.signmode.outputs.mode == 'unsigned'
+        run: |
+          echo "=== PRE-ELECTRON-BUILDER ==="
+          echo "--- packages/server/package.json (first 20 lines) ---"
+          head -20 packages/server/package.json
+          echo "--- packages/server/dist/ ---"
+          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
+          echo "--- packages/desktop/node_modules (if exists) ---"
+          ls packages/desktop/node_modules/ 2>/dev/null | head -10 || echo "(none)"
+          echo "--- node_modules/@inkeep/open-knowledge-server realpath ---"
+          realpath node_modules/@inkeep/open-knowledge-server
+          ls -la "$(realpath node_modules/@inkeep/open-knowledge-server)/dist" 2>/dev/null || echo "(no dist via realpath)"
+
+      - name: DEBUG run electron-builder (split from build:mac)
+        if: steps.signmode.outputs.mode == 'unsigned'
+        working-directory: packages/desktop
+        run: CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac --publish never -c.mac.identity=null
+
+      - name: DEBUG dump state post-electron-builder
+        if: steps.signmode.outputs.mode == 'unsigned'
+        run: |
+          echo "=== POST-ELECTRON-BUILDER ==="
+          echo "--- packages/server/package.json (first 20 lines) ---"
+          head -20 packages/server/package.json
+          echo "--- packages/server/dist/ ---"
+          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
+          echo "--- asar's view of server package.json ---"
+          bunx asar extract-file packages/desktop/dist-desktop/mac-arm64/Open\ Knowledge.app/Contents/Resources/app.asar node_modules/@inkeep/open-knowledge-server/package.json
+          head -20 package.json && rm -f package.json
+          echo "--- asar listing of server dir ---"
+          bunx asar list packages/desktop/dist-desktop/mac-arm64/Open\ Knowledge.app/Contents/Resources/app.asar 2>/dev/null | grep "@inkeep/open-knowledge-server" | head -10
+
       - name: Build + package DMG (${{ steps.signmode.outputs.mode }})
+        if: steps.signmode.outputs.mode != 'unsigned'
         # electron-builder picks up CSC_LINK / CSC_KEY_PASSWORD from env and
         # signs automatically when `build:mac` is invoked. The afterSign
         # hook (scripts/afterSign.mjs) picks up APPLE_* and runs notarize +
