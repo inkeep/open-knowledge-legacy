@@ -327,6 +327,10 @@
   perspective: 400px;
   transform-style: preserve-3d;
   will-change: transform;
+  /* Rapid-click on the mascot would otherwise trigger the browser's
+     double-click/triple-click selection gesture and select surrounding text. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Group wrapper — the click bounce animates the group so body + eyes squish together. */

@@ -32,9 +32,9 @@ export default {
     // the docs workspace's default entry discovery. Silencing the warning
     // here is the whole-workspace pattern we already use for the
     // bridge-contract + ipc-events duplicated-by-design files.
-    'docs/content/guides/open-in-agent-desktop.mdx': ['files'], // M4 (#266)
-    'docs/content/guides/agent-activity-panel.mdx': ['files'], // #314
-    'docs/content/guides/install-claude-cowork.mdx': ['files'], // #318
+    'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
+    'docs/content/guides/agent-activity-panel.mdx': ['files'],
+    'docs/content/guides/install-claude-cowork.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
