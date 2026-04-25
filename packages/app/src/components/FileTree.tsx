@@ -499,7 +499,7 @@ const FileTreeNode: FC<{
         }}
         className="h-7 min-w-0 flex-1 bg-background text-sm text-foreground"
       />
-      {isFile && <span className="text-xs text-sidebar-foreground/40">.md</span>}
+      {isFile && <span className="text-xs text-sidebar-foreground/40">{node.docExt ?? '.md'}</span>}
     </div>
   );
 
