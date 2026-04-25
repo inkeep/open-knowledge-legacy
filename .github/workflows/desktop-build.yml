@@ -113,14 +113,26 @@ jobs:
       # via `cp -r ../app/dist dist/public`. The CLI does not declare the
       # app as a workspace dep (app is private, and the CLI ships the
       # compiled bundle — not a package reference), so turbo's `^build`
-      # runs them in parallel. Without explicit sequencing, cli's
+      # runs them in parallel by default. Without explicit sequencing, cli's
       # `build:assets` races app's vite build and can fail (no `app/dist`
-      # yet) or copy stale content. Match the explicit ordering the README
-      # documents: app → cli.
+      # yet) or copy stale content. Use turbo's `--filter=@inkeep/...`
+      # which DOES respect the `^build` graph (so server + core build
+      # before app), and run the two filters in sequence to enforce
+      # app → cli ordering.
+      #
+      # `bun run --filter=...` was the previous approach; it does not
+      # honor turbo's dep graph (only runs the named package's `build`
+      # script in isolation). After the workspace started shipping
+      # `.mjs` builds for `@inkeep/open-knowledge-server` and
+      # `@inkeep/open-knowledge-core` (specs/2026-04-24-desktop-packaging-
+      # first-boot/), Vite's config loader in app-build resolves those
+      # workspace deps via `exports.default → ./dist/index.mjs`. Without
+      # an upstream `^build`, the `dist/` doesn't exist yet → "Failed to
+      # resolve entry for package @inkeep/open-knowledge-server".
       - name: Build workspace (produces packages/cli/dist/public for extraResources)
         run: |
-          bun run --filter=@inkeep/open-knowledge-app build
-          bun run --filter=@inkeep/open-knowledge build
+          bunx turbo run build --filter=@inkeep/open-knowledge-app
+          bunx turbo run build --filter=@inkeep/open-knowledge
 
       # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
       # the artifact can be named to match. We key off CSC_LINK alone: it's
