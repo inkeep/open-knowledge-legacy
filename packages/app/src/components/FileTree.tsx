@@ -419,8 +419,8 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         flex: 1 1 auto;
         min-height: 0;
         height: 100%;
-        --trees-bg-override: transparent;
-        --trees-border-color-override: transparent;
+        --trees-bg-override: var(--color-sidebar);
+        --trees-border-color-override: var(--color-border);
         --trees-font-family-override: var(--font-sans);
         --trees-font-size-override: 0.875rem;
         --trees-selected-bg-override: var(--color-sidebar-accent);
@@ -440,7 +440,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const folderTreePaths = collectTreeFolderPathsFromDocuments(documents);
   const folderTreePathsRef = useRef(folderTreePaths);
 
-  const activeAncestorTreePaths = computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
+  // Keep parents visible without forcing the selected folder itself open.
+  const activeAncestorTreePaths = selectedFolderPath
+    ? computeTreeAncestorPaths(folderPathToTreeDirectoryPath(selectedFolderPath)).slice(0, -1)
+    : computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
   const activeAncestorTreePathsSignature = activeAncestorTreePaths.join('\0');
 
   const resetModelToDocuments = (nextDocuments?: readonly DocEntry[]) => {
