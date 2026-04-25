@@ -104,6 +104,44 @@ async function copyToClipboard(text: string, label: string): Promise<void> {
 }
 
 const AGENT_FILE_NAMES = new Set(['agents', 'agent', 'claude', 'skill']);
+const LINK_DECORATION_ICON_ID = 'ok-file-tree-link-decoration';
+const AGENT_DECORATION_ICON_ID = 'ok-file-tree-agent-decoration';
+
+function createLucideSpriteSymbol(id: string, icon: ReactElement): string {
+  const svgMarkup = renderToStaticMarkup(icon);
+  const symbolContent = svgMarkup.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
+  return `<symbol id="${id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${symbolContent}</symbol>`;
+}
+
+const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="true" width="0" height="0">
+  ${createLucideSpriteSymbol(LINK_DECORATION_ICON_ID, <Link2 />)}
+  ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, <Bot />)}
+</svg>`;
+
+function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
+  return {
+    ...themeToTreeStyles({
+      type: resolvedTheme === 'dark' ? 'dark' : 'light',
+      colors: {
+        'sideBar.background': 'var(--sidebar)',
+        'sideBar.foreground': 'var(--sidebar-foreground)',
+        'sideBar.border': 'var(--sidebar-border)',
+        'list.activeSelectionBackground': 'var(--sidebar-accent)',
+        'list.activeSelectionForeground': 'var(--sidebar-accent-foreground)',
+        'list.hoverBackground': 'var(--sidebar-hover)',
+        focusBorder: 'var(--sidebar-ring)',
+        'input.background': 'var(--sidebar)',
+        'input.border': 'var(--sidebar-border)',
+      },
+    }),
+    '--trees-font-family-override': 'var(--font-sans)',
+    '--trees-font-size-override': '0.875rem',
+    '--trees-item-padding-x-override': '0.5rem',
+    '--trees-padding-inline-override': '0.5rem',
+    '--trees-border-radius-override': '0.375rem',
+    '--trees-selected-fg': 'var(--color-primary)',
+  } as CSSProperties;
+}
 
 function isAgentTreePath(treePath: string): boolean {
   const name = treePath.split('/').pop()?.replace(/\.md$/i, '').toLowerCase();
@@ -385,7 +423,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     fileTreeSearchMode: 'hide-non-matches',
     initialVisibleRowCount: 18,
     stickyFolders: true,
-    icons: { set: 'complete', colored: true },
+    icons: {
+      set: 'complete',
+      spriteSheet: FILE_TREE_DECORATION_SPRITE_SHEET,
+    },
     composition: {
       contextMenu: {
         enabled: true,
@@ -426,25 +467,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       }
       return null;
     },
-    unsafeCSS: `
-      :host {
-        display: flex;
-        flex: 1 1 auto;
-        min-height: 0;
-        height: 100%;
-        --trees-bg-override: var(--color-sidebar);
-        --trees-border-color-override: var(--color-border);
-        --trees-font-family-override: var(--font-sans);
-        --trees-font-size-override: 0.875rem;
-        --trees-selected-bg-override: var(--color-sidebar-accent);
-        --trees-selected-fg-override: var(--color-sidebar-accent-foreground);
-        --trees-fg-override: color-mix(in oklab, var(--color-sidebar-foreground) 70%, transparent);
-        --trees-fg-muted-override: color-mix(in oklab, var(--color-sidebar-foreground) 50%, transparent);
-        --trees-item-padding-x-override: 0.5rem;
-        --trees-padding-inline-override: 0.5rem;
-        --trees-border-radius-override: 0.375rem;
-      }
-    `,
   });
 
   const treePaths = documentsToTreePaths(documents);
@@ -930,17 +952,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   }
 
   const anyActionBusy = busyPath !== null;
-
   return (
     <>
-      {error && (
-        <span role="alert" className="px-3 pb-1 text-destructive text-xs">
-          {error}
-        </span>
-      )}
       <PierreFileTree
+        header={
+          error && (
+            <span role="alert" className="px-3 pb-1 text-destructive text-xs">
+              {error}
+            </span>
+          )
+        }
         model={model}
-        className="min-h-0 flex-1"
+        style={createFileTreeStyle(resolvedTheme)}
         onMouseMove={handleTreeMouseMove}
         onMouseLeave={cancelCurrentHoverPrewarm}
         renderContextMenu={(item, context) => (
