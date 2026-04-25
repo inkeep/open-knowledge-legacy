@@ -39,7 +39,7 @@
     "postinstall": "node scripts/postinstall.mjs",
     "test": "bun --conditions=development test",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build && bun run test"
+    "prepublishOnly": "bash ../../scripts/check-notices-clean.sh && bun run build && bun run test"
   },
   "dependencies": {
     "@inquirer/password": "^5.0.11",

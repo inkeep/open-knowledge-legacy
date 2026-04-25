@@ -396,7 +396,7 @@ copyright license to reproduce, prepare Derivative Works of, publicly display, p
 Copyright [yyyy] [name of copyright owner]
 
 ### `before-after-hook@4.0.0`
-Homepage: github:gr2m/before-after-hook
+Homepage: https://github.com/gr2m/before-after-hook
 
 copyright notice that is included in or attached to the work
 copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
@@ -507,7 +507,7 @@ Homepage: https://github.com/mikeal/tunnel-agent
 Each entry below is licensed under the MIT License. The original copyright notice is reproduced; the MIT permission notice applies as written by the original author.
 
 ### `@alloc/quick-lru@5.2.0`
-Homepage: sindresorhus/quick-lru
+Homepage: https://github.com/sindresorhus/quick-lru
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -909,13 +909,13 @@ Homepage: https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapp
 Copyright 2024 Justin Ridgewell <justin@ridgewell.name>
 
 ### `@kwsites/file-exists@1.1.1`
-Homepage: git@github.com:kwsites/file-exists.git
+Homepage: https://github.com/kwsites/file-exists
 
 Copyright (c) 2015 Steve King
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@kwsites/promise-deferred@1.1.1`
-Homepage: git://github.com/kwsites/promise-deferred.git
+Homepage: https://github.com/kwsites/promise-deferred
 
 Copyright (c) 2018 kwsites
 
@@ -999,11 +999,6 @@ Homepage: https://github.com/Brooooooklyn/keyring-node
 
 Copyright (c) 2020 N-API for Rust
 
-### `@napi-rs/keyring-darwin-arm64@1.2.0`
-Homepage: https://github.com/Brooooooklyn/keyring-node
-
-_(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
-
 ### `@noble/ciphers@1.3.0`
 Homepage: https://paulmillr.com/noble/
 
@@ -1035,32 +1030,32 @@ Homepage: https://github.com/nodelib/nodelib/tree/master/packages/fs/fs.walk
 Copyright (c) Denis Malinochkin
 
 ### `@octokit/auth-oauth-device@8.0.3`
-Homepage: github:octokit/auth-oauth-device.js
+Homepage: https://github.com/octokit/auth-oauth-device.js
 
 Copyright (c) 2021 Octokit contributors
 
 ### `@octokit/auth-token@6.0.0`
-Homepage: github:octokit/auth-token.js
+Homepage: https://github.com/octokit/auth-token.js
 
 Copyright (c) 2019 Octokit contributors
 
 ### `@octokit/core@7.0.6`
-Homepage: github:octokit/core.js
+Homepage: https://github.com/octokit/core.js
 
 Copyright (c) 2019 Octokit contributors
 
 ### `@octokit/endpoint@11.0.3`
-Homepage: github:octokit/endpoint.js
+Homepage: https://github.com/octokit/endpoint.js
 
 Copyright (c) 2018 Octokit contributors
 
 ### `@octokit/graphql@9.0.3`
-Homepage: github:octokit/graphql.js
+Homepage: https://github.com/octokit/graphql.js
 
 Copyright (c) 2018 Octokit contributors
 
 ### `@octokit/oauth-authorization-url@8.0.0`
-Homepage: github:octokit/oauth-authorization-url.js
+Homepage: https://github.com/octokit/oauth-authorization-url.js
 
 Copyright (c) 2019 Octokit contributors
 
@@ -1075,31 +1070,31 @@ Homepage: https://github.com/octokit/openapi-types.ts
 Copyright (c) GitHub 2025 - Licensed as MIT.
 
 ### `@octokit/plugin-paginate-rest@14.0.0`
-Homepage: github:octokit/plugin-paginate-rest.js
+Homepage: https://github.com/octokit/plugin-paginate-rest.js
 
 ### `@octokit/plugin-request-log@6.0.0`
-Homepage: github:octokit/plugin-request-log.js
+Homepage: https://github.com/octokit/plugin-request-log.js
 
 ### `@octokit/plugin-rest-endpoint-methods@17.0.0`
-Homepage: github:octokit/plugin-rest-endpoint-methods.js
+Homepage: https://github.com/octokit/plugin-rest-endpoint-methods.js
 
 ### `@octokit/request@10.0.8`
-Homepage: github:octokit/request.js
+Homepage: https://github.com/octokit/request.js
 
 Copyright (c) 2018 Octokit contributors
 
 ### `@octokit/request-error@7.1.0`
-Homepage: github:octokit/request-error.js
+Homepage: https://github.com/octokit/request-error.js
 
 Copyright (c) 2019 Octokit contributors
 
 ### `@octokit/rest@22.0.1`
-Homepage: github:octokit/rest.js
+Homepage: https://github.com/octokit/rest.js
 
 Copyright (c) 2012 Cloud9 IDE, Inc. (Mike de Boer) Copyright (c) 2017-2018 Octokit contributors
 
 ### `@octokit/types@16.0.0`
-Homepage: github:octokit/types.ts
+Homepage: https://github.com/octokit/types.ts
 
 ### `@open-draft/deferred-promise@2.2.0`
 Homepage: https://github.com/open-draft/deferred-promise
@@ -1112,16 +1107,11 @@ Homepage: https://github.com/open-draft/logger
 Copyright (c) 2023—present Artem Zakharchenko
 
 ### `@open-draft/until@2.1.0`
-Homepage: open-draft/until
+Homepage: https://github.com/open-draft/until
 
 Copyright (c) 2021 Artem Zakharchenko
 
 ### `@parcel/watcher@2.5.6`
-Homepage: https://github.com/parcel-bundler/watcher
-
-Copyright (c) 2017-present Devon Govett
-
-### `@parcel/watcher-darwin-arm64@2.5.6`
 Homepage: https://github.com/parcel-bundler/watcher
 
 Copyright (c) 2017-present Devon Govett
@@ -1132,7 +1122,7 @@ Homepage: https://github.com/pinojs/redact#readme
 Copyright (c) 2025 pinojs contributors
 
 ### `@polka/url@1.0.0-next.29`
-Homepage: lukeed/polka
+Homepage: https://github.com/lukeed/polka
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
@@ -1457,7 +1447,7 @@ Homepage: https://github.com/steveukx/git-js
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `@sindresorhus/merge-streams@4.0.0`
-Homepage: sindresorhus/merge-streams
+Homepage: https://github.com/sindresorhus/merge-streams
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -1467,11 +1457,6 @@ Homepage: https://tailwindcss.com
 Copyright (c) Tailwind Labs, Inc.
 
 ### `@tailwindcss/oxide@4.2.2`
-Homepage: https://github.com/tailwindlabs/tailwindcss
-
-Copyright (c) Tailwind Labs, Inc.
-
-### `@tailwindcss/oxide-darwin-arm64@4.2.2`
 Homepage: https://github.com/tailwindlabs/tailwindcss
 
 Copyright (c) Tailwind Labs, Inc.
@@ -1698,7 +1683,7 @@ Homepage: https://github.com/Borewit/tokenizer-token
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `@ts-morph/common@0.27.0`
-Homepage: git+https://github.com/dsherret/ts-morph.git
+Homepage: https://github.com/dsherret/ts-morph
 
 Copyright (c) 2017 David Sherret
 
@@ -1808,7 +1793,7 @@ Homepage: https://uiwjs.github.io/react-codemirror/#/theme/doc
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `accepts@2.0.0`
-Homepage: jshttp/accepts
+Homepage: https://github.com/jshttp/accepts
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -1843,17 +1828,17 @@ Homepage: https://github.com/ajv-validator/ajv-formats#readme
 Copyright (c) 2020 Evgeny Poberezkin
 
 ### `ansi-regex@6.2.2`
-Homepage: chalk/ansi-regex
+Homepage: https://github.com/chalk/ansi-regex
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `ansi-regex@5.0.1`
-Homepage: chalk/ansi-regex
+Homepage: https://github.com/chalk/ansi-regex
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `ansi-styles@4.3.0`
-Homepage: chalk/ansi-styles
+Homepage: https://github.com/chalk/ansi-styles
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -1883,7 +1868,7 @@ Homepage: https://github.com/davidmarkclements/atomic-sleep#readme
 Copyright (c) 2020 David Mark Clements
 
 ### `bail@2.0.2`
-Homepage: wooorm/bail
+Homepage: https://github.com/wooorm/bail
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
@@ -1906,12 +1891,12 @@ Homepage: https://github.com/rvagg/bl
 Copyright (c) 2013-2019 bl contributors ----------------------------------
 
 ### `body-parser@2.2.2`
-Homepage: expressjs/body-parser
+Homepage: https://github.com/expressjs/body-parser
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `brace-expansion@5.0.5`
-Homepage: ssh://git@github.com/juliangruber/brace-expansion
+Homepage: https://github.com/juliangruber/brace-expansion
 
 Copyright Julian Gruber <julian@juliangruber.com>
 
@@ -1921,7 +1906,7 @@ Homepage: https://github.com/micromatch/braces
 Copyright (c) 2014-present, Jon Schlinkert.
 
 ### `browserslist@4.28.2`
-Homepage: browserslist/browserslist
+Homepage: https://github.com/browserslist/browserslist
 
 Copyright 2014 Andrey Sitnik <andrey@sitnik.es> and other contributors
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
@@ -1942,7 +1927,7 @@ Homepage: https://github.com/electron-userland/electron-builder
 Copyright (c) 2015 Loopline Systems
 
 ### `bundle-name@4.1.0`
-Homepage: sindresorhus/bundle-name
+Homepage: https://github.com/sindresorhus/bundle-name
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -1952,7 +1937,7 @@ Homepage: http://github.com/mscdex/busboy
 Copyright Brian White. All rights reserved.
 
 ### `bytes@3.1.2`
-Homepage: visionmedia/bytes.js
+Homepage: https://github.com/visionmedia/bytes.js
 
 Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2015 Jed Watson <jed.watson@me.com>
 
@@ -1967,7 +1952,7 @@ Homepage: https://github.com/ljharb/call-bound#readme
 Copyright (c) 2024 Jordan Harband
 
 ### `callsites@3.1.0`
-Homepage: sindresorhus/callsites
+Homepage: https://github.com/sindresorhus/callsites
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -1977,32 +1962,32 @@ Homepage: https://github.com/vasturiano/canvas-color-tracker
 Copyright (c) 2018 Vasco Asturiano
 
 ### `ccount@2.0.1`
-Homepage: wooorm/ccount
+Homepage: https://github.com/wooorm/ccount
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `chalk@5.6.2`
-Homepage: chalk/chalk
+Homepage: https://github.com/chalk/chalk
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `character-entities@2.0.2`
-Homepage: wooorm/character-entities
+Homepage: https://github.com/wooorm/character-entities
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `character-entities-html4@2.1.0`
-Homepage: wooorm/character-entities-html4
+Homepage: https://github.com/wooorm/character-entities-html4
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `character-entities-legacy@3.0.0`
-Homepage: wooorm/character-entities-legacy
+Homepage: https://github.com/wooorm/character-entities-legacy
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `character-reference-invalid@2.0.1`
-Homepage: wooorm/character-reference-invalid
+Homepage: https://github.com/wooorm/character-reference-invalid
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
@@ -2022,22 +2007,22 @@ Homepage: https://github.com/JedWatson/classnames
 Copyright (c) 2018 Jed Watson
 
 ### `cli-boxes@4.0.1`
-Homepage: sindresorhus/cli-boxes
+Homepage: https://github.com/sindresorhus/cli-boxes
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `cli-cursor@5.0.0`
-Homepage: sindresorhus/cli-cursor
+Homepage: https://github.com/sindresorhus/cli-cursor
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `cli-spinners@2.9.2`
-Homepage: sindresorhus/cli-spinners
+Homepage: https://github.com/sindresorhus/cli-spinners
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `clsx@2.1.1`
-Homepage: lukeed/clsx
+Homepage: https://github.com/lukeed/clsx
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
@@ -2057,7 +2042,7 @@ Homepage: https://github.com/codemirror/basic-setup
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
 ### `color-convert@2.0.1`
-Homepage: Qix-/color-convert
+Homepage: https://github.com/Qix-/color-convert
 
 Copyright (c) 2011-2016 Heather Arthur <fayearthur@gmail.com>
 
@@ -2067,12 +2052,12 @@ Homepage: https://github.com/colorjs/color-name
 Copyright (c) 2015 Dmitry Ivanov
 
 ### `colorette@2.0.20`
-Homepage: jorgebucaran/colorette
+Homepage: https://github.com/jorgebucaran/colorette
 
 Copyright © Jorge Bucaran <<https://jorgebucaran.com>>
 
 ### `comma-separated-tokens@2.0.3`
-Homepage: wooorm/comma-separated-tokens
+Homepage: https://github.com/wooorm/comma-separated-tokens
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -2092,12 +2077,12 @@ Homepage: https://github.com/tj/commander.js
 Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>
 
 ### `content-disposition@1.1.0`
-Homepage: jshttp/content-disposition
+Homepage: https://github.com/jshttp/content-disposition
 
 Copyright (c) 2014-2017 Douglas Christopher Wilson
 
 ### `content-type@1.0.5`
-Homepage: jshttp/content-type
+Homepage: https://github.com/jshttp/content-type
 
 Copyright (c) 2015 Douglas Christopher Wilson
 
@@ -2107,12 +2092,12 @@ Homepage: https://github.com/thlorenz/convert-source-map
 Copyright 2013 Thorsten Lorenz.
 
 ### `cookie@0.7.2`
-Homepage: jshttp/cookie
+Homepage: https://github.com/jshttp/cookie
 
 Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com> Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `cookie@1.1.1`
-Homepage: jshttp/cookie
+Homepage: https://github.com/jshttp/cookie
 
 Copyright (c) 2012-2014 Roman Shtylman <shtylman@gmail.com> Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -2122,7 +2107,7 @@ Homepage: https://github.com/visionmedia/node-cookie-signature
 Copyright (c) 2012–2024 LearnBoost <tj@learnboost.com> and other contributors;
 
 ### `cors@2.8.6`
-Homepage: expressjs/cors
+Homepage: https://github.com/expressjs/cors
 
 Copyright (c) 2013 Troy Goode <troygoode@gmail.com>
 
@@ -2182,12 +2167,12 @@ Homepage: https://github.com/debug-js/debug
 Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2018-2021 Josh Junon
 
 ### `decode-named-character-reference@1.3.0`
-Homepage: wooorm/decode-named-character-reference
+Homepage: https://github.com/wooorm/decode-named-character-reference
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `decompress-response@6.0.0`
-Homepage: sindresorhus/decompress-response
+Homepage: https://github.com/sindresorhus/decompress-response
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2206,27 +2191,27 @@ Homepage: https://github.com/TehShrike/deepmerge
 Copyright (c) 2012 James Halliday, Josh Duff, and other contributors
 
 ### `default-browser@5.5.0`
-Homepage: sindresorhus/default-browser
+Homepage: https://github.com/sindresorhus/default-browser
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `default-browser-id@5.0.1`
-Homepage: sindresorhus/default-browser-id
+Homepage: https://github.com/sindresorhus/default-browser-id
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `define-lazy-prop@3.0.0`
-Homepage: sindresorhus/define-lazy-prop
+Homepage: https://github.com/sindresorhus/define-lazy-prop
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `depd@2.0.0`
-Homepage: dougwilson/nodejs-depd
+Homepage: https://github.com/dougwilson/nodejs-depd
 
 Copyright (c) 2014-2018 Douglas Christopher Wilson
 
 ### `dequal@2.0.3`
-Homepage: lukeed/dequal
+Homepage: https://github.com/lukeed/dequal
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
@@ -2236,7 +2221,7 @@ Homepage: https://github.com/thekashey/detect-node
 Copyright (c) 2017 Ilya Kantor
 
 ### `devlop@1.1.0`
-Homepage: wooorm/devlop
+Homepage: https://github.com/wooorm/devlop
 
 Copyright (c) 2023 Titus Wormer <tituswormer@gmail.com>
 
@@ -2251,7 +2236,7 @@ Homepage: https://github.com/ecies/js
 Copyright (c) 2019-2026 Weiliang Li
 
 ### `ee-first@1.1.1`
-Homepage: jonathanong/ee-first
+Homepage: https://github.com/jonathanong/ee-first
 
 Copyright (c) 2014 Jonathan Ong me@jongleberry.com
 
@@ -2271,7 +2256,7 @@ Homepage: https://mths.be/emoji-regex
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `encodeurl@2.0.0`
-Homepage: pillarjs/encodeurl
+Homepage: https://github.com/pillarjs/encodeurl
 
 Copyright (c) 2016 Douglas Christopher Wilson
 
@@ -2286,12 +2271,12 @@ Homepage: http://github.com/webpack/enhanced-resolve
 Copyright JS Foundation and other contributors
 
 ### `env-paths@2.2.1`
-Homepage: sindresorhus/env-paths
+Homepage: https://github.com/sindresorhus/env-paths
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `error-ex@1.3.4`
-Homepage: qix-/node-error-ex
+Homepage: https://github.com/qix-/node-error-ex
 
 Copyright (c) 2015 JD Ballard
 
@@ -2311,37 +2296,37 @@ Homepage: https://github.com/ljharb/es-object-atoms#readme
 Copyright (c) 2024 Jordan Harband
 
 ### `escalade@3.2.0`
-Homepage: lukeed/escalade
+Homepage: https://github.com/lukeed/escalade
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
 ### `escape-html@1.0.3`
-Homepage: component/escape-html
+Homepage: https://github.com/component/escape-html
 
 Copyright (c) 2012-2013 TJ Holowaychuk Copyright (c) 2015 Andreas Lubbe Copyright (c) 2015 Tiancheng "Timothy" Gu
 
 ### `escape-string-regexp@5.0.0`
-Homepage: sindresorhus/escape-string-regexp
+Homepage: https://github.com/sindresorhus/escape-string-regexp
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `escape-string-regexp@4.0.0`
-Homepage: sindresorhus/escape-string-regexp
+Homepage: https://github.com/sindresorhus/escape-string-regexp
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `estree-util-is-identifier-name@3.0.0`
-Homepage: syntax-tree/estree-util-is-identifier-name
+Homepage: https://github.com/syntax-tree/estree-util-is-identifier-name
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `estree-util-visit@2.0.0`
-Homepage: syntax-tree/estree-util-visit
+Homepage: https://github.com/syntax-tree/estree-util-visit
 
 Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>
 
 ### `etag@1.8.1`
-Homepage: jshttp/etag
+Homepage: https://github.com/jshttp/etag
 
 Copyright (c) 2014-2016 Douglas Christopher Wilson
 
@@ -2356,12 +2341,12 @@ Homepage: https://github.com/rexxars/eventsource-parser#readme
 Copyright (c) 2025 Espen Hovlandsdal <espen@hovlandsdal.com>
 
 ### `execa@9.6.1`
-Homepage: sindresorhus/execa
+Homepage: https://github.com/sindresorhus/execa
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `execa@5.1.1`
-Homepage: sindresorhus/execa
+Homepage: https://github.com/sindresorhus/execa
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2407,7 +2392,7 @@ Homepage: https://github.com/planttheidea/fast-equals#readme
 Copyright (c) 2025 Tony Quetano
 
 ### `fast-glob@3.3.3`
-Homepage: mrmlnc/fast-glob
+Homepage: https://github.com/mrmlnc/fast-glob
 
 Copyright (c) Denis Malinochkin
 
@@ -2417,12 +2402,12 @@ Homepage: https://github.com/davidmarkclements/fast-safe-stringify#readme
 Copyright (c) 2016 David Mark Clements Copyright (c) 2017 David Mark Clements & Matteo Collina Copyright (c) 2018 David Mark Clements, Matteo Collina & Ruben Bridgewater
 
 ### `fast-string-truncated-width@3.0.3`
-Homepage: github:fabiospampinato/fast-string-truncated-width
+Homepage: https://github.com/fabiospampinato/fast-string-truncated-width
 
 Copyright (c) 2024-present Fabio Spampinato
 
 ### `fast-string-width@3.0.2`
-Homepage: github:fabiospampinato/fast-string-width
+Homepage: https://github.com/fabiospampinato/fast-string-width
 
 Copyright (c) 2024-present Fabio Spampinato
 
@@ -2443,7 +2428,7 @@ Homepage: https://github.com/NaturalIntelligence/fast-xml-parser
 Copyright (c) 2017 Amit Kumar Gupta
 
 ### `fault@2.0.1`
-Homepage: wooorm/fault
+Homepage: https://github.com/wooorm/fault
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
@@ -2458,17 +2443,17 @@ Homepage: https://github.com/node-fetch/fetch-blob#readme
 Copyright (c) 2019 David Frank
 
 ### `figures@6.1.0`
-Homepage: sindresorhus/figures
+Homepage: https://github.com/sindresorhus/figures
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `file-type@22.0.1`
-Homepage: sindresorhus/file-type
+Homepage: https://github.com/sindresorhus/file-type
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `file-type@21.3.4`
-Homepage: sindresorhus/file-type
+Homepage: https://github.com/sindresorhus/file-type
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2478,7 +2463,7 @@ Homepage: https://github.com/jonschlinkert/fill-range
 Copyright (c) 2014-present, Jon Schlinkert.
 
 ### `finalhandler@2.1.1`
-Homepage: pillarjs/finalhandler
+Homepage: https://github.com/pillarjs/finalhandler
 
 Copyright (c) 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -2503,12 +2488,12 @@ Homepage: https://github.com/jimmywarting/FormData#readme
 Copyright (c) 2016 Jimmy Karl Roland Wärting
 
 ### `forwarded@0.2.0`
-Homepage: jshttp/forwarded
+Homepage: https://github.com/jshttp/forwarded
 
 Copyright (c) 2014-2017 Douglas Christopher Wilson
 
 ### `fresh@2.0.0`
-Homepage: jshttp/fresh
+Homepage: https://github.com/jshttp/fresh
 
 Copyright (c) 2012 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2016-2017 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -2543,7 +2528,7 @@ Homepage: https://github.com/loganfsmyth/gensync
 Copyright 2018 Logan Smyth <loganfsmyth@gmail.com>
 
 ### `get-east-asian-width@1.5.0`
-Homepage: sindresorhus/get-east-asian-width
+Homepage: https://github.com/sindresorhus/get-east-asian-width
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2558,7 +2543,7 @@ Homepage: https://github.com/theKashey/get-nonce
 Copyright (c) 2020 Anton Korzunov
 
 ### `get-own-enumerable-keys@1.0.0`
-Homepage: sindresorhus/get-own-enumerable-keys
+Homepage: https://github.com/sindresorhus/get-own-enumerable-keys
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2568,12 +2553,12 @@ Homepage: https://github.com/ljharb/get-proto#readme
 Copyright (c) 2025 Jordan Harband
 
 ### `get-stream@9.0.1`
-Homepage: sindresorhus/get-stream
+Homepage: https://github.com/sindresorhus/get-stream
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `get-stream@6.0.1`
-Homepage: sindresorhus/get-stream
+Homepage: https://github.com/sindresorhus/get-stream
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2608,22 +2593,22 @@ Homepage: https://github.com/inspect-js/hasOwn#readme
 Copyright (c) Jordan Harband and contributors
 
 ### `hast-util-embedded@3.0.0`
-Homepage: syntax-tree/hast-util-embedded
+Homepage: https://github.com/syntax-tree/hast-util-embedded
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-from-html@2.0.3`
-Homepage: syntax-tree/hast-util-from-html
+Homepage: https://github.com/syntax-tree/hast-util-from-html
 
 Copyright (c) 2022 Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-from-parse5@8.0.3`
-Homepage: syntax-tree/hast-util-from-parse5
+Homepage: https://github.com/syntax-tree/hast-util-from-parse5
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-has-property@3.0.0`
-Homepage: syntax-tree/hast-util-has-property
+Homepage: https://github.com/syntax-tree/hast-util-has-property
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -2633,7 +2618,7 @@ Homepage: https://github.com/rehypejs/rehype-minify/tree/main/packages/hast-util
 Copyright (c) Titus Wormer
 
 ### `hast-util-is-element@3.0.0`
-Homepage: syntax-tree/hast-util-is-element
+Homepage: https://github.com/syntax-tree/hast-util-is-element
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -2643,37 +2628,37 @@ Homepage: https://github.com/rehypejs/rehype-minify/tree/main/packages/hast-util
 Copyright (c) Titus Wormer
 
 ### `hast-util-parse-selector@4.0.0`
-Homepage: syntax-tree/hast-util-parse-selector
+Homepage: https://github.com/syntax-tree/hast-util-parse-selector
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-phrasing@3.0.1`
-Homepage: syntax-tree/hast-util-phrasing
+Homepage: https://github.com/syntax-tree/hast-util-phrasing
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-to-html@9.0.5`
-Homepage: syntax-tree/hast-util-to-html
+Homepage: https://github.com/syntax-tree/hast-util-to-html
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-to-mdast@10.1.2`
-Homepage: syntax-tree/hast-util-to-mdast
+Homepage: https://github.com/syntax-tree/hast-util-to-mdast
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com> Copyright (c) Seth Vincent <sethvincent@gmail.com>
 
 ### `hast-util-to-text@4.0.2`
-Homepage: syntax-tree/hast-util-to-text
+Homepage: https://github.com/syntax-tree/hast-util-to-text
 
 Copyright (c) 2019 Titus Wormer <tituswormer@gmail.com>
 
 ### `hast-util-whitespace@3.0.0`
-Homepage: syntax-tree/hast-util-whitespace
+Homepage: https://github.com/syntax-tree/hast-util-whitespace
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `hastscript@9.0.1`
-Homepage: syntax-tree/hastscript
+Homepage: https://github.com/syntax-tree/hastscript
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -2693,12 +2678,12 @@ Homepage: https://hono.dev
 Copyright (c) 2021 - present, Yusuke Wada and Hono contributors
 
 ### `html-void-elements@3.0.0`
-Homepage: wooorm/html-void-elements
+Homepage: https://github.com/wooorm/html-void-elements
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `http-errors@2.0.1`
-Homepage: jshttp/http-errors
+Homepage: https://github.com/jshttp/http-errors
 
 Copyright (c) 2014 Jonathan Ong me@jongleberry.com Copyright (c) 2016 Douglas Christopher Wilson doug@somethingdoug.com
 
@@ -2713,12 +2698,12 @@ Homepage: https://github.com/pillarjs/iconv-lite
 Copyright (c) 2011 Alexander Shtuchkin
 
 ### `ignore@5.3.2`
-Homepage: git@github.com:kaelzhang/node-ignore
+Homepage: https://github.com/kaelzhang/node-ignore
 
 Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors http://kael.me/
 
 ### `import-fresh@3.3.1`
-Homepage: sindresorhus/import-fresh
+Homepage: https://github.com/sindresorhus/import-fresh
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2733,17 +2718,17 @@ Homepage: https://github.com/beaugunderson/ip-address
 Copyright (C) 2011 by Beau Gunderson
 
 ### `ipaddr.js@1.9.1`
-Homepage: git://github.com/whitequark/ipaddr.js
+Homepage: https://github.com/whitequark/ipaddr.js
 
 Copyright (C) 2011-2017 whitequark <whitequark@whitequark.org>
 
 ### `is-alphabetical@2.0.1`
-Homepage: wooorm/is-alphabetical
+Homepage: https://github.com/wooorm/is-alphabetical
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `is-alphanumerical@2.0.1`
-Homepage: wooorm/is-alphanumerical
+Homepage: https://github.com/wooorm/is-alphanumerical
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -2759,12 +2744,12 @@ Copyright (c) 2014 Dave Justice
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `is-decimal@2.0.1`
-Homepage: wooorm/is-decimal
+Homepage: https://github.com/wooorm/is-decimal
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `is-docker@3.0.0`
-Homepage: sindresorhus/is-docker
+Homepage: https://github.com/sindresorhus/is-docker
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2774,7 +2759,7 @@ Homepage: https://github.com/jonschlinkert/is-extglob
 Copyright (c) 2014-2016, Jon Schlinkert
 
 ### `is-fullwidth-code-point@3.0.0`
-Homepage: sindresorhus/is-fullwidth-code-point
+Homepage: https://github.com/sindresorhus/is-fullwidth-code-point
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -2784,22 +2769,22 @@ Homepage: https://github.com/micromatch/is-glob
 Copyright (c) 2014-2017, Jon Schlinkert.
 
 ### `is-hexadecimal@2.0.1`
-Homepage: wooorm/is-hexadecimal
+Homepage: https://github.com/wooorm/is-hexadecimal
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `is-in-ssh@1.0.0`
-Homepage: sindresorhus/is-in-ssh
+Homepage: https://github.com/sindresorhus/is-in-ssh
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-inside-container@1.0.0`
-Homepage: sindresorhus/is-inside-container
+Homepage: https://github.com/sindresorhus/is-inside-container
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-interactive@2.0.0`
-Homepage: sindresorhus/is-interactive
+Homepage: https://github.com/sindresorhus/is-interactive
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2814,12 +2799,12 @@ Homepage: https://github.com/jonschlinkert/is-number
 Copyright (c) 2014-present, Jon Schlinkert.
 
 ### `is-obj@3.0.0`
-Homepage: sindresorhus/is-obj
+Homepage: https://github.com/sindresorhus/is-obj
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-plain-obj@4.1.0`
-Homepage: sindresorhus/is-plain-obj
+Homepage: https://github.com/sindresorhus/is-plain-obj
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2829,32 +2814,32 @@ Homepage: https://github.com/then/is-promise
 Copyright (c) 2014 Forbes Lindesay
 
 ### `is-regexp@3.1.0`
-Homepage: sindresorhus/is-regexp
+Homepage: https://github.com/sindresorhus/is-regexp
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-stream@4.0.1`
-Homepage: sindresorhus/is-stream
+Homepage: https://github.com/sindresorhus/is-stream
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-stream@2.0.1`
-Homepage: sindresorhus/is-stream
+Homepage: https://github.com/sindresorhus/is-stream
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-unicode-supported@2.1.0`
-Homepage: sindresorhus/is-unicode-supported
+Homepage: https://github.com/sindresorhus/is-unicode-supported
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-unicode-supported@1.3.0`
-Homepage: sindresorhus/is-unicode-supported
+Homepage: https://github.com/sindresorhus/is-unicode-supported
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `is-wsl@3.1.1`
-Homepage: sindresorhus/is-wsl
+Homepage: https://github.com/sindresorhus/is-wsl
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -2869,7 +2854,7 @@ Homepage: https://github.com/vasturiano/jerrypick
 Copyright (c) 2019 Vasco Asturiano
 
 ### `jiti@2.6.1`
-Homepage: unjs/jiti
+Homepage: https://github.com/unjs/jiti
 
 Copyright (c) Pooya Parsa <pooya@pi0.io>
 
@@ -2879,17 +2864,17 @@ Homepage: https://github.com/panva/jose
 Copyright (c) 2018 Filip Skokan
 
 ### `joycon@3.1.1`
-Homepage: egoist/joycon
+Homepage: https://github.com/egoist/joycon
 
 Copyright (c) egoist <0x142857@gmail.com> (https://github.com/egoist)
 
 ### `js-tokens@4.0.0`
-Homepage: lydell/js-tokens
+Homepage: https://github.com/lydell/js-tokens
 
 Copyright (c) 2014, 2015, 2016, 2017, 2018 Simon Lydell
 
 ### `js-yaml@4.1.1`
-Homepage: nodeca/js-yaml
+Homepage: https://github.com/nodeca/js-yaml
 
 Copyright (C) 2011-2015 by Vitaly Puzrin
 
@@ -2919,7 +2904,7 @@ Homepage: http://json5.org/
 Copyright (c) 2012-2018 Aseem Kishore, and [others].
 
 ### `jsonfile@6.2.0`
-Homepage: git@github.com:jprichardson/node-jsonfile
+Homepage: https://github.com/jprichardson/node-jsonfile
 
 Copyright (c) 2012-2015, JP Richardson <jprichardson@gmail.com>
 
@@ -2929,12 +2914,12 @@ Homepage: https://github.com/vasturiano/kapsule
 Copyright (c) 2017 Vasco Asturiano
 
 ### `kleur@4.1.5`
-Homepage: lukeed/kleur
+Homepage: https://github.com/lukeed/kleur
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
 ### `kleur@3.0.3`
-Homepage: lukeed/kleur
+Homepage: https://github.com/lukeed/kleur
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
@@ -2954,7 +2939,7 @@ Homepage: https://github.com/eventualbuddha/lines-and-columns#readme
 Copyright (c) 2015 Brian Donovan
 
 ### `linkify-it@5.0.0`
-Homepage: markdown-it/linkify-it
+Homepage: https://github.com/markdown-it/linkify-it
 
 Copyright (c) 2015 Vitaly Puzrin.
 
@@ -2988,12 +2973,12 @@ Copyright JS Foundation and other contributors <https://js.foundation/>
 Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation.
 
 ### `log-symbols@6.0.0`
-Homepage: sindresorhus/log-symbols
+Homepage: https://github.com/sindresorhus/log-symbols
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `longest-streak@3.1.0`
-Homepage: wooorm/longest-streak
+Homepage: https://github.com/wooorm/longest-streak
 
 Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 
@@ -3008,12 +2993,12 @@ Homepage: https://github.com/Rich-Harris/magic-string
 Copyright 2018 Rich Harris
 
 ### `markdown-it@14.1.1`
-Homepage: markdown-it/markdown-it
+Homepage: https://github.com/markdown-it/markdown-it
 
 Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
 
 ### `markdown-table@3.0.4`
-Homepage: wooorm/markdown-table
+Homepage: https://github.com/wooorm/markdown-table
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -3023,108 +3008,108 @@ Homepage: https://github.com/es-shims/math-intrinsics#readme
 Copyright (c) 2024 ECMAScript Shims
 
 ### `mdast-util-find-and-replace@3.0.2`
-Homepage: syntax-tree/mdast-util-find-and-replace
+Homepage: https://github.com/syntax-tree/mdast-util-find-and-replace
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-from-markdown@2.0.3`
-Homepage: syntax-tree/mdast-util-from-markdown
+Homepage: https://github.com/syntax-tree/mdast-util-from-markdown
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-frontmatter@2.0.1`
-Homepage: syntax-tree/mdast-util-frontmatter
+Homepage: https://github.com/syntax-tree/mdast-util-frontmatter
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm@3.1.0`
-Homepage: syntax-tree/mdast-util-gfm
+Homepage: https://github.com/syntax-tree/mdast-util-gfm
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm-autolink-literal@2.0.1`
-Homepage: syntax-tree/mdast-util-gfm-autolink-literal
+Homepage: https://github.com/syntax-tree/mdast-util-gfm-autolink-literal
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm-footnote@2.1.0`
-Homepage: syntax-tree/mdast-util-gfm-footnote
+Homepage: https://github.com/syntax-tree/mdast-util-gfm-footnote
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm-strikethrough@2.0.0`
-Homepage: syntax-tree/mdast-util-gfm-strikethrough
+Homepage: https://github.com/syntax-tree/mdast-util-gfm-strikethrough
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm-table@2.0.0`
-Homepage: syntax-tree/mdast-util-gfm-table
+Homepage: https://github.com/syntax-tree/mdast-util-gfm-table
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-gfm-task-list-item@2.0.0`
-Homepage: syntax-tree/mdast-util-gfm-task-list-item
+Homepage: https://github.com/syntax-tree/mdast-util-gfm-task-list-item
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-mdx@3.0.0`
-Homepage: syntax-tree/mdast-util-mdx
+Homepage: https://github.com/syntax-tree/mdast-util-mdx
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-mdx-expression@2.0.1`
-Homepage: syntax-tree/mdast-util-mdx-expression
+Homepage: https://github.com/syntax-tree/mdast-util-mdx-expression
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-mdx-jsx@3.2.0`
-Homepage: syntax-tree/mdast-util-mdx-jsx
+Homepage: https://github.com/syntax-tree/mdast-util-mdx-jsx
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-mdxjs-esm@2.0.1`
-Homepage: syntax-tree/mdast-util-mdxjs-esm
+Homepage: https://github.com/syntax-tree/mdast-util-mdxjs-esm
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-phrasing@4.1.0`
-Homepage: syntax-tree/mdast-util-phrasing
+Homepage: https://github.com/syntax-tree/mdast-util-phrasing
 
 Copyright (c) 2017 Titus Wormer <tituswormer@gmail.com> Copyright (c) 2017 Victor Felder <victor@draft.li>
 
 ### `mdast-util-to-hast@13.2.1`
-Homepage: syntax-tree/mdast-util-to-hast
+Homepage: https://github.com/syntax-tree/mdast-util-to-hast
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-to-markdown@2.1.2`
-Homepage: syntax-tree/mdast-util-to-markdown
+Homepage: https://github.com/syntax-tree/mdast-util-to-markdown
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `mdast-util-to-string@4.0.0`
-Homepage: syntax-tree/mdast-util-to-string
+Homepage: https://github.com/syntax-tree/mdast-util-to-string
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `mdurl@2.0.0`
-Homepage: markdown-it/mdurl
+Homepage: https://github.com/markdown-it/mdurl
 
 Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
 Copyright Joyent, Inc. and other Node contributors. All rights reserved.
 
 ### `media-typer@1.1.0`
-Homepage: jshttp/media-typer
+Homepage: https://github.com/jshttp/media-typer
 
 Copyright (c) 2014-2017 Douglas Christopher Wilson
 
 ### `merge-descriptors@2.0.0`
-Homepage: sindresorhus/merge-descriptors
+Homepage: https://github.com/sindresorhus/merge-descriptors
 
 Copyright (c) Jonathan Ong <me@jongleberry.com> Copyright (c) Douglas Christopher Wilson <doug@somethingdoug.com> Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `merge-stream@2.0.0`
-Homepage: grncdr/merge-stream
+Homepage: https://github.com/grncdr/merge-stream
 
 Copyright (c) Stephen Sugden <me@stephensugden.com> (stephensugden.com)
 
@@ -3144,47 +3129,47 @@ Homepage: https://github.com/micromark/micromark/tree/main/packages/micromark-co
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-frontmatter@2.0.0`
-Homepage: micromark/micromark-extension-frontmatter
+Homepage: https://github.com/micromark/micromark-extension-frontmatter
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm@3.0.0`
-Homepage: micromark/micromark-extension-gfm
+Homepage: https://github.com/micromark/micromark-extension-gfm
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-autolink-literal@2.1.0`
-Homepage: micromark/micromark-extension-gfm-autolink-literal
+Homepage: https://github.com/micromark/micromark-extension-gfm-autolink-literal
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-footnote@2.1.0`
-Homepage: micromark/micromark-extension-gfm-footnote
+Homepage: https://github.com/micromark/micromark-extension-gfm-footnote
 
 Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-strikethrough@2.1.0`
-Homepage: micromark/micromark-extension-gfm-strikethrough
+Homepage: https://github.com/micromark/micromark-extension-gfm-strikethrough
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-table@2.1.1`
-Homepage: micromark/micromark-extension-gfm-table
+Homepage: https://github.com/micromark/micromark-extension-gfm-table
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-tagfilter@2.0.0`
-Homepage: micromark/micromark-extension-gfm-tagfilter
+Homepage: https://github.com/micromark/micromark-extension-gfm-tagfilter
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-gfm-task-list-item@2.1.0`
-Homepage: micromark/micromark-extension-gfm-task-list-item
+Homepage: https://github.com/micromark/micromark-extension-gfm-task-list-item
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-mdx@2.1.0`
-Homepage: micromark/micromark-extension-mdx
+Homepage: https://github.com/micromark/micromark-extension-mdx
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
@@ -3194,12 +3179,12 @@ Homepage: https://github.com/micromark/micromark-extension-mdx-expression/tree/m
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-mdx-jsx@3.0.2`
-Homepage: micromark/micromark-extension-mdx-jsx
+Homepage: https://github.com/micromark/micromark-extension-mdx-jsx
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
 ### `micromark-extension-mdx-md@2.0.0`
-Homepage: micromark/micromark-extension-mdx-md
+Homepage: https://github.com/micromark/micromark-extension-mdx-md
 
 Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>
 
@@ -3314,27 +3299,27 @@ Homepage: https://github.com/micromatch/micromatch
 Copyright (c) 2014-present, Jon Schlinkert.
 
 ### `mime-db@1.54.0`
-Homepage: jshttp/mime-db
+Homepage: https://github.com/jshttp/mime-db
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2015-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `mime-types@3.0.2`
-Homepage: jshttp/mime-types
+Homepage: https://github.com/jshttp/mime-types
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `mimic-fn@2.1.0`
-Homepage: sindresorhus/mimic-fn
+Homepage: https://github.com/sindresorhus/mimic-fn
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `mimic-function@5.0.1`
-Homepage: sindresorhus/mimic-function
+Homepage: https://github.com/sindresorhus/mimic-function
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `mimic-response@3.1.0`
-Homepage: sindresorhus/mimic-response
+Homepage: https://github.com/sindresorhus/mimic-response
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3359,12 +3344,12 @@ Homepage: https://github.com/watson/module-details-from-path#readme
 Copyright (c) 2016-2025 Thomas Watson Steen
 
 ### `mrmime@2.0.1`
-Homepage: lukeed/mrmime
+Homepage: https://github.com/lukeed/mrmime
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (https://lukeed.com)
 
 ### `ms@2.1.3`
-Homepage: vercel/ms
+Homepage: https://github.com/vercel/ms
 
 Copyright (c) 2020 Vercel, Inc.
 
@@ -3374,7 +3359,7 @@ Homepage: https://mswjs.io
 Copyright (c) 2018–present Artem Zakharchenko
 
 ### `nanoid@3.3.11`
-Homepage: ai/nanoid
+Homepage: https://github.com/ai/nanoid
 
 Copyright 2017 Andrey Sitnik <andrey@sitnik.ru>
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
@@ -3385,7 +3370,7 @@ Homepage: https://github.com/inspiredware/napi-build-utils#readme
 Copyright (c) 2018 inspiredware
 
 ### `negotiator@1.0.0`
-Homepage: jshttp/negotiator
+Homepage: https://github.com/jshttp/negotiator
 
 Copyright (c) 2012-2014 Federico Romero Copyright (c) 2012-2014 Isaac Z. Schlueter Copyright (c) 2014-2015 Douglas Christopher Wilson
 
@@ -3410,7 +3395,7 @@ Homepage: https://github.com/nodejs/node-addon-api
 Copyright (c) 2017 [Node.js API collaborators](https://github.com/nodejs/node-addon-api#collaborators)
 
 ### `node-diff3@3.2.0`
-Homepage: github:bhousel/node-diff3
+Homepage: https://github.com/bhousel/node-diff3
 
 Copyright (c) 2006, 2008 Tony Garnock-Jones &lt;tonyg@lshift.net&gt;<br/> Copyright (c) 2006, 2008 LShift Ltd. &lt;query@lshift.net&gt;<br/> Copyright (c) 2019-2025 Bryan Housel &lt;bhousel@gmail.com&gt;<br/>
 
@@ -3435,17 +3420,17 @@ Homepage: https://github.com/chicoxyzzy/node-releases
 Copyright (c) 2017 Sergey Rubanov (https://github.com/chicoxyzzy)
 
 ### `npm-run-path@6.0.0`
-Homepage: sindresorhus/npm-run-path
+Homepage: https://github.com/sindresorhus/npm-run-path
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `npm-run-path@4.0.1`
-Homepage: sindresorhus/npm-run-path
+Homepage: https://github.com/sindresorhus/npm-run-path
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `object-assign@4.1.1`
-Homepage: sindresorhus/object-assign
+Homepage: https://github.com/sindresorhus/object-assign
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -3465,27 +3450,27 @@ Homepage: https://github.com/mcollina/on-exit-or-gc#readme
 Copyright (c) 2021 Matteo Collina
 
 ### `on-finished@2.4.1`
-Homepage: jshttp/on-finished
+Homepage: https://github.com/jshttp/on-finished
 
 Copyright (c) 2013 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `onetime@5.1.2`
-Homepage: sindresorhus/onetime
+Homepage: https://github.com/sindresorhus/onetime
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `onetime@7.0.0`
-Homepage: sindresorhus/onetime
+Homepage: https://github.com/sindresorhus/onetime
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `open@11.0.0`
-Homepage: sindresorhus/open
+Homepage: https://github.com/sindresorhus/open
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `ora@8.2.0`
-Homepage: sindresorhus/ora
+Homepage: https://github.com/sindresorhus/ora
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3506,22 +3491,22 @@ Copyright (c) 2015 Matthew Holt
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `parent-module@1.0.1`
-Homepage: sindresorhus/parent-module
+Homepage: https://github.com/sindresorhus/parent-module
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `parse-entities@4.0.2`
-Homepage: wooorm/parse-entities
+Homepage: https://github.com/wooorm/parse-entities
 
 Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>
 
 ### `parse-json@5.2.0`
-Homepage: sindresorhus/parse-json
+Homepage: https://github.com/sindresorhus/parse-json
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `parse-ms@4.0.0`
-Homepage: sindresorhus/parse-ms
+Homepage: https://github.com/sindresorhus/parse-ms
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3531,7 +3516,7 @@ Homepage: https://parse5.js.org
 Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)
 
 ### `parseurl@1.3.3`
-Homepage: pillarjs/parseurl
+Homepage: https://github.com/pillarjs/parseurl
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2017 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -3547,12 +3532,12 @@ Homepage: https://github.com/NaturalIntelligence/path-expression-matcher#readme
 Copyright (c) 2024
 
 ### `path-key@3.1.1`
-Homepage: sindresorhus/path-key
+Homepage: https://github.com/sindresorhus/path-key
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `path-key@4.0.0`
-Homepage: sindresorhus/path-key
+Homepage: https://github.com/sindresorhus/path-key
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3618,7 +3603,7 @@ Homepage: https://github.com/postcss/postcss-selector-parser
 Copyright (c) Ben Briggs <beneb.info@gmail.com> (http://beneb.info)
 
 ### `powershell-utils@0.1.0`
-Homepage: sindresorhus/powershell-utils
+Homepage: https://github.com/sindresorhus/powershell-utils
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3633,7 +3618,7 @@ Homepage: https://github.com/prebuild/prebuild-install
 Copyright (c) 2015 Mathias Buus
 
 ### `pretty-ms@9.3.0`
-Homepage: sindresorhus/pretty-ms
+Homepage: https://github.com/sindresorhus/pretty-ms
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3648,7 +3633,7 @@ Homepage: https://github.com/fastify/fastify-warning#readme
 Copyright (c) Fastify
 
 ### `prompts@2.4.2`
-Homepage: terkelg/prompts
+Homepage: https://github.com/terkelg/prompts
 
 Copyright (c) 2018 Terkel Gjervig Nielsen
 
@@ -3658,7 +3643,7 @@ Homepage: https://facebook.github.io/react/
 Copyright (c) 2013-present, Facebook, Inc.
 
 ### `property-information@7.1.0`
-Homepage: wooorm/property-information
+Homepage: https://github.com/wooorm/property-information
 
 Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>
 
@@ -3753,12 +3738,12 @@ Homepage: https://code.haverbeke.berlin/prosemirror/prosemirror-view
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
 ### `proxy-addr@2.0.7`
-Homepage: jshttp/proxy-addr
+Homepage: https://github.com/jshttp/proxy-addr
 
 Copyright (c) 2014-2016 Douglas Christopher Wilson
 
 ### `pump@3.0.4`
-Homepage: git://github.com/mafintosh/pump.git
+Homepage: https://github.com/mafintosh/pump
 
 Copyright (c) 2014 Mathias Buus
 
@@ -3790,12 +3775,12 @@ Homepage: https://radix-ui.com/primitives
 Copyright (c) 2022 WorkOS
 
 ### `range-parser@1.2.1`
-Homepage: jshttp/range-parser
+Homepage: https://github.com/jshttp/range-parser
 
 Copyright (c) 2012-2014 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2015-2016 Douglas Christopher Wilson <doug@somethingdoug.com
 
 ### `raw-body@3.0.2`
-Homepage: stream-utils/raw-body
+Homepage: https://github.com/stream-utils/raw-body
 
 Copyright (c) 2013-2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -3891,7 +3876,7 @@ Homepage: https://github.com/rehypejs/rehype
 Copyright (c) Titus Wormer
 
 ### `rehype-remark@10.0.1`
-Homepage: rehypejs/rehype-remark
+Homepage: https://github.com/rehypejs/rehype-remark
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -3901,12 +3886,12 @@ Homepage: https://github.com/rehypejs/rehype
 Copyright (c) Titus Wormer
 
 ### `remark-frontmatter@5.0.0`
-Homepage: remarkjs/remark-frontmatter
+Homepage: https://github.com/remarkjs/remark-frontmatter
 
 Copyright (c) 2017 Titus Wormer <tituswormer@gmail.com>
 
 ### `remark-gfm@4.0.1`
-Homepage: remarkjs/remark-gfm
+Homepage: https://github.com/remarkjs/remark-gfm
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -3916,7 +3901,7 @@ Homepage: https://remark.js.org
 Copyright (c) 2014 Titus Wormer <tituswormer@gmail.com>
 
 ### `remark-rehype@11.1.2`
-Homepage: remarkjs/remark-rehype
+Homepage: https://github.com/remarkjs/remark-rehype
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -3931,7 +3916,7 @@ Homepage: https://github.com/troygoode/node-require-directory/
 Copyright (c) 2011 Troy Goode <troygoode@gmail.com>
 
 ### `require-from-string@2.0.2`
-Homepage: floatdrop/require-from-string
+Homepage: https://github.com/floatdrop/require-from-string
 
 Copyright (c) Vsevolod Strukchinsky <floatdrop@gmail.com> (github.com/floatdrop)
 
@@ -3946,12 +3931,12 @@ Homepage: ssh://github.com/browserify/resolve
 Copyright (c) 2012 James Halliday
 
 ### `resolve-from@4.0.0`
-Homepage: sindresorhus/resolve-from
+Homepage: https://github.com/sindresorhus/resolve-from
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `restore-cursor@5.1.0`
-Homepage: sindresorhus/restore-cursor
+Homepage: https://github.com/sindresorhus/restore-cursor
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -3971,12 +3956,12 @@ Homepage: https://github.com/marijnh/rope-sequence
 Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin>
 
 ### `router@2.2.0`
-Homepage: pillarjs/router
+Homepage: https://github.com/pillarjs/router
 
 Copyright (c) 2013 Roman Shtylman Copyright (c) 2014-2022 Douglas Christopher Wilson
 
 ### `run-applescript@7.1.0`
-Homepage: sindresorhus/run-applescript
+Homepage: https://github.com/sindresorhus/run-applescript
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4014,12 +3999,12 @@ Copyright &copy; 2012-2015 Eli Skeggs
 Copyright &copy; 2011 Kevin Kwok
 
 ### `send@1.2.1`
-Homepage: pillarjs/send
+Homepage: https://github.com/pillarjs/send
 
 Copyright (c) 2012 TJ Holowaychuk Copyright (c) 2014-2022 Douglas Christopher Wilson
 
 ### `serve-static@2.2.1`
-Homepage: expressjs/serve-static
+Homepage: https://github.com/expressjs/serve-static
 
 Copyright (c) 2010 Sencha Inc. Copyright (c) 2011 LearnBoost Copyright (c) 2011 TJ Holowaychuk Copyright (c) 2014-2016 Douglas Christopher Wilson
 
@@ -4034,12 +4019,12 @@ Homepage: https://github.com/moroshko/shallow-equal
 Copyright © 2023 Misha Moroshko and Philip Su
 
 ### `shebang-command@2.0.0`
-Homepage: kevva/shebang-command
+Homepage: https://github.com/kevva/shebang-command
 
 Copyright (c) Kevin Mårtensson <kevinmartensson@gmail.com> (github.com/kevva)
 
 ### `shebang-regex@3.0.0`
-Homepage: sindresorhus/shebang-regex
+Homepage: https://github.com/sindresorhus/shebang-regex
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -4086,7 +4071,7 @@ Homepage: https://github.com/steveukx/git-js
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `sirv@3.0.2`
-Homepage: lukeed/sirv
+Homepage: https://github.com/lukeed/sirv
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
@@ -4106,7 +4091,7 @@ Homepage: https://sonner.emilkowal.ski/
 Copyright (c) 2023 Emil Kowalski
 
 ### `space-separated-tokens@2.0.2`
-Homepage: wooorm/space-separated-tokens
+Homepage: https://github.com/wooorm/space-separated-tokens
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -4118,12 +4103,12 @@ Copyright 2017 Ryusei Yamaguchi
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `statuses@2.0.2`
-Homepage: jshttp/statuses
+Homepage: https://github.com/jshttp/statuses
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `stdin-discarder@0.2.2`
-Homepage: sindresorhus/stdin-discarder
+Homepage: https://github.com/sindresorhus/stdin-discarder
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4133,7 +4118,7 @@ Homepage: http://github.com/mscdex/streamsearch
 Copyright Brian White. All rights reserved.
 
 ### `strict-event-emitter@0.5.1`
-Homepage: git@github.com:open-draft/strict-event-emitter.git
+Homepage: https://github.com/open-draft/strict-event-emitter
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
@@ -4144,52 +4129,52 @@ Copyright Node.js contributors. All rights reserved.
 Copyright Joyent, Inc. and other Node contributors. All rights reserved.
 
 ### `string-width@7.2.0`
-Homepage: sindresorhus/string-width
+Homepage: https://github.com/sindresorhus/string-width
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `string-width@4.2.3`
-Homepage: sindresorhus/string-width
+Homepage: https://github.com/sindresorhus/string-width
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `stringify-entities@4.0.4`
-Homepage: wooorm/stringify-entities
+Homepage: https://github.com/wooorm/stringify-entities
 
 Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 
 ### `strip-ansi@7.2.0`
-Homepage: chalk/strip-ansi
+Homepage: https://github.com/chalk/strip-ansi
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `strip-ansi@6.0.1`
-Homepage: chalk/strip-ansi
+Homepage: https://github.com/chalk/strip-ansi
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `strip-bom@3.0.0`
-Homepage: sindresorhus/strip-bom
+Homepage: https://github.com/sindresorhus/strip-bom
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `strip-final-newline@4.0.0`
-Homepage: sindresorhus/strip-final-newline
+Homepage: https://github.com/sindresorhus/strip-final-newline
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `strip-final-newline@2.0.0`
-Homepage: sindresorhus/strip-final-newline
+Homepage: https://github.com/sindresorhus/strip-final-newline
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `strip-json-comments@5.0.3`
-Homepage: sindresorhus/strip-json-comments
+Homepage: https://github.com/sindresorhus/strip-json-comments
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `strip-json-comments@2.0.1`
-Homepage: sindresorhus/strip-json-comments
+Homepage: https://github.com/sindresorhus/strip-json-comments
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
@@ -4214,7 +4199,7 @@ Homepage: https://github.com/inspect-js/node-supports-preserve-symlinks-flag#rea
 Copyright (c) 2022 Inspect JS
 
 ### `tagged-tag@1.0.0`
-Homepage: sindresorhus/tagged-tag
+Homepage: https://github.com/sindresorhus/tagged-tag
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4259,7 +4244,7 @@ Homepage: https://github.com/alexreardon/tiny-invariant
 Copyright (c) 2019 Alexander Reardon
 
 ### `tiny-typed-emitter@2.1.0`
-Homepage: https://github.com/binier/tiny-typed-emitter.git
+Homepage: https://github.com/binier/tiny-typed-emitter
 
 Copyright (c) 2020 Zurab Benashvili (binier) <zura.bena@gmail.com>
 
@@ -4284,7 +4269,7 @@ Homepage: https://github.com/micromatch/to-regex-range
 Copyright (c) 2015-present, Jon Schlinkert.
 
 ### `toidentifier@1.0.1`
-Homepage: component/toidentifier
+Homepage: https://github.com/component/toidentifier
 
 Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -4294,22 +4279,22 @@ Homepage: https://github.com/Borewit/token-types
 Copyright © 2026 Borewit
 
 ### `totalist@3.0.1`
-Homepage: lukeed/totalist
+Homepage: https://github.com/lukeed/totalist
 
 Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
 
 ### `trim-lines@3.0.1`
-Homepage: wooorm/trim-lines
+Homepage: https://github.com/wooorm/trim-lines
 
 Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 
 ### `trim-trailing-lines@2.1.0`
-Homepage: wooorm/trim-trailing-lines
+Homepage: https://github.com/wooorm/trim-trailing-lines
 
 Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 
 ### `trough@2.2.0`
-Homepage: wooorm/trough
+Homepage: https://github.com/wooorm/trough
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -4334,22 +4319,22 @@ Homepage: https://github.com/Wombosvideo/tw-animate-css#readme
 Copyright (c) 2025 Wombosvideo
 
 ### `type-fest@5.5.0`
-Homepage: sindresorhus/type-fest
+Homepage: https://github.com/sindresorhus/type-fest
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `type-is@2.0.1`
-Homepage: jshttp/type-is
+Homepage: https://github.com/jshttp/type-is
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
 ### `uc.micro@2.1.0`
-Homepage: markdown-it/uc.micro
+Homepage: https://github.com/markdown-it/uc.micro
 
 Copyright Mathias Bynens <https://mathiasbynens.be/>
 
 ### `uint8array-extras@1.5.0`
-Homepage: sindresorhus/uint8array-extras
+Homepage: https://github.com/sindresorhus/uint8array-extras
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4364,7 +4349,7 @@ Homepage: https://undici.nodejs.org
 Copyright (c) Matteo Collina and Undici contributors
 
 ### `unicorn-magic@0.3.0`
-Homepage: sindresorhus/unicorn-magic
+Homepage: https://github.com/sindresorhus/unicorn-magic
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4374,37 +4359,37 @@ Homepage: https://unifiedjs.com
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-find-after@5.0.0`
-Homepage: syntax-tree/unist-util-find-after
+Homepage: https://github.com/syntax-tree/unist-util-find-after
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-is@6.0.1`
-Homepage: syntax-tree/unist-util-is
+Homepage: https://github.com/syntax-tree/unist-util-is
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-position@5.0.0`
-Homepage: syntax-tree/unist-util-position
+Homepage: https://github.com/syntax-tree/unist-util-position
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-position-from-estree@2.0.0`
-Homepage: syntax-tree/unist-util-position-from-estree
+Homepage: https://github.com/syntax-tree/unist-util-position-from-estree
 
 Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-stringify-position@4.0.0`
-Homepage: syntax-tree/unist-util-stringify-position
+Homepage: https://github.com/syntax-tree/unist-util-stringify-position
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-visit@5.1.0`
-Homepage: syntax-tree/unist-util-visit
+Homepage: https://github.com/syntax-tree/unist-util-visit
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `unist-util-visit-parents@6.0.2`
-Homepage: syntax-tree/unist-util-visit-parents
+Homepage: https://github.com/syntax-tree/unist-util-visit-parents
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -4415,7 +4400,7 @@ Copyright (c) 2017, Ryan Zimmerman <opensrc@ryanzim.com>
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `unpipe@1.0.0`
-Homepage: stream-utils/unpipe
+Homepage: https://github.com/stream-utils/unpipe
 
 Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
@@ -4425,7 +4410,7 @@ Homepage: https://github.com/kettanaito/until-async
 Copyright (c) 2021 Artem Zakharchenko
 
 ### `update-browserslist-db@1.2.3`
-Homepage: browserslist/update-db
+Homepage: https://github.com/browserslist/update-db
 
 Copyright 2022 Andrey Sitnik <andrey@sitnik.ru> and other contributors
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
@@ -4451,22 +4436,22 @@ Homepage: https://github.com/TooTallNate/util-deprecate
 Copyright (c) 2014 Nathan Rajlich <nathan@tootallnate.net>
 
 ### `vary@1.1.2`
-Homepage: jshttp/vary
+Homepage: https://github.com/jshttp/vary
 
 Copyright (c) 2014-2017 Douglas Christopher Wilson
 
 ### `vfile@6.0.3`
-Homepage: vfile/vfile
+Homepage: https://github.com/vfile/vfile
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 
 ### `vfile-location@5.0.3`
-Homepage: vfile/vfile-location
+Homepage: https://github.com/vfile/vfile-location
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ### `vfile-message@4.0.3`
-Homepage: vfile/vfile-message
+Homepage: https://github.com/vfile/vfile-message
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
@@ -4481,7 +4466,7 @@ Homepage: https://github.com/BerkeleyTrue/warning
 Copyright (c) 2013-present, Facebook, Inc.
 
 ### `web-namespaces@2.0.1`
-Homepage: wooorm/web-namespaces
+Homepage: https://github.com/wooorm/web-namespaces
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -4491,12 +4476,12 @@ Homepage: https://github.com/MattiasBuelens/web-streams-polyfill#readme
 Copyright (c) 2024 Mattias Buelens Copyright (c) 2016 Diwank Singh Tomer
 
 ### `wrap-ansi@6.2.0`
-Homepage: chalk/wrap-ansi
+Homepage: https://github.com/chalk/wrap-ansi
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `wrap-ansi@7.0.0`
-Homepage: chalk/wrap-ansi
+Homepage: https://github.com/chalk/wrap-ansi
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4507,7 +4492,7 @@ Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com> Copyright (c) 2013 Ar
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `wsl-utils@0.3.1`
-Homepage: sindresorhus/wsl-utils
+Homepage: https://github.com/sindresorhus/wsl-utils
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4537,17 +4522,17 @@ Homepage: https://docs.yjs.dev
 Copyright (c) 2023 - Kevin Jahns <kevin.jahns@protonmail.com>. - Chair of Computer Science 5 (Databases & Information Systems), RWTH Aachen University, Germany
 
 ### `yocto-spinner@1.1.0`
-Homepage: sindresorhus/yocto-spinner
+Homepage: https://github.com/sindresorhus/yocto-spinner
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `yoctocolors@2.1.2`
-Homepage: sindresorhus/yoctocolors
+Homepage: https://github.com/sindresorhus/yoctocolors
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `yoctocolors-cjs@2.1.3`
-Homepage: sindresorhus/yoctocolors
+Homepage: https://github.com/sindresorhus/yoctocolors
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
@@ -4562,7 +4547,7 @@ Homepage: https://zod.dev
 Copyright (c) 2025 Colin McDonnell
 
 ### `zwitch@2.0.4`
-Homepage: wooorm/zwitch
+Homepage: https://github.com/wooorm/zwitch
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
@@ -4591,7 +4576,7 @@ Copyright (c) 2015, Ilya Radchenko <knownasilya@gmail.com>
 copyright notice and this permission notice appear in all copies.
 
 ### `cliui@8.0.1`
-Homepage: yargs/cliui
+Homepage: https://github.com/yargs/cliui
 
 Copyright (c) 2015, Contributors
 
@@ -4688,7 +4673,7 @@ Homepage: https://github.com/stefanpenner/get-caller-file#readme
 Copyright 2018 Stefan Penner
 
 ### `glob-parent@5.1.2`
-Homepage: gulpjs/glob-parent
+Homepage: https://github.com/gulpjs/glob-parent
 
 Copyright (c) 2015, 2019 Elan Shanker
 copyright notice and this permission notice appear in all copies.
@@ -4700,7 +4685,7 @@ Copyright (c) 2011-2022 Isaac Z. Schlueter, Ben Noordhuis, and Contributors
 copyright notice and this permission notice appear in all copies.
 
 ### `inherits@2.0.4`
-Homepage: git://github.com/isaacs/inherits
+Homepage: https://github.com/isaacs/inherits
 
 Copyright (c) Isaac Z. Schlueter
 copyright notice and this permission notice appear in all copies.
@@ -4729,7 +4714,7 @@ Copyright (c) Isaac Z. Schlueter and Contributors
 copyright notice and this permission notice appear in all copies.
 
 ### `lru-cache@5.1.1`
-Homepage: git://github.com/isaacs/node-lru-cache.git
+Homepage: https://github.com/isaacs/node-lru-cache
 
 Copyright (c) Isaac Z. Schlueter and Contributors
 copyright notice and this permission notice appear in all copies.
@@ -4760,7 +4745,7 @@ Copyright (c) Isaac Z. Schlueter and Contributors
 copyright notice and this permission notice appear in all copies.
 
 ### `picocolors@1.1.1`
-Homepage: alexeyraspopov/picocolors
+Homepage: https://github.com/alexeyraspopov/picocolors
 
 Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov
 copyright notice and this permission notice appear in all copies.
@@ -4800,7 +4785,7 @@ Copyright (c) 2014-2018, Matteo Collina <hello@matteocollina.com>
 copyright notice and this permission notice appear in all copies.
 
 ### `universal-user-agent@7.0.3`
-Homepage: github:gr2m/universal-user-agent
+Homepage: https://github.com/gr2m/universal-user-agent
 
 Copyright (c) 2018-2021, Gregor Martynus (https://github.com/gr2m)
 
@@ -4949,7 +4934,7 @@ Homepage: https://github.com/fastify/secure-json-parse#readme
 Copyright (c) 2019, Sideway Inc, and project contributors Copyright (c) 2019-present The Fastify team
 
 ### `smol-toml@1.6.1`
-Homepage: github:squirrelchat/smol-toml
+Homepage: https://github.com/squirrelchat/smol-toml
 
 Copyright (c) Squirrel Chat et al., All rights reserved.
 
@@ -5011,7 +4996,7 @@ Homepage: https://github.com/dominictarr/rc
 Copyright (c) 2011 Dominic Tarr
 
 ### `stringify-object@5.0.0`
-Homepage: yeoman/stringify-object
+Homepage: https://github.com/yeoman/stringify-object
 
 Copyright (c) 2015, Yeoman team
 
@@ -5022,9 +5007,6 @@ Copyright (c) 2015, Yeoman team
 Used at build time only — not bundled into shipped artifacts. Listed for traceability.
 
 ### `lightningcss@1.32.0`
-Homepage: https://github.com/parcel-bundler/lightningcss
-
-### `lightningcss-darwin-arm64@1.32.0`
 Homepage: https://github.com/parcel-bundler/lightningcss
 
 ---

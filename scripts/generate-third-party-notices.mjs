@@ -26,8 +26,10 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = dirname(SCRIPT_DIR);
 
 // Workspaces whose runtime dependencies are bundled into a shipped artifact.
-// The CLI is bundled by tsdown; the app is bundled by Vite; both end up under
-// packages/cli/dist/. The desktop workspace adds @napi-rs/keyring (native) and
+// cli/app are bundled by tsdown/Vite into packages/cli/dist/. server/core are
+// workspace-internal libraries pulled in by cli, but `collectClosure` skips
+// workspace-prefixed packages when walking deps, so each shipping workspace
+// must be seeded explicitly. desktop adds @napi-rs/keyring (native) and
 // electron-updater (bundled into the main-process JS). Electron itself is
 // attributed by electron-builder via electron/dist/LICENSES.chromium.html.
 const SHIPPING_WORKSPACES = [
@@ -111,6 +113,20 @@ function isWorkspacePkg(pkg) {
   return pkg.name && pkg.name.startsWith(WORKSPACE_NAME_PREFIX);
 }
 
+// Platform-binary forks (e.g., `@parcel/watcher-darwin-arm64`) declare a
+// non-empty `os` or `cpu` array restricting them to a single host. Only the
+// fork matching the publisher's host actually resolves into `node_modules/`,
+// so including them would make the committed notices file diverge across
+// contributor platforms. The cross-platform wrapper package
+// (`@parcel/watcher`) is still attributed; per-platform binary attribution
+// rides along in each binary's own published npm package, fetched at install
+// time on the user's host.
+function isPlatformRestricted(pkg) {
+  if (Array.isArray(pkg.os) && pkg.os.length > 0) return true;
+  if (Array.isArray(pkg.cpu) && pkg.cpu.length > 0) return true;
+  return false;
+}
+
 function collectClosure() {
   const visitedDirs = new Set();
   const queue = [];
@@ -133,7 +149,12 @@ function collectClosure() {
       continue;
     }
 
-    if (!isWorkspacePkg(pkg) && pkg.name && pkg.version) {
+    if (
+      !isWorkspacePkg(pkg) &&
+      pkg.name &&
+      pkg.version &&
+      !isPlatformRestricted(pkg)
+    ) {
       collected.push({ dir: pkgDir, pkg });
     }
 
@@ -203,12 +224,18 @@ function normalizeSpdx(licenseField) {
   return String(licenseField);
 }
 
+// Cap the number of copyright blocks captured per LICENSE. Aggregator licenses
+// (e.g. Chromium's `LICENSES.chromium.html` with thousands of holders) would
+// otherwise blow up the notices file; legitimate per-package LICENSEs rarely
+// exceed three holders.
+const MAX_COPYRIGHT_BLOCKS = 4;
+
 function extractCopyrights(licenseText) {
   if (!licenseText) return [];
   const lines = licenseText.split('\n');
   const blocks = [];
   let i = 0;
-  while (i < lines.length && blocks.length < 4) {
+  while (i < lines.length && blocks.length < MAX_COPYRIGHT_BLOCKS) {
     const line = lines[i].trim();
     // Match lines that START with the literal word "Copyright" (or
     // "(c) Copyright"). This excludes prose like "the above copyright notice"
@@ -224,7 +251,7 @@ function extractCopyrights(licenseText) {
       while (j < lines.length && lines[j].trim() !== '') {
         const next = lines[j].trim();
         if (
-          /^(Permission|Redistribution|This Font|This license|All rights|The above|License|See the)/i.test(next)
+          /^(Permission|Redistribution|This Font|This license|This software|This program|This module|All rights|The above|Licensed|License|Released under|Subject to|See the)/i.test(next)
         ) {
           break;
         }
@@ -246,30 +273,71 @@ function extractCopyrights(licenseText) {
   return blocks;
 }
 
+// Normalize a `repository.url` (or string-form `repository`) into a browsable
+// `https://…` URL. Handles npm shorthand (`github:user/repo`, bare
+// `user/repo`), the deprecated `git://` protocol, `git+ssh://git@host/path`,
+// and SCP-style `git@host:path` — none of which are clickable as-is in
+// rendered markdown.
+function normalizeRepoUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  let u = url.trim();
+
+  const shortcutMatch = u.match(/^(github|gitlab|bitbucket):(.+)$/);
+  if (shortcutMatch) {
+    const [, host, path] = shortcutMatch;
+    const domain = {
+      github: 'github.com',
+      gitlab: 'gitlab.com',
+      bitbucket: 'bitbucket.org',
+    }[host];
+    return `https://${domain}/${path.replace(/\.git$/, '')}`;
+  }
+
+  // Bare `user/repo` defaults to GitHub per npm convention.
+  if (/^[\w-]+\/[\w.-]+$/.test(u)) {
+    return `https://github.com/${u.replace(/\.git$/, '')}`;
+  }
+
+  u = u.replace(/^git\+/, '');
+  u = u.replace(/^ssh:\/\/git@/, 'https://');
+  u = u.replace(/^git@([^:]+):/, 'https://$1/');
+  u = u.replace(/^git:\/\//, 'https://');
+  u = u.replace(/\.git$/, '');
+  return u;
+}
+
 function homepageOf(pkg) {
   if (pkg.homepage && typeof pkg.homepage === 'string') return pkg.homepage;
   const repo = pkg.repository;
   if (!repo) return null;
-  if (typeof repo === 'string') return repo;
-  if (repo.url)
-    return repo.url
-      .replace(/^git\+/, '')
-      .replace(/^git:\/\//, 'https://')
-      .replace(/\.git$/, '');
-  return null;
+  const url = typeof repo === 'string' ? repo : repo.url;
+  return normalizeRepoUrl(url);
 }
 
 // ─── categorization ──────────────────────────────────────────────────────────
 
 function categorize(spdx) {
-  const s = spdx.replace(/[()]/g, '').trim();
-  // OR expressions: pick a permissive primary
+  const stripped = spdx.replace(/[()]/g, '').trim();
+  // SPDX `OR` is commutative, so normalize alternatives to alphabetical order.
+  // Without this, a routine upstream reorder (e.g. `Apache-2.0 OR MIT` ↔
+  // `MIT OR Apache-2.0`) would silently route the package to OTHER.
+  const orParts = stripped
+    .split(/\s+OR\s+/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const s =
+    orParts.length > 1
+      ? [...orParts].sort((a, b) => a.localeCompare(b)).join(' OR ')
+      : stripped;
+
+  // OR expressions: pick a permissive primary.
   if (/\bMIT\b/i.test(s) && /\bCC0-1\.0\b/i.test(s)) return 'MIT';
   if (/\bMIT\b/i.test(s) && /\bWTFPL\b/i.test(s)) return 'MIT';
   if (/\bMPL-2\.0\b/i.test(s) && /\bApache-2\.0\b/i.test(s)) return 'Apache-2.0';
   if (/\bWTFPL\b/i.test(s) && /\bISC\b/i.test(s)) return 'ISC';
   if (/\bBSD-2-Clause\b/i.test(s) && /\bMIT\b/i.test(s)) return 'BSD-2-Clause';
-  if (/^MIT( OR Apache-2\.0)?$/i.test(s)) return 'MIT';
+  if (/^Apache-2\.0 OR MIT$/i.test(s)) return 'MIT';
+  if (/^MIT$/i.test(s)) return 'MIT';
   if (/^Apache-2\.0$/i.test(s)) return 'Apache-2.0';
   if (/^ISC$/i.test(s)) return 'ISC';
   if (/^BSD-3-Clause$/i.test(s)) return 'BSD-3-Clause';
@@ -285,7 +353,6 @@ function categorize(spdx) {
   if (/^CC0-1\.0$/i.test(s)) return 'CC0-1.0';
   if (/^LGPL/i.test(s)) return 'LGPL';
   if (/^GPL/i.test(s)) return 'GPL';
-  if (/^MIT$/i.test(s)) return 'MIT';
   return 'OTHER';
 }
 
