@@ -108,6 +108,29 @@ jobs:
           ELECTRON_SKIP_REBUILD: "0"
         run: bun install --frozen-lockfile
 
+      # DEBUG: dump packages/server/package.json + node_modules symlink target
+      # at three checkpoints — investigating why the asar shipped a stale
+      # package.json without the `development`/`default → dist/` exports
+      # added in the packaging-first-boot fix. Remove once root cause known.
+      - name: DEBUG dump server package.json (post-install)
+        run: |
+          echo "=== POST-INSTALL ==="
+          echo "--- packages/server/package.json ---"
+          cat packages/server/package.json
+          echo "--- packages/core/package.json ---"
+          cat packages/core/package.json
+          echo "--- node_modules/@inkeep/open-knowledge-server symlink target ---"
+          ls -la node_modules/@inkeep/open-knowledge-server
+          readlink node_modules/@inkeep/open-knowledge-server || echo "(not a symlink)"
+          echo "--- if not a symlink, that copy's package.json ---"
+          if [[ ! -L node_modules/@inkeep/open-knowledge-server ]]; then
+            cat node_modules/@inkeep/open-knowledge-server/package.json | head -20
+          fi
+          echo "--- packages/desktop/node_modules/@inkeep (if exists) ---"
+          ls -la packages/desktop/node_modules/@inkeep 2>/dev/null || echo "(no per-package node_modules)"
+          echo "--- bun.lock packages/server section ---"
+          grep -A5 '"name": "@inkeep/open-knowledge-server"' bun.lock | head -10
+
       # electron-builder.yml's `extraResources` rule copies from
       # `packages/cli/dist/public/`, which the CLI's `build:assets` populates
       # via `cp -r ../app/dist dist/public`. The CLI does not declare the
@@ -133,6 +156,20 @@ jobs:
         run: |
           bunx turbo run build --filter=@inkeep/open-knowledge-app
           bunx turbo run build --filter=@inkeep/open-knowledge
+
+      # DEBUG: dump again after turbo build, before electron-builder packaging.
+      - name: DEBUG dump server package.json (post-build)
+        run: |
+          echo "=== POST-TURBO-BUILD ==="
+          echo "--- packages/server/package.json (first 20 lines) ---"
+          head -20 packages/server/package.json
+          echo "--- packages/server/dist/ contents ---"
+          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
+          echo "--- packages/core/dist/ contents ---"
+          ls -la packages/core/dist/ 2>/dev/null || echo "(no dist/)"
+          echo "--- node_modules/@inkeep/open-knowledge-server resolution ---"
+          realpath node_modules/@inkeep/open-knowledge-server
+          ls -la "$(realpath node_modules/@inkeep/open-knowledge-server)"
 
       # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
       # the artifact can be named to match. We key off CSC_LINK alone: it's
