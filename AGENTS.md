@@ -43,6 +43,7 @@ bun run format                       # Biome --write
 bun run build                        # turbo build (cli, app, docs)
 bun run build:desktop                # electron-vite (no DMG; see packages/desktop)
 bun run changeset                    # Create changeset
+bun run notices                      # Regenerate THIRD_PARTY_NOTICES.md (drift-checked in `bun run check`)
 
 cd packages/app && bun run dev       # Dev server (Vite + Hocuspocus on 5173)
 cd docs && bun run dev               # Docs (Next.js + Fumadocs)
