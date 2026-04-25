@@ -1,23 +1,29 @@
 import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
-import type {
-  ContextMenuItem,
-  ContextMenuOpenContext,
-  FileTreeDirectoryHandle,
-  FileTreeDropResult,
-  FileTreeRenameEvent,
-  FileTree as PierreFileTreeModel,
+import {
+  type ContextMenuItem,
+  type ContextMenuOpenContext,
+  type FileTreeDirectoryHandle,
+  type FileTreeDropResult,
+  type FileTreeRenameEvent,
+  type FileTree as PierreFileTreeModel,
+  themeToTreeStyles,
 } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
+  Bot,
   Copy,
   FolderPlus,
   FoldVertical,
+  Link2,
   Pencil,
   SquarePen,
   Trash2,
   UnfoldVertical,
 } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import {
+  type CSSProperties,
+  type ReactElement,
   type MouseEvent as ReactMouseEvent,
   type Ref,
   startTransition,
@@ -27,6 +33,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
 import {
@@ -326,6 +333,7 @@ export interface FileTreeHandle {
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
+  const { resolvedTheme } = useTheme();
   function navigateToWithPulse(targetPath: string) {
     navigateTo(targetPath);
     notifySidebarFileSelected();
@@ -406,11 +414,16 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       );
       if (doc?.isSymlink) {
         return {
-          text: 'link',
+          icon: LINK_DECORATION_ICON_ID,
           title: doc.targetPath ? `Symlink to ${doc.targetPath}` : 'Symlink',
         };
       }
-      if (isAgentTreePath(item.path)) return { text: 'agent', title: 'Agent configuration file' };
+      if (isAgentTreePath(item.path)) {
+        return {
+          icon: AGENT_DECORATION_ICON_ID,
+          title: 'Agent configuration file',
+        };
+      }
       return null;
     },
     unsafeCSS: `
