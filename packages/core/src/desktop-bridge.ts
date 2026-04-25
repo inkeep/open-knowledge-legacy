@@ -360,6 +360,18 @@ export interface OkDesktopBridge {
   };
 
   /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Backed by main's `openNavigator()` helper — focus-existing-or-create
+   * with no toggle semantics. Renderer call sites: `ProjectSwitcher`
+   * dropdown's "Switch Project…" item and `CommandPalette`'s "Switch
+   * Project" entry. The File menu's "Switch Project…" item invokes
+   * `openNavigator()` directly inside main without crossing the bridge.
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
+
+  /**
    * `ok seed` scaffolder surface consumed by the FileSidebar + menu.
    * `plan()` is read-only and returns what the scaffolder would write;
    * `apply(plan)` performs the writes. Mirrors the shadcn-3.0 shared-

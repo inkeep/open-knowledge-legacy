@@ -93,6 +93,14 @@ bun run --filter=@inkeep/open-knowledge-desktop dev
 
 On first run, the app opens the Navigator window. Click "Open folder on disk" to pick a content directory — every project pick spawns a new editor window (D3 revised — there is no switch-in-place UX). Closing every editor window keeps the app and the Navigator running; click the Dock icon to bring the Navigator back.
 
+From inside an editor window, three affordances re-summon the Navigator without closing the current project:
+
+- **File → Switch Project…** (`Cmd+Shift+N`) — menu accelerator.
+- **Sidebar ProjectSwitcher pill → Switch Project…** — bottom item below the recents list.
+- **Command Palette (`Cmd+K`) → Switch Project…** — searchable by `switch`, `projects`, or `navigator`.
+
+The two renderer surfaces (sidebar pill and Command Palette) call `bridge.navigator.open()` (IPC channel `ok:navigator:open`), which delegates to the focus-or-create `openNavigator()` helper. The File menu accelerator calls `openNavigator()` directly inside the main process — same destination, no IPC hop.
+
 To skip the native-module rebuild during `bun install` (faster on machines that don't need the desktop build):
 
 ```bash

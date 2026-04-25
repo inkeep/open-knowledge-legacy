@@ -687,6 +687,11 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:navigator:open', async () => {
+    openNavigator();
+    return undefined;
+  });
+
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
