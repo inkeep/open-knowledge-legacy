@@ -108,29 +108,6 @@ jobs:
           ELECTRON_SKIP_REBUILD: "0"
         run: bun install --frozen-lockfile
 
-      # DEBUG: dump packages/server/package.json + node_modules symlink target
-      # at three checkpoints — investigating why the asar shipped a stale
-      # package.json without the `development`/`default → dist/` exports
-      # added in the packaging-first-boot fix. Remove once root cause known.
-      - name: DEBUG dump server package.json (post-install)
-        run: |
-          echo "=== POST-INSTALL ==="
-          echo "--- packages/server/package.json ---"
-          cat packages/server/package.json
-          echo "--- packages/core/package.json ---"
-          cat packages/core/package.json
-          echo "--- node_modules/@inkeep/open-knowledge-server symlink target ---"
-          ls -la node_modules/@inkeep/open-knowledge-server
-          readlink node_modules/@inkeep/open-knowledge-server || echo "(not a symlink)"
-          echo "--- if not a symlink, that copy's package.json ---"
-          if [[ ! -L node_modules/@inkeep/open-knowledge-server ]]; then
-            cat node_modules/@inkeep/open-knowledge-server/package.json | head -20
-          fi
-          echo "--- packages/desktop/node_modules/@inkeep (if exists) ---"
-          ls -la packages/desktop/node_modules/@inkeep 2>/dev/null || echo "(no per-package node_modules)"
-          echo "--- bun.lock packages/server section ---"
-          grep -A5 '"name": "@inkeep/open-knowledge-server"' bun.lock | head -10
-
       # electron-builder.yml's `extraResources` rule copies from
       # `packages/cli/dist/public/`, which the CLI's `build:assets` populates
       # via `cp -r ../app/dist dist/public`. The CLI does not declare the
@@ -157,20 +134,6 @@ jobs:
           bunx turbo run build --filter=@inkeep/open-knowledge-app
           bunx turbo run build --filter=@inkeep/open-knowledge
 
-      # DEBUG: dump again after turbo build, before electron-builder packaging.
-      - name: DEBUG dump server package.json (post-build)
-        run: |
-          echo "=== POST-TURBO-BUILD ==="
-          echo "--- packages/server/package.json (first 20 lines) ---"
-          head -20 packages/server/package.json
-          echo "--- packages/server/dist/ contents ---"
-          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
-          echo "--- packages/core/dist/ contents ---"
-          ls -la packages/core/dist/ 2>/dev/null || echo "(no dist/)"
-          echo "--- node_modules/@inkeep/open-knowledge-server resolution ---"
-          realpath node_modules/@inkeep/open-knowledge-server
-          ls -la "$(realpath node_modules/@inkeep/open-knowledge-server)"
-
       # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
       # the artifact can be named to match. We key off CSC_LINK alone: it's
       # the Developer ID cert, so its absence means we cannot produce a
@@ -184,81 +147,49 @@ jobs:
         run: |
           if [[ -n "${CSC_LINK}" ]]; then
             echo "mode=signed" >> "$GITHUB_OUTPUT"
-            echo "script=build:mac" >> "$GITHUB_OUTPUT"
-            echo "::notice::Signing creds present — running build:mac (signed + notarized + stapled + fuse-verified)."
+            echo "::notice::Signing creds present — building signed + notarized + stapled + fuse-verified DMG."
           else
             echo "mode=unsigned" >> "$GITHUB_OUTPUT"
-            echo "script=build:mac:unsigned" >> "$GITHUB_OUTPUT"
-            echo "::notice::CSC_LINK absent — running build:mac:unsigned. Artifact will be labeled 'unsigned'."
+            echo "::notice::CSC_LINK absent — building unsigned DMG. Artifact will be labeled 'unsigned'."
           fi
 
-      # DEBUG: split build:mac:unsigned into electron-vite then electron-builder
-      # so we can checkpoint between them.
-      - name: DEBUG run electron-vite build (split from build:mac)
-        if: steps.signmode.outputs.mode == 'unsigned'
+      # Step A: vite/main/preload bundles via electron-vite. Always identical
+      # for signed and unsigned modes.
+      - name: Build electron-vite bundles
         working-directory: packages/desktop
         run: bun run build:desktop
 
-      - name: DEBUG dump state pre-electron-builder
-        if: steps.signmode.outputs.mode == 'unsigned'
-        run: |
-          echo "=== PRE-ELECTRON-BUILDER ==="
-          echo "--- packages/server/package.json (first 20 lines) ---"
-          head -20 packages/server/package.json
-          echo "--- packages/server/dist/ ---"
-          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
-          echo "--- packages/desktop/node_modules (if exists) ---"
-          ls packages/desktop/node_modules/ 2>/dev/null | head -10 || echo "(none)"
-          echo "--- node_modules/@inkeep/open-knowledge-server realpath ---"
-          realpath node_modules/@inkeep/open-knowledge-server
-          ls -la "$(realpath node_modules/@inkeep/open-knowledge-server)/dist" 2>/dev/null || echo "(no dist via realpath)"
-
-      - name: DEBUG run electron-builder (split from build:mac)
-        if: steps.signmode.outputs.mode == 'unsigned'
-        working-directory: packages/desktop
-        run: CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac --publish never -c.mac.identity=null
-
-      - name: DEBUG dump state post-electron-builder
-        if: steps.signmode.outputs.mode == 'unsigned'
-        run: |
-          echo "=== POST-ELECTRON-BUILDER ==="
-          echo "--- packages/server/package.json (first 20 lines) ---"
-          head -20 packages/server/package.json
-          echo "--- packages/server/dist/ ---"
-          ls -la packages/server/dist/ 2>/dev/null || echo "(no dist/)"
-          echo "--- asar's view of server package.json ---"
-          bunx asar extract-file packages/desktop/dist-desktop/mac-arm64/Open\ Knowledge.app/Contents/Resources/app.asar node_modules/@inkeep/open-knowledge-server/package.json
-          head -20 package.json && rm -f package.json
-          echo "--- asar listing of server dir ---"
-          bunx asar list packages/desktop/dist-desktop/mac-arm64/Open\ Knowledge.app/Contents/Resources/app.asar 2>/dev/null | grep "@inkeep/open-knowledge-server" | head -10
-
-      - name: Build + package DMG (${{ steps.signmode.outputs.mode }})
-        if: steps.signmode.outputs.mode != 'unsigned'
-        # electron-builder picks up CSC_LINK / CSC_KEY_PASSWORD from env and
-        # signs automatically when `build:mac` is invoked. The afterSign
-        # hook (scripts/afterSign.mjs) picks up APPLE_* and runs notarize +
-        # staple + fuse-verify. Partial APPLE_* credentials now FAIL LOUD
-        # via the afterSign partial-credential guard — silent skip happens
-        # only when zero credentials are present, which is the unsigned
-        # path handled above by invoking `build:mac:unsigned` explicitly.
-        #
-        # Every credential env var is gated on `signmode.outputs.mode ==
-        # 'signed'`. In unsigned mode electron-builder and afterSign see
-        # empty strings and take the zero-cred paths naturally — so an
-        # operator who sets APPLE_* but forgets CSC_LINK gets a clean
-        # unsigned build, not a confusing "notarization failed: ad-hoc
-        # signed app" from Apple's notary service. GHA's `A && B || C`
-        # ternary on expressions returns B when A is truthy, else C.
+      # Step B: package via electron-builder. Split from step A across
+      # separate runner steps (rather than chained via && in a single shell)
+      # because empirically — verified across runs 24920389870 (combined,
+      # broken) and 24923907843 (split, correct) — chaining `bun run build:desktop
+      # && electron-builder ...` in one shell produces an asar containing a
+      # stale workspace-dep `package.json` (the pre-`exports.development` /
+      # pre-`files: ["dist", "src"]` snapshot) and omits `dist/`. Same
+      # commands as separate workflow steps produce a correct asar with the
+      # current `package.json` + the built `dist/`. Root cause not fully
+      # characterized — most likely bun.run's workspace-state caching across
+      # the `&&` boundary, or electron-builder's bun-mode walker reading from
+      # a snapshot taken when bun's wrapper opened the script. Specs/2026-04-24-
+      # desktop-packaging-first-boot/ §10 OQ4 captures the open question;
+      # the empirical fix (separate steps) is sufficient for shipping.
+      - name: Package DMG (${{ steps.signmode.outputs.mode }})
         env:
           CSC_LINK: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_TEAM_ID || '' }}
-          # GH_TOKEN is not passed — we don't auto-publish from this
-          # workflow yet. Release automation is M7.
+          # In unsigned mode, force electron-builder to skip its keychain
+          # auto-discovery (mirrors `-c.mac.identity=null` in the script).
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.signmode.outputs.mode == 'unsigned' && 'false' || '' }}
         working-directory: packages/desktop
-        run: bun run ${{ steps.signmode.outputs.script }}
+        run: |
+          if [[ "${{ steps.signmode.outputs.mode }}" == "unsigned" ]]; then
+            bunx electron-builder --mac --publish never -c.mac.identity=null
+          else
+            bunx electron-builder --mac --publish never
+          fi
 
       # Gate on success() — on build failure, there is no DMG, so running
       # the upload step would stack a second "no files found" error on top

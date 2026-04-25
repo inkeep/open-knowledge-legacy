@@ -64,3 +64,23 @@ Yjs was already imported. This breaks constructor checks and will lead to issues
 
 **Decision.** Pending user approval — see SPEC.md §6 D5 (to be added if user agrees).
 
+## Iteration 6 — 2026-04-24 (CI-only: combined `bun run` + `&&` ships stale workspace state)
+
+**Observed.** First green CI build (run 24920389870) produced a DMG that crashes on every launch with the **original** type-stripping error, despite the fix being in HEAD. Asar inspection: `node_modules/@inkeep/open-knowledge-server/package.json` inside the asar is the **pre-fix** version (no `development` condition, no `default → dist/index.mjs`, no `files` field, no `y-protocols` dep, no `build` script). `dist/` directory absent. Local DMG built from the same commit boots correctly and has the new package.json + dist/ in its asar.
+
+**Investigation.** Added DEBUG checkpoints at four points: post-install, post-turbo-build, pre-electron-builder, post-electron-builder. Run 24923907843:
+- POST-INSTALL: `packages/server/package.json` has new content ✓; symlink `node_modules/@inkeep/open-knowledge-server` → `packages/server` ✓.
+- POST-TURBO-BUILD: same ✓; `packages/server/dist/index.mjs` exists (520 KB) ✓.
+- PRE-ELECTRON-BUILDER: same ✓; `packages/desktop/node_modules/` minimal (only `@vitejs`, `vite`); realpath resolution still correct.
+- POST-ELECTRON-BUILDER: asar has the **new** package.json + `dist/` ✓.
+
+**Critical finding.** The DEBUG run produced a correct asar. Difference vs the failing run: the failing run invoked `bun run build:mac:unsigned` (a single `bun run` of a script that chains `bun run build:desktop && electron-builder ...` via `&&`). The DEBUG run split that into two separate workflow steps: one `bun run build:desktop`, then a separate `bunx electron-builder ...`. Same commands, different shell-process boundary.
+
+**Hypothesis.** `bun run script-with-&&` either caches workspace state at the moment its wrapper opens the script, or electron-builder's bun-mode walker reads from a snapshot taken before turbo's build outputs land. Across an `&&` chain inside one `bun run`, the second command sees the pre-build snapshot. As separate workflow steps, each `bun run` / `bunx` re-evaluates current disk state and electron-builder picks up the fresh package.json + dist/.
+
+**Fix.** Inline `electron-vite build` and `electron-builder` as **separate** workflow steps in `desktop-build.yml`. Drop the `bun run build:mac:unsigned` invocation. Same step layout for signed and unsigned modes — only the `electron-builder` flags differ.
+
+**Open question (SPEC §10 OQ5).** Why does `bun run` + `&&` show stale state for electron-builder's bun-mode walker on `macos-26` CI runners but NOT on local macOS? Possibly bun version skew, runner image quirk, or a race in bun's workspace symlink refresh that's serialized differently in interactive vs CI shells. Worth filing upstream if reproducible — but the workaround (split steps) is sufficient for shipping.
+
+**Applied via commit.** `desktop-build.yml`'s `Build + package DMG` step replaced with two-step `Build electron-vite bundles` + `Package DMG`.
+
