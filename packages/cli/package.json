@@ -36,7 +36,7 @@
     "build:assets": "bun run build:app && bun run build:skill-asset",
     "build": "bun run build:cli && bun run build:assets",
     "postinstall": "node scripts/postinstall.mjs",
-    "test": "bun test",
+    "test": "bun --conditions=development test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test"
   },
