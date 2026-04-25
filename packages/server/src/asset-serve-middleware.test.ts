@@ -268,5 +268,31 @@ describe('createAssetServeMiddleware', () => {
       middleware(makeReq('/README'), res, () => {});
       expect(captured.headers['Content-Disposition']).toBe('attachment');
     });
+
+    test('malformed percent-encoding (`/%`) falls through to next() — URIError caught', () => {
+      // decodeURIComponent('%') throws URIError; the middleware must treat
+      // it as a miss rather than letting the throw propagate to http.Server
+      // (which would leave the request hanging on the prod CLI path).
+      const middleware = buildMiddleware(sirvServes);
+      const { res, captured } = makeRes();
+      let nextCalled = false;
+      middleware(makeReq('/%'), res, () => {
+        nextCalled = true;
+      });
+      expect(nextCalled).toBe(true);
+      expect(captured.headers['Content-Disposition']).toBeUndefined();
+      expect(captured.status).toBe(0);
+    });
+
+    test('malformed multi-byte sequence (`/%E0%A4`) falls through to next()', () => {
+      const middleware = buildMiddleware(sirvServes);
+      const { res, captured } = makeRes();
+      let nextCalled = false;
+      middleware(makeReq('/%E0%A4'), res, () => {
+        nextCalled = true;
+      });
+      expect(nextCalled).toBe(true);
+      expect(captured.headers['Content-Disposition']).toBeUndefined();
+    });
   });
 });

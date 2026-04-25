@@ -130,7 +130,15 @@ export function createAssetServeMiddleware(
     deps;
 
   return (req, res, next) => {
-    const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
+    // Malformed percent-encoding (`/%`, `/%E0%A4`) throws URIError; treat
+    // it as a miss and fall through to the SPA handler rather than letting
+    // the throw propagate to the http.Server and leave the request hanging.
+    let rel: string;
+    try {
+      rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
+    } catch {
+      return next();
+    }
     if (!rel || contentFilter.isExcluded(rel)) return next();
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const ext = extname(rel).slice(1).toLowerCase();
