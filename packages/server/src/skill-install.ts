@@ -1,9 +1,9 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveBundledSkillDir } from './build-skill-zip.ts';
 
 /**
  * Minimal logger duck-type accepted by `installUserSkill`. Compatible with
@@ -51,25 +51,6 @@ export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
 /** Sidecar filename — plain version string + trailing newline. SPEC D5/FR7. */
 const SIDECAR_FILENAME = 'skill-installed-version';
 
-/**
- * Candidate bundled-skill asset locations, probed in order. SPEC D19/FR5.
- *
- * Two modes:
- *   - Dev/workspace: this file runs as `packages/server/src/skill-install.ts`,
- *     so `../assets/...` resolves to `packages/server/assets/skills/open-knowledge`.
- *   - Published CLI: tsdown bundles this file into `packages/cli/dist/index.mjs`
- *     (and sibling chunks); the CLI build step copies SKILL.md to
- *     `packages/cli/dist/assets/skills/open-knowledge/SKILL.md`, so
- *     `./assets/...` relative to the bundled-output URL hits it.
- *
- * First-existing wins. If no candidate exists we throw — caller surfaces
- * the error as a `'failed'` result per FR6.
- */
-const BUNDLED_SKILL_CANDIDATES = [
-  '../assets/skills/open-knowledge',
-  './assets/skills/open-knowledge',
-];
-
 /** Pinned patch-range for the `skills` CLI. SPEC D16. */
 const SKILLS_CLI_SPEC = 'skills@~1.5.0';
 
@@ -82,20 +63,6 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  * "fresh install" per SPEC FR7.
  */
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/;
-
-function resolveBundledSkillDir(): string {
-  const tried: string[] = [];
-  for (const rel of BUNDLED_SKILL_CANDIDATES) {
-    const candidate = fileURLToPath(new URL(rel, import.meta.url));
-    if (existsSync(candidate)) return candidate;
-    tried.push(candidate);
-  }
-  throw new Error(
-    `Bundled skill asset directory not found. Tried: ${tried.join(', ')}. ` +
-      'This usually means the CLI build did not copy packages/server/assets into dist/assets. ' +
-      'Run `cd packages/cli && bun run build` before publishing.',
-  );
-}
 
 async function readServerPackageVersion(): Promise<string> {
   const pkgUrl = new URL('../package.json', import.meta.url);

@@ -372,6 +372,30 @@ export interface OkDesktopBridge {
   };
 
   /**
+   * Claude Chat & Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship
+   * 1e/1j). Drives the 2-click install via Claude.app's `.skill`
+   * `CFBundleDocumentType`. Local-build design: `.skill` is produced on
+   * demand from the app-bundled SKILL.md; no GitHub Releases dep.
+   */
+  skill: {
+    /** True when Claude Desktop's config dir exists on this machine. */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Build `openknowledge.skill` from the bundled source, save to
+     * Downloads, invoke the OS file association. Fire-and-forget —
+     * Claude's native install dialog takes over on `ok: true`.
+     */
+    buildAndOpen(): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
+  };
+
+  /**
    * Auto-update control surface. M3 AC18 / D3 revised: Toast A's "Relaunch
    * now" button calls `relaunchNow()` which invokes
    * `autoUpdater.quitAndInstall()` in main.

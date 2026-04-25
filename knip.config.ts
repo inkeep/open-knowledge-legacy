@@ -33,6 +33,8 @@ export default {
     // silencing the warning here is the whole-workspace pattern we already
     // use for the bridge-contract + ipc-events duplicated-by-design files.
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
+    'docs/content/guides/agent-activity-panel.mdx': ['files'],
+    'docs/content/guides/install-claude-cowork.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {

@@ -61,6 +61,7 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
 import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -472,6 +473,17 @@ function refreshApplicationMenu() {
             }
           }
         : undefined,
+    // Ship 1g — Help → Install in Claude Desktop… opens the skill install
+    // dialog in the focused window via the same URL-hash trigger the command
+    // palette + docs link use. Falls back to iterating all BrowserWindows
+    // when no window is focused (e.g. menu clicked from the Dock).
+    openInstallSkillDialog: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      target.webContents.executeJavaScript(
+        "window.location.hash = '#install-claude-desktop'; undefined",
+      );
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
@@ -694,16 +706,27 @@ function registerIpcHandlers() {
   handle('ok:seed:apply', async (event, plan) => {
     return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
   });
+
+  // Chat & Cowork skill install-dialog IPC — SPEC 2026-04-24 Ship 1e/1j.
+  // Two channels: (1) detect Claude Desktop's presence, (2) build .skill
+  // locally + invoke OS file association. No network, no GitHub Releases.
+  // See packages/desktop/src/main/ipc/install-skill.ts.
+  handle('ok:skill:detect-claude-desktop', async () => {
+    return handleDetectClaudeDesktop();
+  });
+  handle('ok:skill:build-and-open', async () => {
+    return handleBuildAndOpen({ app, shell });
+  });
 }
 
 /**
- * Path to the Dock/app icon PNG. Rasterized from packages/app/public/favicon.svg
- * by `scripts/rasterize-icon.mjs` at postinstall time. In packaged builds,
- * electron-builder copies this file into the app bundle and generates .icns
- * from it (electron-builder.yml `icon:` key) — `app.dock.setIcon()` is a no-op
- * for the packaged case because Gatekeeper already knows the bundle's icon.
- * In dev mode, we set it at runtime so the Dock shows the real icon instead
- * of the generic Electron diamond.
+ * Path to the Dock/app icon PNG. Hand-authored 1024² file committed to the
+ * repo at build/icon.png. In packaged builds, electron-builder copies this
+ * into the app bundle and generates .icns from it (electron-builder.yml
+ * `icon:` key) — `app.dock.setIcon()` is a no-op for the packaged case
+ * because Gatekeeper already knows the bundle's icon. In dev mode, we set
+ * it at runtime so the Dock shows the real icon instead of the generic
+ * Electron diamond.
  */
 const ICON_PNG_PATH = join(__dirname, '..', '..', 'build', 'icon.png');
 
@@ -711,9 +734,7 @@ function installDockIcon() {
   if (process.platform !== 'darwin') return;
   if (app.isPackaged) return; // packaged build uses the bundle's .icns
   if (!existsSync(ICON_PNG_PATH)) {
-    console.warn(
-      '[main] skipping dock icon — build/icon.png missing (run `node scripts/rasterize-icon.mjs`)',
-    );
+    console.warn('[main] skipping dock icon — build/icon.png missing');
     return;
   }
   try {

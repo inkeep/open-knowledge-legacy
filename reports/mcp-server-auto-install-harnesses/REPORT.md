@@ -1,10 +1,11 @@
 ---
-title: "Auto-Installing an MCP Server Across AI Coding Harnesses: What's Programmatic, What's Not"
-description: "Landscape of programmatic MCP server registration across 7 AI coding harnesses (Claude Code CLI + Desktop, Claude Cowork, Codex CLI + Desktop, Cursor CLI + Desktop). Covers config-file surfaces, vendor CLI install commands, deep-link URIs, stdio vs HTTP/SSE install shape, OAuth headless friction, DXT/MCPB bundles, cross-harness registries (Smithery, install-mcp, add-mcp, mcpm.sh, MCP Registry), and CLI-vs-file-write trade-offs."
+title: "Auto-Installing an MCP Server + Agent Skill Across AI Coding Harnesses: What's Programmatic, What's Not"
+description: "Landscape of programmatic MCP server registration AND Agent Skills installation across 7 AI coding harnesses (Claude Code CLI + Desktop, Claude Cowork, Codex CLI + Desktop, Cursor CLI + Desktop). Covers config-file surfaces, vendor CLI install commands, deep-link URIs, stdio vs HTTP/SSE install shape, OAuth headless friction, DXT/MCPB bundles, cross-harness registries (Smithery, install-mcp, add-mcp, mcpm.sh, MCP Registry), CLI-vs-file-write trade-offs, and the Agent Skills install surface per harness (`npx skills` agent-ID registry, `~/.claude/skills/` reading surfaces, Cowork VM synthetic-filesystem isolation)."
 createdAt: 2026-04-18
-updatedAt: 2026-04-18
+updatedAt: 2026-04-24
 subjects:
   - Model Context Protocol
+  - Agent Skills
   - Claude Code
   - Claude Desktop
   - Claude Cowork
@@ -14,11 +15,13 @@ subjects:
   - install-mcp
   - add-mcp
   - mcpm.sh
+  - npx skills
   - ToolHive
   - MCPB
   - DXT
 topics:
   - MCP server installation
+  - agent skills installation
   - non-interactive install
   - harness config surfaces
   - deep-link URI schemes
@@ -26,11 +29,14 @@ topics:
   - cross-harness installers
   - CLI vs file-write trade-offs
   - enable-by-default behavior
+  - cowork vm skill isolation
 ---
 
-# Auto-Installing an MCP Server Across AI Coding Harnesses
+# Auto-Installing an MCP Server + Agent Skill Across AI Coding Harnesses
 
-**Purpose:** For each of 7 AI coding harnesses (Claude Code terminal, Claude Code Desktop, Claude Cowork desktop, Codex terminal, Codex desktop, Cursor CLI, Cursor desktop), characterize the lowest-friction programmatic path to register an MCP server — with emphasis on what's fully non-interactive, what requires one click, and what's an outright wall. Primary-source, factual, with conclusions limited to "what's feasible today."
+**Purpose:** For each of 7 AI coding harnesses (Claude Code terminal, Claude Code Desktop, Claude Cowork desktop, Codex terminal, Codex desktop, Cursor CLI, Cursor desktop), characterize the lowest-friction programmatic path to register an MCP server AND an Agent Skill — with emphasis on what's fully non-interactive, what requires one click, and what's an outright wall. Primary-source, factual, with conclusions limited to "what's feasible today."
+
+> **Updates (2026-04-24 Path C pass).** Added a new dimension — **Dim 12: Agent Skills install surface per harness** — driven by a question about whether `npx skills@~1.5.0 add --agent '*'` transitively covers Claude Cowork. Headline finding: **programmatic Agent Skills install for Cowork is NOT supported today** (HIGH confidence). Cowork's VM runs its own per-session synthetic filesystem that does NOT mount the host's `~/.claude/skills/`; `npx skills`'s ~45-agent registry has no `cowork` / `claude-desktop` / `claude-cowork` entry; Anthropic's only sanctioned paths are manual ZIP upload via the Desktop UI or org-admin upload/GitHub-sync for Team+ plans. Also: 6-day refresh against 2026-04-18 findings — bug #26259 (stdio bridge) still open, bug #24433 (per-tool re-approval) confirmed CLOSED "not planned" (framing carries forward from the 2026-04-18 cowork-escape-paths evidence), bug #26952 (`claude://` MCP install) still closed "not planned"; no new Cowork fixes in Claude Code v2.1.116–v2.1.119 (Apr 20–23). See [meta/_changelog.md](meta/_changelog.md) for full details.
 
 > **Updates (2026-04-18 follow-up pass).** The report was extended with three dimensions of additional depth — see [meta/_changelog.md](meta/_changelog.md). Key corrections: (1) Claude Code project-scope trust prompt **is** scriptable-bypassable via pre-staged `.claude/settings.local.json`; (2) Claude Cowork has a per-tool re-approval bug (#24433) worse than the stdio-bridge bug — "Always allow" is never persisted across sessions; (3) Claude Code has 5 documented concurrent-write corruption bugs making direct file-write sometimes SAFER than `claude mcp add`; (4) expanded OSS tool landscape — `install-mcp` (supermemoryai, MIT, covers all 7) and `mcpm.sh` (pathintegral-institute, MIT, best automation story) are stronger reuse candidates than originally surfaced.
 
@@ -46,6 +52,8 @@ topics:
 
 **OAuth HTTP install is a browser wall everywhere.** All seven harnesses follow MCP spec 2025-06-18's authorization-code + PKCE + DCR flow. None implement device-code (RFC 8628) or pre-provisioned refresh-token paths. For headless HTTP MCP install, pre-provisioned bearer tokens in env vars are the only path, and not every harness surfaces a clean injection point: Claude Code terminal and Codex terminal are cleanest (`--header` flag + TOML `env_http_headers` respectively); Claude Desktop/Cowork require the Connectors UI for OAuth and `mcp-remote` bridge args for bearer; Cursor CLI has a confirmed bug ([forum #143045](https://forum.cursor.com/t/cursor-cli-mcp-the-non-interactive-mode-cannot-be-used/143045)) where MCP doesn't activate in `--print` non-interactive mode at all.
 
+**Agent Skills install covers Claude Code cleanly, Cowork not at all.** `npx skills@~1.5.0 add <path> --agent '*' -g -y --copy` writes to `~/.claude/skills/` and Claude Code picks it up on next session — this is the path Open Knowledge and other third-party tools use to ship a SKILL.md today. But the `npx skills` agent-ID registry (~45 targets including `claude-code`, `cursor-agent`, `codex`, `gemini-cli`, `amp`, `opencode`) has no `cowork`, `claude-cowork`, or `claude-desktop` entry — and even transitively via "Claude Code runs inside the Cowork VM," it fails: the Cowork VM does NOT mount the host's `~/.claude/skills/`, it instantiates its own per-session synthetic filesystem that only resolves the 6 built-in Anthropic skills plus ephemeral `local_<uuid>/.claude/skills/` directories that get wiped on session cleanup ([claude-code#31422](https://github.com/anthropics/claude-code/issues/31422)). Anthropic's only sanctioned install paths for Cowork are manual ZIP upload via `Customize > Skills > +` (personal) or org-admin upload/GitHub-sync (Team+ plans) — both human-UI-only, neither scriptable, and both affected by an open "metadata registered but SKILL.md not mounted" bug class (#26254, #31542, #39400) with zero Anthropic-staff engagement. Cursor has no Skills spec; Codex's skill-equivalent (AGENTS.md) is scoped to project files only. **Programmatic skills install today: Claude Code YES, everything else NO.**
+
 **Key Findings:**
 
 - **The 7 harnesses = 5 config-file install surfaces + 1 bundle format (MCPB)** — see "Install Surface Topology" below
@@ -60,6 +68,7 @@ topics:
 - **Codex CLI vs Claude Code CLI idempotency diverges** (source-confirmed): Codex `BTreeMap::insert` overwrites silently; Claude Code errors `"already exists"`. Wrappers must normalize.
 - **Deep-link install is Cursor-only** among our 7, and intentionally cannot be silent (security advisory). Cursor has a documented **fourth install mechanism** — `vscode.cursor.mcp.registerServer()` Extension API — for "enterprise/automated setup workflows."
 - **OAuth HTTP install is a hard wall** — no harness implements a headless OAuth path; bearer-token-in-env is the workaround. Codex `codex mcp add --url` uniquely auto-initiates OAuth browser flow as a post-write side-effect (verified from Rust source).
+- **Agent Skills install is Claude Code only** (added 2026-04-24). `npx skills@~1.5.0 add --agent '*' -g` writes `~/.claude/skills/<name>/SKILL.md` and Claude Code resolves it on next session — fully non-interactive. Cowork's VM isolation means this does NOT transitively cover it, and the `npx skills` agent-ID registry has no cowork/desktop entry. For Cowork: manual ZIP upload via the Desktop UI is the only path; ship a download artifact, not an auto-installer. Cursor has no Skills spec equivalent. Codex project-scope AGENTS.md is in-repo, not user-global — a different concept.
 
 ---
 
@@ -78,6 +87,7 @@ topics:
 | 9 | Harness detection | P1 | Moderate |
 | 10 | Cross-harness install tooling / registries | P1 | Moderate |
 | 11 | Versioning / updates / uninstall | P1 | Light |
+| 12 | Agent Skills install surface per harness *(added 2026-04-24)* | P0 | Deep |
 
 **Stance:** Factual-with-conclusions. **Non-goals:** MCP server implementation; agent-framework SDK consumption; Windsurf/Zed/VS Code/Cline; full OAuth server implementation.
 
@@ -417,6 +427,34 @@ Config-shape differences (stdio → HTTP):
 | Codex (all) | `codex mcp remove <n>` | Same args-based |
 | Cursor (all) | Edit `mcp.json` or `agent mcp disable <id>` | Same |
 
+### Dim 12 — Agent Skills install surface per harness *(added 2026-04-24)*
+
+**Finding:** **Programmatic Agent Skills install is Claude Code only.** `npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy` writes to `~/.claude/skills/<name>/SKILL.md`, which Claude Code resolves on next session. Cowork's VM does not mount that directory; Cursor has no Skills spec; Codex's AGENTS.md is per-project, not user-global. The `npx skills` agent-ID registry covers ~45 targets but lists neither `cowork` / `claude-cowork` / `claude-desktop` nor any synthetic alias that reaches Cowork transitively.
+
+**Evidence:** [evidence/cowork-skills-surface-update-2026-04-24.md](evidence/cowork-skills-surface-update-2026-04-24.md)
+
+| Harness | Skills install shape | Programmatic? | Recommended path today |
+|---------|---------------------|---------------|------------------------|
+| Claude Code CLI | `~/.claude/skills/<name>/SKILL.md` user-global; project `.claude/skills/` optional | **YES** | `npx skills@~1.5.0 add <path> --agent claude-code -g -y --copy` (or `--agent '*'`) |
+| Claude Code Desktop ("Code tab") | Inherits `~/.claude/skills/` | **YES** (transitively) | Same as CLI |
+| Claude Desktop Chat | Per-user ZIP upload via `Customize > Skills > +`; Team+ org-admin upload/GitHub-sync | **NO** | Ship a ZIP release artifact + manual upload instructions |
+| **Claude Cowork desktop** | VM per-session synthetic filesystem; 6 built-in Anthropic skills + ephemeral `local_<uuid>/.claude/skills/` wiped on cleanup (#31422) | **NO** | Ship a ZIP; instruct user to upload via Desktop UI; accept re-upload per session until Anthropic fixes VM mount |
+| Codex CLI + Desktop + IDE | AGENTS.md in-repo (project-scoped, different concept) | **NO** (no user-global equivalent) | N/A — Codex doesn't implement Skills spec |
+| Cursor CLI + Desktop | No Skills spec; `.cursor/rules/` exists but is a separate rules-file convention | **NO** | N/A — Cursor doesn't implement Skills spec |
+
+**Open Anthropic bug class** — "metadata registered but SKILL.md not mounted in Cowork VM" affects #26254, #31542, #39400. Zero Anthropic-staff engagement on any of the three as of 2026-04-24. Community workarounds (symlinking host `~/.claude/skills/` into the VM) break on every session restart.
+
+**Implications for a third-party installer (e.g. the Open Knowledge host app):**
+- `installUserSkill()` that calls `npx skills add --agent '*'` **does not reach Cowork** — the wildcard resolves to 45 non-Cowork targets. No change to this command can fix that without Anthropic adding a Cowork agent ID to the registry.
+- Attempting to bridge via Claude-Code-in-the-Cowork-VM fails because the VM boots with its own synthetic filesystem. The host-installed skill is simply not present.
+- The Anthropic-sanctioned Cowork path is a ZIP upload in the Desktop UI. Third-party tools should ship a downloadable `<skill-name>.zip` release artifact, link the user to `https://claude.ai/directory` or the Desktop `Customize > Skills > +` UI, and surface a "Re-upload if session restarts" hint given the known bugs.
+- **If you only care about Claude Code** (terminal + Desktop Code tab), the existing `npx skills` flow is sufficient. Skip Cowork until cross-surface skill sharing ships (monitor #31422, #25278, #26254, #31542).
+
+**Decision triggers:**
+- Building a host-managed skill for developer/agent workflows primarily: Claude Code CLI is the right surface → `npx skills` is fine.
+- Wanting Cowork reach today: no programmatic path. Ship a ZIP + manual instructions.
+- Wanting Cursor / Codex reach: neither implements Skills. Use MCP server + per-tool descriptions instead (which was the pre-Skills pattern and still works).
+
 ---
 
 ## Harness Ranking: Headless-Install Feasibility Today
@@ -458,6 +496,7 @@ Four patterns emerge from the landscape:
 - Ship bearer-token-via-env-var as the "works everywhere headless" path; OAuth as a follow-up best-effort.
 - Don't ship a `.mcpb` bundle unless Claude Desktop Chat is a primary target.
 - Don't build a custom deep-link URI scheme — no harness would honor it; rely on direct file-write instead.
+- **If you also ship an Agent Skill** (added 2026-04-24): use `npx skills@~1.5.0 add <path> --agent '*' -g -y --copy` for Claude Code (CLI + Desktop Code tab) — it covers ~45 agent IDs. Do NOT expect it to reach Cowork; ship a separate ZIP release artifact with manual-upload instructions and surface that path in your installer's UX. Cursor and Codex don't implement the Skills spec; if your guidance needs to reach them, encode it in MCP tool descriptions / AGENTS.md respectively instead of a standalone skill.
 
 ---
 
@@ -512,6 +551,10 @@ Most primary sources are vendor-authored (docs.anthropic.com, developers.openai.
 **Runtime install + Cowork escape pass (2026-04-18):**
 - [evidence/cowork-escape-paths.md](evidence/cowork-escape-paths.md) — verification of 6 Cowork workarounds; skill/project-bootstrap behavior; per-tool approval #24433 now CLOSED as NOT PLANNED
 - [evidence/runtime-self-install.md](evidence/runtime-self-install.md) — per-harness runtime-register capability matrix; only Cursor Desktop has a genuine API (`vscode.cursor.mcp.registerServer()`); two-conversation flow as baseline UX
+
+**Path C update (2026-04-24):**
+- [evidence/cowork-skills-surface-update-2026-04-24.md](evidence/cowork-skills-surface-update-2026-04-24.md) — Agent Skills install surface per harness; `npx skills` agent-ID registry enumeration; Cowork VM synthetic-filesystem isolation; feasibility verdict NO for programmatic Cowork skills install
+- [evidence/refresh-check-2026-04-24.md](evidence/refresh-check-2026-04-24.md) — 6-day spot-check on bugs #26259 / #24433 / #26952 + Claude Code v2.1.116–v2.1.119 release notes — parent report claims still accurate
 
 **Changelog:** [meta/_changelog.md](meta/_changelog.md)
 

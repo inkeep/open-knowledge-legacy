@@ -21,7 +21,7 @@
 ## 2) Goals
 - **G1:** An agent about to edit a doc can call `get_preview_url(docName)` and immediately get a URL to navigate the preview browser to — zero config reads, zero follow-up calls.
 - **G2:** Resolution works identically in local dev and cloud deploy via one resolver path (env → lock → config).
-- **G3:** CLAUDE.md guidance pushes the agent to open-before-edit; subscriber-presence warning on write tools tells it (and the user) when the preview wasn't actually watching.
+- **G3:** CLAUDE.md guidance pushes the agent to open-before-edit; subscriber-presence warning on write tools tells it (and the user) when the preview wasn't actually watching.<br>_[Corrected 2026-04-24 post-ship: per-edit mandate superseded by once-per-session contract. Authoritative fix in [[specs/2026-04-24-preview-attach-once-per-session/SPEC]].]_
 - **G4:** No syntactically invalid URLs emitted. If nothing resolves, omit the field rather than fake one. (Reachability is a deploy-time operator responsibility; see D13.)
 
 ## 3) Non-goals
@@ -43,7 +43,7 @@
 1. User starts `open-knowledge start`; server writes `server.lock` with port.
 2. User opens Claude Code, starts a conversation touching a wiki doc.
 3. Agent calls `exec("ls docs/")` → response includes `enrichedPaths[].previewUrl = "http://localhost:5173/#/docs/test"`.
-4. Agent decides to edit `docs/test`. Per CLAUDE.md guidance, agent navigates the preview to that URL *first*.
+4. Agent decides to edit `docs/test`. Per CLAUDE.md guidance, agent navigates the preview to that URL *first*.<br>_[Corrected 2026-04-24 post-ship: per-edit mandate superseded by once-per-session contract. Authoritative fix in [[specs/2026-04-24-preview-attach-once-per-session/SPEC]].]_
 5. Agent calls `edit_document`. CRDT change streams into the now-open editor tab. User sees the edit land live.
 
 **Happy path (cloud deploy — future):**
@@ -96,7 +96,7 @@
 
 ## 7) Success metrics & instrumentation
 
-- **M1:** Fraction of wiki-edit MCP calls that were preceded (within same session, within 30s) by a preview-navigation.
+- **M1:** Fraction of wiki-edit MCP calls that were preceded (within same session, within 30s) by a preview-navigation.<br>_[Corrected 2026-04-24 post-ship: metric superseded. The once-per-session contract has new metrics M1 (tool calls per write) + M2 (hint-emission count). Authoritative fix in [[specs/2026-04-24-preview-attach-once-per-session/SPEC]].]_
   - Baseline: ~0% (no mechanism today).
   - Target: ≥70% once CLAUDE.md guidance lands.
   - Instrumentation: correlate agent tool-call logs (not persistent today — see evidence/observability-gap.md *TBD*).
@@ -216,7 +216,7 @@
 | A1 | Hocuspocus exposes a way to enumerate connected providers per room | MEDIUM | Read Hocuspocus 4.0-rc docs + trace our server | Before audit (Step 6) | Active |
 | A2 | `content.include` filter is accessible from tool response builders | HIGH | Grep tool shared helpers | During iteration | Active |
 | A3 | Current MCP tool response format allows additive fields without breaking existing clients | HIGH | MCP spec is additive by design; verify with one tool | Before implementation | Active |
-| A4 | Agents will reliably read `previewUrl` from tool responses and navigate before editing when CLAUDE.md tells them to | LOW | Dogfood for a week post-ship; measure M1 | 2 weeks post-ship | Active |
+| A4 | Agents will reliably read `previewUrl` from tool responses and navigate before editing when CLAUDE.md tells them to<br>_[Corrected 2026-04-24 post-ship: assumption no longer load-bearing — per-edit navigation dropped. Authoritative fix in [[specs/2026-04-24-preview-attach-once-per-session/SPEC]].]_ | LOW | Dogfood for a week post-ship; measure M1 | 2 weeks post-ship | Active |
 
 ## 13) In Scope (implement now)
 
@@ -248,7 +248,7 @@
 
 | Risk | Likelihood | Impact | Mitigation | Owner |
 |---|---|---|---|---|
-| Agents ignore CLAUDE.md guidance | Medium | Medium (low feature value) | PreToolUse hook in Future Work; monitor M1 | Tim |
+| Agents ignore CLAUDE.md guidance | Medium | Medium (low feature value) | PreToolUse hook in Future Work; monitor M1<br>_[Corrected 2026-04-24 post-ship: risk dissolved — per-edit mandate removed; compliance now measured by FR9 hint-emission counter. Authoritative fix in [[specs/2026-04-24-preview-attach-once-per-session/SPEC]].]_ | Tim |
 | Cloud deploy forgets `preview.baseUrl` | Medium | Low (field just omitted) | Loud warning on MCP startup when lock absent + no config | Tim |
 | `hostname` in lock file is unreachable | Resolved | — | D9: always use `localhost` when lock branch fires | — |
 | Cloud-deployed repo's `preview.baseUrl` leaks to local clones | Resolved | — | D1 priority flipped to env → lock → config; lock (local server) beats config (deploy default) | — |

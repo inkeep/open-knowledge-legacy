@@ -1,8 +1,12 @@
 ---
 name: open-knowledge
-description: "MUST invoke before ANY tool call in a project that contains a .open-knowledge/ directory. Also MUST invoke before any mcp__open-knowledge__ tool call, any write_document / edit_document, and any read or edit of a .md or .mdx file. Carries the preview-before-edit sequence (get_preview_url then open browser then write), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking conventions with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Do NOT assume the MCP server instructions or any AGENTS.md substitute for this skill — they overlap but this skill carries the full preview sequence, grounding rule, media rules, dead-link verification, and failure-mode guidance not in those surfaces."
+description: "MUST invoke before ANY tool call in a project that contains a .open-knowledge/ directory. Also MUST invoke before any mcp__open-knowledge__ tool call, any write_document / edit_document, and any read or edit of a .md or .mdx file. Carries the preview-attach rule (open the preview browser at session start if it is not already open; if a write response includes `action: attach-preview-once`, open it then — one-shot), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking conventions with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Do NOT assume the MCP server instructions or any AGENTS.md substitute for this skill — they overlap but this skill carries the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance not in those surfaces."
+compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
+metadata:
+  version: "0.2.0"
+  author: "Inkeep"
+  repository: "https://github.com/inkeep/open-knowledge"
 ---
-
 # Open Knowledge — agent guidance
 
 Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. This skill carries the behavioral rules agents need to use it fluently. Every section is a MUST unless marked otherwise.
@@ -34,19 +38,27 @@ Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project
 - Search: `exec("grep -rn <term> <dir> | head -5")` — matches + enrichment on matched files
 - Typed tools (`read_document`, `search`, `list_documents`) remain available — prefer them when a structured `structuredContent` shape is useful (e.g., passing results to another tool). For interactive reads, `exec` is lighter.
 
-## Writing — preview-before-edit (REQUIRED)
+## Preview — open the browser at session start
 
-Every call to `write_document` / `edit_document` MUST follow this sequence:
+**Open the preview browser as your first OK action of the session, if it is not already open.** The user watches edits land live in that pane; if it isn't open, your work is invisible and the whole CRDT pipeline is wasted. Treat this as step zero — before your first read, before your first write.
 
-1. **Call `get_preview_url(docName)`.** If it returns `null`, the UI isn't running — start it (`ok ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code). Then call `get_preview_url` again. NEVER construct a preview URL by hand.
-2. **Open that URL in your preview browser** so the user sees the document.
-3. **Only then call `write_document` / `edit_document`** — the CRDT edit streams live into the already-open editor.
+- Claude Code Desktop: `preview_start("open-knowledge-ui")`.
+- Cursor: use the host's open-URL tool with a `previewUrl` from any write response.
+- Other hosts: use whatever command opens a URL (macOS: `open <url>`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat for the user to click.
 
-Never skip the preview step. The user expects to watch every edit land in real time. Write-tool responses include `previewUrl` (when resolvable) and a `warning` when no client is currently attached to the doc.
+**How to know if it's already open.** You usually can't pre-check from the agent side — rely on these signals:
 
-Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
+1. You already opened it earlier in this session → don't reopen.
+2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning: { action: "attach-preview-once" }` → a browser is attached somewhere; do nothing.
+3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → no browser is attached; open immediately, one-shot. The hint fires only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
+
+If the server isn't running, you'll see a `"Hocuspocus server is not running"` error or `previewUrl: null`. Start the UI (`open-knowledge ui` from a terminal, or `preview_start("open-knowledge-ui")` in Claude Code), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` returned in tool responses.
 
 **No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
+
+## Writing
+
+Call `write_document` / `edit_document` as soon as you have content. Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
 
 ## Grounding — every factual claim needs a source (MUST)
 
@@ -160,6 +172,7 @@ folders:
 ```
 
 Rules:
+
 - Rules apply in declaration order; later matches override earlier scalars.
 - Tags concat + dedup across all matching rules; first-occurrence preserved.
 - File's own frontmatter always wins per-scalar; folder defaults fill in blanks.
@@ -184,30 +197,31 @@ This is primarily a human-watchability concern — the user watches edits land i
 
 ## Anti-patterns — at a glance
 
-| Task                                          | Don't                                                     | Do                                                                 |
-| --------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
-| List a markdown-heavy dir                     | `Bash: ls specs/`                                         | `exec("ls specs/")`                                                |
-| Find all SPEC.md files                        | `Glob: **/SPEC.md`                                        | `exec("find specs -name SPEC.md")`                                 |
-| Search a phrase across markdown               | `Grep: "pattern" *.md`                                    | `search({ query: "pattern" })`                                     |
-| Read an individual doc                        | `Read: specs/foo/SPEC.md`                                 | `exec("cat specs/foo/SPEC.md")` or `read_document(...)`            |
-| Explore a markdown-heavy dir                  | `Agent(Explore): "..."`                                   | Do `exec`-based exploration yourself                               |
-| Edit without preview                          | `write_document(...)` direct                              | `get_preview_url` → open browser → `write_document`                |
-| Reference another doc                         | `` `[text](./page.md)` `` (backticked) or HTML `<a>`      | `[text](./page.md)` (raw markdown)                                 |
-| Embed an image                                | `<img src="...">` (HTML) or hot-linked external URL       | Fetch + save locally + `![meaningful alt](./assets/images/path)`   |
-| Write a factual claim                         | plausible prose without citation                          | prose with `[source](URL)` per Grounding rule                      |
-| Add an image                                  | empty alt `![](./x.png)` or generic alt `![image](./x)`   | meaningful alt + source caption below                              |
-| Catalog folder contents                       | create `INDEX.md` hub file                                | add `folders:` entry in `.open-knowledge/config.yml`               |
-| Fork a skill and expect no stomp              | Edit installed SKILL.md                                   | `npx skills remove` before CLI upgrade                             |
+| Task                                            | Don't                                                                              | Do                                                                                |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| List a markdown-heavy dir                       | `Bash: ls specs/`                                                                  | `exec("ls specs/")`                                                               |
+| Find all SPEC.md files                          | `Glob: **/SPEC.md`                                                                 | `exec("find specs -name SPEC.md")`                                                |
+| Search a phrase across markdown                 | `Grep: "pattern" *.md`                                                             | `search({ query: "pattern" })`                                                    |
+| Read an individual doc                          | `Read: specs/foo/SPEC.md`                                                          | `exec("cat specs/foo/SPEC.md")` or `read_document(...)`                           |
+| Explore a markdown-heavy dir                    | `Agent(Explore): "..."`                                                            | Do `exec`-based exploration yourself                                              |
+| Wait for the server to tell you to open preview | Skip the session-start preview open and wait for the `attach-preview-once` hint    | Open the preview browser at session start; the hint is a fallback when you didn't |
+| Ignore the attach hint                          | Skip the `warning: { action: "attach-preview-once" }` hint in write-tool responses | Open the `previewUrl` when the hint fires; otherwise do nothing                   |
+| Reference another doc                           | `` `[text](./page.md)` `` (backticked) or HTML `<a>`                               | `[text](./page.md)` (raw markdown)                                                |
+| Embed an image                                  | `<img src="...">` (HTML) or hot-linked external URL                                | Fetch + save locally + `![meaningful alt](./assets/images/path)`                  |
+| Write a factual claim                           | plausible prose without citation                                                   | prose with `[source](URL)` per Grounding rule                                     |
+| Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
+| Catalog folder contents                         | create `INDEX.md` hub file                                                         | add `folders:` entry in `.open-knowledge/config.yml`                              |
+| Fork a skill and expect no stomp                | Edit installed SKILL.md                                                            | `npx skills remove` before CLI upgrade                                            |
 
 ## Workflow tools — when to invoke them
 
 Three MCP tools build on the primitives above and correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
 
-| Tool | Layer | When to invoke |
-| --- | --- | --- |
-| `ingest` | Raw sources (immutable) | User shares a URL, PDF, or file to preserve verbatim. No analysis in the file itself — takeaways go back to the user in chat. |
-| `research` | Wiki, provisional | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
-| `consolidate` | Wiki, canonical | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain. |
+| Tool          | Layer                   | When to invoke                                                                                                                                                                                                                                                                          |
+| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ingest`      | Raw sources (immutable) | User shares a URL, PDF, or file to preserve verbatim. No analysis in the file itself — takeaways go back to the user in chat.                                                                                                                                                           |
+| `research`    | Wiki, provisional       | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
+| `consolidate` | Wiki, canonical         | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
 
 Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
 

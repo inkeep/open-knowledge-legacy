@@ -35,6 +35,13 @@ export {
   parseKeepaliveConnectionId,
 } from './boot.ts';
 export {
+  type BuildSkillZipOptions,
+  type BuildSkillZipResult,
+  buildSkillZip,
+  resolveBundledSkillDir,
+  validateSkillZip,
+} from './build-skill-zip.ts';
+export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
   type CC1Signal,
@@ -52,6 +59,10 @@ export {
   formatContributors,
   recordContributor,
 } from './contributor-tracker.ts';
+export {
+  type DetectClaudeDesktopOptions,
+  detectClaudeDesktopPresence,
+} from './detect-claude-desktop.ts';
 export {
   applyExternalChange,
   createExternalChangeHandler,

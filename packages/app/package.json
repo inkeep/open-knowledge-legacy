@@ -18,7 +18,7 @@
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts",
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "bun run build && size-limit"
@@ -39,7 +39,7 @@
     {
       "name": "main CSS (gzipped)",
       "path": "dist/assets/index-*.css",
-      "limit": "25 kB",
+      "limit": "30 kB",
       "gzip": true
     }
   ],
@@ -98,6 +98,7 @@
     "next-themes": "^0.4.6",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
+    "react-diff-view": "^3.3.3",
     "react-dom": "^19.2.5",
     "react-error-boundary": "^6.0.0",
     "react-force-graph-2d": "^1.29.1",
@@ -124,6 +125,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "commonmark.json": "^0.31.0",
+    "diff": "^8.0.4",
     "fast-check": "^4.6.0",
     "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",

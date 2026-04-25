@@ -6,7 +6,6 @@ import {
   type AgentPresenceState,
   hasAgentPresenceShape,
   pickAgentsForDoc,
-  pickPrimary,
 } from './agent-presence';
 
 function makeAwareness(states: AgentPresenceState[]): AgentPresenceAwareness {
@@ -28,81 +27,6 @@ function entry(over: Partial<AgentPresenceEntry> = {}): AgentPresenceEntry {
     ...over,
   };
 }
-
-describe('pickPrimary', () => {
-  const NOW = 10_000;
-
-  test('returns null when awareness is empty', () => {
-    expect(pickPrimary(makeAwareness([]), NOW)).toBeNull();
-  });
-
-  test('returns null when no peers have agentPresence', () => {
-    expect(pickPrimary(makeAwareness([{}]), NOW)).toBeNull();
-  });
-
-  test('returns null when all entries have no currentDoc (D8)', () => {
-    const awareness = makeAwareness([
-      { agentPresence: { 'uuid-A': entry({ currentDoc: null, ts: NOW }) } },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBeNull();
-  });
-
-  test('returns currentDoc for a single fresh entry', () => {
-    const awareness = makeAwareness([
-      { agentPresence: { 'uuid-A': entry({ currentDoc: 'foo.md', ts: NOW }) } },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBe('foo.md');
-  });
-
-  test('returns latest-ts across multiple agents (latest-wins)', () => {
-    const awareness = makeAwareness([
-      {
-        agentPresence: {
-          'uuid-A': entry({ currentDoc: 'a.md', ts: NOW - 500 }),
-          'uuid-B': entry({ currentDoc: 'b.md', ts: NOW - 200 }),
-        },
-      },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBe('b.md');
-  });
-
-  test('filters stale entries (older than AGENT_PRESENCE_STALE_MS)', () => {
-    const stale = NOW - AGENT_PRESENCE_STALE_MS - 1;
-    const awareness = makeAwareness([
-      { agentPresence: { 'uuid-A': entry({ currentDoc: 'a.md', ts: stale }) } },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBeNull();
-  });
-
-  test('live agent overrides stale agent', () => {
-    const stale = NOW - AGENT_PRESENCE_STALE_MS - 1;
-    const awareness = makeAwareness([
-      {
-        agentPresence: {
-          'uuid-old': entry({ currentDoc: 'old.md', ts: stale }),
-          'uuid-new': entry({ currentDoc: 'new.md', ts: NOW - 100 }),
-        },
-      },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBe('new.md');
-  });
-
-  test('aggregates across multiple awareness peers (defensive)', () => {
-    const awareness = makeAwareness([
-      { agentPresence: { 'uuid-A': entry({ currentDoc: 'peer0.md', ts: NOW - 300 }) } },
-      { agentPresence: { 'uuid-B': entry({ currentDoc: 'peer1.md', ts: NOW - 100 }) } },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBe('peer1.md');
-  });
-
-  test('stale filter uses strict >= boundary', () => {
-    const exactly = NOW - AGENT_PRESENCE_STALE_MS;
-    const awareness = makeAwareness([
-      { agentPresence: { 'uuid-A': entry({ currentDoc: 'a.md', ts: exactly }) } },
-    ]);
-    expect(pickPrimary(awareness, NOW)).toBeNull();
-  });
-});
 
 describe('pickAgentsForDoc', () => {
   const NOW = 10_000;
