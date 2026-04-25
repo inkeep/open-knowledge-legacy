@@ -200,6 +200,53 @@ export function extractPrimitiveProps(
   return sanitizeComponentProps(result);
 }
 
+/**
+ * Compute the post-convert PM node attrs when promoting a compat-surface
+ * descriptor to its canonical target. Exported as a pure helper so the
+ * dispatch shape (componentName flip, attributes/sourceRaw clear, sourceDirty
+ * set, props remap) is unit-testable without standing up a full TipTap
+ * editor. The host (the `onConvert` factory below) wraps this in a
+ * `setNodeMarkup` transaction.
+ *
+ * Invariants the caller MUST hold before calling:
+ *   - `curAttrs.kind === 'element'` (compat descriptors don't dispatch on
+ *     `kind: 'expression'` blocks).
+ *   - `descriptor.surface === 'compat' && descriptor.convertibleTo` —
+ *     enforced upstream by the surface narrowing in the factory.
+ *
+ * Why each field is what it is:
+ *   - `componentName` flips to the canonical target so render dispatch +
+ *     descriptor lookup pick up the canonical's prop set + serializer.
+ *   - `attributes: []` — preserved compat-form mdast attrs are no longer
+ *     meaningful under the canonical's serializer (which reconstructs from
+ *     `props` via `reconstructAttrs`); leaving them in would re-emit stale
+ *     compat-shape attributes.
+ *   - `sourceRaw: ''` — the compat's original source bytes (e.g.,
+ *     `> [!NOTE]\nbody`) are no longer the right form for the canonical;
+ *     forcing the dirty branch on next save guarantees emission as MDX JSX.
+ *   - `sourceDirty: true` — pairs with `sourceRaw: ''` to skip the pristine
+ *     passthrough on next serialize.
+ *   - `props: remap(currentProps)` — identity for v1's three compat
+ *     descriptors; reserved for non-identity rename maps when a future
+ *     compat (e.g., a hypothetical Mintlify Note) carries source-form prop
+ *     names that diverge from canonical's storage spelling.
+ */
+export function buildConvertedAttrs(
+  curAttrs: Record<string, unknown>,
+  target: string,
+  remap: (props: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown> {
+  const currentProps = (curAttrs.props as Record<string, unknown>) ?? {};
+  return {
+    ...curAttrs,
+    componentName: target,
+    attributes: [],
+    sourceRaw: '',
+    sourceDirty: true,
+    props: remap(currentProps),
+  };
+}
+
 // ── Main NodeView ───────────────────────────────────────────────────────
 
 /**
@@ -842,7 +889,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                         // Capture once per render so the closure sees the live
                         // descriptor on the active node. Identity remap for
                         // v1's three compat descriptors — prop names already
-                        // match their canonical's storage spelling.
+                        // match their canonical's storage spelling. Dispatch
+                        // shape lives in the pure `buildConvertedAttrs`
+                        // helper above (componentName flip + attributes /
+                        // sourceRaw clear + sourceDirty set + props remap)
+                        // so it's unit-testable without a TipTap editor.
                         const target = descriptor.convertibleTo.target;
                         const remap = descriptor.convertibleTo.remap;
                         return () => {
@@ -851,22 +902,12 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                           const curNode = editor.state.doc.nodeAt(p);
                           if (!curNode) return;
                           if (curNode.attrs.kind !== 'element') return;
-                          const currentProps =
-                            (curNode.attrs.props as Record<string, unknown>) ?? {};
-                          const nextProps = remap(currentProps);
                           editor.view.dispatch(
-                            editor.state.tr.setNodeMarkup(p, null, {
-                              ...curNode.attrs,
-                              componentName: target,
-                              // Drop preserved compat attrs on the way to
-                              // canonical — the canonical's serializer
-                              // reconstructs from `props`, and any compat-
-                              // shaped attrs would no longer round-trip.
-                              attributes: [],
-                              sourceRaw: '',
-                              sourceDirty: true,
-                              props: nextProps,
-                            }),
+                            editor.state.tr.setNodeMarkup(
+                              p,
+                              null,
+                              buildConvertedAttrs(curNode.attrs, target, remap),
+                            ),
                           );
                           markUserTyping();
                           setPopoverOpen(false);

@@ -116,8 +116,12 @@ function navigateTo(targetPath: string) {
  * handoff dispatch inputs share the same normalizer. `relativePathForNode`
  * stays local because it operates on a `TreeNode` (not a bare docName).
  */
-function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): string {
-  return node.kind === 'file' ? `${node.path}.md` : node.path;
+function relativePathForNode(node: {
+  kind: 'file' | 'folder';
+  path: string;
+  docExt?: string;
+}): string {
+  return node.kind === 'file' ? `${node.path}${node.docExt ?? '.md'}` : node.path;
 }
 
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -1426,7 +1430,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
               )}
               <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
                 {activeDragSource.name}
-                {activeDragSource.kind === 'file' ? '.md' : ''}
+                {activeDragSource.kind === 'file' ? (activeDragSource.docExt ?? '.md') : ''}
               </span>
             </div>
           ) : null}
