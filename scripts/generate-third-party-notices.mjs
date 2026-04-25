@@ -98,6 +98,7 @@ const LICENSE_TEXTS = {
   apache: loadLicenseText('apache-2.0'),
   bsd2: loadLicenseText('bsd-2-clause'),
   bsd3: loadLicenseText('bsd-3-clause'),
+  lgpl3: loadLicenseText('lgpl-3.0'),
 };
 
 // ─── closure resolution ──────────────────────────────────────────────────────
@@ -265,19 +266,22 @@ function normalizeSpdx(licenseField) {
 const MAX_COPYRIGHT_BLOCKS = 4;
 
 // A real copyright line starts with `Copyright` (or `(c) Copyright`) and the
-// next non-whitespace token is one of: `(c)`, a 4-digit year, or an
+// next non-whitespace token is one of: `(c)`, a 4-digit year, or a Unicode
 // uppercase letter (a holder name). The case-sensitivity is load-bearing —
 // we need to distinguish:
 //
 //   `Copyright Denis Malinochkin`         (real, uppercase D after Copyright)
 //   `Copyright (c) 2014-present Sebastian` (real, year)
+//   `Copyright Иван Иванов`               (real, Cyrillic uppercase)
 //   `copyright notice that is included`   (Apache prose, lowercase n)
 //   `copyright license to reproduce`      (Apache prose, lowercase l)
 //   `Copyright [yyyy] [name of owner]`    (Apache template, `[`)
 //
-// Without case-sensitivity on the post-Copyright character, the prose lines
-// pass. With it, only real holder names + years + (c) markers match.
-const COPYRIGHT_LINE = /^(\([cC]\)\s+)?[Cc]opyright\s+(\([cC]\)\s+)?(\d{4}|[A-ZÀ-ɏ])/;
+// `\p{Lu}` matches any Unicode uppercase letter (Latin, Cyrillic, Greek, …);
+// the `/u` flag enables Unicode property escapes. Without case-sensitivity
+// on the post-Copyright character, the prose lines pass. With it, only real
+// holder names + years + (c) markers match.
+const COPYRIGHT_LINE = /^(\([cC]\)\s+)?[Cc]opyright\s+(\([cC]\)\s+)?(\d{4}|\p{Lu})/u;
 
 // Reject blocks whose joined body still contains template tokens — defensive
 // secondary filter in case a continuation line picks up the placeholder line.
@@ -552,6 +556,11 @@ function build() {
   // LGPL — `node-liblzma` is an optional transitive of just-bash. Emit the
   // callout unconditionally so the notice is platform-stable; if the package
   // ended up in this build's resolved tree, surface the resolved version.
+  // The LGPL-3.0 text is reproduced inline because §4 of the GNU GPL (which
+  // LGPL §0 incorporates by reference) requires recipients of conveyed
+  // covered works to receive a copy of the License — for the Electron path
+  // where the binary may ship in `Resources/app.asar.unpacked/`, this
+  // satisfies the obligation independent of network access.
   push('## LGPL-3.0 — transitive optional binary', '');
   const lgplResolved = (grouped.get('LGPL') || []).find(
     (e) => e.pkg.name === 'node-liblzma',
@@ -562,6 +571,8 @@ function build() {
     } is an **optional** transitive dependency of \`just-bash\`, used by \`@inkeep/open-knowledge\` for sandboxed shell execution. The package is licensed under LGPL-3.0. For the npm CLI tarball, \`node-liblzma\` is not bundled — it is resolved from the public npm registry at install time on platforms where the native build succeeds. For the Electron desktop \`.app\`, whether the binary lands in \`Resources/app.asar.unpacked/\` depends on the build host's toolchain at packaging time; if present, the binary ships subject to LGPL-3.0 obligations. Upstream source: https://github.com/Manawyrm/node-liblzma. Corresponding source can be obtained from upstream per LGPL §6.`,
     '',
   );
+  push('The full text of the GNU Lesser General Public License v3.0 follows.', '');
+  push('```', LICENSE_TEXTS.lgpl3, '```', '');
   hr();
 
   // Apache-2.0 — full LICENSE text per §4(a) ("give any other recipients of
