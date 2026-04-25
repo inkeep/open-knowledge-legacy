@@ -212,237 +212,377 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## LGPL-3.0 — transitive optional binary
 
-`node-liblzma`@2.2.0 is an **optional** transitive dependency of `just-bash`, which `@inkeep/open-knowledge` depends on for sandboxed shell execution. We do not bundle `node-liblzma`; npm/bun fetches it directly from the public registry on platforms where the native build succeeds. Source is available at https://github.com/Manawyrm/node-liblzma. The library is licensed under LGPL-3.0; corresponding source can be obtained from upstream per LGPL §6.
+`node-liblzma`@2.2.0 is an **optional** transitive dependency of `just-bash`, used by `@inkeep/open-knowledge` for sandboxed shell execution. The package is licensed under LGPL-3.0. For the npm CLI tarball, `node-liblzma` is not bundled — it is resolved from the public npm registry at install time on platforms where the native build succeeds. For the Electron desktop `.app`, whether the binary lands in `Resources/app.asar.unpacked/` depends on the build host's toolchain at packaging time; if present, the binary ships subject to LGPL-3.0 obligations. Upstream source: https://github.com/Manawyrm/node-liblzma. Corresponding source can be obtained from upstream per LGPL §6.
 
 ---
 
 ## Apache License, Version 2.0
 
-Each entry below is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Where the upstream package ships a `NOTICE` file, its contents are reproduced inline as required by Apache-2.0 §4(d).
+Each package in this section is licensed under the Apache License, Version 2.0. The full text of the license is reproduced once below and applies to every entry; per-package `NOTICE` file content is reproduced inline with each entry.
+
+```
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
 
 ### `@mongodb-js/zstd@7.0.0`
 Homepage: https://github.com/mongodb-js/zstd
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2022 MongoDB
 
 ### `@opentelemetry/api@1.9.1`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/api
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/api-logs@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/api-logs
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/context-async-hooks@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-context-async-hooks
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/core@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-core
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/core@2.1.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-core
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/exporter-metrics-otlp-http@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-exporter-metrics-otlp-http
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/exporter-trace-otlp-http@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/exporter-trace-otlp-http
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/instrumentation@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/instrumentation-document-load@0.49.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-document-load#readme
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/instrumentation-fetch@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/opentelemetry-instrumentation-fetch
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/instrumentation-user-interaction@0.49.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-user-interaction#readme
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/otlp-exporter-base@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-exporter-base
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/otlp-transformer@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/otlp-transformer
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/resources@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-resources
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/resources@2.1.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-resources
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-logs@0.204.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/experimental/packages/sdk-logs
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-metrics@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-metrics
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-metrics@2.1.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/sdk-metrics
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-trace-base@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-base
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-trace-base@2.1.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-base
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-trace-web@2.7.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-web
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/sdk-trace-web@2.1.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-sdk-trace-web
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `@opentelemetry/semantic-conventions@1.40.0`
 Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-conventions
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `baseline-browser-mapping@2.10.17`
 Homepage: https://github.com/web-platform-dx/baseline-browser-mapping
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `before-after-hook@4.0.0`
 Homepage: https://github.com/gr2m/before-after-hook
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2018 Gregor Martynus and other contributors.
 
 ### `class-variance-authority@0.7.1`
 Homepage: https://github.com/joe-bell/cva#readme
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2022 Joe Bell
 
 ### `detect-libc@2.1.2`
 Homepage: https://github.com/lovell/detect-libc
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright {yyyy} {name of copyright owner}
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `diff-match-patch@1.0.5`
 Homepage: https://github.com/JackuB/diff-match-patch
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `human-signals@8.0.1`
 Homepage: https://www.github.com/ehmicky/human-signals
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2025 ehmicky <ehmicky@gmail.com>
 
 ### `human-signals@2.1.0`
 Homepage: https://git.io/JeluP
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2019 ehmicky <ehmicky@gmail.com>
 
 ### `import-in-the-middle@1.15.0`
 Homepage: https://github.com/nodejs/import-in-the-middle#readme
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 NOTICE:
 
@@ -486,25 +626,45 @@ https://github.com/DataDog/import-in-the-middle repository:
 ### `just-bash@2.14.2`
 Homepage: https://github.com/vercel-labs/just-bash#readme
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
 Copyright 2025 Vercel Inc.
 
 ### `long@5.3.2`
 Homepage: https://github.com/dcodeIO/long.js
 
-copyright notice that is included in or attached to the work
-copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.
-Copyright [yyyy] [name of copyright owner]
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ### `tunnel-agent@0.6.0`
 Homepage: https://github.com/mikeal/tunnel-agent
+
+_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
 ---
 
 ## MIT License
 
-Each entry below is licensed under the MIT License. The original copyright notice is reproduced; the MIT permission notice applies as written by the original author.
+Each package in this section is licensed under the MIT License. The full text of the permission notice is reproduced once below and applies to every entry; per-package copyright lines are listed inline.
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### `@alloc/quick-lru@5.2.0`
 Homepage: https://github.com/sindresorhus/quick-lru
@@ -654,7 +814,7 @@ Copyright (c) 2014-present Sebastian McKenzie and other contributors
 ### `@borewit/text-codec@0.2.2`
 Homepage: https://github.com/Borewit/text-codec
 
-Copyright © 2025 Borewit
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `@codemirror/autocomplete@6.20.1`
 Homepage: https://github.com/codemirror/autocomplete
@@ -765,25 +925,21 @@ Copyright (c) 2019-2026 Weiliang Li
 Homepage: https://floating-ui.com
 
 Copyright (c) 2021-present Floating UI contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@floating-ui/dom@1.7.6`
 Homepage: https://floating-ui.com
 
 Copyright (c) 2021-present Floating UI contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@floating-ui/react-dom@2.1.8`
 Homepage: https://floating-ui.com/docs/react-dom
 
 Copyright (c) 2021-present Floating UI contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@floating-ui/utils@0.2.11`
 Homepage: https://floating-ui.com
 
 Copyright (c) 2021-present Floating UI contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@handlewithcare/remark-prosemirror@0.1.5`
 Homepage: https://github.com/handlewithcarecollective/remark-prosemirror
@@ -863,6 +1019,8 @@ Copyright (c) 2025 Simon Boudrias
 ### `@jitl/quickjs-ffi-types@0.32.0`
 Homepage: https://github.com/justjake/quickjs-emscripten
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `@jitl/quickjs-wasmfile-debug-asyncify@0.32.0`
 Homepage: https://github.com/justjake/quickjs-emscripten
 
@@ -912,7 +1070,6 @@ Copyright 2024 Justin Ridgewell <justin@ridgewell.name>
 Homepage: https://github.com/kwsites/file-exists
 
 Copyright (c) 2015 Steve King
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@kwsites/promise-deferred@1.1.1`
 Homepage: https://github.com/kwsites/promise-deferred
@@ -1072,11 +1229,17 @@ Copyright (c) GitHub 2025 - Licensed as MIT.
 ### `@octokit/plugin-paginate-rest@14.0.0`
 Homepage: https://github.com/octokit/plugin-paginate-rest.js
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `@octokit/plugin-request-log@6.0.0`
 Homepage: https://github.com/octokit/plugin-request-log.js
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `@octokit/plugin-rest-endpoint-methods@17.0.0`
 Homepage: https://github.com/octokit/plugin-rest-endpoint-methods.js
+
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `@octokit/request@10.0.8`
 Homepage: https://github.com/octokit/request.js
@@ -1095,6 +1258,8 @@ Copyright (c) 2012 Cloud9 IDE, Inc. (Mike de Boer) Copyright (c) 2017-2018 Octok
 
 ### `@octokit/types@16.0.0`
 Homepage: https://github.com/octokit/types.ts
+
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `@open-draft/deferred-promise@2.2.0`
 Homepage: https://github.com/open-draft/deferred-promise
@@ -1675,7 +1840,6 @@ Copyright (c) 2019 Kevin Jahns <kevin.jahns@protonmail.com>. Copyright (c) 2025 
 Homepage: https://github.com/Borewit/tokenizer-inflate
 
 Copyright (c) 2024, Borewit
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `@tokenizer/token@0.3.0`
 Homepage: https://github.com/Borewit/tokenizer-token
@@ -1875,6 +2039,8 @@ Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 ### `balanced-match@4.0.4`
 Homepage: https://github.com/juliangruber/balanced-match
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `base64-js@1.5.1`
 Homepage: https://github.com/beatgammit/base64-js
 
@@ -1909,7 +2075,6 @@ Copyright (c) 2014-present, Jon Schlinkert.
 Homepage: https://github.com/browserslist/browserslist
 
 Copyright 2014 Andrey Sitnik <andrey@sitnik.es> and other contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `buffer@5.7.1`
 Homepage: https://github.com/feross/buffer
@@ -2054,7 +2219,7 @@ Copyright (c) 2015 Dmitry Ivanov
 ### `colorette@2.0.20`
 Homepage: https://github.com/jorgebucaran/colorette
 
-Copyright © Jorge Bucaran <<https://jorgebucaran.com>>
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `comma-separated-tokens@2.0.3`
 Homepage: https://github.com/wooorm/comma-separated-tokens
@@ -2131,7 +2296,6 @@ Homepage: https://crossws.h3.dev
 
 Copyright (c) Pooya Parsa <pooya@pi0.io>
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com> Copyright (c) 2013 Arnout Kazemier and contributors Copyright (c) 2016 Luigi Pinca and contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `cssesc@3.0.0`
 Homepage: https://mths.be/cssesc
@@ -2161,6 +2325,8 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 ### `dateformat@4.6.3`
 Homepage: https://github.com/felixge/node-dateformat
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `debug@4.4.3`
 Homepage: https://github.com/debug-js/debug
 
@@ -2179,11 +2345,12 @@ Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 ### `dedent@1.7.2`
 Homepage: https://github.com/dmnd/dedent
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `deep-extend@0.6.0`
 Homepage: https://github.com/unclechu/node-deep-extend
 
 Copyright (c) 2013-2018, Viacheslav Lotsmanov
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `deepmerge@4.3.1`
 Homepage: https://github.com/TehShrike/deepmerge
@@ -2364,7 +2531,6 @@ Copyright (c) 2009-2014 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2013-2
 Homepage: https://github.com/express-rate-limit/express-rate-limit
 
 Copyright 2023 Nathan Friedly, Vedant K
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `extend@3.0.2`
 Homepage: https://github.com/justmoon/node-extend
@@ -2570,7 +2736,7 @@ Copyright (c) 2020 Baidu EFE
 ### `github-from-package@0.0.0`
 Homepage: https://github.com/substack/github-from-package
 
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `gopd@1.2.0`
 Homepage: https://github.com/ljharb/gopd#readme
@@ -2700,7 +2866,7 @@ Copyright (c) 2011 Alexander Shtuchkin
 ### `ignore@5.3.2`
 Homepage: https://github.com/kaelzhang/node-ignore
 
-Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors http://kael.me/
+Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors
 
 ### `import-fresh@3.3.1`
 Homepage: https://github.com/sindresorhus/import-fresh
@@ -2741,7 +2907,6 @@ Copyright (c) 2015 JD Ballard
 Homepage: https://github.com/inspect-js/is-core-module
 
 Copyright (c) 2014 Dave Justice
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `is-decimal@2.0.1`
 Homepage: https://github.com/wooorm/is-decimal
@@ -2866,7 +3031,7 @@ Copyright (c) 2018 Filip Skokan
 ### `joycon@3.1.1`
 Homepage: https://github.com/egoist/joycon
 
-Copyright (c) egoist <0x142857@gmail.com> (https://github.com/egoist)
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `js-tokens@4.0.0`
 Homepage: https://github.com/lydell/js-tokens
@@ -2952,25 +3117,21 @@ Copyright (c) 2024 Nick Frasser
 Homepage: https://lodash.com/
 
 Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
-Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation.
 
 ### `lodash-es@4.18.1`
 Homepage: https://lodash.com/custom-builds
 
 Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
-Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation.
 
 ### `lodash.escaperegexp@4.1.2`
 Homepage: https://lodash.com/
 
-Copyright jQuery Foundation and other contributors <https://jquery.org/>
-Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation.
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `lodash.isequal@4.5.0`
 Homepage: https://lodash.com/
 
 Copyright JS Foundation and other contributors <https://js.foundation/>
-Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation.
 
 ### `log-symbols@6.0.0`
 Homepage: https://github.com/sindresorhus/log-symbols
@@ -3326,7 +3487,7 @@ Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 ### `minimist@1.2.8`
 Homepage: https://github.com/minimistjs/minimist
 
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `mkdirp-classic@0.5.3`
 Homepage: https://github.com/mafintosh/mkdirp-classic
@@ -3362,7 +3523,6 @@ Copyright (c) 2018–present Artem Zakharchenko
 Homepage: https://github.com/ai/nanoid
 
 Copyright 2017 Andrey Sitnik <andrey@sitnik.ru>
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `napi-build-utils@2.0.0`
 Homepage: https://github.com/inspiredware/napi-build-utils#readme
@@ -3488,7 +3648,6 @@ Copyright (c) 2021–present Artem Zakharchenko
 Homepage: https://www.papaparse.com/
 
 Copyright (c) 2015 Matthew Holt
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `parent-module@1.0.1`
 Homepage: https://github.com/sindresorhus/parent-module
@@ -3524,7 +3683,6 @@ Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2017 Dou
 Homepage: https://github.com/browserify/path-browserify
 
 Copyright (c) 2013 James Halliday
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `path-expression-matcher@1.5.0`
 Homepage: https://github.com/NaturalIntelligence/path-expression-matcher#readme
@@ -3595,7 +3753,6 @@ Copyright (c) 2019
 Homepage: https://postcss.org/
 
 Copyright 2013 Andrey Sitnik <andrey@sitnik.es>
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `postcss-selector-parser@7.1.1`
 Homepage: https://github.com/postcss/postcss-selector-parser
@@ -3756,7 +3913,6 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 Homepage: https://github.com/feross/queue-microtask
 
 Copyright (c) Feross Aboukhadijeh
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `quick-format-unescaped@4.0.4`
 Homepage: https://github.com/davidmarkclements/quick-format#readme
@@ -3766,8 +3922,12 @@ Copyright (c) 2016-2019 David Mark Clements
 ### `quickjs-emscripten@0.32.0`
 Homepage: https://github.com/justjake/quickjs-emscripten
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `quickjs-emscripten-core@0.32.0`
 Homepage: https://github.com/justjake/quickjs-emscripten
+
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `radix-ui@1.4.3`
 Homepage: https://radix-ui.com/primitives
@@ -3969,7 +4129,6 @@ Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 Homepage: https://github.com/feross/run-parallel
 
 Copyright (c) Feross Aboukhadijeh
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `safe-buffer@5.2.1`
 Homepage: https://github.com/feross/safe-buffer
@@ -3994,9 +4153,7 @@ Copyright (c) Meta Platforms, Inc. and affiliates.
 ### `seek-bzip@2.0.0`
 Homepage: https://github.com/cscott/seek-bzip
 
-Copyright &copy; 2013-2015 C. Scott Ananian
-Copyright &copy; 2012-2015 Eli Skeggs
-Copyright &copy; 2011 Kevin Kwok
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `send@1.2.1`
 Homepage: https://github.com/pillarjs/send
@@ -4016,7 +4173,7 @@ Copyright (c) 2023 shadcn
 ### `shallow-equal@3.1.0`
 Homepage: https://github.com/moroshko/shallow-equal
 
-Copyright © 2023 Misha Moroshko and Philip Su
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `shebang-command@2.0.0`
 Homepage: https://github.com/kevva/shebang-command
@@ -4057,13 +4214,11 @@ Copyright (c) 2019 Jordan Harband
 Homepage: https://github.com/feross/simple-concat
 
 Copyright (c) Feross Aboukhadijeh
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `simple-get@4.0.1`
 Homepage: https://github.com/feross/simple-get
 
 Copyright (c) Feross Aboukhadijeh
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `simple-git@3.36.0`
 Homepage: https://github.com/steveukx/git-js
@@ -4100,7 +4255,6 @@ Homepage: http://github.com/sql-js/sql.js
 
 Copyright (c) 2017 sql.js authors (see AUTHORS)
 Copyright 2017 Ryusei Yamaguchi
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `statuses@2.0.2`
 Homepage: https://github.com/jshttp/statuses
@@ -4122,12 +4276,6 @@ Homepage: https://github.com/open-draft/strict-event-emitter
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
-### `string_decoder@1.3.0`
-Homepage: https://github.com/nodejs/string_decoder
-
-Copyright Node.js contributors. All rights reserved.
-Copyright Joyent, Inc. and other Node contributors. All rights reserved.
-
 ### `string-width@7.2.0`
 Homepage: https://github.com/sindresorhus/string-width
 
@@ -4137,6 +4285,12 @@ Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 Homepage: https://github.com/sindresorhus/string-width
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+
+### `string_decoder@1.3.0`
+Homepage: https://github.com/nodejs/string_decoder
+
+Copyright Node.js contributors. All rights reserved.
+Copyright Joyent, Inc. and other Node contributors. All rights reserved.
 
 ### `stringify-entities@4.0.4`
 Homepage: https://github.com/wooorm/stringify-entities
@@ -4186,7 +4340,7 @@ Copyright (c) 2021 Natural Intelligence
 ### `strtok3@10.3.5`
 Homepage: https://github.com/Borewit/strtok3
 
-Copyright © 2026 Borewit
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `style-mod@4.1.3`
 Homepage: https://github.com/marijnh/style-mod
@@ -4251,7 +4405,7 @@ Copyright (c) 2020 Zurab Benashvili (binier) <zura.bena@gmail.com>
 ### `tinycolor2@1.6.0`
 Homepage: https://github.com/bgrins/TinyColor
 
-Copyright (c), Brian Grinstead, http://briangrinstead.com
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `tldts@7.0.28`
 Homepage: https://github.com/remusao/tldts#readme
@@ -4276,7 +4430,7 @@ Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com>
 ### `token-types@6.1.2`
 Homepage: https://github.com/Borewit/token-types
 
-Copyright © 2026 Borewit
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ### `totalist@3.0.1`
 Homepage: https://github.com/lukeed/totalist
@@ -4397,7 +4551,6 @@ Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 Homepage: https://github.com/RyanZim/universalify#readme
 
 Copyright (c) 2017, Ryan Zimmerman <opensrc@ryanzim.com>
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `unpipe@1.0.0`
 Homepage: https://github.com/stream-utils/unpipe
@@ -4413,7 +4566,6 @@ Copyright (c) 2021 Artem Zakharchenko
 Homepage: https://github.com/browserslist/update-db
 
 Copyright 2022 Andrey Sitnik <andrey@sitnik.ru> and other contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `use-callback-ref@1.3.3`
 Homepage: https://github.com/theKashey/use-callback-ref/
@@ -4489,7 +4641,6 @@ Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 Homepage: https://github.com/websockets/ws
 
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com> Copyright (c) 2013 Arnout Kazemier and contributors Copyright (c) 2016 Luigi Pinca and contributors
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### `wsl-utils@0.3.1`
 Homepage: https://github.com/sindresorhus/wsl-utils
@@ -4555,25 +4706,38 @@ Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
 
 ## ISC License
 
-Each entry below is licensed under the ISC License (functionally equivalent to MIT/2-clause BSD).
+Each package in this section is licensed under the ISC License. The full text of the permission notice is reproduced once below and applies to every entry; per-package copyright lines are listed inline.
+
+```
+ISC License
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+```
 
 ### `@ungap/structured-clone@1.3.0`
 Homepage: https://github.com/ungap/structured-clone#readme
 
 Copyright (c) 2021, Andrea Giammarchi, @WebReflection
-copyright notice and this permission notice appear in all copies.
 
 ### `chownr@1.1.4`
 Homepage: https://github.com/isaacs/chownr
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `cli-width@4.1.0`
 Homepage: https://github.com/knownasilya/cli-width
 
 Copyright (c) 2015, Ilya Radchenko <knownasilya@gmail.com>
-copyright notice and this permission notice appear in all copies.
 
 ### `cliui@8.0.1`
 Homepage: https://github.com/yargs/cliui
@@ -4665,7 +4829,6 @@ Copyright 2018 Kilian Valkhof
 Homepage: https://github.com/mcollina/fastq#readme
 
 Copyright (c) 2015-2020, Matteo Collina <matteo.collina@gmail.com>
-copyright notice and this permission notice appear in all copies.
 
 ### `get-caller-file@2.0.5`
 Homepage: https://github.com/stefanpenner/get-caller-file#readme
@@ -4676,31 +4839,26 @@ Copyright 2018 Stefan Penner
 Homepage: https://github.com/gulpjs/glob-parent
 
 Copyright (c) 2015, 2019 Elan Shanker
-copyright notice and this permission notice appear in all copies.
 
 ### `graceful-fs@4.2.11`
 Homepage: https://github.com/isaacs/node-graceful-fs
 
 Copyright (c) 2011-2022 Isaac Z. Schlueter, Ben Noordhuis, and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `inherits@2.0.4`
 Homepage: https://github.com/isaacs/inherits
 
 Copyright (c) Isaac Z. Schlueter
-copyright notice and this permission notice appear in all copies.
 
 ### `ini@6.0.0`
 Homepage: https://github.com/npm/ini
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `ini@1.3.8`
 Homepage: https://github.com/isaacs/ini
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `internmap@1.0.1`
 Homepage: https://github.com/mbostock/internmap/
@@ -4711,62 +4869,52 @@ Copyright 2021 Mike Bostock
 Homepage: https://github.com/isaacs/isexe#readme
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `lru-cache@5.1.1`
 Homepage: https://github.com/isaacs/node-lru-cache
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `lucide-react@1.8.0`
 Homepage: https://lucide.dev
 
 Copyright (c) 2026 Lucide Icons and Contributors
-copyright notice and this permission notice appear in all copies.
 Copyright (c) 2013-present Cole Bemis
 
 ### `mute-stream@3.0.0`
 Homepage: https://github.com/npm/mute-stream
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `mute-stream@2.0.0`
 Homepage: https://github.com/npm/mute-stream
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `once@1.4.0`
 Homepage: https://github.com/isaacs/once
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `picocolors@1.1.1`
 Homepage: https://github.com/alexeyraspopov/picocolors
 
 Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov
-copyright notice and this permission notice appear in all copies.
 
 ### `semver@7.7.4`
 Homepage: https://github.com/npm/node-semver
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `semver@6.3.1`
 Homepage: https://github.com/npm/node-semver
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `setprototypeof@1.2.0`
 Homepage: https://github.com/wesleytodd/setprototypeof
 
 Copyright (c) 2015, Wes Todd
-copyright notice and this permission notice appear in all copies.
 
 ### `signal-exit@4.1.0`
 Homepage: https://github.com/tapjs/signal-exit
@@ -4782,7 +4930,6 @@ Copyright (c) 2015, Contributors
 Homepage: https://github.com/mcollina/split2
 
 Copyright (c) 2014-2018, Matteo Collina <hello@matteocollina.com>
-copyright notice and this permission notice appear in all copies.
 
 ### `universal-user-agent@7.0.3`
 Homepage: https://github.com/gr2m/universal-user-agent
@@ -4798,19 +4945,16 @@ Copyright (c) 2015, npm, Inc
 Homepage: https://github.com/isaacs/node-which
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `which@4.0.0`
 Homepage: https://github.com/npm/node-which
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `wrappy@1.0.2`
 Homepage: https://github.com/npm/wrappy
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `y18n@5.0.8`
 Homepage: https://github.com/yargs/y18n
@@ -4821,7 +4965,6 @@ Copyright (c) 2015, Contributors
 Homepage: https://github.com/isaacs/yallist
 
 Copyright (c) Isaac Z. Schlueter and Contributors
-copyright notice and this permission notice appear in all copies.
 
 ### `yaml@2.8.3`
 Homepage: https://eemeli.org/yaml/
@@ -4837,11 +4980,42 @@ Copyright (c) 2016, Contributors
 Homepage: https://github.com/StefanTerdell/zod-to-json-schema
 
 Copyright (c) 2020, Stefan Terdell
-copyright notice and this permission notice appear in all copies.
 
 ---
 
 ## BSD 3-Clause License
+
+Each package in this section is licensed under the BSD 3-Clause License. The full text of the conditions, disclaimer, and non-endorsement clause is reproduced once below and applies to every entry; per-package copyright lines are listed inline.
+
+```
+BSD 3-Clause License
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from this
+   software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
 
 ### `@dotenvx/dotenvx@1.61.0`
 Homepage: https://github.com/dotenvx/dotenvx
@@ -4962,6 +5136,34 @@ Copyright (c) 2015, Salesforce.com, Inc.
 
 ## BSD 2-Clause License
 
+Each package in this section is licensed under the BSD 2-Clause License. The full text of the conditions and disclaimer is reproduced once below and applies to every entry; per-package copyright lines are listed inline.
+
+```
+BSD 2-Clause License
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
+
 ### `@mixmark-io/domino@2.2.0`
 Homepage: https://github.com/mixmark-io/domino
 
@@ -4990,6 +5192,8 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 ### `json-schema-typed@8.0.2`
 Homepage: https://github.com/RemyRylan/json-schema-typed/tree/main/dist/node
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `rc@1.2.8`
 Homepage: https://github.com/dominictarr/rc
 
@@ -5009,18 +5213,40 @@ Used at build time only — not bundled into shipped artifacts. Listed for trace
 ### `lightningcss@1.32.0`
 Homepage: https://github.com/parcel-bundler/lightningcss
 
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ---
 
 ## Other permissive licenses
 
-The following packages are under licenses that do not strictly require attribution (BlueOak-1.0.0, 0BSD, WTFPL, Unlicense, CC0-1.0, Python-2.0, CC-BY-4.0). Listed for completeness and traceability.
+The following packages are under licenses that do not require attribution (BlueOak-1.0.0, 0BSD, WTFPL, Unlicense, CC0-1.0). Listed for completeness and traceability.
 
-- `argparse@2.0.1` — Python-2.0
-- `caniuse-lite@1.0.30001787` — CC-BY-4.0
 - `isexe@3.1.5` — BlueOak-1.0.0
 - `minimatch@10.2.5` — BlueOak-1.0.0
 - `sax@1.6.0` — BlueOak-1.0.0
 - `tslib@2.8.1` — 0BSD
+
+---
+
+## Creative Commons Attribution 4.0 International (CC-BY-4.0)
+
+The data files below are licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/legalcode). Each entry preserves its copyright and license URI per §3(a)(1). Note: CC-BY-4.0 §5 disclaims warranties; the licensor offers the work as-is.
+
+### `caniuse-lite@1.0.30001787`
+Homepage: https://github.com/browserslist/caniuse-lite
+
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
+---
+
+## Python Software Foundation License (Python-2.0)
+
+The packages below are licensed under the PSF License v2 (https://docs.python.org/3/license.html#psf-license). Each entry preserves its copyright notice. The license disclaims warranties and limits liability per its terms; refer to upstream for the full text.
+
+### `argparse@2.0.1`
+Homepage: https://github.com/nodeca/argparse
+
+Copyright (c) 1991 - 1995, Stichting Mathematisch Centrum Amsterdam,
 
 ---
 
@@ -5031,8 +5257,8 @@ The following MIT-licensed packages are patched in this repository via Bun's `pa
 | Package | Patch file |
 | --- | --- |
 | `@handlewithcare/remark-prosemirror@0.1.5` | `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` |
-| `y-prosemirror@1.3.7` | `patches/y-prosemirror@1.3.7.patch` |
 | `@tiptap/y-tiptap@3.0.3` | `patches/@tiptap%2Fy-tiptap@3.0.3.patch` |
+| `y-prosemirror@1.3.7` | `patches/y-prosemirror@1.3.7.patch` |
 
 ---
 

@@ -56,24 +56,13 @@ const LICENSE_FILENAMES = [
   'LICENSE.MIT',
 ];
 
-const NOTICE_FILENAMES = ['NOTICE', 'NOTICE.md', 'NOTICE.txt'];
-
-const PATCHED_DEPS = [
-  {
-    name: '@handlewithcare/remark-prosemirror',
-    version: '0.1.5',
-    patchFile: 'patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch',
-  },
-  {
-    name: 'y-prosemirror',
-    version: '1.3.7',
-    patchFile: 'patches/y-prosemirror@1.3.7.patch',
-  },
-  {
-    name: '@tiptap/y-tiptap',
-    version: '3.0.3',
-    patchFile: 'patches/@tiptap%2Fy-tiptap@3.0.3.patch',
-  },
+const NOTICE_FILENAMES = [
+  'NOTICE',
+  'NOTICE.md',
+  'NOTICE.txt',
+  'NOTICE.markdown',
+  'NOTICE.rst',
+  'NOTICES',
 ];
 
 // ─── CLI args ────────────────────────────────────────────────────────────────
@@ -86,10 +75,55 @@ const OUT_PATH =
     ? args[outIdx + 1]
     : join(REPO_ROOT, 'THIRD_PARTY_NOTICES.md');
 
+// Byte (lexicographic) comparator. Use this everywhere instead of
+// `String.prototype.localeCompare` — locale-aware sorting depends on the
+// host's $LC_COLLATE, which varies across contributor machines and CI
+// runners and can re-order the output between runs.
+function byteCompare(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Canonical license texts shipped alongside this script. Each section
+// preamble (MIT, ISC, Apache-2.0, BSD-2, BSD-3) reproduces its license body
+// once at the top so a reader of the notices file can see the permission
+// notice / disclaimer / non-endorsement clauses without leaving the document.
+// The OFL section reproduces full text per package (each font has unique
+// reserved-name copyright lines) and is handled separately.
+function loadLicenseText(name) {
+  return readFileSync(join(SCRIPT_DIR, 'license-texts', `${name}.txt`), 'utf8').trim();
+}
+const LICENSE_TEXTS = {
+  mit: loadLicenseText('mit'),
+  isc: loadLicenseText('isc'),
+  apache: loadLicenseText('apache-2.0'),
+  bsd2: loadLicenseText('bsd-2-clause'),
+  bsd3: loadLicenseText('bsd-3-clause'),
+};
+
 // ─── closure resolution ──────────────────────────────────────────────────────
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+// Derive patched dependencies from the canonical `package.json#patchedDependencies`
+// rather than hardcoding. Bumping a Bun patch in `package.json` would otherwise
+// drift silently from this script's view of the patches — a hand-mirrored list
+// that the drift check could never catch (regenerated file would still be
+// byte-identical to the committed file).
+function loadPatchedDeps() {
+  const rootPkg = readJson(join(REPO_ROOT, 'package.json'));
+  const patches = rootPkg.patchedDependencies || {};
+  return Object.entries(patches)
+    .map(([nameVersion, patchFile]) => {
+      const at = nameVersion.lastIndexOf('@');
+      return {
+        name: nameVersion.slice(0, at),
+        version: nameVersion.slice(at + 1),
+        patchFile,
+      };
+    })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 /**
@@ -230,6 +264,25 @@ function normalizeSpdx(licenseField) {
 // exceed three holders.
 const MAX_COPYRIGHT_BLOCKS = 4;
 
+// A real copyright line starts with `Copyright` (or `(c) Copyright`) and the
+// next non-whitespace token is one of: `(c)`, a 4-digit year, or an
+// uppercase letter (a holder name). The case-sensitivity is load-bearing —
+// we need to distinguish:
+//
+//   `Copyright Denis Malinochkin`         (real, uppercase D after Copyright)
+//   `Copyright (c) 2014-present Sebastian` (real, year)
+//   `copyright notice that is included`   (Apache prose, lowercase n)
+//   `copyright license to reproduce`      (Apache prose, lowercase l)
+//   `Copyright [yyyy] [name of owner]`    (Apache template, `[`)
+//
+// Without case-sensitivity on the post-Copyright character, the prose lines
+// pass. With it, only real holder names + years + (c) markers match.
+const COPYRIGHT_LINE = /^(\([cC]\)\s+)?[Cc]opyright\s+(\([cC]\)\s+)?(\d{4}|[A-ZÀ-ɏ])/;
+
+// Reject blocks whose joined body still contains template tokens — defensive
+// secondary filter in case a continuation line picks up the placeholder line.
+const TEMPLATE_TOKENS = /\[yyyy\]|\{yyyy\}|\[name of copyright owner\]/i;
+
 function extractCopyrights(licenseText) {
   if (!licenseText) return [];
   const lines = licenseText.split('\n');
@@ -237,34 +290,40 @@ function extractCopyrights(licenseText) {
   let i = 0;
   while (i < lines.length && blocks.length < MAX_COPYRIGHT_BLOCKS) {
     const line = lines[i].trim();
-    // Match lines that START with the literal word "Copyright" (or
-    // "(c) Copyright"). This excludes prose like "the above copyright notice"
-    // which appears inside MIT/BSD permission text and is not a copyright line.
-    if (/^(\(c\)\s*)?copyright\b/i.test(line)) {
-      // Collect this line + continuation lines until a blank line or until we
-      // hit something that is clearly the start of the permission grant.
-      // Captures multi-line copyrights like yjs:
-      //   Copyright (c) 2023
-      //     - Kevin Jahns <...>
+    if (COPYRIGHT_LINE.test(line)) {
+      // Collect this line + continuation lines (bullet-listed holders, e.g.
+      // yjs's `Copyright (c) 2023\n  - Kevin Jahns <...>`) until a blank line
+      // or the start of the permission grant.
       const block = [line];
       let j = i + 1;
       while (j < lines.length && lines[j].trim() !== '') {
         const next = lines[j].trim();
         if (
-          /^(Permission|Redistribution|This Font|This license|This software|This program|This module|All rights|The above|Licensed|License|Released under|Subject to|See the)/i.test(next)
+          /^(Permission|Redistribution|This Font|This license|This software|This program|This module|All rights|The above|Licensed|License|Released under|Subject to|See the)/i.test(
+            next,
+          )
         ) {
           break;
         }
-        // Only continue if the line looks like a holder/contributor — bullets,
-        // dashes, indented names, or another Copyright line.
-        if (/^([-*•]|\s*\w+|copyright\b)/i.test(next)) {
+        // Continuation: bullets/dashes, an emailed author line (`Name <name@host>`),
+        // or another Copyright line. Plain prose terminates the block — this
+        // tightens the previous overly-permissive `\s*\w+` alternative which
+        // could fold non-attribution sentences into the captured block.
+        if (
+          /^[-*•]/.test(next) ||
+          /^\S+ <\S+@\S+>/.test(next) ||
+          /^copyright\b/i.test(next)
+        ) {
           block.push(next);
           j++;
         } else {
           break;
         }
       }
-      blocks.push(block.join(' '));
+      const joined = block.join(' ');
+      if (!TEMPLATE_TOKENS.test(joined)) {
+        blocks.push(joined);
+      }
       i = j;
     } else {
       i++;
@@ -325,9 +384,12 @@ function categorize(spdx) {
     .split(/\s+OR\s+/i)
     .map((p) => p.trim())
     .filter(Boolean);
+  // Byte comparison rather than localeCompare — locale-aware sorting depends
+  // on $LC_COLLATE, which varies across contributor machines and CI runners.
+  // The script's determinism guarantee requires byte-stable ordering.
   const s =
     orParts.length > 1
-      ? [...orParts].sort((a, b) => a.localeCompare(b)).join(' OR ')
+      ? [...orParts].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(' OR ')
       : stripped;
 
   // OR expressions: pick a permissive primary.
@@ -367,13 +429,21 @@ function shortEntry(e) {
   const home = homepageOf(e.pkg);
   if (home) lines.push(`Homepage: ${home}`);
   const cps = extractCopyrights(e.licenseText);
+  lines.push('');
   if (cps.length > 0) {
-    lines.push('');
     for (const cp of cps) lines.push(cp);
   } else if (!e.licenseText) {
-    lines.push('');
     lines.push(
       '_(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_',
+    );
+  } else {
+    // LICENSE file present but `extractCopyrights` returned empty. Common for
+    // packages that ship the upstream LICENSE template without filling in the
+    // APPENDIX (e.g., the OpenTelemetry packages, which ship the bare Apache
+    // 2.0 template). Surface the situation rather than emit silent empty
+    // attribution — the package's actual copyright lives in source headers.
+    lines.push(
+      '_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_',
     );
   }
   return lines.join('\n');
@@ -399,9 +469,17 @@ function apacheEntry(e) {
   const home = homepageOf(e.pkg);
   if (home) lines.push(`Homepage: ${home}`);
   const cps = extractCopyrights(e.licenseText);
+  lines.push('');
   if (cps.length > 0) {
-    lines.push('');
     for (const cp of cps) lines.push(cp);
+  } else {
+    // Apache packages frequently ship the LICENSE template verbatim with the
+    // APPENDIX unfilled (the OpenTelemetry pattern). When `extractCopyrights`
+    // returns empty, surface the absence — the canonical attribution lives
+    // in the package's source headers, not LICENSE.
+    lines.push(
+      '_(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_',
+    );
   }
   if (e.noticeText) {
     lines.push('');
@@ -440,7 +518,7 @@ function build() {
     grouped.get(category).push(entry);
   }
   for (const arr of grouped.values()) {
-    arr.sort((a, b) => a.pkg.name.localeCompare(b.pkg.name));
+    arr.sort((a, b) => byteCompare(a.pkg.name, b.pkg.name));
   }
 
   const lines = [];
@@ -481,53 +559,66 @@ function build() {
   push(
     `\`node-liblzma\`${
       lgplResolved ? `@${lgplResolved.pkg.version}` : ''
-    } is an **optional** transitive dependency of \`just-bash\`, which \`@inkeep/open-knowledge\` depends on for sandboxed shell execution. We do not bundle \`node-liblzma\`; npm/bun fetches it directly from the public registry on platforms where the native build succeeds. Source is available at https://github.com/Manawyrm/node-liblzma. The library is licensed under LGPL-3.0; corresponding source can be obtained from upstream per LGPL §6.`,
+    } is an **optional** transitive dependency of \`just-bash\`, used by \`@inkeep/open-knowledge\` for sandboxed shell execution. The package is licensed under LGPL-3.0. For the npm CLI tarball, \`node-liblzma\` is not bundled — it is resolved from the public npm registry at install time on platforms where the native build succeeds. For the Electron desktop \`.app\`, whether the binary lands in \`Resources/app.asar.unpacked/\` depends on the build host's toolchain at packaging time; if present, the binary ships subject to LGPL-3.0 obligations. Upstream source: https://github.com/Manawyrm/node-liblzma. Corresponding source can be obtained from upstream per LGPL §6.`,
     '',
   );
   hr();
 
-  // Apache-2.0
+  // Apache-2.0 — full LICENSE text per §4(a) ("give any other recipients of
+  // the Work or Derivative Works a copy of this License"). Per-package NOTICE
+  // content is reproduced inline below per §4(d).
   if (grouped.has('Apache-2.0')) {
     push('## Apache License, Version 2.0', '');
     push(
-      'Each entry below is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Where the upstream package ships a `NOTICE` file, its contents are reproduced inline as required by Apache-2.0 §4(d).',
+      'Each package in this section is licensed under the Apache License, Version 2.0. The full text of the license is reproduced once below and applies to every entry; per-package `NOTICE` file content is reproduced inline with each entry.',
       '',
     );
+    push('```', LICENSE_TEXTS.apache, '```', '');
     for (const e of grouped.get('Apache-2.0')) {
       push(apacheEntry(e), '');
     }
     hr();
   }
 
-  // MIT
+  // MIT — full permission notice text. Each entry shows the per-package
+  // copyright; the permission notice + warranty disclaimer below applies to
+  // every entry in the section.
   if (grouped.has('MIT')) {
     push('## MIT License', '');
     push(
-      'Each entry below is licensed under the MIT License. The original copyright notice is reproduced; the MIT permission notice applies as written by the original author.',
+      'Each package in this section is licensed under the MIT License. The full text of the permission notice is reproduced once below and applies to every entry; per-package copyright lines are listed inline.',
       '',
     );
+    push('```', LICENSE_TEXTS.mit, '```', '');
     for (const e of grouped.get('MIT')) {
       push(shortEntry(e), '');
     }
     hr();
   }
 
-  // ISC
+  // ISC — same pattern as MIT.
   if (grouped.has('ISC')) {
     push('## ISC License', '');
     push(
-      'Each entry below is licensed under the ISC License (functionally equivalent to MIT/2-clause BSD).',
+      'Each package in this section is licensed under the ISC License. The full text of the permission notice is reproduced once below and applies to every entry; per-package copyright lines are listed inline.',
       '',
     );
+    push('```', LICENSE_TEXTS.isc, '```', '');
     for (const e of grouped.get('ISC')) {
       push(shortEntry(e), '');
     }
     hr();
   }
 
-  // BSD-3-Clause
+  // BSD-3-Clause — text reproduces the conditions, disclaimer, and the
+  // load-bearing non-endorsement clause #3.
   if (grouped.has('BSD-3-Clause')) {
     push('## BSD 3-Clause License', '');
+    push(
+      'Each package in this section is licensed under the BSD 3-Clause License. The full text of the conditions, disclaimer, and non-endorsement clause is reproduced once below and applies to every entry; per-package copyright lines are listed inline.',
+      '',
+    );
+    push('```', LICENSE_TEXTS.bsd3, '```', '');
     for (const e of grouped.get('BSD-3-Clause')) {
       push(shortEntry(e), '');
     }
@@ -537,6 +628,11 @@ function build() {
   // BSD-2-Clause
   if (grouped.has('BSD-2-Clause')) {
     push('## BSD 2-Clause License', '');
+    push(
+      'Each package in this section is licensed under the BSD 2-Clause License. The full text of the conditions and disclaimer is reproduced once below and applies to every entry; per-package copyright lines are listed inline.',
+      '',
+    );
+    push('```', LICENSE_TEXTS.bsd2, '```', '');
     for (const e of grouped.get('BSD-2-Clause')) {
       push(shortEntry(e), '');
     }
@@ -556,31 +652,62 @@ function build() {
     hr();
   }
 
-  // Permissive-no-attribution roll-up
+  // Permissive-no-attribution roll-up. Strict membership: only licenses that
+  // truly require no attribution belong here. CC-BY-4.0 and Python-2.0 (PSF)
+  // both REQUIRE attribution (CC-BY §3 and the PSF copyright-preservation
+  // clause, respectively) and are routed to dedicated sections below.
   const PERMISSIVE_NO_ATTR = [
     'BlueOak-1.0.0',
     '0BSD',
     'WTFPL',
     'Unlicense',
     'CC0-1.0',
-    'Python-2.0',
-    'CC-BY-4.0',
   ];
   const noAttrEntries = [];
   for (const cat of PERMISSIVE_NO_ATTR) {
     if (grouped.has(cat)) noAttrEntries.push(...grouped.get(cat));
   }
   if (noAttrEntries.length > 0) {
-    noAttrEntries.sort((a, b) => a.pkg.name.localeCompare(b.pkg.name));
+    noAttrEntries.sort((a, b) => byteCompare(a.pkg.name, b.pkg.name));
     push('## Other permissive licenses', '');
     push(
-      'The following packages are under licenses that do not strictly require attribution (BlueOak-1.0.0, 0BSD, WTFPL, Unlicense, CC0-1.0, Python-2.0, CC-BY-4.0). Listed for completeness and traceability.',
+      'The following packages are under licenses that do not require attribution (BlueOak-1.0.0, 0BSD, WTFPL, Unlicense, CC0-1.0). Listed for completeness and traceability.',
       '',
     );
     for (const e of noAttrEntries) {
       push(`- \`${e.pkg.name}@${e.pkg.version}\` — ${e.spdx}`);
     }
     push('');
+    hr();
+  }
+
+  // CC-BY-4.0 — §3(a)(1) requires creator identification, copyright notice,
+  // and license URI. Currently used for build-time data only (caniuse-lite),
+  // but render the attribution properly in case the closure ever ships any.
+  if (grouped.has('CC-BY-4.0')) {
+    push('## Creative Commons Attribution 4.0 International (CC-BY-4.0)', '');
+    push(
+      'The data files below are licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/legalcode). Each entry preserves its copyright and license URI per §3(a)(1). Note: CC-BY-4.0 §5 disclaims warranties; the licensor offers the work as-is.',
+      '',
+    );
+    for (const e of grouped.get('CC-BY-4.0')) {
+      push(shortEntry(e), '');
+    }
+    hr();
+  }
+
+  // Python-2.0 (PSF License) — preserves the copyright notice and PSF
+  // disclaimer. Used in our tree by `argparse@2.x` (a JS port that ships its
+  // upstream PSF LICENSE for the Python original).
+  if (grouped.has('Python-2.0')) {
+    push('## Python Software Foundation License (Python-2.0)', '');
+    push(
+      'The packages below are licensed under the PSF License v2 (https://docs.python.org/3/license.html#psf-license). Each entry preserves its copyright notice. The license disclaims warranties and limits liability per its terms; refer to upstream for the full text.',
+      '',
+    );
+    for (const e of grouped.get('Python-2.0')) {
+      push(shortEntry(e), '');
+    }
     hr();
   }
 
@@ -592,7 +719,7 @@ function build() {
   );
   push('| Package | Patch file |');
   push('| --- | --- |');
-  for (const p of PATCHED_DEPS) {
+  for (const p of loadPatchedDeps()) {
     push(`| \`${p.name}@${p.version}\` | \`${p.patchFile}\` |`);
   }
   push('');
@@ -607,7 +734,7 @@ function build() {
   }
   const filteredCallouts = callouts.filter((e) => e.pkg.name !== 'node-liblzma');
   if (filteredCallouts.length > 0) {
-    filteredCallouts.sort((a, b) => a.pkg.name.localeCompare(b.pkg.name));
+    filteredCallouts.sort((a, b) => byteCompare(a.pkg.name, b.pkg.name));
     push('## Other licenses (audit needed)', '');
     push(
       'The generator did not auto-categorize the following packages. Each requires individual review before next-release ship.',
@@ -619,6 +746,12 @@ function build() {
     push('');
     hr();
   }
+  // Surface unrecognized-license entries to the caller so the script can
+  // fail-closed when the audit bucket is non-empty (a new transitive with an
+  // unhandled SPDX expression should block the gate, not slip into the output
+  // unnoticed). Bypassed by `OK_NOTICES_ALLOW_AUDIT_BUCKET=1` for cases where
+  // the human auditor has reviewed and accepted.
+  build.lastAuditCount = filteredCallouts.length;
 
   push(
     '_Regenerate with `bun run notices`. The generator at `scripts/generate-third-party-notices.mjs` walks the production-dep closure of `packages/{cli,server,core,app,desktop}` and emits attribution for every package that ends up bundled into a shipped artifact._',
@@ -632,6 +765,19 @@ function build() {
 
 const generated = build();
 
+// Compute a structured diff between the existing committed file and what we
+// would write now. Used by `--check` to surface what changed so contributors
+// can debug drift without having to regenerate locally to see the delta.
+function computeHeaderDiff(existing, fresh) {
+  const headerOf = (s) =>
+    new Set(s.split('\n').filter((l) => /^### `[^@]+@[^`]+`$/.test(l)));
+  const a = headerOf(existing);
+  const b = headerOf(fresh);
+  const added = [...b].filter((h) => !a.has(h)).sort();
+  const removed = [...a].filter((h) => !b.has(h)).sort();
+  return { added, removed };
+}
+
 if (CHECK_MODE) {
   if (!existsSync(OUT_PATH)) {
     console.error(`THIRD_PARTY_NOTICES.md not found at ${OUT_PATH}`);
@@ -640,10 +786,29 @@ if (CHECK_MODE) {
   }
   const existing = readFileSync(OUT_PATH, 'utf8');
   if (existing !== generated) {
+    const { added, removed } = computeHeaderDiff(existing, generated);
     console.error(
       `${relative(REPO_ROOT, OUT_PATH)} is out of date with the resolved dependency tree.`,
     );
     console.error('');
+    if (added.length > 0) {
+      console.error(`Added (${added.length}):`);
+      for (const h of added.slice(0, 25)) console.error(`  + ${h.replace(/^### /, '')}`);
+      if (added.length > 25) console.error(`  + ... and ${added.length - 25} more`);
+      console.error('');
+    }
+    if (removed.length > 0) {
+      console.error(`Removed (${removed.length}):`);
+      for (const h of removed.slice(0, 25)) console.error(`  - ${h.replace(/^### /, '')}`);
+      if (removed.length > 25) console.error(`  - ... and ${removed.length - 25} more`);
+      console.error('');
+    }
+    if (added.length === 0 && removed.length === 0) {
+      console.error(
+        'No package list changes — license text, copyright extraction, or section structure differs.',
+      );
+      console.error('');
+    }
     console.error('Run `bun run notices` to regenerate, then commit the result.');
     exit(1);
   }
@@ -653,4 +818,19 @@ if (CHECK_MODE) {
   console.log(
     `Wrote ${relative(REPO_ROOT, OUT_PATH)} (${Buffer.byteLength(generated, 'utf8')} bytes).`,
   );
+}
+
+// Fail-closed if the audit bucket is non-empty. A new transitive with an
+// unhandled SPDX expression should block the gate, not slip into the output
+// unnoticed. Bypassed by `OK_NOTICES_ALLOW_AUDIT_BUCKET=1` for cases where
+// the human auditor has reviewed and explicitly accepted.
+if (build.lastAuditCount > 0 && process.env.OK_NOTICES_ALLOW_AUDIT_BUCKET !== '1') {
+  console.error('');
+  console.error(
+    `Audit-needed bucket is non-empty (${build.lastAuditCount} package(s) with unrecognized SPDX).`,
+  );
+  console.error(
+    'Review and either (a) add explicit handling in `categorize()` and re-run, or (b) re-run with `OK_NOTICES_ALLOW_AUDIT_BUCKET=1` after auditing.',
+  );
+  exit(1);
 }
