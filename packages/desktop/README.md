@@ -97,7 +97,7 @@ From inside an editor window, three affordances re-summon the Navigator without 
 
 - **File → Switch Project…** (`Cmd+Shift+N`) — menu accelerator.
 - **Sidebar ProjectSwitcher pill → Switch Project…** — bottom item below the recents list.
-- **Command Palette (`Cmd+K`) → Switch Project** — searchable by `switch`, `manage`, `projects`, or `navigator`.
+- **Command Palette (`Cmd+K`) → Switch Project…** — searchable by `switch`, `projects`, or `navigator`.
 
 The two renderer surfaces (sidebar pill and Command Palette) call `bridge.navigator.open()` (IPC channel `ok:navigator:open`), which delegates to the focus-or-create `openNavigator()` helper. The File menu accelerator calls `openNavigator()` directly inside the main process — same destination, no IPC hop.
 
