@@ -1,6 +1,6 @@
 /**
  * Main-process defense-in-depth for asset clicks that bypass the renderer
- * dispatcher (SPEC 2026-04-23 amendment FR-A7, D-A10).
+ * dispatcher.
  *
  * The renderer-side `dispatchAssetClick` handles the happy path — every
  * click on a wikiembed `<a>` or an asset-classified link mark routes

@@ -1,7 +1,7 @@
 /**
- * Unit tests for the right-click context-menu target classifier
- * (SPEC 2026-04-23 amendment FR-A8). Exercises `classifyContextMenuTarget`
- * against fake DOM ancestors without mounting an editor.
+ * Unit tests for the right-click context-menu target classifier.
+ * Exercises `classifyContextMenuTarget` against fake DOM ancestors
+ * without mounting an editor.
  */
 
 import { describe, expect, test } from 'bun:test';

@@ -119,10 +119,9 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
           const href = info?.attrs?.href;
           if (typeof href !== 'string' || !href) return false;
 
-          // Asset dispatch branch (SPEC 2026-04-23 amendment FR-A4,
-          // softened 2026-04-24b). Fires on BOTH bare click AND
+          // Asset dispatch branch. Fires on BOTH bare click AND
           // Cmd/Ctrl+click — asset hrefs never open the PropPanel.
-          // Cmd+click forces OS delegation (D-A6 escape hatch).
+          // Cmd+click forces OS delegation as an escape hatch.
           //
           // Two paths enter this branch:
           //   1. `classifyMarkdownHref` returned `kind: 'asset'` — the
@@ -130,15 +129,14 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
           //      extension.
           //   2. `sourceForm === 'wikiembed'` + the href shape looks
           //      asset-like (has an extension). This captures post-
-          //      roundtrip `![[file.ext]]` refs that Commit 3 of the
-          //      2026-04-24a amendment flipped to server-absolute
-          //      (`/file.ext`) — classifier returns `external` for
-          //      leading-slash paths, but the `sourceForm` tag tells us
-          //      unambiguously that this came from a wiki-embed.
-          //      Without this branch, post-reload clicks on server-
-          //      absolute asset hrefs open the PropPanel instead of the
-          //      file. `resolveAssetProjectPath` handles the leading
-          //      slash (2026-04-24b).
+          //      roundtrip `![[file.ext]]` refs that emit as server-
+          //      absolute paths (`/file.ext`) — classifier returns
+          //      `external` for leading-slash paths, but the
+          //      `sourceForm` tag tells us unambiguously that this
+          //      came from a wiki-embed. Without this branch, post-
+          //      reload clicks on server-absolute asset hrefs open
+          //      the PropPanel instead of the file.
+          //      `resolveAssetProjectPath` handles the leading slash.
           const sourceForm = info?.attrs?.sourceForm;
           const target = classifyMarkdownHref(href, docName);
           const hrefExt = extractAssetExtension(href);
@@ -198,9 +196,9 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
         markTypes: ['link'],
         computeAttrs: makeLinkResolutionAttrsComputer(docName),
       }),
-      // 4. Right-click context menu for on-disk references (SPEC
-      //    2026-04-23 amendment FR-A8). Attaches a `contextmenu` DOM
-      //    listener on `editor.view.dom` and routes matched targets
+      // 4. Right-click context menu for on-disk references. Attaches
+      //    a `contextmenu` DOM listener on `editor.view.dom` and
+      //    routes matched targets
       //    (wiki-embed chips, asset link marks, images) through the
       //    showAssetMenu IPC. No-op in web (browser default).
       createAssetContextMenuPlugin({ sourceDocName: docName }),

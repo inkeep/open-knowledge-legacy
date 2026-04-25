@@ -42,8 +42,8 @@ export interface PageListCacheSnapshot {
   readonly folderPaths: ReadonlySet<string>;
   /**
    * Slug-keyed index: `toWikiLinkSlug(docName) → original docName`.
-   * Populated alongside `pages` by `setPageListCache` (2026-04-24
-   * amendment). Enables O(1) resolution for wiki-link targets that
+   * Populated alongside `pages` by `setPageListCache`. Enables O(1)
+   * resolution for wiki-link targets that
    * arrive in slug form (e.g. dropped `.md` → target='readme' via
    * `buildUnresolvedWikiLinkAttrs` / `toWikiLinkSlug`) against
    * case-preserved + non-slug-form cache entries (`README`,

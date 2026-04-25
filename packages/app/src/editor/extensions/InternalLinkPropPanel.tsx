@@ -313,12 +313,12 @@ export function InternalLinkPropPanel({
   function handleNavigate(opts: { newTab?: boolean }) {
     if (!target) return;
     if (target.kind === 'asset') {
-      // SPEC 2026-04-23 amendment FR-A4 — PropPanel asset branch. Bare
-      // click on an asset ref normally bypasses the PropPanel (handled
-      // by `internal-link.ts` handlePrimary), but if the panel does
-      // open for an asset (path-escape fallback, programmatic open),
-      // "Open" routes through the same dispatcher so the user always
-      // reaches the asset via the canonical path.
+      // PropPanel asset branch. Bare click on an asset ref normally
+      // bypasses the PropPanel (handled by `internal-link.ts`
+      // handlePrimary), but if the panel does open for an asset
+      // (path-escape fallback, programmatic open), "Open" routes through
+      // the same dispatcher so the user always reaches the asset via
+      // the canonical path.
       const projectRelPath = resolveAssetProjectPath(target.url, sourceDocName);
       if (!projectRelPath) return;
       void dispatchAssetClick({

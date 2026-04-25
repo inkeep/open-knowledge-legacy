@@ -27,12 +27,11 @@ export const sharedExtensions = [
     return ext;
   }),
   SlashCommand,
-  // SPEC §6 D-M accept-all: omit `allowedMimeTypes` so the FileHandler
-  // accepts every browser-readable file type. The server is the single
-  // policy point — post-streaming (2026-04-22) there's no user-facing
-  // cap either; disk fullness (`storage-full` → 507) is the only
-  // rejection axis, and the SVG `<img>`-only NFR-3 routing happens
-  // server-side. See reports/streaming-upload-refactor/REPORT.md §D8.
+  // Omit `allowedMimeTypes` so the FileHandler accepts every browser-
+  // readable file type. The server is the single policy point — there's
+  // no user-facing cap either; disk fullness (`storage-full` → 507) is
+  // the only rejection axis, and the SVG `<img>`-only routing happens
+  // server-side. See reports/streaming-upload-refactor/REPORT.md.
   FileHandler.configure({
     onDrop(editor, files, pos) {
       for (const file of files) {

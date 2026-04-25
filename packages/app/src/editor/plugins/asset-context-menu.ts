@@ -1,6 +1,5 @@
 /**
- * Renderer-side right-click context menu for on-disk references (SPEC
- * 2026-04-23 amendment FR-A8 / D-A7).
+ * Renderer-side right-click context menu for on-disk references.
  *
  * When the user right-clicks an `<a data-wiki-embed>` (drop-time wiki-embed
  * chip), an `<a>` with a `link` mark (post-roundtrip asset chip or markdown

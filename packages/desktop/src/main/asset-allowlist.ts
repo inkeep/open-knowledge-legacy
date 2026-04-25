@@ -1,7 +1,7 @@
 /**
  * Asset-open gate — the pure validation layer that sits in front of every
- * `shell.openPath` / `shell.showItemInFolder` dispatch for renderer-supplied
- * asset paths (SPEC 2026-04-23 amendment FR-A6, D-A5, D-A9).
+ * `shell.openPath` / `shell.showItemInFolder` dispatch for renderer-
+ * supplied asset paths.
  *
  * Enforces three checks in this order on every `openAssetSafely` call:
  *   1. **Path containment** via `isPathWithinProject(canonicalPath,

@@ -1,11 +1,11 @@
 /**
  * `dispatchAssetClick` — renderer-side routing for clicks on asset links.
- * Fires on bare-click via the `internal-link.ts` handlePrimary for the post-
- * reload mark path, and via the new node-interaction-bridge for the drop-time
- * `WikiLinkEmbed` node path (Commit 4 wires both).
+ * Fires on bare-click via the `internal-link.ts` handlePrimary for the
+ * post-reload mark path, and via the node-interaction-bridge for the
+ * drop-time `WikiLinkEmbed` node path.
  *
- * Ordering (SPEC 2026-04-23 amendment FR-A3):
- *   1. Cmd/Ctrl+click → `forceOsDelegation: true` → skip the registry (D-A6)
+ * Ordering:
+ *   1. Cmd/Ctrl+click → `forceOsDelegation: true` → skip the registry
  *   2. Registry lookup on `ctx.ext` → viewer.render(ctx) if found
  *   3. Electron fallback → `window.okDesktop.shell.openAsset(projectRelPath)`
  *   4. Web fallback → `openHashHrefInNewTab(url)`
@@ -15,7 +15,7 @@
  * `window.okDesktop` + the real tab-opener.
  *
  * No refs-level knowledge of executable-blocklist or path-escape — those
- * checks live in the main-process handler (`openAssetSafely` at Commit 3).
+ * checks live in the main-process handler (`openAssetSafely`).
  * The dispatcher's job is routing; the enforcement fires at the IPC boundary
  * where `isPathWithinProject` + `realpath` run under main-process trust.
  */

@@ -26,9 +26,9 @@ function createSkeletonWidget(file?: File): HTMLElement {
   el.setAttribute('data-upload-widget', 'loading');
   el.setAttribute('role', 'status');
   // WCAG 4.1.2: the announced label must reflect what is actually
-  // uploading. Under D-M accept-all the widget is used for every file
-  // type (PDF / ZIP / MP4 / CSV / etc.), so the pre-fix "Uploading
-  // image..." misdescribes every non-image upload.
+  // uploading. The widget is used for every file type (PDF / ZIP /
+  // MP4 / CSV / etc.), so a generic "Uploading image..." would
+  // misdescribe every non-image upload.
   el.setAttribute('aria-label', file?.name ? `Uploading ${file.name}…` : 'Uploading file…');
   return el;
 }
@@ -161,8 +161,8 @@ interface InsertShape {
 /**
  * Choose the PM insert shape for a freshly uploaded file. Dispatches by
  * extension against `WIKI_EMBED_EXTENSIONS` + `IMAGE_EXTENSIONS` — both
- * fixed constants per SPEC 2026-04-24 amendment (zero user-facing upload
- * config). Markdown files are OK docs (wiki-link semantic), not assets.
+ * fixed constants (zero user-facing upload config). Markdown files are
+ * OK docs (wiki-link semantic), not assets.
  */
 export function pickInsertShape(filename: string): InsertShape {
   const ext = extensionOf(filename);
@@ -276,10 +276,10 @@ export async function uploadAndInsert(
         ? `${parentDocDir}/${src}`
         : src;
 
-  // SPEC §6 FR-2 + 2026-04-24 amendment: dedup toast. Fixed default is
-  // `DEFAULT_DEDUP_UI === 'toast'` — no user config surface. The check is
-  // kept so future spec work that reintroduces the knob with concrete user
-  // evidence does not have to re-derive the call site.
+  // Dedup toast. Fixed default is `DEFAULT_DEDUP_UI === 'toast'` — no
+  // user config surface. The check is kept so future work that reintroduces
+  // the knob with concrete user evidence does not have to re-derive the
+  // call site.
   if (deduped && DEFAULT_DEDUP_UI !== 'silent') {
     toast.info(`Already at ${assetContentPath} — reusing.`);
   }
@@ -302,8 +302,8 @@ export async function uploadAndInsert(
   // (root = `/`, so same-dir drops at content root resolve correctly).
   const relPath = shortestImageRef(assetContentPath, parentDocName);
 
-  // Bug B/C fix (2026-04-24 amendment): `resolvedSrc` is the in-editor
-  // render hint for `<img src>` / `<a href>` — it must be server-absolute
+  // `resolvedSrc` is the in-editor render hint for `<img src>` /
+  // `<a href>` — it must be server-absolute
   // (`/<contentDir-relative>`) so the browser resolves it against origin
   // regardless of the current doc's hash-routed URL. Under hash routing,
   // `location.pathname === '/'` always, so a doc-relative path (bare

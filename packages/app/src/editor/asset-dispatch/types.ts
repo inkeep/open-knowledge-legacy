@@ -2,19 +2,16 @@
  * Asset-click dispatcher types.
  *
  * Consumed by `dispatcher.ts` (renderer routing logic), `registry.ts`
- * (module-level singleton), and the renderer hook-up sites in Commit 4
+ * (module-level singleton), and the renderer hook-up sites
  * (`internal-link.ts` handlePrimary + `InternalLinkPropPanel` asset branch
- * + the new node-interaction-bridge on `wiki-link-embed`).
+ * + the node-interaction-bridge on `wiki-link-embed`).
  *
  * The surface is deliberately minimal: the context object carries everything
  * a viewer or the fallback path needs, and the registry is a thin `Map<ext, viewer>`.
  *
- * Design refs:
- * - SPEC 2026-04-23 amendment FR-A1..A5 for the dispatch contract.
- * - Plan at `~/.claude/plans/lets-do-this-transient-jellyfish.md` §Commit 2.
- * - Research: `reports/electron-os-integration-patterns/` D3 (click-interception
- *   patterns; the dispatcher is the "renderer handler + main-process safety
- *   net" two-layer pattern).
+ * Implements the "renderer handler + main-process safety net" two-layer
+ * click-interception pattern (research at
+ * `reports/electron-os-integration-patterns/`).
  */
 
 /**

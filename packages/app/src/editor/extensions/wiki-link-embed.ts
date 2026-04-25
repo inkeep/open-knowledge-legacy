@@ -215,7 +215,7 @@ export const WikiLinkEmbed = BaseWikiLinkEmbed.extend({
           const ext = extractAssetExtension(liveTarget);
           if (ext === null) return false;
           // Drop-time wikiLinkEmbed always carries a server-absolute
-          // `resolvedSrc` (post-2026-04-24a amendment), so the resolver
+          // `resolvedSrc`, so the resolver
           // ignores the source-doc argument. For the `resolvedSrc === null`
           // edge case (bare target), we pass empty `sourceDocName` to
           // resolve against project root — acceptable because drop-time

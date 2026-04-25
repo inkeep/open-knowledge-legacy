@@ -50,7 +50,7 @@ describe('isResolvedWikiLinkTarget', () => {
   });
 });
 
-// Bug A regression guard (2026-04-24): `buildUnresolvedWikiLinkAttrs` stores
+// Regression guard: `buildUnresolvedWikiLinkAttrs` stores
 // the lowercased slug as target (e.g. `README.md` drop → target='readme'),
 // but the page-list cache populated from /api/documents is keyed by
 // case-preserved docName (`README`). Exact `pages.has(target)` never matches,

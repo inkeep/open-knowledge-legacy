@@ -1,8 +1,8 @@
 /**
- * Native right-click context menu for on-disk references (SPEC 2026-04-23
- * amendment FR-A8 / D-A7). Built from `Menu.buildFromTemplate` in main —
- * per D11 of electron-os-integration-patterns, main observes the click
- * directly so the gesture is attested without IPC gesture forwarding.
+ * Native right-click context menu for on-disk references. Built from
+ * `Menu.buildFromTemplate` in main — main observes the click directly
+ * so the gesture is attested without IPC gesture forwarding (see
+ * `reports/electron-os-integration-patterns/`).
  *
  * Entries:
  *   - Reveal in Finder / Show in Explorer / Open in file manager

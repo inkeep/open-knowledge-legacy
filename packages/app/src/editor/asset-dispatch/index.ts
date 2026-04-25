@@ -1,7 +1,7 @@
 /**
- * Public surface of the asset-click dispatcher (SPEC 2026-04-23 amendment
- * FR-A2 / FR-A3). Controlled barrel — re-exports only what external
- * consumers import through the module boundary.
+ * Public surface of the asset-click dispatcher. Controlled barrel —
+ * re-exports only what external consumers import through the module
+ * boundary.
  *
  * Today the only external consumer is `dispatchAssetClick` (called from
  * `internal-link.ts handlePrimary` + `InternalLinkPropPanel` asset branch +

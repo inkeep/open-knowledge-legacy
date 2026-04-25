@@ -26,8 +26,8 @@ function getPagesSet(input: PagesLookupInput): ReadonlySet<string> {
  * original docName on match, or undefined when no entry's slug matches
  * the target's slug.
  *
- * Bug A fix (2026-04-24 amendment): `buildUnresolvedWikiLinkAttrs` stores
- * the lowercased slug as the PM wikiLink target. The page cache keeps
+ * `buildUnresolvedWikiLinkAttrs` stores the lowercased slug as the PM
+ * wikiLink target. The page cache keeps
  * case-preserved + non-slug-form docNames (`README`,
  * `BA_for_Depression_Research`). Without a slug-based fallback,
  * `pages.has('readme')` and `pages.has('ba-for-depression-research')`
@@ -115,7 +115,7 @@ export function isResolvedWikiLinkTarget(target: string, pages: PagesLookupInput
     return true;
   }
 
-  // Bug A fix (2026-04-24): slug-based fallback. Handles dropped `.md`
+  // Slug-based fallback. Handles dropped `.md`
   // (target='readme' from slug) against case-preserved cache entry
   // (`README`) AND underscore/space/punctuation cache entries
   // (`BA_for_Depression_Research` → slug `ba-for-depression-research`).

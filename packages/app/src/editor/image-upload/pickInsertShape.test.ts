@@ -1,12 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { pickInsertShape } from './index';
 
-// SPEC §6 FR-1a emit-dispatch matrix under 2026-04-24 amendment: zero user-
-// facing upload config. Dispatch reads the fixed constants
-// `WIKI_EMBED_EXTENSIONS` + `IMAGE_EXTENSIONS` + `DEFAULT_EMIT_FORMAT`.
-// Operator-override cases from the prior suite are gone by design — no knobs
-// to override. The extension-matrix coverage that matters (image / non-image
-// wikiembed / opaque / markdown-doc) stays.
+// Emit-dispatch matrix: zero user-facing upload config. Dispatch reads
+// the fixed constants `WIKI_EMBED_EXTENSIONS` + `IMAGE_EXTENSIONS` +
+// `DEFAULT_EMIT_FORMAT`. The extension-matrix coverage that matters
+// (image / non-image wikiembed / opaque / markdown-doc) stays.
 describe('pickInsertShape — emit-dispatch by extension', () => {
   test('image extension emits wikiembed', () => {
     expect(pickInsertShape('photo.png').kind).toBe('wikiembed');

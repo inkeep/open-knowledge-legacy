@@ -132,14 +132,13 @@ interface DocumentContextValue {
    *   - `'doc'`:   existing 5-tab info pane keyed to `activeDocName`.
    *   - `'agent'`: Activity view keyed to `docPanelAgentId` (one agent session).
    *
-   * Default is `'doc'` on every fresh tab. Tab-scoped state (not persisted),
-   * per SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle FR-T11.
+   * Default is `'doc'` on every fresh tab. Tab-scoped state (not persisted).
    */
   docPanelMode: 'doc' | 'agent';
   /**
    * connectionId of the agent the panel is scoped to when in `'agent'` mode.
-   * Preserved across mode flips (FR-T12) — flipping `agent → doc → agent`
-   * still shows the previously-scoped agent. Cleared only by explicit
+   * Preserved across mode flips — flipping `agent → doc → agent` still
+   * shows the previously-scoped agent. Cleared only by explicit
    * `closeActivityPanel()` or swap to a different agent.
    */
   docPanelAgentId: string | null;
@@ -148,7 +147,7 @@ interface DocumentContextValue {
    * in the same setState pass that flips `docPanelMode`. `EditorArea`
    * observes the counter via `useEffect` and calls `panel.expand()` (desktop)
    * or `setSheetOpen(true)` (mobile) on each increment — idempotent if the
-   * panel is already visible. Implements FR-T10 (auto-expand on avatar click).
+   * panel is already visible.
    */
   docPanelExpandSignal: number;
   /**
@@ -496,7 +495,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     docPanelAgentId,
     docPanelExpandSignal,
     openActivityPanel: (connectionId: string) => {
-      // Toggle / swap / open-with-expand, per SPEC-24 FR-T6/T7/T8/T9.
+      // Toggle / swap / open-with-expand.
       // Same agent already scoped AND already in agent mode → flip back
       // to doc mode (toggle). Anything else → go/stay in agent mode with
       // the new (or same) id AND bump the expand signal so `EditorArea`
