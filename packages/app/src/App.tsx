@@ -137,9 +137,9 @@ function NewItemShortcutHandler() {
 
 export function App() {
   // Electron-only Cmd+K palette for project-level commands (open folder,
-  // switch project via the Navigator, install Claude skill, switch to a
-  // recent project, open in agent). Gated on `window.okDesktop` so the
-  // web/CLI distribution never mounts the handler — zero footprint
+  // switch project via the Navigator, install for Claude Desktop, switch
+  // to a recent project, open in agent). Gated on `window.okDesktop` so
+  // the web/CLI distribution never mounts the handler — zero footprint
   // outside Electron. Mounted at the App root so Cmd+K works regardless
   // of which surface has focus (editor, sidebar, timeline, etc.).
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;

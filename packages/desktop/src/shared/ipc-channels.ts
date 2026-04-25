@@ -10,8 +10,8 @@
  * a debugger.
  *
  * Scale-match trigger (FU-3): at >20 channels, migrate baseline to
- * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 21 — at the
- * trigger; consider migrating before adding more.
+ * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 21 — past
+ * the trigger; migrate before adding more.
  */
 
 import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
