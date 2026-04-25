@@ -3,12 +3,11 @@ import { existsSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
-  applyExternalChange,
-  BacklinkIndex,
-  type CC1Signal,
-  reconcile,
+  type CC1DerivedViewPayload,
+  CC1DerivedViewPayloadSchema,
   SYSTEM_DOC_NAME,
-} from '@inkeep/open-knowledge-server';
+} from '@inkeep/open-knowledge-core';
+import { applyExternalChange, BacklinkIndex, reconcile } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 import { createTestServer, type TestServer, wait, waitForSync } from './test-harness';
 
@@ -24,26 +23,30 @@ afterAll(async () => {
 
 function connectSystemDoc(port: number): {
   provider: HocuspocusProvider;
-  signals: CC1Signal[];
+  signals: CC1DerivedViewPayload[];
   destroy: () => void;
 } {
   const doc = new Y.Doc();
-  const signals: CC1Signal[] = [];
+  const signals: CC1DerivedViewPayload[] = [];
   const provider = new HocuspocusProvider({
     url: `ws://localhost:${port}/collab`,
     name: SYSTEM_DOC_NAME,
     document: doc,
     connect: true,
     onStateless: ({ payload }) => {
+      let raw: unknown;
       try {
-        const parsed = JSON.parse(payload) as CC1Signal;
-        // Only track 'files' channel signals — backlinks/graph signals from
-        // server observer processing should not affect file-event assertions.
-        if (parsed.ch === 'files') {
-          signals.push(parsed);
-        }
+        raw = JSON.parse(payload);
       } catch {
-        // ignore malformed payloads
+        return;
+      }
+      const result = CC1DerivedViewPayloadSchema.safeParse(raw);
+      // Only track 'files' channel signals — backlinks/graph signals from
+      // server observer processing should not affect file-event assertions.
+      // Mismatched-channel payloads (server-info, branch-switched) parse-fail
+      // here and are silently skipped.
+      if (result.success && result.data.ch === 'files') {
+        signals.push(result.data);
       }
     },
   });
@@ -331,7 +334,7 @@ describe('CC1 broadcast — L1 integration', () => {
       connect: true,
       onStateless: ({ payload }) => {
         try {
-          const parsed = JSON.parse(payload) as CC1Signal;
+          const parsed = JSON.parse(payload) as CC1DerivedViewPayload;
           arrivals.push({ seq: parsed.seq, at: performance.now() });
         } catch {
           // ignore

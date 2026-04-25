@@ -37,25 +37,15 @@ export {
   SYSTEM_DOC_NAME,
 };
 
-/**
- * Legacy aliases preserved so `SystemDocSubscriber` and tests don't see
- * breaking renames. `CC1Signal` historically meant "derived-view frame"
- * on the client side; the canonical server-side name is
- * `CC1DerivedViewPayload`. Rename is a future cleanup.
- */
-type CC1Signal = CC1DerivedViewPayload;
-type CC1ServerInfoSignal = CC1ServerInfoPayload;
-type CC1BranchSwitchedSignal = CC1BranchSwitchedPayload;
-
-export function parseCC1Signal(payload: string): CC1Signal | null {
+export function parseCC1DerivedView(payload: string): CC1DerivedViewPayload | null {
   return safeParseJson(payload, CC1DerivedViewPayloadSchema);
 }
 
-export function parseCC1ServerInfo(payload: string): CC1ServerInfoSignal | null {
+export function parseCC1ServerInfo(payload: string): CC1ServerInfoPayload | null {
   return safeParseJson(payload, CC1ServerInfoPayloadSchema);
 }
 
-export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedSignal | null {
+export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedPayload | null {
   return safeParseJson(payload, CC1BranchSwitchedPayloadSchema);
 }
 

@@ -12,8 +12,8 @@ import {
 } from '@/lib/agent-presence';
 import {
   parseCC1BranchSwitched,
+  parseCC1DerivedView,
   parseCC1ServerInfo,
-  parseCC1Signal,
   SYSTEM_DOC_NAME,
 } from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
@@ -96,7 +96,7 @@ export function SystemDocSubscriber() {
           void onBranchSwitchedRef.current(branchSwitched.branch);
           return;
         }
-        const signal = parseCC1Signal(payload);
+        const signal = parseCC1DerivedView(payload);
         if (!signal) {
           console.warn('[CC1] Unparseable stateless payload, skipping:', payload.slice(0, 100));
           return;

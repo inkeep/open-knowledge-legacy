@@ -3,13 +3,13 @@ import {
   CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CONTRACT_VERSION,
   parseCC1BranchSwitched,
-  parseCC1Signal,
+  parseCC1DerivedView,
 } from './cc1';
 
-describe('parseCC1Signal', () => {
+describe('parseCC1DerivedView', () => {
   test('parses a valid files signal', () => {
     expect(
-      parseCC1Signal(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 'files', seq: 3 })),
+      parseCC1DerivedView(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 'files', seq: 3 })),
     ).toEqual({
       v: CC1_CONTRACT_VERSION,
       ch: 'files',
@@ -18,17 +18,19 @@ describe('parseCC1Signal', () => {
   });
 
   test('returns null for malformed JSON', () => {
-    expect(parseCC1Signal('{')).toBeNull();
+    expect(parseCC1DerivedView('{')).toBeNull();
   });
 
   test('returns null for unknown contract versions', () => {
-    expect(parseCC1Signal(JSON.stringify({ v: 2, ch: 'files', seq: 1 }))).toBeNull();
+    expect(parseCC1DerivedView(JSON.stringify({ v: 2, ch: 'files', seq: 1 }))).toBeNull();
   });
 
   test('returns null for invalid payload shapes', () => {
-    expect(parseCC1Signal(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 1, seq: 1 }))).toBeNull();
     expect(
-      parseCC1Signal(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 'files', seq: '1' })),
+      parseCC1DerivedView(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 1, seq: 1 })),
+    ).toBeNull();
+    expect(
+      parseCC1DerivedView(JSON.stringify({ v: CC1_CONTRACT_VERSION, ch: 'files', seq: '1' })),
     ).toBeNull();
   });
 });
