@@ -176,6 +176,14 @@ export interface RequestChannels {
   /** Request main to close the current project's window. */
   'ok:project:close': { args: []; result: undefined };
   /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Calls main's `openNavigator()` (focus existing or create new) — same
+   * function the File menu's "Switch Project…" item invokes. Lifecycle is
+   * focus-or-create only (no toggle). Renderer surfaces: `ProjectSwitcher`
+   * dropdown, `CommandPalette`. No payload, no return — IPC-ack only.
+   */
+  'ok:navigator:open': { args: []; result: undefined };
+  /**
    * M3 Toast A "Relaunch now" action: renderer invokes this after the user
    * clicks the sonner action button. Main handler calls
    * `autoUpdater.quitAndInstall()` which triggers Squirrel.Mac's ZIP swap

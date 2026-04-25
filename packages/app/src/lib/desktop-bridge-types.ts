@@ -207,6 +207,15 @@ export interface OkDesktopBridge {
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
   };
+  /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Focus-existing-or-create — idempotent on already-focused. Used by
+   * `ProjectSwitcher` and `CommandPalette` to expose the navigator from
+   * inside the editor without closing the current window.
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
   seed: {
     plan(): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
