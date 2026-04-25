@@ -25,10 +25,12 @@ import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { cloneCommand } from './commands/clone.ts';
 import { initCommand } from './commands/init.ts';
+import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
+import { seedCommand } from './commands/seed.ts';
 import { startCommand } from './commands/start.ts';
 import { statusCommand } from './commands/status.ts';
 import { stopCommand } from './commands/stop.ts';
@@ -92,6 +94,15 @@ program.addCommand(mcp);
 
 // init command — stateless terminal setup, no config needed
 program.addCommand(initCommand());
+
+// seed command — stateless content-scaffold, no config needed
+program.addCommand(seedCommand());
+
+// install-skill command — build + install the .skill into Claude Desktop / Cowork.
+// Closes the loop for Pro/Max users who saw the Cowork hint from `ok init`:
+// one command, two-click install via the `.skill` file association.
+// See specs/2026-04-24-skill-dual-track-install/SPEC.md Ship 1f.
+program.addCommand(installSkillCommand());
 
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);

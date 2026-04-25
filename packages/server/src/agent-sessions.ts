@@ -308,6 +308,8 @@ function createSessionOrigin(
   sessionId: string,
   agentType?: string,
   principalId?: string,
+  displayName?: string,
+  colorSeed?: string,
 ): PairedWriteOrigin {
   // precedent #1: typed transaction origin object (not string).
   // D23: deep-freeze both context and outer object so accidental mutation throws.
@@ -323,6 +325,10 @@ function createSessionOrigin(
   };
   if (agentType !== undefined) context.agent_type = agentType;
   if (principalId !== undefined) context.principal = principalId;
+  // display_name + color_seed are read by agent-activity's listAgentActivity
+  // so the Activity Panel shows the same name/color the presence bar does.
+  if (displayName !== undefined) context.display_name = displayName;
+  if (colorSeed !== undefined) context.color_seed = colorSeed;
   Object.freeze(context);
   const origin: PairedWriteOrigin = {
     source: 'local',
@@ -370,6 +376,37 @@ export class AgentSessionManager {
 
   private sessionKey(docName: string, agentId: string): string {
     return `${docName}\0${agentId}`;
+  }
+
+  /**
+   * Read-only iterator over live `SessionRecord`s whose session key ends with
+   * the `\0${connectionId}` suffix. Returns sessions in insertion order.
+   *
+   * This is the typed public surface for the Agent Activity Panel's
+   * `listAgentActivity` (SPEC 2026-04-23-agent-activity-panel §6). Reaching
+   * into `this.sessions` directly via `(as any)` is discouraged — callers
+   * should use this accessor so future refactors (e.g. splitting the
+   * (docName, agentId)-keyed map into separate per-agent and per-doc
+   * indices) can evolve without silent breakage at consumer call sites.
+   */
+  public *sessionsForConnection(connectionId: string): IterableIterator<SessionRecord> {
+    const suffix = `\0${connectionId}`;
+    for (const [key, session] of this.sessions) {
+      if (key.endsWith(suffix)) yield session;
+    }
+  }
+
+  /**
+   * Lookup a single session by its (docName, agentId) composite key. Returns
+   * `undefined` when no session is live — callers must guard (e.g. the
+   * Activity Panel's `GET /api/agent-burst-diff` returns 404 in that case).
+   *
+   * Equivalent to `hasSession(docName, agentId) ? sessions.get(key) : null`
+   * but returns the record directly instead of forcing a separate get after
+   * the existence check.
+   */
+  public getLiveSession(docName: string, agentId: string): SessionRecord | undefined {
+    return this.sessions.get(this.sessionKey(docName, agentId));
   }
 
   /**
@@ -430,7 +467,13 @@ export class AgentSessionManager {
     // commit under that mismatched writerId.
     const rawSessionId = agentId.startsWith('agent-') ? agentId.slice('agent-'.length) : agentId;
     // F1 (D2): per-session frozen origin — object-identity-unique
-    const origin = createSessionOrigin(rawSessionId, agentType, identity?.principalId);
+    const origin = createSessionOrigin(
+      rawSessionId,
+      agentType,
+      identity?.principalId,
+      identity?.displayName,
+      identity?.colorSeed,
+    );
     // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
     const undoOrigin = createUndoOrigin(rawSessionId, agentType);
 
@@ -479,6 +522,20 @@ export class AgentSessionManager {
         ignoreRemoteMapChanges: true,
       },
     );
+
+    // Stamp wall-clock capture time on each StackItem's meta so the Activity
+    // Panel can order bursts chronologically (SPEC FR-P10). Y.UndoManager
+    // does not auto-populate meta.time — the `stackItemAdded` event is the
+    // documented hook (see `node_modules/yjs/src/utils/UndoManager.js`). We
+    // also handle `stackItemUpdated` (fired when writes within captureTimeout
+    // merge into an existing StackItem) so the latest merged write's ts
+    // becomes the burst's `lastTs` signal.
+    // Y.StackItem is not exported from yjs public API — use structural type.
+    const stampTime = ({ stackItem }: { stackItem: { meta: Map<unknown, unknown> } }): void => {
+      stackItem.meta.set('time', Date.now());
+    };
+    um.on('stack-item-added', stampTime);
+    um.on('stack-item-updated', stampTime);
 
     log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
 

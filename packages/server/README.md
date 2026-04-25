@@ -173,11 +173,12 @@ No event kind, no path, no docName. Every signal says only "channel `ch` changed
 
 Each channel's semantics are owned by its emitter. Adding a new `ch` value counts as a contract change (D2 signoff).
 
-| Channel     | Emitted from                                                | Triggers                                                                                        | Canonical refetch             |
-| ----------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------- |
-| `files`     | `standalone.ts` DiskEvent dispatch (V0-2, shipped)          | `create \| delete \| rename` DiskEvents only. `update` / `conflict` do not change the file list | `GET /api/documents`          |
-| `backlinks` | `persistence.ts` backlink-index update path (V0-3, pending) | Content changes that invalidate the backlink index                                              | `GET /api/backlinks/:docName` |
-| `graph`     | TBD (V0-11, pending)                                        | Graph-derived data changes                                                                      | TBD                           |
+| Channel            | Emitted from                                                                                              | Triggers                                                                                        | Canonical refetch                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `files`            | `standalone.ts` DiskEvent dispatch (V0-2, shipped)                                                        | `create \| delete \| rename` DiskEvents only. `update` / `conflict` do not change the file list | `GET /api/documents`                                                                                           |
+| `backlinks`        | `persistence.ts` backlink-index update path (V0-3, pending)                                               | Content changes that invalidate the backlink index                                              | `GET /api/backlinks/:docName`                                                                                  |
+| `graph`            | TBD (V0-11, pending)                                                                                      | Graph-derived data changes                                                                      | TBD                                                                                                            |
+| `session-activity` | `persistence.ts` L2 drain, after any successful `commitWipFromTree` whose `writerId.startsWith('agent-')` | Any agent-origin write that produced a shadow-repo commit                                       | `GET /api/agent-activity?agentId=<connId>` — open Activity Panels re-fetch with a 500 ms hook-level debounce   |
 
 ### Coalescing
 

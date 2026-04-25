@@ -3,6 +3,80 @@
 @import "shadcn/tailwind.css";
 @plugin "tailwind-scrollbar";
 
+/* --- Activity Panel unified-diff styling (react-diff-view) ---
+   The library renders diff hunks with `.diff-code-insert`, `.diff-code-delete`,
+   `.diff-gutter-insert`, `.diff-gutter-delete` class roots. Scoping under
+   `.activity-panel-diff` keeps the tokens from leaking into the main DiffView
+   (which uses @codemirror/merge, a different DOM entirely). */
+.activity-panel-diff .diff {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.activity-panel-diff .diff-line,
+.activity-panel-diff .diff-decoration-content {
+  font-family: var(--font-mono);
+  line-height: 1.25rem;
+}
+
+.activity-panel-diff .diff-gutter {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.activity-panel-diff .diff-code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.activity-panel-diff .diff-code-insert {
+  background-color: color-mix(in oklab, var(--color-green-100) 60%, transparent);
+  color: var(--color-green-900);
+}
+
+.activity-panel-diff .diff-code-delete {
+  background-color: color-mix(in oklab, var(--color-red-100) 60%, transparent);
+  color: var(--color-red-900);
+}
+
+.dark .activity-panel-diff .diff-code-insert {
+  background-color: color-mix(in oklab, var(--color-green-900) 40%, transparent);
+  color: var(--color-green-200);
+}
+
+.dark .activity-panel-diff .diff-code-delete {
+  background-color: color-mix(in oklab, var(--color-red-900) 40%, transparent);
+  color: var(--color-red-200);
+}
+
+.activity-panel-diff .diff-gutter-insert {
+  background-color: color-mix(in oklab, var(--color-green-100) 40%, transparent);
+  color: var(--color-green-800);
+}
+
+.activity-panel-diff .diff-gutter-delete {
+  background-color: color-mix(in oklab, var(--color-red-100) 40%, transparent);
+  color: var(--color-red-800);
+}
+
+.dark .activity-panel-diff .diff-gutter-insert {
+  background-color: color-mix(in oklab, var(--color-green-900) 30%, transparent);
+  color: var(--color-green-300);
+}
+
+.dark .activity-panel-diff .diff-gutter-delete {
+  background-color: color-mix(in oklab, var(--color-red-900) 30%, transparent);
+  color: var(--color-red-300);
+}
+
+.activity-panel-diff .diff-hunk-header {
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.25rem;
+}
+
 /*
  * Explicit source root for Tailwind v4 content scanning.
  *
@@ -135,6 +209,33 @@
   --animate-agent-flash: agent-flash 2s var(--ease-out-strong) forwards;
   --animate-agent-breathing: agent-breathing 2.4s ease-in-out infinite;
   --animate-undo-ready: undo-ready 600ms var(--ease-out-strong) forwards;
+
+  @keyframes sidebar-push-pulse {
+    0% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+    25% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0.4);
+    }
+    100% {
+      box-shadow: inset 4px 0 0 0 hsl(var(--primary) / 0);
+    }
+  }
+
+  --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
+}
+
+/* Push-mode pulse hint — plays once when an in-sidebar action (file pick,
+   wiki-link follow) lands while the sidebar is open at small width.
+   Honors prefers-reduced-motion. The selector targets the SidebarInset's
+   data-push-pulse attribute set by SidebarProvider. */
+[data-slot="sidebar-inset"][data-push-pulse] {
+  animation: var(--animate-sidebar-push-pulse);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar-inset"][data-push-pulse] {
+    animation: none;
+  }
 }
 
 /* Base styles */
@@ -229,6 +330,10 @@
   perspective: 400px;
   transform-style: preserve-3d;
   will-change: transform;
+  /* Rapid-click on the mascot would otherwise trigger the browser's
+     double-click/triple-click selection gesture and select surrounding text. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Group wrapper — the click bounce animates the group so body + eyes squish together. */

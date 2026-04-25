@@ -103,6 +103,20 @@ jobs:
             ':!package-lock.json'
             ':!yarn.lock'
             ':!**/CHANGELOG.md'
+            ':!tmp/ship/**'
+            ':!dist/**'
+            ':!build/**'
+            ':!.next/**'
+            ':!.turbo/**'
+            ':!node_modules/**'
+            ':!.codex/**'
+            ':!.agents/skills/pr-context/**'
+            ':!specs/**'
+            ':!reports/**'
+            ':!tech-probes/**'
+            ':!stories/**'
+            ':!projects/**'
+            ':!strategy/**'
           )
 
           BASE="origin/${{ steps.pr.outputs.base_ref }}"
@@ -378,6 +392,20 @@ jobs:
                 ':!package-lock.json'
                 ':!yarn.lock'
                 ':!**/CHANGELOG.md'
+                ':!tmp/ship/**'
+                ':!dist/**'
+                ':!build/**'
+                ':!.next/**'
+                ':!.turbo/**'
+                ':!node_modules/**'
+                ':!.codex/**'
+                ':!.agents/skills/pr-context/**'
+                ':!specs/**'
+                ':!reports/**'
+                ':!tech-probes/**'
+                ':!stories/**'
+                ':!projects/**'
+                ':!strategy/**'
               )
               SINCE_REVIEW_LOG=$(git log --oneline "$LAST_REVIEW_SHA".."$PR_HEAD")
               SINCE_REVIEW_STATS=$(git diff --stat "$LAST_REVIEW_SHA".."$PR_HEAD" -- . "${DIFF_EXCLUDE[@]}")
@@ -642,9 +670,10 @@ jobs:
 
       - name: Run PR Review
         id: claude
-        uses: anthropics/claude-code-action@01e756b34ef7a1447e9508f674143b07d20c2631
+        uses: anthropics/claude-code-action@e58dfa55559035499a4982426bb73605e8b5ad8e # v1.0.105
         env:
           CLAUDE_CODE_DEBUG_LOGS_DIR: ${{ runner.temp }}/claude-debug
+          DEBUG_CLAUDE_AGENT_SDK: "1"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}

@@ -35,6 +35,13 @@ export {
   parseKeepaliveConnectionId,
 } from './boot.ts';
 export {
+  type BuildSkillZipOptions,
+  type BuildSkillZipResult,
+  buildSkillZip,
+  resolveBundledSkillDir,
+  validateSkillZip,
+} from './build-skill-zip.ts';
+export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
   type CC1Signal,
@@ -52,6 +59,10 @@ export {
   formatContributors,
   recordContributor,
 } from './contributor-tracker.ts';
+export {
+  type DetectClaudeDesktopOptions,
+  detectClaudeDesktopPresence,
+} from './detect-claude-desktop.ts';
 export {
   applyExternalChange,
   createExternalChangeHandler,
@@ -140,6 +151,29 @@ export {
   reconcile,
   splitMarkdownBlocks,
 } from './reconciliation.ts';
+// Seed scaffolder (`ok seed`) — shared module for the CLI Commander wrapper
+// and the Electron IPC handler. Deterministic plan/apply split; writes the
+// Karpathy three-layer starter + optional log.md + config.yml folders: entries.
+// See specs/2026-04-23-ok-seed-scaffold/SPEC.md.
+export {
+  type ApplyError,
+  type ApplyResult,
+  applySeed,
+  type ConfigEdit,
+  type FileEntry,
+  type FolderFrontmatter,
+  type FolderRule,
+  LOG_MD_TEMPLATE,
+  planSeed,
+  type ScaffoldPlan,
+  SEED_CONFIG_FILENAME,
+  type SeedOptions,
+  SeedPrerequisiteError,
+  type SkipEntry,
+  STARTER_FOLDERS,
+  type StarterFolder,
+  starterFolderRule,
+} from './seed/index.ts';
 export {
   acquireServerLock,
   readServerLock,
@@ -183,6 +217,13 @@ export {
   type TimelineRescueEntry,
   type WriterIdentity,
 } from './shadow-repo.ts';
+export {
+  type InstallUserSkillOptions,
+  type InstallUserSkillResult,
+  installUserSkill,
+  type SkillInstallLogger,
+  type SpawnLike,
+} from './skill-install.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   getMeter,

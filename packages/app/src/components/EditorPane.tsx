@@ -293,6 +293,13 @@ export function EditorPane() {
           setAuthModalOpen(true);
         }}
       />
+      {/*
+        Agent Activity Panel now lives inside DocPanel as the `'agent'` mode
+        content (SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle).
+        No longer mounted here — the mode toggle + DocumentContext
+        (`docPanelMode` / `docPanelAgentId`) drive visibility. Presence-bar
+        avatar clicks flip the DocPanel's mode + scope + trigger expand.
+      */}
     </>
   );
 }

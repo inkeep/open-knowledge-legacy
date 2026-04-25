@@ -237,6 +237,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       getPrincipal: () => loadedPrincipal,
+      // Emit CC1 ch:'session-activity' after any agent writer commits so
+      // Activity Panel clients get live invalidations (FR-P25, D-P11).
+      // cc1Broadcaster is initialized after persistence but captured by
+      // closure reference — the callback always sees the latest value.
+      onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
