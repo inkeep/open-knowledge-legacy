@@ -115,7 +115,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         data-testid="project-switcher-menu"
       >
         <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
-          Switch project
+          Recent projects
         </DropdownMenuLabel>
         {switchable.length === 0 ? (
           <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">

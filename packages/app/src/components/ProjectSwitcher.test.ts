@@ -98,8 +98,26 @@ describe('Switch Project affordance (source-level guards)', () => {
     expect(src).toContain('data-testid="project-switcher-switch-project"');
   });
 
-  test('the click handler invokes bridge.navigator.open()', () => {
-    expect(src).toMatch(/bridge\.navigator\.open\(\)/);
+  test('Switch Project item: onSelect routes through onSwitchProject which calls bridge.navigator.open()', () => {
+    // Anchored on the exact opening tag carrying our testid, so a refactor
+    // that crossed onSelect onto a sibling DropdownMenuItem would fail the
+    // first assertion below rather than silently passing because
+    // `bridge.navigator.open()` exists somewhere in the file.
+    const tagRe = /<DropdownMenuItem\b[^>]*data-testid="project-switcher-switch-project"[^>]*>/;
+    const tag = src.match(tagRe)?.[0];
+    expect(
+      tag,
+      'DropdownMenuItem with project-switcher-switch-project testid not found',
+    ).toBeTruthy();
+    expect(tag).toContain('onSelect={onSwitchProject}');
+
+    // The onSwitchProject handler body must call bridge.navigator.open().
+    // Lazy [\s\S]*? matches up to the first `};` — the function close —
+    // because the body has no nested `}` characters.
+    const handlerRe = /const onSwitchProject = \(\) => \{[\s\S]*?\};/;
+    const handler = src.match(handlerRe)?.[0];
+    expect(handler, 'onSwitchProject handler definition not found').toBeTruthy();
+    expect(handler).toMatch(/bridge\.navigator\.open\(\)/);
   });
 
   test('the new item sits BELOW "Open folder…" (Obsidian-pattern position)', () => {

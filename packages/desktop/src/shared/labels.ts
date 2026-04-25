@@ -1,6 +1,9 @@
 /**
  * User-facing string constants surfaced from the desktop app's main process.
  *
+ * Inclusion rule: only strings duplicated across two-or-more cross-package
+ * surfaces belong here. Single-site labels stay inline at their call site.
+ *
  * Keep this file zero-dep — it loads in main, preload, and any test runner.
  * The renderer side (`packages/app/src/lib/desktop-labels.ts`) carries a
  * deliberately-mirrored copy because the app package does not import from
@@ -9,12 +12,12 @@
  */
 
 /**
- * Shown on:
+ * Shown on every "re-summon the Project Navigator" affordance:
  *   - File → Switch Project… (menu accelerator `Cmd+Shift+N` preserved)
  *   - ProjectSwitcher dropdown's tail item
+ *   - CommandPalette entry
  *
- * The CommandPalette uses the no-ellipsis form (the palette already implies
- * "this opens something"); that variant lives in the app-side mirror only
- * because the desktop main process never references it.
+ * The ellipsis form matches the sibling `Open folder on disk…` palette item
+ * — every cmdk row that opens a picker / dialog / new surface keeps it.
  */
-export const SWITCH_PROJECT_LABEL_WITH_ELLIPSIS = 'Switch Project…';
+export const SWITCH_PROJECT_LABEL_WITH_ELLIPSIS = 'Switch Project…' as const;

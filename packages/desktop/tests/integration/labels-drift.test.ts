@@ -16,15 +16,18 @@ const DESKTOP_LABELS = join(__dirname, '..', '..', 'src', 'shared', 'labels.ts')
 const APP_LABELS = join(__dirname, '..', '..', '..', 'app', 'src', 'lib', 'desktop-labels.ts');
 
 /**
- * Only the with-ellipsis form is mirrored across both packages — it shows up
- * in the File menu (desktop main) AND the ProjectSwitcher dropdown (app
- * renderer). The CommandPalette's no-ellipsis form lives only in the app
- * mirror because main never references it.
+ * The with-ellipsis form is the single label used by every "re-summon
+ * Navigator" surface — File menu (desktop main), ProjectSwitcher dropdown
+ * (app renderer), and CommandPalette entry (app renderer).
  */
 const NAMES = ['SWITCH_PROJECT_LABEL_WITH_ELLIPSIS'] as const;
 
 function extractStringConst(src: string, name: string): string | undefined {
-  const re = new RegExp(`export\\s+const\\s+${name}\\s*=\\s*(['"])([^'"]*)\\1\\s*;`);
+  // Optional `as const` suffix tolerated so the type-narrowing literal
+  // annotation on the export does not break the drift catcher.
+  const re = new RegExp(
+    `export\\s+const\\s+${name}\\s*=\\s*(['"])([^'"]*)\\1(?:\\s+as\\s+const)?\\s*;`,
+  );
   const m = src.match(re);
   return m?.[2];
 }

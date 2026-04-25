@@ -6,7 +6,7 @@
  *
  * Commands (project actions open a NEW editor BrowserWindow per D3 revised):
  *   - Open folder on disk…            — `bridge.dialog.openFolder()` → open
- *   - Switch Project                  — `bridge.navigator.open()` (focus or
+ *   - Switch Project…                 — `bridge.navigator.open()` (focus or
  *                                       create the Project Navigator window)
  *   - Install for Claude Chat & Cowork (Desktop App)…
  *   - Open in agent (per-target)
@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/command';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
-import { SWITCH_PROJECT_LABEL_PALETTE } from '@/lib/desktop-labels';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { useWorkspace } from '@/lib/use-workspace';
@@ -143,14 +143,14 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <CommandShortcut>⌘O</CommandShortcut>
           </CommandItem>
           <CommandItem
-            value="switch-project navigator manage projects"
+            value="switch-project navigator projects"
             onSelect={() =>
               runAction(() => bridge.navigator.open(), 'Failed to open Project Navigator.')
             }
             data-testid="command-palette-switch-project"
           >
             <LayoutGrid />
-            <span>{SWITCH_PROJECT_LABEL_PALETTE}</span>
+            <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
             <CommandShortcut>⌘⇧N</CommandShortcut>
           </CommandItem>
           <CommandItem
