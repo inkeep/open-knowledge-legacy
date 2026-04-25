@@ -4,10 +4,13 @@
  * Inclusion rule: only strings duplicated across two-or-more cross-package
  * surfaces belong here. Single-site labels stay inline at their call site.
  *
- * The app package does not import from `@inkeep/open-knowledge-desktop`
- * (same rationale as `desktop-bridge-types.ts` — three-way duplication
- * avoids cross-package module-resolution issues). Drift between the two
- * copies is caught by `packages/desktop/tests/integration/labels-drift.test.ts`.
+ * Same module-resolution constraint that forces the three-way duplication
+ * of `desktop-bridge-types.ts` applies here — the app package's TypeScript
+ * program cannot share modules with `@inkeep/open-knowledge-desktop`
+ * directly. Two copies (desktop main + app renderer) suffice for label
+ * constants; drift caught by the
+ * `M1 invariant: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts`.
  */
 
 export const SWITCH_PROJECT_LABEL_WITH_ELLIPSIS = 'Switch Project…' as const;

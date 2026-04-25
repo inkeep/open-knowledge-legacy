@@ -7,8 +7,9 @@
  * Keep this file zero-dep — it loads in main, preload, and any test runner.
  * The renderer side (`packages/app/src/lib/desktop-labels.ts`) carries a
  * deliberately-mirrored copy because the app package does not import from
- * `@inkeep/open-knowledge-desktop`. Drift is caught by
- * `packages/desktop/tests/integration/labels-drift.test.ts`.
+ * `@inkeep/open-knowledge-desktop`. Drift is caught by the
+ * `M1 invariant: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS drift catcher` test in
+ * `packages/desktop/tests/integration/m1-smoke.test.ts`.
  */
 
 /**

@@ -121,7 +121,7 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       open={open}
       onOpenChange={setOpen}
       title="Project Command Palette"
-      description="Switch projects, open folders, or open the Project Navigator."
+      description="Open a folder, switch to a recent project, or open the Project Navigator."
     >
       <CommandInput placeholder="Type a command or search recent projects…" />
       <CommandList className="subtle-scrollbar">

@@ -102,7 +102,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         <SidebarMenuButton
           className="justify-between text-sidebar-foreground/70"
           data-testid="project-switcher-trigger"
-          title="Switch project"
+          title="Open project menu"
         >
           <span className="truncate">{bridge.config.projectName}</span>
           <ChevronsUpDown aria-hidden="true" className="opacity-60" />
