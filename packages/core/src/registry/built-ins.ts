@@ -44,6 +44,7 @@
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * for the un-deferral framework.
  */
+import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
 // ── Callout ──────────────────────────────────────────────────────────────────
@@ -424,12 +425,67 @@ const accordionProps: PropDef[] = [
   },
 ];
 
+// ── Compat descriptor prop subsets ───────────────────────────────────────────
+//
+// Compat descriptors expose ONLY the props their source syntax can natively
+// express. Names are canonical (identity translateProps in v1) so storage stays
+// uniform — node.attrs.props uses the same keys regardless of which descriptor
+// is active. Convert-to-canonical is identity (same prop names, just enabling
+// the canonical's full superset).
+
+const gfmCalloutProps: PropDef[] = [
+  // GFM `[!TYPE]` marker → type
+  calloutProps[0],
+  // Obsidian title text after the marker → title
+  calloutProps[1],
+  // Obsidian `+` / `-` suffix → collapsible + defaultOpen
+  calloutProps[4],
+  calloutProps[5],
+  // Body is the reactnode children slot — same as canonical Callout.
+  calloutProps[6],
+];
+
+const commonMarkImageProps: PropDef[] = [
+  // `![alt](src "title")` — three native fields.
+  imageProps[0], // src
+  imageProps[1], // alt
+  imageProps[5], // title
+];
+
+const htmlDetailsAccordionProps: PropDef[] = [
+  // `<summary>` inner text → title
+  accordionProps[0],
+  // `open` HTML attr → defaultOpen
+  accordionProps[1],
+  // `id` HTML attr → id (deep-link anchor)
+  accordionProps[4],
+  // `name` HTML attr → name (HTML5 mutex group)
+  accordionProps[5],
+];
+
+// ── Compat serialize helpers ─────────────────────────────────────────────────
+
+/** Minimal HTML attribute-value escape (matches the lossiness of the parser). */
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Minimal HTML text-content escape for `<summary>` inner text. */
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── Manifest ─────────────────────────────────────────────────────────────────
 
 export const builtInComponents: JsxComponentMeta[] = [
   // Content
   {
     name: 'Callout',
+    surface: 'canonical',
     hasChildren: true,
     props: calloutProps,
     icon: 'MessageSquareWarning',
@@ -438,11 +494,13 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
     searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
+    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx),
   },
 
   // Media
   {
     name: 'Image',
+    surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
     props: imageProps,
@@ -451,9 +509,11 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with optional caption, explicit dimensions, and click-to-zoom',
     searchTerms: ['image', 'zoom', 'picture', 'photo', 'figure', 'caption'],
+    serialize: (node, ctx) => emitMdxJsx('Image', node, ctx),
   },
   {
     name: 'Video',
+    surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
     props: videoProps,
@@ -462,9 +522,11 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
+    serialize: (node, ctx) => emitMdxJsx('Video', node, ctx),
   },
   {
     name: 'Audio',
+    surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
     props: audioProps,
@@ -473,11 +535,13 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
+    serialize: (node, ctx) => emitMdxJsx('Audio', node, ctx),
   },
 
   // Content
   {
     name: 'Accordion',
+    surface: 'canonical',
     hasChildren: true,
     props: accordionProps,
     icon: 'ChevronRight',
@@ -486,5 +550,147 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
+    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx),
+  },
+
+  // ── Compat descriptors ─────────────────────────────────────────────────────
+  // Read-only; never offered for new insertion (slash menu filters to
+  // `surface: 'canonical'`). Each owns its own source-form serialize so
+  // round-trip preserves the source bytes even after a user prop edit.
+
+  {
+    name: 'GFMCallout',
+    surface: 'compat',
+    hasChildren: true,
+    props: gfmCalloutProps,
+    icon: 'MessageSquareWarning',
+    category: 'content',
+    displayName: 'GFM Callout',
+    description:
+      'GFM blockquote alert (`> [!NOTE]`) — read-only compat. Convert to Callout for full prop access.',
+    rendersAs: 'Callout',
+    translateProps: (props) => props,
+    convertibleTo: { target: 'Callout', remap: (props) => props },
+    serialize: (node, ctx) => {
+      const props = node.attrs.props as
+        | {
+            type?: string;
+            title?: string;
+            collapsible?: boolean;
+            defaultOpen?: boolean;
+          }
+        | undefined;
+      // Clamp to the GFM 5-type enum — the source form can only encode these
+      // values syntactically. An invalid `type` (e.g., set via `setNodeMarkup`
+      // by some external source) falls back to 'note' so the emit stays
+      // GFM-syntax-valid and idempotent on round-trip. Mirror of the
+      // alerts-plugin's permissiveness on parse + the descriptor PropDef enum.
+      const GFM_ALERT_TYPES = new Set(['note', 'tip', 'important', 'warning', 'caution']);
+      const rawType = props?.type ?? 'note';
+      const type = (GFM_ALERT_TYPES.has(rawType.toLowerCase()) ? rawType : 'note').toUpperCase();
+      // Obsidian `+` / `-` suffix encoding: collapsible+defaultOpen → `+`,
+      // collapsible+!defaultOpen → `-`, !collapsible → no suffix.
+      const suffix = props?.collapsible ? (props.defaultOpen === false ? '-' : '+') : '';
+      const titleSegment = props?.title ? ` ${props.title}` : '';
+      // Emit the alert marker as `html` mdast so remark-stringify does NOT
+      // escape the `[` (text-node emit produces `\[!NOTE]`, breaking the
+      // alerts-plugin re-parse). The blockquote container handler prefixes
+      // every line with `> `; remark-github-alerts re-parses the resulting
+      // `> [!TYPE]\n>\n> body` shape identically on round-trip → idempotent
+      // dirty path holds.
+      const marker = {
+        type: 'html' as const,
+        value: `[!${type}]${suffix}${titleSegment}`,
+      };
+      // Strip empty paragraphs from the body — a `> [!TYPE]\n>\n> body` source
+      // re-parses with an empty paragraph between the marker line and the
+      // body, and emitting it back through the blockquote handler would add
+      // another blank `> ` line on every round-trip (idempotence violation).
+      // Empty paragraphs are layout-only artifacts of the alert-block parse
+      // and don't carry semantic content; dropping them produces a stable
+      // fixed point under dirty-path re-emit.
+      const body = ctx.all(node).filter((child) => {
+        if (child.type !== 'paragraph') return true;
+        const para = child as { type: 'paragraph'; children?: unknown[] };
+        return Array.isArray(para.children) && para.children.length > 0;
+      });
+      return {
+        type: 'blockquote' as const,
+        children: [marker, ...body] as never,
+      };
+    },
+  },
+
+  {
+    name: 'CommonMarkImage',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: commonMarkImageProps,
+    icon: 'ZoomIn',
+    category: 'media',
+    displayName: 'CommonMark Image',
+    description:
+      'CommonMark image (`![alt](src "title")`) — read-only compat. Convert to Image for caption / dimensions / zoom props.',
+    rendersAs: 'Image',
+    translateProps: (props) => props,
+    convertibleTo: { target: 'Image', remap: (props) => props },
+    serialize: (node) => {
+      const p = node.attrs.props as { src?: string; alt?: string; title?: string } | undefined;
+      const image = {
+        type: 'image' as const,
+        url: p?.src ?? '',
+        alt: p?.alt ?? '',
+        title: p?.title ?? null,
+      };
+      return {
+        type: 'paragraph' as const,
+        children: [image],
+      };
+    },
+  },
+
+  {
+    name: 'HtmlDetailsAccordion',
+    surface: 'compat',
+    hasChildren: true,
+    props: htmlDetailsAccordionProps,
+    icon: 'ChevronRight',
+    category: 'content',
+    displayName: 'HTML5 Details',
+    description:
+      'HTML5 `<details><summary>` collapsible — read-only compat. Convert to Accordion for icon / description props.',
+    rendersAs: 'Accordion',
+    translateProps: (props) => props,
+    convertibleTo: { target: 'Accordion', remap: (props) => props },
+    serialize: (node, ctx) => {
+      const p = node.attrs.props as
+        | { title?: string; defaultOpen?: boolean; name?: string; id?: string }
+        | undefined;
+      const open = p?.defaultOpen ? ' open' : '';
+      const nameAttr = p?.name ? ` name="${escapeHtmlAttr(p.name)}"` : '';
+      const idAttr = p?.id ? ` id="${escapeHtmlAttr(p.id)}"` : '';
+      // Trim the title before emit — the parser strips leading/trailing
+      // whitespace inside `<summary>`, so an un-trimmed title would round-trip
+      // to a trimmed re-parse and break dirty-path idempotence. An empty
+      // title (whitespace-only) emits no summary tag at all.
+      const trimmedTitle = p?.title?.trim();
+      const summary = trimmedTitle ? `<summary>${escapeHtmlText(trimmedTitle)}</summary>` : '';
+      // Body is rendered by the to-markdown handler via state.containerFlow
+      // when `data.htmlBoundary` is set — emit a marker mdxJsxFlowElement
+      // carrying the opener/closer strings and the live mdast body children.
+      return {
+        type: 'mdxJsxFlowElement' as const,
+        name: 'HtmlDetailsAccordion',
+        attributes: [],
+        children: ctx.all(node) as never,
+        data: {
+          htmlBoundary: {
+            opener: `<details${open}${nameAttr}${idAttr}>\n${summary}`,
+            closer: '</details>',
+          },
+        },
+      };
+    },
   },
 ];

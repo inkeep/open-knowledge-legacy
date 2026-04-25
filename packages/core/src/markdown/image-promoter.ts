@@ -113,7 +113,10 @@ function buildImageElement(image: Image, paragraph: Paragraph): MdxJsxFlowElemen
 
   const element: MdxJsxFlowElement = {
     type: 'mdxJsxFlowElement',
-    name: 'Image',
+    // CommonMarkImage (compat descriptor) preserves source-form identity
+    // through the PM tree so the dirty-path serializer round-trips back to
+    // CommonMark `![alt](src "title")` syntax instead of always emitting MDX JSX.
+    name: 'CommonMarkImage',
     attributes: attrs,
     children: [],
   };

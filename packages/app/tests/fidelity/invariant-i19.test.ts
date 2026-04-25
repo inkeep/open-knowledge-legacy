@@ -1,13 +1,16 @@
 /**
  * Invariant I19 — HTML5 `<details>` ↔ Accordion round-trip (US-011 / FR-8).
  *
- * Two claims:
+ * Two claims (post canonical/compat split):
  *
- * 1. Structural equivalence: `parse('<details><summary>X</summary>Y</details>')`
- *    produces the same PM tree (modulo γ source-raw fields) as
- *    `parse('<Accordion title="X">Y</Accordion>')`, and analogous for the
- *    `open`, `name`, and `id` attrs. This is what lets the DIY Accordion
- *    renderer treat both authoring forms identically at the runtime layer.
+ * 1. Prop-shape equivalence: `parse('<details><summary>X</summary>Y</details>')`
+ *    produces the same `props` bag (modulo γ source-raw fields) as
+ *    `parse('<Accordion title="X">Y</Accordion>')`. The `componentName` differs
+ *    by design — `<details>` parses to `HtmlDetailsAccordion` (compat) so the
+ *    serializer can round-trip back to HTML5; `<Accordion>` parses to
+ *    `Accordion` (canonical). Both descriptors render through the same React
+ *    Component via `rendersAs: 'Accordion'` on the compat side, so the runtime
+ *    treats them identically.
  *
  * 2. γ pristine preservation: `parse → serialize` on `<details>` source
  *    emits the original bytes (modulo a single trailing newline that
@@ -34,6 +37,9 @@ function stripGammaAttrs(node: JSONContent): JSONContent {
     delete (attrs as Record<string, unknown>).content;
     delete (attrs as Record<string, unknown>).attributes;
     delete (attrs as Record<string, unknown>).sourceDirty;
+    // componentName differs by source form (HtmlDetailsAccordion vs Accordion)
+    // by design — strip it for prop-shape comparison.
+    delete (attrs as Record<string, unknown>).componentName;
   }
   const content = node.content?.map(stripGammaAttrs);
   return { ...node, ...(attrs ? { attrs } : {}), ...(content ? { content } : {}) };
@@ -140,7 +146,7 @@ describe('I19 — props shape after parse', () => {
     const json = mdManager.parse('<details open><summary>X</summary>Body</details>');
     const node = findFirstNode(json, 'jsxComponent');
     expect(node).toBeDefined();
-    expect(node?.attrs?.componentName).toBe('Accordion');
+    expect(node?.attrs?.componentName).toBe('HtmlDetailsAccordion');
     const props = (node?.attrs?.props ?? {}) as Record<string, unknown>;
     expect(props.title).toBe('X');
     expect(props.defaultOpen).toBe(true);

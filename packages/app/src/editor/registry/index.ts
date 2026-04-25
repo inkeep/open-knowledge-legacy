@@ -64,7 +64,35 @@ interface Decoration {
 
 const decorations = new Map<string, Decoration>();
 
+/**
+ * Build the React-component decoration for a descriptor.
+ *
+ * - `surface: 'canonical'` → look up the React component by `meta.name`.
+ *   Returns null if `componentMap` doesn't have the canonical's component
+ *   (e.g., during module init before `componentMap` is seeded).
+ * - `surface: 'compat'` → look up the React component by `meta.rendersAs`.
+ *   Compat descriptors render through the canonical's component via the
+ *   render-time `translateProps` step in `JsxComponentView`. Throws if
+ *   `rendersAs` doesn't resolve to a registered canonical — fail loud at
+ *   module init rather than render an undefined component.
+ *
+ * Note: `reactNodePropNames` is computed from the descriptor's OWN `props`
+ * (not the canonical's). Compat descriptors expose a subset of props; the
+ * reactnode set is a subset accordingly.
+ */
 function buildDecoration(meta: JsxComponentMeta): Decoration | null {
+  if (meta.surface === 'compat') {
+    const Component = componentMap[meta.rendersAs];
+    if (!Component) {
+      throw new Error(
+        `Compat descriptor '${meta.name}' declares rendersAs: '${meta.rendersAs}', but no React component is registered under that name in componentMap. Add the canonical component before registering the compat descriptor.`,
+      );
+    }
+    return {
+      Component,
+      reactNodePropNames: computeReactNodePropNames(meta.props),
+    };
+  }
   const Component = componentMap[meta.name];
   if (!Component) return null;
   return {
@@ -74,10 +102,12 @@ function buildDecoration(meta: JsxComponentMeta): Decoration | null {
 }
 
 // Seed decorations for the wildcard + every built-in whose React component
-// ships in `componentMap`. Any future `coreRegistry.set(name, meta)` that
-// also lands a matching entry in `componentMap` will render correctly the
-// next time `getDescriptor` is called; entries without a render component
-// fall through to the wildcard via `getOrWildcard`.
+// ships in `componentMap`. Compat descriptors resolve via `rendersAs` and
+// throw at init if their canonical isn't registered. Any future
+// `coreRegistry.set(name, meta)` that also lands a matching entry in
+// `componentMap` will render correctly the next time `getDescriptor` is
+// called; entries without a render component fall through to the wildcard
+// via `getOrWildcard`.
 for (const [name, meta] of coreRegistry.entries()) {
   const deco = buildDecoration(meta);
   if (deco) decorations.set(name, deco);

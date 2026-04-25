@@ -193,9 +193,14 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
 /**
  * Build slash-command items from the registered descriptor registry.
  * Called lazily by the slash-command extension's itemsSources API.
+ *
+ * Filters to `surface: 'canonical'` — compat descriptors (GFMCallout,
+ * CommonMarkImage, HtmlDetailsAccordion) are read-only and never offered for
+ * fresh insertion. The user gets a Convert affordance in PropPanel if they
+ * want to upgrade an existing compat-form node to its canonical.
  */
 export function getComponentItems(): SlashCommandItem[] {
-  const descriptors = getRegisteredDescriptors();
+  const descriptors = getRegisteredDescriptors().filter((desc) => desc.surface === 'canonical');
 
   return descriptors.map((desc) => ({
     name: `component-${desc.name}`,

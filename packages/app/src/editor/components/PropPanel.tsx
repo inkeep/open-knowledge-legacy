@@ -15,8 +15,10 @@
  */
 
 import type { PropDef } from '@inkeep/open-knowledge-core';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
 
 /**
  * Humanize a camelCase / snake_case prop name for the PropPanel UI.
@@ -36,15 +38,36 @@ function humanizePropName(name: string): string {
 }
 
 interface PropPanelProps {
-  props: PropDef[];
+  /**
+   * Active descriptor — drives both the prop controls (form-scoped to the
+   * descriptor's own `props`) and the optional Convert affordance for compat
+   * descriptors with `convertibleTo` set.
+   */
+  descriptor: JsxComponentDescriptor;
   values: Record<string, unknown>;
   onChange: (propName: string, value: unknown) => void;
+  /**
+   * Convert-to-canonical action. Surfaced as a button below the prop controls
+   * when `descriptor.surface === 'compat' && descriptor.convertibleTo` is set.
+   * The host (`JsxComponentView`) builds the transaction; PropPanel just
+   * renders the affordance.
+   */
+  onConvert?: () => void;
 }
 
-export function PropPanel({ props, values, onChange }: PropPanelProps) {
-  const editableProps = props.filter((p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode');
+export function PropPanel({ descriptor, values, onChange, onConvert }: PropPanelProps) {
+  const editableProps = descriptor.props.filter(
+    (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
+  );
 
-  if (editableProps.length === 0) return null;
+  // Convert affordance is only meaningful for compat descriptors that declare
+  // a target. Narrowing on `surface` exposes `convertibleTo`.
+  const showConvert =
+    descriptor.surface === 'compat' &&
+    descriptor.convertibleTo !== undefined &&
+    onConvert !== undefined;
+
+  if (editableProps.length === 0 && !showConvert) return null;
 
   return (
     <div data-prop-panel="" className="flex flex-col gap-2 p-3 text-sm">
@@ -56,6 +79,20 @@ export function PropPanel({ props, values, onChange }: PropPanelProps) {
           onChange={(v) => onChange(propDef.name, v)}
         />
       ))}
+      {showConvert && descriptor.surface === 'compat' && descriptor.convertibleTo && (
+        <>
+          <div className="my-1 border-t border-border" />
+          <Button
+            variant="outline"
+            size="sm"
+            data-prop-panel-convert=""
+            onClick={onConvert}
+            className="h-7 text-xs"
+          >
+            Convert to {descriptor.convertibleTo.target}
+          </Button>
+        </>
+      )}
     </div>
   );
 }

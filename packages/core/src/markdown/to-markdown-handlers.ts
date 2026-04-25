@@ -337,6 +337,20 @@ export const toMarkdownHandlers = {
     const raw = mdxNode.data?.sourceRaw;
     if (typeof raw === 'string') return raw;
 
+    // Compat HTML-boundary descriptors (HtmlDetailsAccordion) emit raw HTML
+    // opener/closer with a markdown body in between. Body is rendered via
+    // state.containerFlow so block markdown inside `<details>` serializes
+    // correctly. The mdast `name` and `attributes` are ignored on this path.
+    const boundary = mdxNode.data?.htmlBoundary;
+    if (boundary && typeof boundary.opener === 'string' && typeof boundary.closer === 'string') {
+      const childContent = state.containerFlow(
+        // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
+        { type: 'root', children: mdxNode.children ?? [] } as any,
+        info,
+      );
+      return `${boundary.opener}\n\n${childContent}\n\n${boundary.closer}`;
+    }
+
     const name = mdxNode.name ?? '';
     const attrs = serializeMdxJsxAttrs(mdxNode.attributes ?? []);
 

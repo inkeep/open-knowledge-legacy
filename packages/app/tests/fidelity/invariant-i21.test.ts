@@ -49,7 +49,7 @@ describe('I21: CommonMark `![alt](src)` → `<Image>` block-context promotion', 
     const json = mdManager.parse('![Architecture](/assets/diagram.png)\n');
     const image = findFirstJsxComponent(json);
     expect(image).not.toBeNull();
-    expect(image?.attrs?.componentName).toBe('Image');
+    expect(image?.attrs?.componentName).toBe('CommonMarkImage');
     const props = image?.attrs?.props as Record<string, unknown> | undefined;
     expect(props?.src).toBe('/assets/diagram.png');
     expect(props?.alt).toBe('Architecture');
@@ -77,12 +77,19 @@ describe('I21: CommonMark `![alt](src)` → `<Image>` block-context promotion', 
     expect(props?.alt).toBeUndefined();
   });
 
-  test('CommonMark image tree === MDX JSX Image tree (structural)', () => {
+  test('CommonMark image props === MDX JSX Image props (render-time equivalence)', () => {
+    // Post canonical/compat split: CommonMark `![alt](src)` parses to
+    // `componentName: 'CommonMarkImage'` (compat) while MDX `<Image ...>`
+    // parses to `componentName: 'Image'` (canonical). Both render through
+    // the same React component via `rendersAs: 'Image'` on CommonMarkImage,
+    // so the load-bearing equivalence is the props bag — not byte-equal
+    // PM trees. Source-form preservation is the whole point of the split.
     const fromCommonMark = mdManager.parse('![Arc](/a.png "X")\n');
     const fromMdxJsx = mdManager.parse('<Image src="/a.png" alt="Arc" title="X" />\n');
     const cmImage = findFirstJsxComponent(fromCommonMark);
     const mdxImage = findFirstJsxComponent(fromMdxJsx);
-    expect(cmImage?.attrs?.componentName).toBe(mdxImage?.attrs?.componentName);
+    expect(cmImage?.attrs?.componentName).toBe('CommonMarkImage');
+    expect(mdxImage?.attrs?.componentName).toBe('Image');
     const cmProps = cmImage?.attrs?.props as Record<string, unknown> | undefined;
     const mdxProps = mdxImage?.attrs?.props as Record<string, unknown> | undefined;
     expect(cmProps?.src).toBe(mdxProps?.src);
@@ -158,7 +165,7 @@ describe('I21 PBT: fuzz CommonMark image → descriptor structural equivalence',
           const image = findFirstJsxComponent(parsed);
           if (!image) return false;
           const props = image.attrs?.props as Record<string, unknown> | undefined;
-          if (image.attrs?.componentName !== 'Image') return false;
+          if (image.attrs?.componentName !== 'CommonMarkImage') return false;
           if (props?.src !== src) return false;
           if (alt && props?.alt !== alt) return false;
           if (title && props?.title !== title) return false;

@@ -5,6 +5,10 @@
  * This file MUST NOT import React.
  */
 
+import type { Node as PmNode } from '@tiptap/pm/model';
+import type { Nodes as MdastNodes } from 'mdast';
+import type { ComponentRegistry } from './index.ts';
+
 // ── PropDef discriminated union ──────────────────────────────────────────────
 
 export interface PropDefBase {
@@ -54,15 +58,46 @@ export type PropDef =
   | PropDefEnum
   | PropDefReactNode;
 
-// ── JsxComponentMeta ─────────────────────────────────────────────────────────
+// ── SerializeContext + helper types ──────────────────────────────────────────
 
 /**
- * React-free component metadata for the descriptor registry.
+ * State threaded into a descriptor's `serialize(node, ctx)` call. Provides the
+ * minimum surface a descriptor needs to emit its source-form mdast.
+ *
+ * Mirror of remark-prosemirror's internal `State` (not publicly exported); the
+ * field names must stay in lockstep with `markdown/index.ts` (`MdastToPmState`).
+ */
+export interface SerializeContext {
+  /** Recursively serialize a PM node's children to mdast nodes. */
+  all: (node: PmNode) => MdastNodes[];
+  /** Read-only access to the registry. Used by descriptors that delegate. */
+  registry: Pick<ComponentRegistry, 'getOrWildcard'>;
+  /**
+   * Render PM children to markdown bytes. Required by source forms whose emit
+   * is a single `html` mdast node carrying the body verbatim (e.g.,
+   * `<details>...</details>`). The host wires this from
+   * `mdast-util-to-markdown`'s `containerFlow`. May throw if the host has not
+   * provided it; descriptors that don't need it must not call it.
+   */
+  serializeChildren: (node: PmNode) => string;
+}
+
+/**
+ * Translates a compat descriptor's stored prop bag to the render-time props
+ * its `rendersAs` canonical Component expects. Pure; no React. Identity for
+ * v1's three compat descriptors (their prop names already match canonical).
+ */
+export type TranslateProps = (compatProps: Record<string, unknown>) => Record<string, unknown>;
+
+// ── JsxComponentMeta — discriminated on `surface` ───────────────────────────
+
+/**
+ * Fields shared by both surfaces of `JsxComponentMeta`.
  *
  * NG14: registry tracks block components only. No isInline field —
  * inline JSX is the thin jsxInline node and doesn't use descriptors.
  */
-export interface JsxComponentMeta {
+interface JsxComponentMetaBase {
   /** Component tag name, or '*' for the wildcard fallback. */
   name: string;
   /** PropPanel/slash-menu hint; NodeViewContent always renders per Precedent #26. */
@@ -84,4 +119,62 @@ export interface JsxComponentMeta {
   searchTerms?: string[];
   /** For empty-container placeholder UX — Steps → 'Step', Tabs → 'Tab'. */
   emptyChildName?: string;
+  /**
+   * Emit this descriptor's source form as mdast. Required.
+   *
+   * Pristine-path round-trip is handled upstream by the caller via
+   * `data.sourceRaw` passthrough — descriptors only own the dirty path. Each
+   * canonical descriptor emits an `mdxJsxFlowElement`; each compat descriptor
+   * emits its native source form (blockquote for GFMCallout, paragraph+image
+   * for CommonMarkImage, html-block for HtmlDetailsAccordion).
+   */
+  serialize: (node: PmNode, ctx: SerializeContext) => MdastNodes;
 }
+
+/**
+ * Canonical descriptor — appears in the slash menu, what WYSIWYG writes for
+ * fresh inserts. Renders directly through its own React component in
+ * `componentMap` (keyed by `name`).
+ */
+export interface CanonicalMeta extends JsxComponentMetaBase {
+  surface: 'canonical';
+}
+
+/**
+ * Compat descriptor — read-only; never offered for new insertion. Preserves
+ * the source form on round-trip via its own `serialize` even after edits.
+ *
+ * Renders through the canonical descriptor's React component (looked up via
+ * `rendersAs`), with `translateProps` adapting the compat's prop names to
+ * whatever the canonical Component expects.
+ */
+export interface CompatMeta extends JsxComponentMetaBase {
+  surface: 'compat';
+  /**
+   * Canonical descriptor name to render through. Must resolve to a registered
+   * `CanonicalMeta` at registry build time; the app-side registry throws on
+   * init if the reference is dangling.
+   */
+  rendersAs: string;
+  /**
+   * Per-descriptor prop-name remap from compat storage shape to canonical
+   * Component render-prop shape. Identity for v1's three compat descriptors
+   * (their prop names already match canonical's spelling).
+   */
+  translateProps: TranslateProps;
+  /**
+   * Drives the "Convert to <canonical>" affordance in PropPanel. When present,
+   * the panel surfaces a button that rewrites the node to the canonical
+   * descriptor (componentName + props remap). Identity remap for v1.
+   */
+  convertibleTo?: {
+    target: string;
+    remap: (compatProps: Record<string, unknown>) => Record<string, unknown>;
+  };
+}
+
+/**
+ * Descriptor union — runtime dispatch on `surface` discriminator. Closes
+ * exhaustive switches with `assertNever` per type-safety idioms.
+ */
+export type JsxComponentMeta = CanonicalMeta | CompatMeta;

@@ -313,6 +313,14 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   }, [selected, hasEditableProps, pos]);
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.reactNodePropNames);
+  // Compat descriptors render through their canonical's React component via
+  // a render-time prop translation. `translateProps` is identity for v1's
+  // three compat descriptors (their prop names already match canonical) but
+  // the seam exists for future compats whose source spelling differs from
+  // canonical (e.g., a hypothetical Mintlify Note → Callout mapping that
+  // renames `title` to `heading` without changing storage).
+  const renderProps =
+    descriptor.surface === 'compat' ? descriptor.translateProps(primitiveProps) : primitiveProps;
   // Stable reset key for the ErrorBoundary. `JSON.stringify` on an arbitrary
   // props object produced a string whose content was key-order-sensitive
   // across engines — combined with the post-edit re-serialization that
@@ -826,8 +834,46 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 {descriptor.displayName ?? descriptor.name} Properties
               </div>
               <PropPanel
-                props={descriptor.props}
+                descriptor={descriptor}
                 values={primitiveProps}
+                onConvert={
+                  descriptor.surface === 'compat' && descriptor.convertibleTo
+                    ? (() => {
+                        // Capture once per render so the closure sees the live
+                        // descriptor on the active node. Identity remap for
+                        // v1's three compat descriptors — prop names already
+                        // match their canonical's storage spelling.
+                        const target = descriptor.convertibleTo.target;
+                        const remap = descriptor.convertibleTo.remap;
+                        return () => {
+                          const p = typeof getPos === 'function' ? getPos() : undefined;
+                          if (typeof p !== 'number') return;
+                          const curNode = editor.state.doc.nodeAt(p);
+                          if (!curNode) return;
+                          if (curNode.attrs.kind !== 'element') return;
+                          const currentProps =
+                            (curNode.attrs.props as Record<string, unknown>) ?? {};
+                          const nextProps = remap(currentProps);
+                          editor.view.dispatch(
+                            editor.state.tr.setNodeMarkup(p, null, {
+                              ...curNode.attrs,
+                              componentName: target,
+                              // Drop preserved compat attrs on the way to
+                              // canonical — the canonical's serializer
+                              // reconstructs from `props`, and any compat-
+                              // shaped attrs would no longer round-trip.
+                              attributes: [],
+                              sourceRaw: '',
+                              sourceDirty: true,
+                              props: nextProps,
+                            }),
+                          );
+                          markUserTyping();
+                          setPopoverOpen(false);
+                        };
+                      })()
+                    : undefined
+                }
                 onChange={(propName, value) => {
                   // Update the node at its live position — NOT via
                   // `editor.commands.updateAttributes`, which targets the
@@ -927,7 +973,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
         rawComponentName={(node.attrs.componentName as string) ?? ''}
       >
-        <Comp {...primitiveProps}>
+        <Comp {...renderProps}>
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''

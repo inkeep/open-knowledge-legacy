@@ -36,6 +36,8 @@ function stripGammaAttrs(node: JSONContent): JSONContent {
     delete (attrs as Record<string, unknown>).content;
     delete (attrs as Record<string, unknown>).attributes;
     delete (attrs as Record<string, unknown>).sourceDirty;
+    // componentName differs by source form post canonical/compat split.
+    delete (attrs as Record<string, unknown>).componentName;
   }
   const content = node.content?.map(stripGammaAttrs);
   return { ...node, ...(attrs ? { attrs } : {}), ...(content ? { content } : {}) };

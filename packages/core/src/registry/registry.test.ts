@@ -1,15 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
 import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the complete 5-pack (5 registered + wildcard) after US-009 adds Accordion', () => {
-    // US-003 cut 14 fumadocs descriptors; US-005/US-006 widened Callout/Image;
-    // US-007 added Video; US-008 widened Audio + flipped hasChildren;
-    // US-009 adds Accordion — 5-pack foundation complete.
+  test('returns the 5 canonical + 3 compat descriptors + wildcard', () => {
+    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 3 compats
+    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion) + '*' wildcard.
+    // Compats are registered for parse + render but filtered out of the slash
+    // menu; they preserve source-form fidelity through round-trip edits.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(6);
+    expect(entries.length).toBe(9);
   });
 
   test('get returns registered component by name', () => {
@@ -45,12 +47,14 @@ describe('createRegistry', () => {
     // Hot-add
     const dataVizMeta: JsxComponentMeta = {
       name: 'DataViz',
+      surface: 'canonical',
       hasChildren: true,
       props: [
         { name: 'chartType', type: 'enum', enumValues: ['bar', 'line', 'pie'], required: true },
       ],
       category: 'content',
       description: 'Data visualization chart',
+      serialize: (node, ctx) => emitMdxJsx('DataViz', node, ctx),
     };
     registry.set('DataViz', dataVizMeta);
 
@@ -84,8 +88,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains exactly 5 entries (complete 5-pack foundation after US-009)', () => {
-    expect(builtInComponents.length).toBe(5);
+  test('contains 5 canonical + 3 compat entries (5-pack + source-form preservation)', () => {
+    expect(builtInComponents.length).toBe(8);
+    const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
+    const compat = builtInComponents.filter((m) => m.surface === 'compat');
+    expect(canonical.length).toBe(5);
+    expect(compat.length).toBe(3);
   });
 
   test('all entries have required fields', () => {
@@ -96,11 +104,16 @@ describe('builtInComponents manifest', () => {
     }
   });
 
-  test('all entries have description and searchTerms', () => {
+  test('all canonical entries have description and searchTerms (slash-menu surface)', () => {
+    // Compat descriptors are filtered out of the slash menu, so searchTerms
+    // (which power slash-menu discoverability) are only required on canonicals.
+    // Description is required on both — surfaces in agent discovery / MCP.
     for (const meta of builtInComponents) {
       expect(meta.description).toBeTruthy();
-      expect(Array.isArray(meta.searchTerms)).toBe(true);
-      expect(meta.searchTerms?.length).toBeGreaterThan(0);
+      if (meta.surface === 'canonical') {
+        expect(Array.isArray(meta.searchTerms)).toBe(true);
+        expect(meta.searchTerms?.length).toBeGreaterThan(0);
+      }
     }
   });
 

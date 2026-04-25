@@ -58,6 +58,8 @@ import { createRegistry } from '../registry/index.ts';
 import type { PropDef } from '../registry/types.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
+// reconstructAttrs is now consumed by descriptor `serialize` implementations
+// in registry/built-ins.ts via emitMdxJsx — no longer imported directly here.
 import {
   createParseProcessor,
   createSerializeProcessor,
@@ -297,98 +299,9 @@ function effectiveDirty(node: PmNode): boolean {
   return node.attrs.sourceDirty || hasDirtyDescendant(node);
 }
 
-/**
- * Reconstruct MdxJsxAttribute[] from a jsxComponent PM node's attrs.
- *
- * Merge semantics (FR-21): starts from the preserved mdast `attributes` array,
- * overlays structured props from attrs.props for descriptor-declared keys.
- * All other keys pass through verbatim. Prevents the γ-dirty path from
- * silently dropping user-supplied attrs not known to the descriptor.
- */
-function reconstructAttrs(pmNode: PmNode): Array<MdxJsxAttribute | MdxJsxExpressionAttribute> {
-  const preserved: Array<MdxJsxAttribute | MdxJsxExpressionAttribute> = Array.isArray(
-    pmNode.attrs.attributes,
-  )
-    ? pmNode.attrs.attributes.filter(
-        (a): a is MdxJsxAttribute | MdxJsxExpressionAttribute =>
-          a != null && typeof a === 'object' && 'type' in a,
-      )
-    : [];
-  const structuredProps: Record<string, unknown> = pmNode.attrs.props ?? {};
-
-  // Overlay structured props onto the preserved array
-  for (const [key, value] of Object.entries(structuredProps)) {
-    const existingIdx = preserved.findIndex((a) => a.type === 'mdxJsxAttribute' && a.name === key);
-
-    const newAttr = propToMdxJsxAttribute(key, value);
-
-    if (existingIdx >= 0) {
-      // Replace existing attr with the updated value
-      preserved[existingIdx] = newAttr;
-    } else {
-      // Add new attr that wasn't in the original source
-      preserved.push(newAttr);
-    }
-  }
-
-  return preserved;
-}
-
-/**
- * Convert a (key, value) pair to an MdxJsxAttribute mdast node.
- */
-function propToMdxJsxAttribute(name: string, value: unknown): MdxJsxAttribute {
-  // Boolean shorthand: bool → <Comp bool /> (value: null in mdast)
-  if (value === true) {
-    return { type: 'mdxJsxAttribute', name, value: null };
-  }
-  // Boolean false: serialize as bool={false} expression
-  if (value === false) {
-    return {
-      type: 'mdxJsxAttribute',
-      name,
-      value: { type: 'mdxJsxAttributeValueExpression', value: 'false' },
-    };
-  }
-  // Null/undefined: boolean shorthand (omit value)
-  if (value == null) {
-    return { type: 'mdxJsxAttribute', name, value: null };
-  }
-  // String: string literal
-  if (typeof value === 'string') {
-    return { type: 'mdxJsxAttribute', name, value };
-  }
-  // Number: expression
-  if (typeof value === 'number') {
-    return {
-      type: 'mdxJsxAttribute',
-      name,
-      value: {
-        type: 'mdxJsxAttributeValueExpression',
-        value: JSON.stringify(value),
-      },
-    };
-  }
-  // Array, object: expression with safe stringify
-  if (typeof value === 'object') {
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(value);
-    } catch {
-      serialized = String(value);
-    }
-    return {
-      type: 'mdxJsxAttribute',
-      name,
-      value: {
-        type: 'mdxJsxAttributeValueExpression',
-        value: serialized,
-      },
-    };
-  }
-  // Fallback: stringify
-  return { type: 'mdxJsxAttribute', name, value: String(value) };
-}
+// reconstructAttrs + propToMdxJsxAttribute moved to ./serialize-helpers.ts
+// so descriptor `serialize` implementations can import them without a
+// circular dep through this module's other exports.
 
 /**
  * True when an mdast node is a `paragraph` with no rendered text content —
@@ -1058,7 +971,9 @@ function buildPmToMdastHandlers(schema: Schema): {
 
       // Pristine path: sourceRaw carries the canonical bytes. to-markdown
       // handler returns it verbatim; mdast-to-hast reads it for escape-safe
-      // HTML rendering.
+      // HTML rendering. Same shape regardless of source form (canonical MDX
+      // JSX, GFM blockquote, CommonMark image, HTML5 details) — the bytes
+      // are the source of truth.
       if (!effectiveDirty(pmNode) && pmNode.attrs.sourceRaw) {
         return {
           type: 'mdxJsxFlowElement' as const,
@@ -1069,17 +984,26 @@ function buildPmToMdastHandlers(schema: Schema): {
         } as MdxJsxFlowElement;
       }
 
-      // Dirty path: structural reconstruction. No data.sourceRaw so the
-      // to-markdown handler falls through to its flush-left reconstruction
-      // branch (FR-6). reconstructAttrs merges user-edited PropPanel values
-      // onto the preserved original attrs (FR-21).
-      return {
-        type: 'mdxJsxFlowElement' as const,
-        name: componentName,
-        attributes: reconstructAttrs(pmNode),
-        children: state.all(pmNode),
-        data: {},
-      } as MdxJsxFlowElement;
+      // Dirty path: descriptor-dispatched. Each descriptor owns its own
+      // source-form emit — canonical descriptors emit mdxJsxFlowElement via
+      // the shared `emitMdxJsx` helper, compat descriptors emit their native
+      // source form (blockquote, paragraph+image, html-block) so round-trip
+      // preserves source identity even after a user edit.
+      const meta = registry.getOrWildcard(componentName ?? '*');
+      return meta.serialize(pmNode, {
+        all: (node) => state.all(node) as MdastNodes[],
+        registry,
+        // Wired by HtmlDetailsAccordion via its own serialize body. Other
+        // descriptors should not depend on this — call sites that do without
+        // host wiring will throw.
+        serializeChildren: () => {
+          throw new Error(
+            'SerializeContext.serializeChildren is not available in the PM→mdast handler. ' +
+              'Compat descriptors that need markdown-byte body rendering must emit a marker ' +
+              'mdast node and let the to-markdown handler render the body via state.containerFlow.',
+          );
+        },
+      });
     };
   }
 

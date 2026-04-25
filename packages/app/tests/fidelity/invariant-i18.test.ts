@@ -30,8 +30,12 @@ import * as fc from 'fast-check';
 import { mdManager, mdRoundTrip, NUM_RUNS } from './helpers';
 
 /** Strip γ-path-specific attrs that differ across authoring forms (sourceRaw,
- * source-attr array) but keep the normalized componentName + props which
- * represent the render-time equivalence. */
+ * source-attr array). After the canonical/compat split (see
+ * `registry/types.ts`), `componentName` ALSO differs by source form
+ * (`GFMCallout` for `> [!NOTE]`, `Callout` for `<Callout>` MDX); both render
+ * through the same React component via `rendersAs: 'Callout'` on GFMCallout.
+ * Strip componentName for prop-shape comparison — render-time equivalence is
+ * the load-bearing invariant, not byte-equal PM trees. */
 function stripGammaAttrs(node: JSONContent): JSONContent {
   if (!node) return node;
   let attrs = node.attrs;
@@ -41,6 +45,7 @@ function stripGammaAttrs(node: JSONContent): JSONContent {
     delete (attrs as Record<string, unknown>).content;
     delete (attrs as Record<string, unknown>).attributes;
     delete (attrs as Record<string, unknown>).sourceDirty;
+    delete (attrs as Record<string, unknown>).componentName;
   }
   const content = node.content?.map(stripGammaAttrs);
   return { ...node, ...(attrs ? { attrs } : {}), ...(content ? { content } : {}) };
@@ -105,7 +110,7 @@ describe('I18 — alias map folds broader types to GFM 5 subset', () => {
       const json = mdManager.parse(gfmForm);
       const calloutNode = findFirstNode(json, 'jsxComponent');
       expect(calloutNode).toBeDefined();
-      expect(calloutNode?.attrs?.componentName).toBe('Callout');
+      expect(calloutNode?.attrs?.componentName).toBe('GFMCallout');
       expect((calloutNode?.attrs?.props as Record<string, unknown>)?.type).toBe(expectedType);
     });
   }

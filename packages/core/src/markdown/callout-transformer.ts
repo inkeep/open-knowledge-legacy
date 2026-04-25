@@ -228,11 +228,38 @@ function buildCalloutElement(
   // The plugin always prepends a paragraph with class `ok-alert-title`;
   // everything after is the original blockquote body with the opener line
   // already consumed from the first text child.
-  const body = blockquote.children.slice(1);
+  //
+  // Additionally: when the title was extracted from the marker line AND the
+  // source separates marker from body with a blank `>` line, the alerts
+  // plugin leaves a residual paragraph containing the title-text remainder
+  // (e.g., source `> [!NOTE] hi\n>\n> body` → blockquote children = [
+  // synthetic-title, paragraph('hi' on line 1), paragraph('body' on line 3) ]).
+  // The residual is a duplicate of `title` and breaks dirty-path idempotence
+  // (the serializer would emit `> [!NOTE] hi\n>\n> hi\n>\n> body`, growing on
+  // each cycle). Detect via position — the residual paragraph's start line
+  // matches the blockquote opener line (the marker), distinct from later
+  // body paragraphs.
+  const rawBody = blockquote.children.slice(1);
+  const openerLineNumber = blockquote.position?.start.line;
+  // A residual title paragraph is single-line, confined to the opener line.
+  // The blank-line variant (`> [!NOTE] hi\n>\n> body`) produces a paragraph
+  // with start.line === end.line === opener-line; the no-blank-line variant
+  // (`> [!NOTE] hi\n> body`) produces a multi-line paragraph that ends on a
+  // later line and IS the body — must not be stripped.
+  const body =
+    title &&
+    rawBody.length > 0 &&
+    openerLineNumber !== undefined &&
+    isResidualTitleParagraph(rawBody[0], openerLineNumber)
+      ? rawBody.slice(1)
+      : rawBody;
 
   const element: MdxJsxFlowElement = {
     type: 'mdxJsxFlowElement',
-    name: 'Callout',
+    // GFMCallout (compat descriptor) preserves source-form identity through
+    // the PM tree so the dirty-path serializer round-trips back to GFM
+    // `> [!TYPE]` syntax instead of always emitting MDX JSX.
+    name: 'GFMCallout',
     attributes: attrs,
     children: body,
     // Copy position verbatim so `applyPositionSliceToNode` captures the
@@ -241,6 +268,26 @@ function buildCalloutElement(
   };
 
   return element;
+}
+
+/**
+ * Detect a residual title-line paragraph that the alerts plugin leaves when
+ * the source separates the marker line from the body with a blank `>` line.
+ * The residual paragraph is single-line — start.line === end.line ===
+ * opener-line. A multi-line paragraph that begins on the opener line is the
+ * body (e.g., `> [!NOTE] hi\n> body` produces one paragraph spanning lines
+ * 1-2; the whole thing is body content, not a residual).
+ */
+function isResidualTitleParagraph(node: unknown, openerLineNumber: number): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const n = node as {
+    type?: string;
+    position?: { start?: { line?: number }; end?: { line?: number } };
+  };
+  if (n.type !== 'paragraph') return false;
+  const start = n.position?.start?.line;
+  const end = n.position?.end?.line;
+  return start === openerLineNumber && end === openerLineNumber;
 }
 
 /**

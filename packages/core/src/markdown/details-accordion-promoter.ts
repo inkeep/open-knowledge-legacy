@@ -175,7 +175,10 @@ function promoteSingleLineParagraph(paragraph: Paragraph): MdxJsxFlowElement | n
 
   return {
     type: 'mdxJsxFlowElement',
-    name: 'Accordion',
+    // HtmlDetailsAccordion (compat descriptor) preserves source-form identity
+    // through the PM tree so the dirty-path serializer round-trips back to
+    // HTML5 `<details>...</details>` syntax instead of always emitting MDX JSX.
+    name: 'HtmlDetailsAccordion',
     attributes: buildAccordionAttrs({ title, defaultOpen, name, id }),
     children,
     position: paragraph.position,
@@ -266,7 +269,9 @@ function promoteInParent(parent: Parent): void {
         const closerPos = closer.position;
         const replacement: MdxJsxFlowElement = {
           type: 'mdxJsxFlowElement',
-          name: 'Accordion',
+          // HtmlDetailsAccordion (compat descriptor) — see single-line variant
+          // above for the source-form-identity rationale.
+          name: 'HtmlDetailsAccordion',
           attributes: buildAccordionAttrs(match),
           children: body,
           position:

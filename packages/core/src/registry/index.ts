@@ -7,18 +7,30 @@
 
 export { builtInComponents } from './built-ins.ts';
 
+import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
 import { builtInComponents } from './built-ins.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 /**
  * The wildcard descriptor — serves any component name not in the registry.
  * hasChildren: true so markdown children remain editable ("bring your own markdown").
+ *
+ * Tagged `surface: 'canonical'` so render dispatch is uniform — the wildcard's
+ * `serialize` is the same MDX-JSX structural reconstruction the canonical 5-pack
+ * uses, just with the unregistered name passed through verbatim. The wildcard
+ * is technically neither truly canonical nor compat; calling it canonical
+ * sidesteps a third surface category that would have no other consumers.
  */
 export const wildcardMeta: JsxComponentMeta = {
   name: '*',
+  surface: 'canonical',
   hasChildren: true,
   props: [],
   description: 'Unregistered component — children editable as markdown',
+  serialize: (node, ctx) => {
+    const componentName = (node.attrs.componentName as string) || '*';
+    return emitMdxJsx(componentName, node, ctx);
+  },
 };
 
 export interface ComponentRegistry {
