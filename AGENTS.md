@@ -4,6 +4,20 @@ Bun monorepo (`bun@1.3.13`) — CRDT collaboration server + editor, packaged as 
 
 This file is the agent-facing index. It names the load-bearing commands, STOP rules, and conventions. **Depth lives elsewhere**: [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PRECEDENTS.md`](./PRECEDENTS.md), per-package READMEs, `specs/`, and `reports/`. Follow the pointers — don't re-derive them from this file.
 
+## What belongs in this file
+
+This file loads on every agent session — every byte trades against instruction adherence. **Hard cap 40,000 chars (pre-commit errors); soft warning at 35,000.** Per-section research + audit: [`reports/agents-md-size-reduction/REPORT.md`](reports/agents-md-size-reduction/REPORT.md).
+
+Before adding anything, ask: *would removing this cause an agent to make a mistake a linter can't catch?* If yes, inline. If no, link out — point, don't embed. (`@path` imports do **not** save context — they expand at load time. Use prose references.)
+
+**Inline:** STOP / WARN rules that fire repo-wide; canonical commands; repo-wide conventions (ESM, Biome, `workspace:*`); one-paragraph package and editor-substrate orientations; names of architectural invariants the user must hold while editing; "use Y not X" tool-routing guidance.
+
+**Reference (don't embed):** subsystem deep dives → `ARCHITECTURE.md`; precedent enumerations + rationale → [`PRECEDENTS.md`](./PRECEDENTS.md); per-package internals → `packages/<pkg>/README.md`; tutorials, step-by-steps, code examples → a skill, or the relevant `tests/README.md`; spec text, decision logs, NG enumerations → the spec directory.
+
+Stop signs this file is growing wrong: status banners ("M3 shipped"), milestone checklists, post-mortem narrative ("we got burned by …"), full enumerations (every endpoint, every `D#`, every `NG#`), tutorial-form code examples, multi-paragraph rationale for a single rule (move it to a comment at the protected call site).
+
+When you add a STOP / WARN rule, delete the rule it absorbs — net char delta should approach zero on routine maintenance.
+
 ## Monorepo
 
 ```
@@ -179,14 +193,12 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **`recordContributor` summaries route through `normalizeSummary`** (`packages/server/src/agent-write-summary.ts`). Single API-boundary truncation point — don't scatter trimming/type-checking across handlers. Whitespace-only inputs classify as `absent` and don't count as adoption. SPEC: [`specs/2026-04-21-agent-write-summaries/SPEC.md`](specs/2026-04-21-agent-write-summaries/SPEC.md) §6 FR2 + D5/D24.
 - **`handleRename` / `handleRollback` guard `extractAgentIdentity` + `recordContributor` on explicit `agentId`.** In-editor Restore posts with no identity; the default `claude-1/Claude` fallback would attribute every human-driven rollback to Claude (D22 LOCKED 1-way-door, NG12). Adding attribution by default is scope-extension.
 - **Don't narrow PM mark `excludes` fields.** Precedent #9 covers mark attrs as add-only. US-017 widened `Code` via `CodeMarkFidelity` (`excludes: ''`) to let emphasis/strong coexist with inline code per CommonMark. Reverting via a Tiptap upgrade reintroduces idempotence failures.
-- **`shell.openPath` single-source discipline (2026-04-23).** Exactly two call sites in the main process: `openAssetSafely` at `packages/desktop/src/main/asset-allowlist.ts` and the `ok:shell:open-asset` handler registration at `packages/desktop/src/main/index.ts` that delegates to it. Do NOT add a third. `shell.openPath` dispatches to the OS content handler by extension — every unguarded call site is a potential RCE vector (Joplin/Obsidian/Zettlr research in [`reports/electron-os-integration-patterns/`](reports/electron-os-integration-patterns/) D5). Any new renderer-initiated "open this file on disk" surface must route through the existing IPC → `openAssetSafely` three-check gate (containment + existence + `EXECUTABLE_BLOCKLIST_EXTENSIONS`). Extend the IPC channel or add a sibling handler that reuses `openAssetSafely`; don't call `shell.openPath` directly.
-- **Asset click interception goes through InteractionLayer only (2026-04-23).** Click routing goes through `createMarkInteractionBridgePlugin` (for `link` marks) or `createAssetContextMenuPlugin` (contextmenu) — NEVER `handleClickOn` / `handleDOMEvents` on a ProseMirror plugin (precedent #19(b)). The renderer dispatcher (`dispatchAssetClick` in `packages/app/src/editor/asset-dispatch/`) is the single entry point; every bridge/plugin routes there. Adding a second click-intercept mechanism fragments routing and re-introduces the Gap 3b / Gap 4 failure class.
-- **No `upload.*` user-facing config + no runtime `.obsidian/app.json` reader (2026-04-24).** `ConfigSchema` has no `upload` section; `UploadConfig` / `DEFAULT_UPLOAD_CONFIG` / `PartialUserUploadConfig` / `resolveUploadConfig` / `detectObsidianVault` were deleted. Every value is a module-level constant in `packages/core/src/constants/upload.ts` (`DEFAULT_ATTACHMENT_FOLDER_PATH`, `DEFAULT_EMIT_FORMAT`, `DEFAULT_DEDUP_MODE`, `DEFAULT_DEDUP_UI`, `WIKI_EMBED_EXTENSIONS`). Re-adding any knob requires a spec with a concrete user request. Do NOT re-add a runtime reader of `.obsidian/app.json` — Obsidian-refugee onboarding is the future one-shot `ok migrate --from-obsidian-vault` CLI, not runtime coupling to a proprietary closed-source schema. Reference: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-24).
-- **Server-side disk writes go through `fs-traced.ts` wrappers.** Never import `writeFile` / `rename` / `mkdir` / `unlink` directly from `node:fs` (or `node:fs/promises`) in server code that might run in production paths — use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (or `*Sync` variants) from `packages/server/src/fs-traced.ts` so every disk write emits an `fs.*` span with bounded-cardinality path attributes. `@opentelemetry/instrumentation-fs` does NOT work on Bun (oven-sh/bun#6546, #26536); the hand-rolled wrappers are the sanctioned path. Exception: test-only code and one-shot scripts that never run in production don't need wrapping. Reference: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17 US-010.
-- **Don't emit unbounded-cardinality span/metric attributes.** Raw absolute paths, document content, user free-form strings on histograms or high-volume span attributes will blow up Tempo's index and Prometheus's label cardinality. Normalize before emitting: paths → last-two-segments + a `*.role` classifier (reference: `fs-traced.ts`'s `normalizeFsPath` + `classifyFsPath`); identifiers → pre-validated UUIDs / enums. Safe spans tag `doc.name`, `shadow.writer`, `agent.write_position`, `http.route` (pre-normalized). Reference: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17 US-010 cardinality rule.
-- **Serve-side asset admission goes through widened `ASSET_EXTENSIONS` + `Content-Disposition` dispatch (2026-04-24b).** The Vite plugin's sirv middleware at `packages/app/src/server/hocuspocus-plugin.ts:404+` MUST set `Content-Disposition: inline` for `INLINE_RENDERABLE_EXTENSIONS` (image/pdf/video/audio subset) and `attachment` for everything else admitted by the content filter. Narrowing `ASSET_EXTENSIONS`, removing the Content-Disposition dispatch, or dropping the SPA-fallback 404 guard silently refutes SPEC D-M accept-all + R7 and re-surfaces the `.m4v`-class dogfood bug (new tab serves `text/html` instead of the asset). `.md`/`.mdx` direct-URL requests bypass the dispatch (edge case — forcing attachment would break dev-tool `curl` of markdown paths). Reference: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-24b).
-- **`EXECUTABLE_BLOCKLIST_EXTENSIONS` includes macOS-installer + URL-file + cross-platform-package classes (2026-04-24b).** Do not narrow. Covered: `.dmg`/`.pkg`/`.mpkg`/`.scpt`/`.applescript`/`.terminal`/`.prefpane` (macOS installer + script + system-UI), `.webloc`/`.inetloc`/`.fileloc` (URL-file, CVE-2022-22590 class), `.jar`/`.appimage`/`.deb`/`.rpm`/`.msix`/`.appx`/`.ipa`/`.apk` (cross-platform packages), `.pif`/`.scr`/`.lnk`/`.url` (Windows shortcut + PE executables). Consumed by `openAssetSafely` (`packages/desktop/src/main/asset-allowlist.ts`) and `matchAssetUrl` (`packages/desktop/src/main/asset-safety-net.ts`). Reference: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-24b) + [`reports/electron-os-integration-patterns/REPORT.md`](reports/electron-os-integration-patterns/REPORT.md) D4.
-- **FR-A5 `wikiLinkEmbed` NodeView wires drop-time clicks through the dispatcher (2026-04-24b).** `packages/app/src/editor/extensions/wiki-link-embed.ts` (app-layer) mounts a per-instance NodeView over core's `WikiLinkEmbed` that registers with `getInteractionLayer(editor)` and routes non-image chip clicks through `dispatchAssetClick`. Do NOT revert to bare `<a target="_blank">` fallback — pre-fix, this path silently failed in Electron (`setWindowOpenHandler` denied with no feedback). Image extensions render as `<img>` with no registration (inline display; click is a PM-selection concern). Pattern mirrors `wiki-link.ts:98-200`. Reference: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) §Post-finalization amendment (2026-04-24b).
+- **`shell.openPath` single-source + don't narrow `EXECUTABLE_BLOCKLIST_EXTENSIONS`.** Two `shell.openPath` call sites: `openAssetSafely` (`packages/desktop/src/main/asset-allowlist.ts`) and the `ok:shell:open-asset` IPC handler. New surfaces must route through `openAssetSafely`'s three-check gate (containment + existence + blocklist); unguarded `shell.openPath` is RCE-class. Blocklist (in `packages/core/src/constants/upload.ts`) covers macOS installer/script + CVE-2022-22590 URL-files + cross-platform packages + Windows shortcut/PE — also consumed by `matchAssetUrl` in `asset-safety-net.ts`.
+- **Asset click interception via InteractionLayer only.** All click surfaces (`createMarkInteractionBridgePlugin`, `createAssetContextMenuPlugin`, `wikiLinkEmbed` NodeView) route through `dispatchAssetClick` (`packages/app/src/editor/asset-dispatch/`); NEVER `handleClickOn` / `handleDOMEvents` on a PM plugin (precedent #19(b)). Drop-time chips MUST register with `getInteractionLayer(editor)` — bare `<a target="_blank">` silently fails in Electron.
+- **No `upload.*` config + no runtime `.obsidian/app.json` reader.** Values live as constants in `packages/core/src/constants/upload.ts`. Adding a knob requires a spec with a concrete user request; Obsidian-refugee onboarding is the future `ok migrate --from-obsidian-vault` CLI, not a runtime reader.
+- **Server-side disk writes go through `fs-traced.ts` wrappers.** Use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (+ `*Sync`) from `packages/server/src/fs-traced.ts` rather than importing raw `node:fs` write functions in production paths — every disk write needs an `fs.*` span with bounded-cardinality attributes. `@opentelemetry/instrumentation-fs` does not work on Bun (oven-sh/bun#6546). Test-only code is exempt.
+- **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
+- **Serve-side asset admission via `createAssetServeMiddleware`.** Shared factory at `packages/server/src/asset-serve-middleware.ts` (consumed by Vite dev plugin + `ok ui`); inline for `INLINE_RENDERABLE_EXTENSIONS`, attachment otherwise. Don't drop CD dispatch or the SPA-fallback 404 guard — re-surfaces `.m4v`-class `text/html` bugs.
 
 ## WARN rules
 
@@ -198,71 +210,22 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - React 19.2 `<Activity mode="hidden">` unmounts the hidden subtree's DOM. Scroll containers that wrap multiple Activity mounts lose `scrollTop` on every flip. **Each Activity mount must own its own scroll container** — see `EditorActivityPool.tsx` + `ScrollPreservingContainer`.
 - Playwright's `_electron.launch({ args: [url] })` does NOT fire the macOS `open-url` Apple Event — URL arrives via `process.argv` (second-instance path only), NOT the cold-start queue-then-flush. Tests that need true Apple-Event delivery must shell out to `execSync('open -g "openknowledge://..."')`. Reference: `packages/desktop/tests/smoke/deep-link.e2e.ts`.
 - `syntaxTreeAvailable()` from `@codemirror/language` reflects the DEEPEST pending sublanguage, not the outer markdown tree. Gating decorations on it silently disables them whenever a fenced-code language block enters the viewport. For ViewPlugin: detect `syntaxTree(update.startState) !== syntaxTree(update.state)`. For StateField: early-return on `!tr.docChanged`. Reference: `packages/app/src/editor/source-polish/`.
-- `OTEL_SDK_DISABLED` follows OTel convention: only the literal string `"false"` enables the SDK. Any other value (`"true"`, `"1"`, empty, unset) keeps it disabled. Misreading this as "boolean" sends people down an hour of wondering why no traces appear when they set `OTEL_SDK_DISABLED=0`. Frontend gate `VITE_OTEL_ENABLED` is the inverse (must equal `"true"` to enable) and is a Vite build-time env — setting it AFTER `bun run dev` starts has no effect on the current bundle.
-- The dev plugin runs `createServer()` from `@inkeep/open-knowledge-server` (no longer constructs Hocuspocus directly — changed in PR #293). `createServer()` calls `initTelemetry()` internally, so `bun run dev` gets OTel for free when the env vars are set. Don't re-add a separate `initTelemetry()` call in the plugin — it'd be a redundant no-op (init is idempotent) but noise in the init sequence.
+- `OTEL_SDK_DISABLED` follows OTel convention — only the literal `"false"` enables the SDK; `"true"`, `"1"`, empty, unset all keep it disabled. Frontend gate `VITE_OTEL_ENABLED` is the inverse (must be `"true"`) and is a Vite build-time env — set it before `bun run dev` starts.
+- `bun run dev` gets OTel for free: the dev plugin's `createServer()` call internally runs `initTelemetry()`. Don't re-add a separate `initTelemetry()` call in the plugin — redundant no-op.
 
 **Logging conventions.** Two `console.warn` styles coexist: (1) bracket-prefix (`[file-watcher] ...`) for ad-hoc ops warnings read by humans; (2) structured JSON (`console.warn(JSON.stringify({event, ...}))`) for events counted in aggregate or asserted in tests. Don't convert one to the other without knowing the consumers.
 
 ## Observability (OpenTelemetry)
 
-OTel instrumentation is **opt-in** and **dev-focused**. Default builds have the SDK disabled on the server and bundle-eliminated on the frontend — zero overhead when off.
+Opt-in, dev-focused. Default builds: SDK disabled on the server (`OTEL_SDK_DISABLED=false` enables — note the literal-string sentinel, see WARN rules), bundle-eliminated on the frontend (`VITE_OTEL_ENABLED=true` enables; build-time env). Zero overhead when off.
 
-**Turn it on + see traces:** full getting-started is in [`docker/otel-dev/README.md`](docker/otel-dev/README.md). Three commands: `docker compose up -d`, export env vars (`OTEL_SDK_DISABLED=false OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318 VITE_OTEL_ENABLED=true VITE_OTEL_COLLECTOR_URL=http://localhost:14318`), `bun run dev`. Grafana at **[http://localhost:3001](http://localhost:3001)** (anonymous admin, no login).
+**Local stack + getting started:** [`docker/otel-dev/README.md`](docker/otel-dev/README.md). Compose the LGTM stack (Grafana + Tempo + Loki + Prometheus + OTel Collector); collector listens on `14318` (HTTP) / `14317` (gRPC), Grafana on `3001`. Browser → fetch → HTTP server span → agent-write → persistence → `fs-traced` writes → shadow-repo all chain into one Tempo trace. Pino logs carry `trace_id` / `span_id` for trace↔log correlation.
 
-**What's instrumented:** browser UserInteraction / DocumentLoad / Fetch → HTTP server span (with `traceparent` extraction) → agent-write → persistence load/store → `fs.writeFile` / `fs.rename` / `fs.mkdir` (via `fs-traced.ts`) → `persistence.commitToWipRef` → `shadow.commitWip`. Full app→disk chain as one trace when fetch-initiated. Metrics: `http.server.request.duration`, `ok.persistence.load/store/git_commit.duration`, `ok.file_watcher.events`. Pino log records carry `trace_id` / `span_id` for trace↔log correlation in Grafana.
+**Canonical sites.** SDK init + `withSpan` / `getMeter` helpers: [`packages/server/src/telemetry.ts`](packages/server/src/telemetry.ts). The only sanctioned path for `fs.*` spans: [`packages/server/src/fs-traced.ts`](packages/server/src/fs-traced.ts) (`tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` + `*Sync` variants; reuse its `normalizeFsPath` + `classifyFsPath` to keep cardinality bounded). Lazy browser SDK: [`packages/app/src/telemetry-impl.ts`](packages/app/src/telemetry-impl.ts). Hocuspocus WS trace propagation (query-param, since the browser `WebSocket` API can't set headers): [`packages/app/src/editor/collab-otel.ts`](packages/app/src/editor/collab-otel.ts).
 
-**Canonical sites:**
+**Adding a span / metric:** wrap the call site with `withSpan('my.operation', { attributes }, async () => { … })`; for disk writes use the `traced*` wrappers; namespace repo-specific attributes / metrics under `ok.*` / `agent.*` / `shadow.*` / `persistence.*` / `doc.*` and follow OTel semconv for `http.*` / `fs.*` / `db.*`. Cardinality discipline is the STOP rule above; HTTP-initiated paths inherit `traceparent` automatically via `onRequest`, WS-initiated paths are independent roots.
 
-- [`packages/server/src/telemetry.ts`](packages/server/src/telemetry.ts) — SDK init (`initTelemetry`, `shutdownTelemetry`), helpers (`withSpan`, `withSpanSync`, `setActiveSpanAttributes`, `getTracer`, `getMeter`). SDK 2.x, Bun-compatible (`BasicTracerProvider` + `AsyncLocalStorageContextManager`).
-- [`packages/server/src/fs-traced.ts`](packages/server/src/fs-traced.ts) — the ONLY sanctioned path for adding a disk-write span. Every new `writeFile` / `rename` / `mkdir` call site in the server package goes through these wrappers.
-- [`packages/app/src/telemetry.ts`](packages/app/src/telemetry.ts) + [`telemetry-impl.ts`](packages/app/src/telemetry-impl.ts) — lazy-loaded browser SDK. Dynamic import gates the \~45 KB OTel bundle behind `VITE_OTEL_ENABLED === 'true'` — nothing ships when off.
-- [`packages/app/src/editor/collab-otel.ts`](packages/app/src/editor/collab-otel.ts) — Hocuspocus WebSocket trace-context propagation (query param, since browser `WebSocket` can't set headers).
-- [`docker/otel-dev/`](docker/otel-dev/) — the local Grafana LGTM stack (Grafana + Tempo + Loki + Prometheus + OTel Collector). README has port layout, env vars, and troubleshooting.
-
-**Adding a new span** (agents + humans):
-
-1. Identify the operation. Is it a ≥1ms unit worth measuring, and a named boundary in the codebase (function, hook, handler)? If yes, it gets a span; if it's 5 lines of CPU-bound arithmetic, it doesn't.
-
-2. Wrap the call site:
-
-   ```typescript
-   import { withSpan } from './telemetry.ts';  // or from @inkeep/open-knowledge-server
-
-   await withSpan('my.operation', { attributes: { 'my.attr': value } }, async () => {
-     // existing code
-   });
-   ```
-
-   `withSpan` handles exception recording + status + `span.end()` — just write the body.
-
-3. If you need to read the active span without a reference (e.g. to add attributes deep in a call chain), use `setActiveSpanAttributes({ ... })`.
-
-4. If the operation writes to disk, use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (async) or `*Sync` variants from `fs-traced.ts` — do NOT import raw `fs` and wrap it yourself.
-
-5. Attribute keys: follow OTel semantic conventions (`http.*`, `db.*`, `fs.*`, `file.*`, etc.). Repo-specific attributes use namespaced prefixes (`ok.*`, `agent.*`, `shadow.*`, `persistence.*`, `doc.*`).
-
-6. **Cardinality check:** attributes with an unbounded value space (raw paths, user IDs, document content) will blow up Tempo's index. Normalize or classify before emitting — `fs-traced.ts`'s `fs.path` + `fs.path.role` pattern is the reference.
-
-**Adding a new metric:**
-
-```typescript
-import { getMeter } from './telemetry.ts';
-
-// Lazy-init at first use (meter is a no-op when disabled, so allocation is cheap).
-const hist = getMeter().createHistogram('ok.my_subsystem.duration', {
-  description: 'What this measures',
-  unit: 's',
-});
-hist.record(elapsedSeconds, { 'bounded.label': value });
-```
-
-- Namespace: `ok.<subsystem>.<metric_name>`. Standard OTel names (`http.*`) when they apply.
-- Units follow semconv: seconds (`s`), bytes (`By`), counts unitless.
-- Histogram labels must be bounded-cardinality. Never put raw paths, user IDs, or free-form strings on a metric.
-
-**Adding trace context to a new write surface:** if the surface receives an HTTP request, the server's `onRequest` extension already extracts the incoming `traceparent` header — just wrap the handler body with `withSpan`. If it's a WebSocket-initiated path, the server-side `onConnect` extraction of `traceparent` from `requestParameters` is deferred (see [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md) §17.4) — your span will be an independent root, which is fine.
-
-Full PRD + decisions + non-goals + user stories: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md). **§17 is the scope-expansion amendment** (2026-04-23) — read before adding non-trivial instrumentation.
+Full PRD + scope-expansion amendment §17 (the full-chain scope): [`specs/2026-04-09-otel-instrumentation/SPEC.md`](specs/2026-04-09-otel-instrumentation/SPEC.md).
 
 ## Symlinks
 
@@ -301,26 +264,11 @@ Six handler-specific PBTs alongside (emphasis, backslash, list-nesting, html-blo
 
 Comments explain the non-obvious **why** — a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader. If removing the comment wouldn't confuse a future reader, don't write it. Well-named identifiers explain the **what**; don't duplicate them in prose.
 
-**Do NOT cite the process that produced the code.** The following all rot and belong in the PR body or commit message, not in source:
+**Don't cite the process that produced the code.** Spec paths, internal decision numbers (`D5`, `LOCKED`, `NOT NOW`, …), non-goal tags (`NG2`), AC / US / FR numbers, audit-finding IDs (`DC-M4`, `Mutation H`), dated audit-trail narratives ("post-ship amendment", "Per 2026-04-21 review"), and feature-work / milestone tags (`M3`, `V0-14`) all rot. They belong in the PR body or commit message, not source. When one appears next to substance worth keeping, strip the citation and keep the substance; when the whole comment only exists to cite, delete it.
 
-- SPEC paths — `specs/2026-04-21-open-in-agent-desktop/SPEC.md §6.4`, `Governing spec: …`.
-- Internal decision numbers — `D5`, `D8`, `D24`, `LOCKED`, `DIRECTED`, `NOT NOW`, `per D44 case (a)`.
-- Non-goal tags — `NG2`, `per NG6`, `NG3 — no beta channel`.
-- Acceptance-criteria / user-story / functional-requirement numbers — `AC9 asserts`, `US-007 wires a mock`, `FR-8 "Warning logged"`, `MQ1`.
-- Audit finding IDs — `DC-M4`, `DC-L7`, `Review M5`, `Review Minor #1`, `audit M6`, `Mutation H`.
-- Dated audit-trail narratives — `post-ship amendment`, `post-implementation fix`, `Per post-ship review`, `2026-04-21 amendment`.
-- Feature-work or milestone tags that mean nothing after the work ships — `M3`, `V0-14`, `V0-1 shipped`, `added for …`.
+**Exempt — keep these:** STOP / WARN rules and cross-file contracts (already codified above); external standards with stable numbering (`CommonMark §2.4`, `RFC 3986`, upstream issue numbers like `electron/electron#32600`); `precedent #N` references (target [`PRECEDENTS.md`](./PRECEDENTS.md), an intentionally long-lived rulebook); explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
 
-When one of these appears next to substance worth keeping, strip the citation and keep the substance. When the whole comment only exists to cite, delete it.
-
-**Exempt — keep these:**
-
-- STOP / WARN rules and cross-file contracts (the ones already codified in the "Known Pitfalls" and "STOP rules" sections of this file).
-- External standards with stable numbering: `CommonMark §2.4`, `RFC 3986`, `OAuth 2.1 §4.1.3`, upstream issue numbers like `electron/electron#32600`.
-- `precedent #N` references in this repo — they target [PRECEDENTS.md](./PRECEDENTS.md), which is an intentionally curated long-lived rulebook (not a rotating spec).
-- Explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
-
-**Rule of thumb before writing a comment:** if the "why" is the task ticket, a review suggestion, or a spec paragraph, put it in the PR body and leave the code alone. If it's a permanent structural reason a future reader would stub their toe on, write the permanent reason without the dated pointer.
+Rule of thumb: if the "why" is the task ticket, a review suggestion, or a spec paragraph, put it in the PR body and leave the code alone. If it's a permanent structural reason a future reader would stub their toe on, write that reason without the dated pointer.
 
 ## See also
 
@@ -331,66 +279,29 @@ When one of these appears next to substance worth keeping, strip the citation an
 - `specs/` — per-feature specs (e.g. `2026-04-14-bridge-convergence-under-concurrent-writes/`, `2026-04-16-bridge-correctness/`, `2026-04-18-agent-identity-attribution-foundation/`, `2026-04-19-ci-signal-quality/`, `2026-04-21-agent-write-summaries/`)
 - `stories/`, `projects/`, `strategy/` — product planning surfaces
 
-<!-- open-knowledge:begin -->
+## Open Knowledge MCP
 
-## Open Knowledge
+This repo's `.md` / `.mdx` files (under `content.dir`, matching `content.include`, not in `content.exclude` or `.gitignore` — see [`.open-knowledge/config.yml`](.open-knowledge/config.yml); default `**/*.md` under `.`) are CRDT documents. When the Open Knowledge MCP server is registered for this project, route reads, listings, searches, and writes through its tools — never native `Read` / `Grep` / `Glob` / `Edit` / `Bash ls|find|cat|sed`. Native bypasses lose attribution (writes land as anonymous `file-system` per precedent #25), miss frontmatter / backlinks / recent-edit signal, and break the live preview the user is watching. MCP wiring varies per host (Claude Code / Codex / Cursor / Windsurf / VS Code–class) and tools may not appear as a top-level `exec` symbol — use the host's "call MCP tool" flow; that still counts as available.
 
-This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowledge/config.yml`** (with optional `~/.open-knowledge/config.yml`; CLI/env may override) is the **path contract**: `content.dir` is the root for relative paths; `content.include` lists globs that **add** markdown; `content.exclude` lists globs that **remove** paths. Nothing else defines scope — not folder names, not "docs vs code." `.gitignore` still applies. When MCP is connected, the server's instructions echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and the YAML as two views of the same rules.
-
-**Default mental model (no jargon):** unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
-
-**STOP — your host's built-in file tools on in-scope `.md` / `.mdx`.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** reach for native tools on in-scope markdown. Same failure mode as native `Edit` on them: no frontmatter, no backlinks, no shadow-repo activity, no recent-edit signal. The ban is broader than just `Read` / `Grep` / `Glob` — it names every common rationalization:
-
-- **Native `Read` / `Grep` / `Glob` on in-scope `.md` / `.mdx`** — the original case.
-- **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent-activity per child.
-- **Glob patterns that target markdown** (`**/*.md`, `**/SPEC.md`, or any dir known to be markdown-heavy like `specs/**`, `reports/**`, `stories/**`, `projects/**`, `docs/**`) — use `exec` with `find`, or `list_documents({ dir })`.
-- **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search`. Subagents remain appropriate for **source-code** exploration (`.ts`, `.py`, configs, etc.).
-
-**MCP wiring varies by client:** Claude Code, Codex, Cursor, Windsurf, VS Code–class clients, and others surface MCP differently — server labels are user-defined; tools may not appear as a top-level symbol named `exec`. **If Open Knowledge is registered**, route markdown reads through its `exec` / `search` / `read_document` tools using **your client's documented MCP invocation** (including any generic "call MCP tool" flow). **That counts as available.** Not seeing `exec` in a flat tool list is **not** the escape hatch.
-
-**Escape hatch (narrow).** Native `Read` / `Grep` / `Glob` on `.md` / `.mdx` is allowed **only** when no Open Knowledge MCP server is registered for this project, **or** immediately after you **tried** an MCP call and it failed — then start a user-visible sentence with `Open Knowledge MCP unavailable:`. Never use the hatch because you skipped your client's MCP path.
-
-**Reads and searches on markdown:** Open Knowledge `exec` (or `read_document` / `search`) — same payloads whether your client invokes them directly or through MCP. Examples: `exec("cat docs/auth.md")`, `exec("ls reports/")`, `exec("grep -rn karpathy specs/ | head -10")`.
-
-**Listings too.** `exec("ls <dir>/")` is how you list a directory — it returns per-child frontmatter, recursive markdown counts, and the most-recently-updated doc per subdir. Plain `Bash ls` returns just names.
-
-**Anti-patterns at a glance:**
-
-| Task                            | Don't                     | Do                                             |
+| Task                            | Native (don't)            | OK MCP (do)                                    |
 | ------------------------------- | ------------------------- | ---------------------------------------------- |
 | List a markdown-heavy dir       | `Bash: ls specs/`         | `exec("ls specs/")`                            |
 | Find all SPEC.md files          | `Glob: **/SPEC.md`        | `exec("find specs -name SPEC.md")`             |
 | Summarize specs across the repo | `Agent(Explore): "…"`     | `exec("head -25 specs/*/SPEC.md")` + `search`  |
 | Search a phrase across markdown | `Grep: "pattern" *.md`    | `search({ query: "pattern" })`                 |
 | Read an individual spec         | `Read: specs/foo/SPEC.md` | `read_document({ path: "specs/foo/SPEC.md" })` |
+| Edit / create a markdown doc    | `Edit` / `Write` / `sed`  | `edit_document` / `write_document`             |
 
-**Source code and everything else** (`.ts`, `.py`, `package.json`, …): native `Read` / `Grep` / `Glob`.
+Subagents (`Explore`, `general-purpose`) use native tools internally and bypass MCP — keep markdown exploration on the main thread; subagents remain appropriate for `.ts` / `.py` / config exploration.
 
-**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `file-system` writes (classified writer per precedent #25) — you lose per-agent attribution in the shadow repo.
+**`docName` argument is extension-less.** `write_document({ docName: "foo" })` writes `foo.md`; passing `"foo.md"` produces `foo.md.md`.
 
-**Preview — open the browser at session start if it is not already open.** The user watches edits land live in the preview pane; if it is not open, your work is invisible. Treat opening the preview as your first OK action of the session, before reads or writes.
+**Escape hatch (narrow).** Native tools on in-scope `.md` / `.mdx` are allowed **only** when no Open Knowledge MCP server is registered for this project, **or** immediately after an MCP call you tried failed. In the latter case, prefix a user-visible sentence with `Open Knowledge MCP unavailable:` so the bypass is auditable. Don't take the hatch because you skipped the client's MCP path.
 
-- Claude Code Desktop: `preview_start("open-knowledge-ui")`.
-- Cursor: use the host's open-URL tool with a `previewUrl` from any write response.
-- Other hosts: use whatever command opens a URL (macOS: `open <url>`). On hosts with no preview tool (Codex, generic stdio), surface the URL in chat.
+**Server-running fallback.** If a write returns "Hocuspocus server is not running", start it with `open-knowledge start` (via Bash) and retry — never fall back to native `Edit` for in-scope markdown.
 
-**How to know if it is already open.** You usually cannot pre-check. Three signals:
+**Preview — open once if the server asks.** The user watches edits land in a browser preview. After a write, the response carries `previewUrl`; only when `warning: { action: "attach-preview-once" }` is also present is no browser attached. Open it then, one-shot (Claude Code Desktop: `preview_start("open-knowledge-ui")`; other hosts: their open-URL tool, or `open <url>` on macOS, or surface the URL in chat). Otherwise do nothing — server-push pushes focus to the open tab on each subsequent write. Never construct preview URLs by hand. Don't take `preview_screenshot` after each write — the CRDT response is the confirmation. Contract: [`specs/2026-04-24-preview-attach-once-per-session/SPEC.md`](specs/2026-04-24-preview-attach-once-per-session/SPEC.md) (supersedes the per-edit mandate in `specs/2026-04-15-preview-url-pre-edit/`).
 
-1. You already opened it earlier this session → don't reopen.
-2. A `write_document` / `edit_document` response returns `previewUrl` but NO `warning: { action: "attach-preview-once" }` → a browser is attached somewhere; do nothing.
-3. A response DOES include `warning: { action: "attach-preview-once", previewUrl, message }` → no browser is attached; open immediately, one-shot. The hint fires only when needed (server tracks `__system__` subscribers) and at most once per session in the normal fresh-start case.
+**Authoring.** Wiki-link liberally: `[[Page Title]]`. Redlinks ("this should exist") are fine; backlink density is how the KB stays navigable. When you add or edit a child doc in a folder with a hub (`INDEX.md`, `README.md`, `REPORT.md`, `SPEC.md`, or a file matching the folder name), update the hub interleaved with child writes — the hub becomes a live progress bar in the preview.
 
-If the server isn't running, start it (`open-knowledge start` or `preview_start("open-knowledge-ui")`), then retry. NEVER construct preview URLs by hand — always use the `previewUrl` from tool responses.
-
-See [[specs/2026-04-24-preview-attach-once-per-session/SPEC]] for the contract; the old per-edit mandate in [[specs/2026-04-15-preview-url-pre-edit/SPEC]] is superseded.
-
-**No screenshots after edits.** Do NOT take `preview_screenshot` after every `edit_document` / `write_document`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
-
-**Linking.** When authoring, link liberally with `[[Page Title]]` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
-
-**Cadence — maintain hubs as you go.** When you create or edit a child doc in a folder that has a hub doc (`INDEX.md`, `README.md`, `REPORT.md`, `SPEC.md`, or a file whose name matches the folder name — e.g. `reports/r1/r1.md`), update the hub to reflect the change before the next child. Interleaved child → hub → child → hub makes the hub the live progress bar and the browser-based editor follows your focus cleanly. Orphan writes get a soft hint in the `write_document` response pointing to the likely hub.
-
-**Server must be running.** If `write_document` or `edit_document` returns a "Hocuspocus server is not running" error, start it with `open-knowledge start` (via Bash) and retry. NEVER fall back to native `Edit` / `Write` for in-scope markdown — always use the MCP write tools so edits go through the CRDT layer with proper attribution.
-
-**Non-markdown files.** Use native `Read` / `Edit` / `Grep` / `Bash` for source code, configs, and anything outside the path contract in `config.yml`: under `content.dir`, matching `content.include`, not removed by `content.exclude` or `.gitignore`.
-<!-- open-knowledge:end -->
+Source code and everything outside the path contract: native `Read` / `Edit` / `Grep` / `Bash` as usual.

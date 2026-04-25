@@ -38,14 +38,24 @@ export default {
   },
   ignoreBinaries: ['printf'],
   workspaces: {
+    // Co-located src/**/*.test.{ts,tsx} files: knip auto-discovers these via
+    // the package's main entry (src/index.ts) only when `exports.default`
+    // resolves to src/. After PR #320 made workspace deps emit conditional
+    // exports with `default → dist/index.mjs`, knip walks the bundled output
+    // and co-located test files become unreachable. Each workspace below
+    // explicitly adds them to `entry` to restore pre-#320 reachability.
     'packages/app': {
-      // Include the standalone `bun`-driven perf driver (+ its scenario
-      // library) as entries — otherwise knip marks the `ProfilerPhase` /
-      // `ProfilerRenderEvent` types and related helpers "unused" because
-      // `tests/perf/*.ts` sits outside the default `*.{test,e2e}.ts` scan.
-      // See `tests/perf/profile.ts` header for why this driver is not a
-      // Playwright-runner test.
-      entry: ['tests/**/*.{test,e2e}.ts', 'tests/perf/profile.ts', 'tests/perf/lib/*.ts'],
+      // Co-located src test files (post-#320 dist exports) + standalone
+      // `bun`-driven perf driver (+ its scenario library). Without the perf
+      // entries, knip marks `ProfilerPhase` / `ProfilerRenderEvent` types
+      // "unused" because `tests/perf/*.ts` sits outside the default
+      // `*.{test,e2e}.ts` scan. See `tests/perf/profile.ts` header.
+      entry: [
+        'src/**/*.test.{ts,tsx}',
+        'tests/**/*.{test,e2e}.ts',
+        'tests/perf/profile.ts',
+        'tests/perf/lib/*.ts',
+      ],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
@@ -54,15 +64,20 @@ export default {
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
     'packages/core': {
-      entry: ['tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      entry: ['src/**/*.test.ts', 'tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      project: 'src/**',
     },
     docs: {
       ignoreDependencies: [
         'postcss', // Bundled in Next.js
       ],
     },
+    'packages/server': {
+      entry: ['src/**/*.test.ts'],
+      project: 'src/**',
+    },
     'packages/cli': {
-      entry: ['scripts/*.ts', 'tests/**/*.ts'],
+      entry: ['src/**/*.test.ts', 'scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
         '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
       ],
@@ -84,6 +99,7 @@ export default {
         'src/main/index.ts',
         'src/preload/index.ts',
         'src/utility/server-entry.ts',
+        'src/**/*.test.ts',
         'electron.vite.config.ts',
         'scripts/*.mjs',
         'tests/**/*.test.ts',

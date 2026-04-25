@@ -43,12 +43,12 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install --frozen-lockfile
-      # Use turbo so the workspace deps (`@inkeep/open-knowledge-server` +
-      # `@inkeep/open-knowledge-core`) are built first. Their conditional
-      # exports map points at `dist/index.mjs` under default conditions;
-      # vite's bundling of `vite.config.ts` resolves the import the same
-      # way and fails if the dist artifacts are missing.
-      - name: Build packages/app via turbo (with deps)
+      # Build via turbo so `^build` produces `packages/{server,core}/dist/`
+      # before vite's config loader resolves `@inkeep/open-knowledge-server`
+      # in `packages/app/vite.config.ts`. After PR #320, the workspace deps'
+      # `exports.default` resolves to `dist/index.mjs`; running `vite build`
+      # directly skips upstream builds and crashes at config load.
+      - name: Build packages/app (with workspace deps)
         run: bunx turbo run build --filter=@inkeep/open-knowledge-app
       - name: Check bundle size
         run: bunx size-limit
