@@ -1175,6 +1175,20 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${baseURL}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
       method: 'POST',
     });
+    // Client-persistence (y-indexeddb) preserves Y.Doc state in
+    // `ok-ydoc:${docName}` across reloads. test-reset wipes server state
+    // but cannot reach the browser's IDB; without explicit cleanup the
+    // client hydrates seed content from IDB and the post-reset doc never
+    // empties out. The deleteDatabase call mirrors what
+    // CC1 `branch-switched` does in production.
+    await page.evaluate(async (name) => {
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(`ok-ydoc:${name}`);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    }, docName);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
@@ -1227,6 +1241,16 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${baseURL}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
       method: 'POST',
     });
+    // Drop the client-persistence IDB row alongside the server reset —
+    // see prior test for rationale.
+    await page.evaluate(async (name) => {
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(`ok-ydoc:${name}`);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    }, docName);
     // Force full reload — see the prior test's comment; same-hash goto is a
     // no-op and lets ProviderPool replay the cached pre-reset Y.Doc.
     await page.reload({ waitUntil: 'domcontentloaded' });
