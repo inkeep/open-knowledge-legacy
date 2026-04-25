@@ -10,9 +10,9 @@
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build:desktop": "electron-vite build",
-    "build:dir": "bun run build:desktop && electron-builder --dir",
-    "build:mac": "bun run build:desktop && electron-builder --mac",
-    "build:mac:unsigned": "bun run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac -c.mac.identity=null",
+    "build:dir": "bun run build:desktop && electron-builder --dir --publish never",
+    "build:mac": "bun run build:desktop && electron-builder --mac --publish never",
+    "build:mac:unsigned": "bun run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never -c.mac.identity=null",
     "postinstall": "node scripts/postinstall.mjs",
     "rebuild:native": "electron-builder install-app-deps",
     "smoke:mock-update": "OK_UPDATER_FORCE_DEV=1 node scripts/smoke-mock-update.mjs",
