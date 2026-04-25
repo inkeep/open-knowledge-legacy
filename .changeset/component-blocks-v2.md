@@ -92,10 +92,14 @@ Bundle size:
 - Main app bundle stays flat (~210 kB gzipped) — the `fumadocs-ui`
   drop and 12-descriptor cut offset the 5-pack prop-surface widening
   and new selection-chrome plugins.
-- Total JS across lazy-loaded chunks grows ~60 kB gzipped (~978 kB →
-  ~1.04 MB) to accommodate CB-v2 feature surface (descriptor-dispatch
+- Total JS across lazy-loaded chunks grows ~100 kB gzipped (~978 kB →
+  ~1.08 MB) to accommodate CB-v2 feature surface (descriptor-dispatch
   registry, V2 editor cache, SelectionStatePlugin + Breadcrumb +
   SelectionAnnouncer + BlockDragHandle, nested CodeMirror for
-  `rawMdxFallback`, slash-command menu). This is delivered via
+  `rawMdxFallback`, slash-command menu, canonical/compat descriptor
+  split with three additional read-only source-form descriptors
+  (GFMCallout, CommonMarkImage, HtmlDetailsAccordion) for round-trip
+  preservation). The `all JS chunks combined` size-limit ceiling is
+  raised 1050 → 1100 kB (~2% headroom) to match. Delivered via
   on-demand chunk loading — users don't pay the full bill on first
   paint.

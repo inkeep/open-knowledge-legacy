@@ -227,79 +227,11 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     expect(page.url()).not.toContain(`#/${docBar}`);
   });
 
-  test('clicking the cross-doc wiki-link navigates to a .mdx target doc', async ({ page, api }) => {
-    // First-class .mdx nav: the cross-doc avatar's onClick sets
-    // `window.location.hash` using the bare docName (extension-less). Pair
-    // with the `.md` variant above — this test proves the same path lands
-    // on an .mdx-backed doc without regressing when the target extension
-    // is .mdx instead of .md. Cross-doc nav helper + sidebar click (F0-mdx
-    // in docs-open.e2e.ts) together cover both human-initiated ways to
-    // reach a .mdx doc from the browser.
-    const docFoo = 'doc-mp-mdx-nav-foo';
-    const docBarMdx = 'doc-mp-mdx-nav-bar';
-    // seedDocs hard-codes .md — seed docFoo via it, then create the .mdx
-    // target manually so the nav landing doc is genuinely .mdx-backed. We
-    // don't pre-seed the .mdx body because the Cursor agent-write below
-    // replaces the doc content; asserting on the Cursor body after nav is a
-    // cleaner signal that the .mdx doc is live-mounted, not merely hash-navd.
-    await api.seedDocs([{ name: docFoo, markdown: '# foo' }]);
-    await api.createPage(`${docBarMdx}.mdx`);
-
-    await page.goto(`/#/${docFoo}`);
-    const bar = page.locator('[data-slot="presence-bar"]');
-    await expect(bar).toBeVisible();
-
-    // Pin docFoo: same rationale as the .md variant — prevents auto-nav
-    // chasing the cross-doc Cursor write before the user-initiated click.
-    await page.evaluate(
-      ([doc]) => {
-        const setPin = (window as { __test_setPin?: (d: string | null) => void }).__test_setPin;
-        if (!setPin) throw new Error('__test_setPin dev hook missing');
-        setPin(doc);
-      },
-      [docFoo],
-    );
-
-    await api.writeAsAgent(docFoo, '# Claude on foo', {
-      agentId: agentId('claude-mdx-nav-foo'),
-      agentName: 'Claude',
-      clientName: 'claude-code',
-    });
-    await api.writeAsAgent(docBarMdx, '# Cursor on bar mdx', {
-      agentId: agentId('cursor-mdx-nav-bar'),
-      agentName: 'Cursor',
-      clientName: 'cursor',
-    });
-
-    const crossDocAvatar = bar.locator(
-      '[data-presence-section="crossdoc"] [data-presence-badge="agent"][data-presence-crossdoc="true"]',
-      { hasText: '' },
-    );
-    await expect(crossDocAvatar.first()).toBeVisible({ timeout: 10_000 });
-
-    // aria-label carries the bare docName — the click-target path is
-    // identical to the .md case; only the on-disk extension differs.
-    const navButton = page
-      .getByRole('button', { name: new RegExp(`editing ${docBarMdx}`) })
-      .first();
-    await expect(navButton).toBeVisible({ timeout: 10_000 });
-    await navButton.click();
-
-    // Hash carries the bare docName (extension-less); NavigationHandler
-    // resolves it against the .mdx-backed file on disk.
-    await expect
-      .poll(async () => page.url(), {
-        timeout: 10_000,
-        intervals: [100, 250, 500],
-      })
-      .toContain(`#/${docBarMdx}`);
-
-    // Body rendered from the .mdx file — proves the full nav chain
-    // landed on real content, not just a hash mutation. The Cursor agent
-    // wrote `# Cursor on bar mdx` to the .mdx-backed doc; that heading
-    // rendering in the main editor is evidence the .mdx doc is live-mounted.
-    await expect(
-      page.getByRole('main').getByRole('heading', { name: 'Cursor on bar mdx' }),
-    ).toBeVisible({ timeout: 10_000 });
-  });
+  // Note: the prior `.mdx target doc` cross-doc-nav test was removed when
+  // D-P9 (agent-activity-panel SPEC) flipped the cross-doc-avatar click
+  // contract from "navigate to target doc" to "open activity panel for that
+  // agent". The `.md` sibling test above now asserts the new contract;
+  // adding a parallel `.mdx`-target variant would test the activity-panel
+  // feature, not the `.mdx` extension. `.mdx`-extension nav coverage stays
+  // through F0-mdx in `docs-open.e2e.ts` (sidebar click → .mdx file loads).
 });

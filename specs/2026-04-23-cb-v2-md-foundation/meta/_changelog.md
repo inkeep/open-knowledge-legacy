@@ -107,3 +107,124 @@
 - Codebase explore pass identifying consumers of cut items
 
 **Next step:** Phase 3 backlog extraction (3-probe walkthrough; priority triage).
+
+## 2026-04-25 — Canonical / compat descriptor split (post-ship architecture pivot)
+
+**Session context:** User-driven architecture conversation discovered that the
+shipped pipeline destroys source-form identity at parse time (`callout-
+transformer`, `image-promoter`, `details-accordion-promoter` all collapse to
+the canonical `componentName`), and the dirty-path serializer always emits
+MDX JSX regardless. Result: a GFM `> [!NOTE]` opened, edited, saved becomes
+`<Callout type="note">…</Callout>`. PropPanel further always shows the
+canonical's full superset, so editing an MDX-only prop on a GFM-form node
+silently promotes to MDX.
+
+**Decision: canonical / compat descriptor split.** Descriptor identity carries
+the source form. Three new compat descriptors (`GFMCallout`,
+`CommonMarkImage`, `HtmlDetailsAccordion`) land alongside the 5 canonicals
+(Callout, Image, Video, Audio, Accordion). Compat descriptors are read-only
+(filtered out of the slash menu); each owns a `serialize()` that emits its
+native source form, so `> [!NOTE]` round-trips back to `> [!NOTE]` even
+through edits. Both surfaces render through the canonical's React component
+via a render-time `translateProps` step (identity for v1's three compats).
+PropPanel auto-scopes to the active descriptor's `props`. Compat nodes
+expose a "Convert to <canonical>" affordance for users who want the
+canonical's full superset.
+
+**Decisions added:**
+- D-MF20 — descriptor identity carries source form. Discriminated-union
+  `JsxComponentMeta = CanonicalMeta | CompatMeta` on `surface: 'canonical' |
+  'compat'`. Required `serialize: (node, ctx) => mdast` on both arms.
+  Compat-only fields: `rendersAs`, `translateProps`, `convertibleTo`.
+  Reverses the parse-time-coalescing-only model that was implicit in
+  D-MF11/13/17 (those decisions about prop set + foldable extensions stay;
+  the new layer is *which descriptor the source form claims to be*).
+- D-MF21 — slash menu filtered to `surface === 'canonical'`. No
+  user-facing way to insert a compat-form node from scratch — they only
+  arise from authored markdown source. Convert-to-canonical is the
+  promote path; there's no demote path.
+
+**Files touched (code):**
+- `packages/core/src/registry/types.ts` — discriminated union + new
+  `SerializeContext`, `TranslateProps` types.
+- `packages/core/src/registry/built-ins.ts` — 5 canonicals tagged + 3
+  compat entries added.
+- `packages/core/src/markdown/serialize-helpers.ts` (new) —
+  `reconstructAttrs`, `propToMdxJsxAttribute`, `emitMdxJsx` extracted so
+  descriptors can import without circular deps.
+- `packages/core/src/markdown/index.ts:1043-1083` — dirty branch
+  becomes `meta.serialize(pmNode, ctx)` dispatch.
+- `packages/core/src/markdown/mdast-augmentation.ts` —
+  `MdxJsxFlowElementData.htmlBoundary` (escape hatch for compat
+  descriptors whose emit is raw HTML wrapping a markdown body, e.g.,
+  `<details>...</details>` body via `state.containerFlow`).
+- Three parser retargets:
+  `callout-transformer.ts:188` `Callout` → `GFMCallout`,
+  `image-promoter.ts:116` `Image` → `CommonMarkImage`,
+  `details-accordion-promoter.ts:178,269` `Accordion` →
+  `HtmlDetailsAccordion`.
+- `packages/app/src/editor/registry/index.ts:67-74` — `buildDecoration`
+  branches on `surface`. Compat descriptors look up `componentMap[meta.
+  rendersAs]`. Throws at module init if `rendersAs` is dangling.
+- `packages/app/src/editor/extensions/JsxComponentView.tsx` — applies
+  `descriptor.translateProps(primitiveProps)` for compat surface; builds
+  `onConvert` factory when `convertibleTo` is set.
+- `packages/app/src/editor/components/PropPanel.tsx` — signature now
+  `descriptor: JsxComponentDescriptor` (was `props: PropDef[]`). Renders
+  Convert button when `surface === 'compat' && convertibleTo`.
+- `packages/app/src/editor/slash-command/component-items.ts:198` —
+  filter to `surface === 'canonical'`.
+- `callout-transformer.ts` bonus fix — strips the residual title-line
+  paragraph the alerts plugin leaves when title is on the marker line +
+  body separated by a blank `>` (without it, `> [!NOTE] hi\n>\n> body`
+  duplicated the title text on every dirty cycle).
+
+**Files touched (tests):**
+- `packages/core/src/registry/canonical-compat.test.ts` (new) — 12 unit
+  tests locking the architecture: surface-discriminator presence,
+  `rendersAs` resolution, identity `translateProps`, `convertibleTo`
+  shape, prop-set subset relation.
+- `packages/core/src/registry/registry.test.ts` — 5+3+wildcard count
+  check; canonical-only `searchTerms` requirement.
+- `packages/app/tests/fidelity/invariant-i13.test.ts` — PBT scoped to
+  canonical fixtures (compat fixtures' source-form syntax can't survive
+  PBT-generated pathological titles like `_a_*<>` through the
+  remark-mdx-emphasis-inside-JSX parse). Added clamp for invalid `type`
+  values in GFMCallout serializer (PBT generates non-enum strings).
+- `packages/app/tests/fidelity/invariant-i18.test.ts`,
+  `invariant-i19.test.ts`, `invariant-i20.test.ts`,
+  `invariant-i21.test.ts` — `stripGammaAttrs` now also strips
+  `componentName` for cross-form prop-shape comparison; updated explicit
+  componentName assertions to the new compat names.
+
+**Source-form fidelity invariants (new):**
+- A user-edited GFM `> [!NOTE]` (or `> [!NOTE]+`) round-trips back to
+  GFM syntax, NOT to `<Callout type="note">…</Callout>`.
+- A user-edited CommonMark `![alt](src)` round-trips to CommonMark
+  syntax, NOT to `<Image src="…" alt="…" />`.
+- A user-edited HTML5 `<details>` round-trips to `<details>` HTML
+  block, NOT to `<Accordion title="…">…</Accordion>`.
+- All three surfaces render through the canonical's React component
+  (so the editor visual is identical to the canonical authoring form),
+  but storage preserves source-form identity through PM `componentName`.
+
+**Tradeoffs / scope notes:**
+- Mintlify `<Note>` compat descriptor was discussed and dropped from
+  v1. It would be a true rename case (storage `heading` ≠ source
+  `title`); v1's three compats all use identity `translateProps`
+  because their prop names already match canonical's spelling. Adding
+  a Mintlify compat is additive; no architectural change required.
+- Convert-to-canonical UX shipped in v1 with identity remaps. Future
+  compats whose prop names diverge from canonical's would supply
+  non-identity `convertibleTo.remap` functions.
+- Bundle size: all-JS-chunks ceiling raised 1050 → 1100 kB (+50 kB) to
+  accommodate the three additional compat descriptors and main's
+  recently-merged activity-panel + statistics-footer features. Main
+  app bundle stays flat (213 kB / 230 kB ceiling).
+
+**Audit findings status:** Clean. Architecture-locking unit tests cover
+the new contract; existing fidelity invariants (I13/I18/I19/I20/I21)
+adapted to the new contract.
+
+**Next step:** Cloud review iteration on PR #310.
+

@@ -1140,7 +1140,13 @@ describe('runInit', () => {
 
   describe('ensureProjectGit wiring (US-005)', () => {
     it('fresh tmpdir (no .git/) → runInit creates .git/ and reports didGitInit=true', async () => {
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      // Use runInitForTest (defaultInstallUserSkill stub) — the real
+      // installUserSkill shells out to `npx skills@~1.5.0 add` which
+      // intermittently fails in CI sandboxes (subprocess returns nonzero
+      // with empty stderr; exit code null) and times out the 5s budget.
+      // The git-init wiring under test is independent of skill install,
+      // so the hermetic stub is the right scope.
+      const result = await runInitForTest();
 
       expect(result.didGitInit).toBe(true);
       expect(existsSync(join(testDir, '.git/HEAD'))).toBe(true);
@@ -1155,7 +1161,7 @@ describe('runInit', () => {
     it('pre-existing .git/ → runInit does not re-init and reports didGitInit=false', async () => {
       mkdirSync(join(testDir, '.git'));
 
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      const result = await runInitForTest();
 
       expect(result.didGitInit).toBe(false);
       // formatInitResult omits the disclosure line

@@ -21,6 +21,8 @@
 
 ## 1) Problem statement
 
+> **Post-ship architecture pivot (2026-04-25):** the descriptor system gained a canonical/compat split — every source form (GFM `> [!NOTE]`, CommonMark `![alt](src)`, HTML5 `<details>`) now preserves its identity through the PM tree (componentName=`GFMCallout`/`CommonMarkImage`/`HtmlDetailsAccordion`) so the dirty-path serializer round-trips back to the original source form even after edits. Slash menu stays canonical-only. Any FR-7/FR-8/FR-21/I12-I21 prose below that says a parse path emits `mdxJsxFlowElement(Callout)` or `mdxJsxFlowElement(Image)` or `mdxJsxFlowElement(Accordion)` should be read as emitting the corresponding compat `componentName`; the structural mdast shape is unchanged. Authoritative description: [`meta/_changelog.md` 2026-04-25 entry](meta/_changelog.md).
+
 **Situation.** Post-PR #165 (Component Blocks v2, open), OK ships descriptor-dispatched MDX editing — `jsxComponent` node widened to `block*` content, runtime descriptor registry, PropPanel, γ serialization, G9 always-live bridge, `rawMdxFallback` CM-in-PM — with a 17-component manifest (16 fumadocs-ui + 1 custom Audio). The architecture is solid and validated; the manifest is docs-site-shaped (fumadocs-origin: Banner, Card, Cards, Steps, Tabs, Accordion, Files, TypeTable, InlineTOC, etc.) and over-serves OK's primary audiences (Obsidian-style personal knowledge bases, AI agents authoring structured content, dev-docs and help-center content). Audit confirmed only 2 of the top-5-by-relevance components (Callout, ImageZoom) actually use `fumadocs-ui` React; the rest are OK-custom or HTML5.
 
 **Complication.** Shipping PR #165's full 17-descriptor scope carries cost without proportional value:
