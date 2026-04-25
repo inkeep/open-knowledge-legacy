@@ -12,8 +12,9 @@
  * doubled content even if the WYSIWYG (XmlFragment-backed) view were clean —
  * or vice versa. The test asserts both surfaces match and neither duplicates.
  *
- * Expected: FAIL until fix. Both Y.Text and XmlFragment see doubled content
- * on fast restart.
+ * Expected: PASS post-fix. Regression guard for the pre-PR-#311 bug class
+ * — pre-fix, both Y.Text and XmlFragment showed doubled content on fast
+ * restart. Post-fix, neither surface duplicates and the two stay in sync.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';

@@ -426,11 +426,9 @@ export async function seedClientPersistenceState(
   docName: string,
   updates: Uint8Array[],
 ): Promise<void> {
-  const { asDocName, createClientPersistence } = await import(
-    '../../src/editor/client-persistence'
-  );
+  const { createClientPersistence } = await import('../../src/editor/client-persistence');
   const doc = new Y.Doc();
-  const persistence = createClientPersistence(asDocName(docName), doc);
+  const persistence = createClientPersistence(docName, doc);
   try {
     await persistence.whenSynced;
     for (const update of updates) {

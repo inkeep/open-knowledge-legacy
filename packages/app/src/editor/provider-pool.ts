@@ -5,7 +5,6 @@ import { getSchema } from '@tiptap/core';
 import * as Y from 'yjs';
 import { mark } from '../lib/perf/mark';
 import {
-  asDocName,
   type ClientPersistenceProvider,
   captureStateVector,
   computeUnsyncedUpdate,
@@ -322,7 +321,7 @@ export class ProviderPool {
     // from `ok-ydoc:${docName}` on cold mount and persists every non-self
     // update back. On server-instance-mismatch, buffer-and-replay captures
     // unsynced edits before clearData + recycle.
-    const persistence = createClientPersistence(asDocName(docName), provider.document);
+    const persistence = createClientPersistence(docName, provider.document);
 
     const entry: PoolEntry = {
       provider,

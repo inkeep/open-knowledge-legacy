@@ -18,8 +18,10 @@
  * same content); here, stale content is re-introduced into a doc that
  * should have the new content.
  *
- * Expected: FAIL until fix. Content-A markers remain in the merged state;
- * only content-B should be present.
+ * Expected: PASS post-fix. Regression guard for the pre-PR-#311 bug class
+ * — pre-fix, the merged state retained content-A markers; post-fix only
+ * content-B is present. Any reintroduction of the stale-client merge path
+ * trips this red.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';

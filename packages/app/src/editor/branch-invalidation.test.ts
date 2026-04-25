@@ -49,27 +49,31 @@ describe('handleBranchSwitched', () => {
     if (!e1 || !e2) throw new Error('pool.open returned null');
     if (!e1.persistence || !e2.persistence) throw new Error('entry missing persistence');
 
-    let clearResolvedAt = 0;
-    let recycleCalledAt = 0;
+    // Causal-ordering check (not wall-clock): set a flag inside the
+    // clearData resolver, assert it inside the recycle wrapper. Proves
+    // recycle ran AFTER clearData's microtask without depending on
+    // Date.now() resolution.
+    let clearResolved = false;
     const clearPromise = new Promise<void>((resolve) => {
       setTimeout(() => {
-        clearResolvedAt = Date.now();
+        clearResolved = true;
         resolve();
       }, 20);
     });
     e1.persistence.clearData = mock(() => clearPromise);
     e2.persistence.clearData = mock(() => Promise.resolve());
 
+    let recycleObservedClearResolved = false;
     const originalRecycle = pool.recycleAllEntries.bind(pool);
     pool.recycleAllEntries = mock(() => {
-      recycleCalledAt = Date.now();
+      recycleObservedClearResolved = clearResolved;
       originalRecycle();
     });
 
     await handleBranchSwitched(pool, 'feature');
 
     expect(pool.recycleAllEntries).toHaveBeenCalledTimes(1);
-    expect(recycleCalledAt).toBeGreaterThanOrEqual(clearResolvedAt);
+    expect(recycleObservedClearResolved).toBe(true);
   });
 
   test('skips entries that are tearing down', async () => {

@@ -17,12 +17,10 @@ import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import {
-  asDocName,
   type ClientPersistenceProvider,
   captureStateVector,
   computeUnsyncedUpdate,
   createClientPersistence,
-  type DocName,
 } from './client-persistence';
 
 function uniqueDocName(prefix = 'cp-test'): string {
@@ -76,7 +74,7 @@ async function countPersistedUpdates(docName: string): Promise<number> {
 
 describe('createClientPersistence', () => {
   test('creates provider for empty IDB and emits synced event', async () => {
-    const docName: DocName = asDocName(uniqueDocName());
+    const docName = uniqueDocName();
     const doc = new Y.Doc();
     const provider: ClientPersistenceProvider = createClientPersistence(docName, doc);
 
@@ -92,7 +90,7 @@ describe('createClientPersistence', () => {
   });
 
   test('persists updates across destroy then re-open with same docName', async () => {
-    const docName = asDocName(uniqueDocName());
+    const docName = uniqueDocName();
 
     const docA = new Y.Doc();
     const providerA = createClientPersistence(docName, docA);
@@ -123,7 +121,7 @@ describe('createClientPersistence', () => {
     // prevents the N individual stored updates from being re-written as
     // the doc receives them during `fetchUpdates` — otherwise each mount
     // would multiply IDB growth by N.
-    const docName = asDocName(uniqueDocName());
+    const docName = uniqueDocName();
 
     const docA = new Y.Doc();
     const providerA = createClientPersistence(docName, docA);
@@ -156,7 +154,7 @@ describe('createClientPersistence', () => {
   });
 
   test('clearData wipes persisted updates', async () => {
-    const docName = asDocName(uniqueDocName());
+    const docName = uniqueDocName();
 
     const docA = new Y.Doc();
     const providerA = createClientPersistence(docName, docA);
@@ -182,7 +180,7 @@ describe('createClientPersistence', () => {
   });
 
   test('destroy preserves persisted data for the next open', async () => {
-    const docName = asDocName(uniqueDocName());
+    const docName = uniqueDocName();
 
     const docA = new Y.Doc();
     const providerA = createClientPersistence(docName, docA);

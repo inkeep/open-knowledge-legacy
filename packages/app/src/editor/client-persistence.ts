@@ -25,12 +25,6 @@
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
 
-export type DocName = string & { readonly __brand: 'DocName' };
-
-export function asDocName(raw: string): DocName {
-  return raw as DocName;
-}
-
 export interface ClientPersistenceProvider {
   readonly whenSynced: Promise<this>;
   readonly synced: boolean;
@@ -43,7 +37,7 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   private readonly _dbName: string;
   readonly whenSynced: Promise<this>;
 
-  constructor(docName: DocName, doc: Y.Doc) {
+  constructor(docName: string, doc: Y.Doc) {
     this._dbName = `ok-ydoc:${docName}`;
     this._idb = new IndexeddbPersistence(this._dbName, doc);
     this.whenSynced = this._idb.whenSynced.then(() => this);
@@ -78,7 +72,7 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   }
 }
 
-export function createClientPersistence(docName: DocName, doc: Y.Doc): ClientPersistenceProvider {
+export function createClientPersistence(docName: string, doc: Y.Doc): ClientPersistenceProvider {
   return new ClientPersistenceImpl(docName, doc);
 }
 

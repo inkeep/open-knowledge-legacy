@@ -11,8 +11,9 @@
  * (two client clientIDs + one server clientID). Content from the fresh-server-
  * clientID items duplicates the on-disk markdown.
  *
- * Expected: FAIL until fix. When fix lands, marker counts flip to baseline and
- * clientID-drift assertion passes.
+ * Expected: PASS post-fix. Regression guard for the pre-PR-#311 bug class
+ * — marker counts at baseline and clientID-drift assertion holds. Any
+ * reintroduction of the multi-client restart duplication trips this red.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';

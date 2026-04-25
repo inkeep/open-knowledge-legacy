@@ -13,12 +13,13 @@
  *      New agent session created (server in-memory session map was reset).
  *      applyAgentMarkdownWrite runs against the fresh server Y.Doc.
  *
- * Expected: FAIL until fix. After step 3, the browser client's stale Y.Doc
- * merges with the fresh server Y.Doc — content-1 duplicates. Content-2 then
- * lands once on the (already duplicated) fresh server Y.Doc.
- *
- * The test asserts content-1 and content-2 each appear exactly once on disk
- * and in the browser client's Y.Doc. Currently fails because content-1 is 2×.
+ * Expected: PASS post-fix. Regression guard for the pre-PR-#311 bug class:
+ * before the client-persistence + buffer-and-replay landing, step 3's stale
+ * Y.Doc merge with the fresh server Y.Doc duplicated content-1, then
+ * content-2 landed once on the already-duplicated state. The test asserts
+ * content-1 and content-2 each appear exactly once on disk and in the
+ * browser client's Y.Doc — any reintroduction of the duplication path
+ * trips it red.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
