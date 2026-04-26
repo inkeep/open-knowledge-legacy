@@ -50,7 +50,7 @@ function mkEntry(docName: string, idx: number, type: 'wip' | 'checkpoint'): Time
     type,
     message: type === 'checkpoint' ? 'Save Version' : 'WIP',
     contributors: [],
-    checkpoint: type === 'checkpoint' ? { kind: 'save', size: null, version: null } : null,
+    checkpoint: null,
   };
 }
 
