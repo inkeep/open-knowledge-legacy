@@ -50,6 +50,7 @@ import {
 } from '../../src/editor/observers';
 import type { ProviderPool } from '../../src/editor/provider-pool';
 import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '../../src/lib/cc1';
+import { refreshServerInfo } from '../../src/lib/server-info-refresh';
 import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
@@ -1518,6 +1519,7 @@ export function attachSystemDocSubscriber(
   port: number,
 ): SystemDocSubscriberHandle {
   const url = `ws://localhost:${port}/collab`;
+  const baseUrl = `http://localhost:${port}`;
   const doc = new Y.Doc();
   const provider = new HocuspocusProvider({
     url,
@@ -1547,6 +1549,22 @@ export function attachSystemDocSubscriber(
         },
       });
     },
+  });
+
+  // Late-join recovery: on every reconnect (subsequent `synced` event),
+  // re-fetch /api/server-info to refresh the per-doc disk-ack
+  // watermarks. CC1 stateless broadcasts have no replay; without this
+  // refresh, a brief `__system__` WS drop during a write burst would
+  // leave `lastDiskAckedSV` permanently stale and reopen the
+  // missed-frame duplication path on the next mismatch-recycle.
+  // Mirrors the production wiring in `SystemDocSubscriber.tsx`.
+  let hadFirstSynced = false;
+  provider.on('synced', () => {
+    if (hadFirstSynced) {
+      void refreshServerInfo(pool, baseUrl);
+    } else {
+      hadFirstSynced = true;
+    }
   });
 
   return {

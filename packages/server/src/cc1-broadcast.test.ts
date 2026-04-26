@@ -304,4 +304,47 @@ describe('CC1Broadcaster', () => {
     expect(ack1.seq).toBe(1);
     expect(ack2.seq).toBe(2);
   });
+
+  test('getLatestDiskAckSVsAsBase64 returns empty object before any flush', () => {
+    expect(broadcaster.getLatestDiskAckSVsAsBase64()).toEqual({});
+  });
+
+  test('getLatestDiskAckSVsAsBase64 returns the latest SV per docName', () => {
+    broadcaster.emitDiskAck('notes/intro', new Uint8Array([0xde, 0xad]));
+    broadcaster.emitDiskAck('notes/details', new Uint8Array([0xbe, 0xef]));
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(Object.keys(snapshot).sort()).toEqual(['notes/details', 'notes/intro']);
+    expect(snapshot['notes/intro']).toBe(Buffer.from([0xde, 0xad]).toString('base64'));
+    expect(snapshot['notes/details']).toBe(Buffer.from([0xbe, 0xef]).toString('base64'));
+  });
+
+  test('getLatestDiskAckSVsAsBase64 reflects the most recent emit per docName', () => {
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01]));
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01, 0x02]));
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01, 0x02, 0x03]));
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot.doc).toBe(Buffer.from([0x01, 0x02, 0x03]).toString('base64'));
+  });
+
+  // Late-join recovery contract: the snapshot is the source of truth for
+  // `__system__`-disconnected clients to refresh `lastDiskAckedSV` on
+  // reconnect via `GET /api/server-info`. It MUST advance even when the
+  // broadcast itself was dropped (no `__system__` subscribers, document
+  // missing). Otherwise a client that reconnects after a brief drop
+  // would receive a stale snapshot and the missed-frame bug recurs.
+  test('getLatestDiskAckSVsAsBase64 advances even when broadcast is dropped (no __system__ subscribers)', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitDiskAck('doc', new Uint8Array([0xab, 0xcd]));
+    expect(broadcasts).toHaveLength(0);
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot.doc).toBe(Buffer.from([0xab, 0xcd]).toString('base64'));
+  });
+
+  test('getLatestDiskAckSVsAsBase64 returns a fresh object each call (caller-owned)', () => {
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01]));
+    const snapshot1 = broadcaster.getLatestDiskAckSVsAsBase64();
+    const snapshot2 = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot1).not.toBe(snapshot2);
+    expect(snapshot1).toEqual(snapshot2);
+  });
 });

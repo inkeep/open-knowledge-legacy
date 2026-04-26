@@ -357,6 +357,29 @@ export class ProviderPool {
   }
 
   /**
+   * Refresh the `lastDiskAckedSV` watermark for every doc named in the
+   * batch. Called by the boot fetch + every `__system__` reconnect via
+   * `GET /api/server-info`'s `currentDiskAckSVs` field — closes the
+   * missed-frame gap that CC1 stateless broadcasts leave open (no
+   * replay; a brief `__system__` WS drop during a write burst would
+   * otherwise leave `lastDiskAckedSV` permanently stale and reopen
+   * the disk-ack-staleness duplication path on server-restart).
+   *
+   * Per-doc semantics match `observeDiskAck`: skip when no entry
+   * exists for the doc or when the entry is tearing-down. Docs in the
+   * batch that the client doesn't have open are silently ignored.
+   *
+   * No staleness check (overwrite-on-receive) — the server's snapshot
+   * is monotonic per-doc (`emitDiskAck` only ever moves forward), so
+   * a fresh batch can never carry an older value than what we have.
+   */
+  observeDiskAckBatch(svsByDocName: Record<string, Uint8Array>): void {
+    for (const [docName, sv] of Object.entries(svsByDocName)) {
+      this.observeDiskAck(docName, sv);
+    }
+  }
+
+  /**
    * Last-observed git branch reported by the server (via `/api/server-info`
    * boot fetch + CC1 `server-info` broadcasts).
    *

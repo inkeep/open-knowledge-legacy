@@ -51,6 +51,28 @@ import * as Y from 'yjs';
  * client's `handleServerInstanceMismatch` recycle) reconciles via
  * IDB clear + fresh provider, which is the same recovery used for any
  * other stale-claim scenario.
+ *
+ * Storage hygiene caveat: `ok-ydoc:_unknown_:<docName>` IDBs may
+ * accumulate when the cold-tab branch-mismatch recovery fails before
+ * the IDB is cleared. Two failure paths leave orphans:
+ *
+ *   1. `/api/server-info` unreachable (network blip, server still
+ *      booting) — `DocumentContext.tsx`'s mismatch handler logs
+ *      `branch-mismatch-recovery-failed` and skips the recycle.
+ *   2. Tab close mid-recycle — destroy chain doesn't await the
+ *      `clearData` promise.
+ *
+ * Each failed-recovery cycle leaves at most one `_unknown_`-prefixed
+ * IDB per docName (same docName overwrites). Bounded by docName
+ * cardinality; harmless under browser quota; not a correctness bug
+ * (all of these IDBs would correctly trigger `branch-mismatch` on
+ * the next session and be cleared via the recycle path). Documented
+ * here following the `localStorage`+IDB co-eviction precedent at
+ * `provider-pool.ts:lastObservedBranch` — a symmetric storage-hygiene
+ * note rather than a code-level cleanup. Opportunistic enumeration
+ * via `indexedDB.databases()` was considered but rejected: the
+ * cleanup path could race a mid-recovery reuse of the sentinel-
+ * prefixed IDB and delete an in-use database.
  */
 export const UNKNOWN_BRANCH_SENTINEL = '_unknown_';
 

@@ -15,6 +15,7 @@ export function SystemDocSubscriber() {
     onBranchSwitched,
     observeBranch,
     observeDiskAck,
+    refreshServerInfo,
   } = useDocumentContext();
 
   // Ref pattern: dispatchers are re-created per-render in DocumentContext's `value`
@@ -25,6 +26,7 @@ export function SystemDocSubscriber() {
   const onBranchSwitchedRef = useRef(onBranchSwitched);
   const observeBranchRef = useRef(observeBranch);
   const observeDiskAckRef = useRef(observeDiskAck);
+  const refreshServerInfoRef = useRef(refreshServerInfo);
   useEffect(() => {
     updateServerInstanceIdRef.current = updateServerInstanceId;
   }, [updateServerInstanceId]);
@@ -37,6 +39,9 @@ export function SystemDocSubscriber() {
   useEffect(() => {
     observeDiskAckRef.current = observeDiskAck;
   }, [observeDiskAck]);
+  useEffect(() => {
+    refreshServerInfoRef.current = refreshServerInfo;
+  }, [refreshServerInfo]);
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -90,8 +95,21 @@ export function SystemDocSubscriber() {
       }
     });
 
+    // Track first-sync vs subsequent-sync so the boot fetch
+    // (DocumentContext) doesn't race with a redundant SystemDocSubscriber
+    // refetch on the initial connect. After that, every `synced` is a
+    // reconnect — re-fetch /api/server-info to recover any disk-ack /
+    // server-info / branch-switched frames missed during the WS drop.
+    // Idempotent dispatch in `refreshServerInfo` makes this safe even
+    // if the first-sync gate ever leaks.
+    let hadFirstSynced = false;
     provider.on('synced', () => {
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
+      if (hadFirstSynced) {
+        void refreshServerInfoRef.current();
+      } else {
+        hadFirstSynced = true;
+      }
     });
 
     // One-shot per-clientID warning when a stale bundled client still publishes

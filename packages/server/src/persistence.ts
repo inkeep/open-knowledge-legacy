@@ -726,6 +726,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       });
     },
 
+    // STOP: Do NOT add additional `Y.encodeStateVector(document)` calls
+    // anywhere in this function. The only sanctioned capture is via
+    // `captureDocSnapshotForPersistence` at the top of the body — its
+    // co-capture of `{sv, json}` is what guarantees the disk-ack
+    // watermark reflects the exact doc state that lands on disk. A
+    // second SV captured later (e.g., after `await tracedRename`) would
+    // include updates from the async write window, falsely advancing the
+    // watermark past content that's NOT durably persisted, and
+    // clients would drop those bytes from the recycle buffer →
+    // unsynced-edit loss on server-restart. See the helper's docstring
+    // for the full timing contract.
     async onStoreDocument({
       document,
       documentName,

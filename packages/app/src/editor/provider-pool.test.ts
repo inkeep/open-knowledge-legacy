@@ -1646,6 +1646,68 @@ describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
   });
 });
 
+describe('ProviderPool observeDiskAckBatch (missed-frame recovery)', () => {
+  test('updates lastDiskAckedSV for every doc named in the batch', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docA = uniqueDocName('pp-batch');
+    const docB = uniqueDocName('pp-batch');
+    const entryA = pool.open(docA);
+    const entryB = pool.open(docB);
+    if (!entryA || !entryB) throw new Error('expected entries');
+
+    const svA = new Uint8Array([0x01, 0x02]);
+    const svB = new Uint8Array([0x03, 0x04, 0x05]);
+    pool.observeDiskAckBatch({ [docA]: svA, [docB]: svB });
+
+    expect(entryA.lastDiskAckedSV).toBe(svA);
+    expect(entryB.lastDiskAckedSV).toBe(svB);
+  });
+
+  test('silently ignores docs in the batch that the pool does not have open', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docA = uniqueDocName('pp-batch');
+    const entryA = pool.open(docA);
+    if (!entryA) throw new Error('expected entry');
+
+    expect(() => {
+      pool.observeDiskAckBatch({
+        [docA]: new Uint8Array([0x01]),
+        'nonexistent-doc': new Uint8Array([0x02]),
+      });
+    }).not.toThrow();
+    expect(entryA.lastDiskAckedSV).toEqual(new Uint8Array([0x01]));
+  });
+
+  test('empty batch is a no-op', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docA = uniqueDocName('pp-batch');
+    const entryA = pool.open(docA);
+    if (!entryA) throw new Error('expected entry');
+    pool.observeDiskAck(docA, new Uint8Array([0xab]));
+
+    pool.observeDiskAckBatch({});
+    expect(entryA.lastDiskAckedSV).toEqual(new Uint8Array([0xab]));
+  });
+
+  // Late-join recovery contract: after a __system__ reconnect, the
+  // batch refresh MUST overwrite a stale per-entry watermark with the
+  // server's authoritative value. Without this, the missed-frame path
+  // re-opens disk-ack staleness — the very bug the /api/server-info
+  // dispatch was added to close.
+  test('overwrites a stale lastDiskAckedSV with the fresh batch value', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docA = uniqueDocName('pp-batch');
+    const entryA = pool.open(docA);
+    if (!entryA) throw new Error('expected entry');
+
+    const stale = new Uint8Array([0x01]);
+    const fresh = new Uint8Array([0x01, 0x02, 0x03]);
+    pool.observeDiskAck(docA, stale);
+    pool.observeDiskAckBatch({ [docA]: fresh });
+    expect(entryA.lastDiskAckedSV).toBe(fresh);
+  });
+});
+
 describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
   // These tests assert the conservative-watermark logic: when
   // `lastDiskAckedSV` is set, it MUST be used as the baseline for the

@@ -33,6 +33,29 @@ export class CC1Broadcaster {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly log = getLogger('cc1');
   private warnedMissing = false;
+  /**
+   * Latest disk-ack state vector per documentName. Updated synchronously
+   * inside `emitDiskAck` BEFORE the broadcast so the in-process snapshot
+   * never lags the wire format.
+   *
+   * Late-join recovery: CC1 stateless broadcasts have no replay, so a
+   * client whose `__system__` WebSocket dropped during a write burst
+   * misses every disk-ack frame from that window forever. Without a
+   * recovery path, the client's `lastDiskAckedSV` would stay at the last
+   * received frame's SV and silently fall behind the actual durable
+   * state. The mismatch-recycle path then over-includes durably-persisted
+   * bytes in the buffer → re-replays them onto the post-restart server's
+   * markdown-rebuilt Y.Doc → content duplication (re-opens the bug class
+   * T11 was strengthened to prevent).
+   *
+   * `getLatestDiskAckSVsAsBase64()` exposes this map for the
+   * `GET /api/server-info` handler so the client can refresh its
+   * watermarks on every `__system__` reconnect, closing the missed-frame
+   * gap. Map is per-process (lifetime = server instance), which is the
+   * correct scope: a server restart issues a new `serverInstanceId`,
+   * triggers full recycle, and rebuilds the Y.Docs from disk.
+   */
+  private readonly latestDiskAckSVs = new Map<string, Uint8Array>();
 
   constructor(hocuspocus: Hocuspocus) {
     this.hocuspocus = hocuspocus;
@@ -187,6 +210,13 @@ export class CC1Broadcaster {
    * before broadcast.
    */
   emitDiskAck(docName: string, sv: Uint8Array): void {
+    // Update the in-process snapshot BEFORE the broadcast so a same-tick
+    // `getLatestDiskAckSVsAsBase64()` call (e.g. /api/server-info served
+    // synchronously after disk flush) reflects the latest state. The
+    // map updates run regardless of broadcast success because the
+    // snapshot's purpose is recovery — clients that missed the
+    // broadcast read it via /api/server-info instead.
+    this.latestDiskAckSVs.set(docName, sv);
     try {
       const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
       if (!doc) {
@@ -212,6 +242,24 @@ export class CC1Broadcaster {
     } catch (err) {
       this.log.error({ err, docName }, '[cc1] emitDiskAck failed');
     }
+  }
+
+  /**
+   * Snapshot of the latest disk-ack state vector for every doc the
+   * server has flushed at least once since startup, encoded as base64
+   * for transport via `GET /api/server-info`'s `currentDiskAckSVs`
+   * field. Same wire format as the per-frame broadcast `sv`.
+   *
+   * Returns a fresh object on every call — caller-owned, safe to
+   * include in JSON responses. Empty `{}` is a valid return for a
+   * cold server (no disks flushed yet).
+   */
+  getLatestDiskAckSVsAsBase64(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [docName, sv] of this.latestDiskAckSVs) {
+      out[docName] = Buffer.from(sv).toString('base64');
+    }
+    return out;
   }
 
   get subscriberCount(): number {

@@ -403,6 +403,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      // CC1 broadcaster is initialized after persistence but captured by
+      // closure reference (same pattern as `onAgentCommit` + `onDiskFlush`
+      // above). `getLatestDiskAckSVsAsBase64()` returns `{}` when the
+      // server has flushed nothing yet, matching the schema's
+      // empty-object case.
+      getDiskAckSVs: () => cc1Broadcaster?.getLatestDiskAckSVsAsBase64() ?? {},
       contentRoot,
       backlinkIndex,
       signalChannel,

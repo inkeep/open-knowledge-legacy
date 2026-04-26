@@ -556,6 +556,17 @@ export interface ApiExtensionOptions {
   flushGitCommit?: () => Promise<void>;
   /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
   getCurrentBranch?: () => string | null;
+  /**
+   * Accessor for the latest disk-ack state vectors per document. Wired
+   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
+   * Returned as part of `GET /api/server-info` so clients can recover
+   * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
+   * without relying on stateless CC1 broadcasts (which have no replay).
+   * Empty `{}` is the cold-server case (no docs flushed yet); omitted
+   * when the broadcaster isn't available (e.g. plugin mode in dev
+   * server). Values are base64-encoded `Uint8Array` state vectors.
+   */
+  getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
@@ -720,6 +731,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     shadowRef,
     flushGitCommit,
     getCurrentBranch,
+    getDiskAckSVs,
     contentRoot,
     backlinkIndex,
     signalChannel,
@@ -3281,7 +3293,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const currentBranch = getActiveBranch();
-    json(res, 200, { ok: true, serverInstanceId, currentBranch });
+    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
+    // server) doesn't have a CC1Broadcaster and omits the field. The
+    // schema's `.optional()` keeps the response shape valid in both
+    // cases without a separate "no broadcaster" branch on the client.
+    const currentDiskAckSVs = getDiskAckSVs?.();
+    json(res, 200, {
+      ok: true,
+      serverInstanceId,
+      currentBranch,
+      ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
+    });
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {

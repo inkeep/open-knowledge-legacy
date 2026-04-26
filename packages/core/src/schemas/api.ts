@@ -31,12 +31,25 @@ import { z } from 'zod';
  * `handleBranchSwitched` exactly as the live broadcast would. Optional
  * for backwards-compat with non-git deployments where branch is
  * meaningless.
+ *
+ * `currentDiskAckSVs` is the late-join backstop for the CC1 `disk-ack`
+ * stateless broadcasts. Same gap as `branch-switched` (no replay), with
+ * a stronger correctness consequence: a stale `lastDiskAckedSV` would
+ * cause the mismatch-recycle baseline-selection to over-include
+ * durably-persisted bytes in the buffer, re-replaying them onto the
+ * post-restart server's markdown-rebuilt Y.Doc and producing
+ * duplication. The map is keyed by `documentName`; values are
+ * base64-encoded `Uint8Array` state vectors (same wire shape as
+ * `CC1DiskAckPayload.sv`). Clients refresh their per-entry
+ * `lastDiskAckedSV` on every `__system__` reconnect via this fetch.
+ * Empty `{}` is valid (cold server with no flushed docs).
  */
 export const ServerInfoResponseSchema = z
   .object({
     ok: z.literal(true),
     serverInstanceId: z.string().min(1),
     currentBranch: z.string().min(1).optional(),
+    currentDiskAckSVs: z.record(z.string().min(1), z.string().min(1)).optional(),
   })
   .loose();
 export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;

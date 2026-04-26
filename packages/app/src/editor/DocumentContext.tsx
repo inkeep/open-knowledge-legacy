@@ -4,6 +4,7 @@ import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { mark } from '@/lib/perf';
+import { refreshServerInfo } from '@/lib/server-info-refresh';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
 import { handleBranchSwitched } from './branch-invalidation';
@@ -144,6 +145,16 @@ interface DocumentContextValue {
    * `disk-ack` frame.
    */
   observeDiskAck: (docName: string, sv: Uint8Array) => void;
+  /**
+   * Re-fetch `/api/server-info` and dispatch every recognized field
+   * (instanceId, branch, disk-ack watermarks). Called by
+   * `SystemDocSubscriber` on every `__system__` reconnect to recover
+   * from missed CC1 stateless broadcasts (which have no replay).
+   * Boot path uses the same helper for consistency. Idempotent —
+   * each dispatcher no-ops on unchanged inputs, so a redundant call
+   * costs only one HTTP round-trip.
+   */
+  refreshServerInfo: () => Promise<void>;
   /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
@@ -380,34 +391,21 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         // principal unavailable — pool opens providers with anonymous auth token
       });
 
-    // CRDT server-restart recovery (Commit 3): fetch the server's
-    // per-process instance ID at boot and seed the pool's cache. Every
-    // subsequent provider open includes the cached ID in its auth-token's
-    // `expectedServerInstanceId` field so Commit 4's server-side
-    // enforcement can reject a stale-client reconnect before Yjs sync
-    // merges ghost state (see reports/crdt-server-restart-recovery/).
-    // Silent on failure: pre-Commit-2 servers return 404 here, and the
-    // pool simply doesn't claim an instance ID (legacy path accepted
-    // unconditionally by the server).
-    fetch('/api/server-info')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((info: unknown) => {
-        const result = ServerInfoResponseSchema.safeParse(info);
-        if (result.success) {
-          p.setExpectedServerInstanceId(result.data.serverInstanceId);
-          // Seed the late-join backstop. First call seeds without
-          // invalidating; subsequent mismatches via CC1 server-info
-          // replay handleBranchSwitched client-side.
-          if (result.data.currentBranch !== undefined) {
-            if (p.compareAndUpdateObservedBranch(result.data.currentBranch)) {
-              void handleBranchSwitched(p, result.data.currentBranch);
-            }
-          }
-        }
-      })
-      .catch(() => {
-        // server-info unavailable — pool opens providers without an instance claim
-      });
+    // CRDT server-restart recovery boot fetch: pull the server's
+    // per-process instance ID, current git branch, and per-doc
+    // disk-ack watermarks at startup, dispatch them all into the
+    // pool. Subsequent provider opens claim the instance ID + branch
+    // in their auth tokens so server-side enforcement can reject a
+    // stale-client reconnect before Yjs sync merges ghost state. The
+    // disk-ack batch refreshes per-entry `lastDiskAckedSV` so the
+    // mismatch-recycle baseline-selection always operates on fresh
+    // data (closes the missed-frame staleness gap that CC1 stateless
+    // broadcasts otherwise leave open).
+    //
+    // SystemDocSubscriber re-fires this on every `__system__` reconnect
+    // — same helper, same dispatch — so a brief WS drop doesn't leave
+    // any of the three watermarks permanently stale.
+    void refreshServerInfo(p);
 
     // systemProvider exposure happens in a dedicated effect below because it
     // depends on `systemProvider` state, not `collabUrl`.
@@ -612,6 +610,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
       p.observeDiskAck(docName, sv);
+    },
+    refreshServerInfo: async () => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      await refreshServerInfo(p);
     },
     collabUrl,
     collabTerminal,
