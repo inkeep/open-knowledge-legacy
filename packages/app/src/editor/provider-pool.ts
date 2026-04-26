@@ -29,41 +29,98 @@ export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-interface PoolEntry {
+/**
+ * Pool entries follow a two-state lifecycle modeled as a discriminated
+ * union: `Active` (the normal case — provider live, persistence attached)
+ * and `TearingDown` (transient, inside `destroyEntry` after the kind flip
+ * but before the entry is removed from `entries`).
+ *
+ * The discriminator narrows `persistence`, `observerCleanup`, and
+ * `pendingRecycleTimer` to their non-transient shapes when consumers know
+ * the entry is Active — replaces the implicit-invariant pattern of
+ * `if (entry.tearingDown || entry.persistence === null) continue;` that
+ * accumulated across review rounds 3, 6, 7.
+ *
+ * Note on `bridgeSetupFailed`: kept as a flag on `Active` rather than a
+ * third variant. A bridge-failed entry stays pool-resident with
+ * persistence still attached and the recycle-on-disconnect path still
+ * functional — the only narrowing benefit of a separate variant would be
+ * `observerCleanup === null`, which doesn't earn its variant weight.
+ *
+ * Note on stale-closure checks: variants don't subsume the
+ * `this.entries.get(docName) !== entry` guard in event handlers. That
+ * check answers "is my closure stale?" — orthogonal to the entry's
+ * lifecycle state. Both checks remain.
+ */
+interface PoolEntryBase {
   provider: HocuspocusProvider;
-  /**
-   * Client-side Yjs persistence attached to this entry's Y.Doc. Hydrates
-   * from IndexedDB on cold mount (instant Cmd-R), persists new updates to
-   * the `ok-ydoc:${docName}` database, and is the handle the mismatch
-   * recycle flow uses to `clearData()` before destroying the provider.
-   * Null after the entry has been torn down.
-   */
-  persistence: ClientPersistenceProvider | null;
-  /**
-   * Server state vector captured after every `synced` event. The delta
-   * between this and the Y.Doc's current state is the "unsynced buffer"
-   * that must survive `server-instance-mismatch` recycle — after clearData
-   * wipes the IDB, the buffered bytes are replayed onto the fresh
-   * provider's Y.Doc at its first `synced` event.
-   */
-  lastServerSyncedSV: Uint8Array | null;
-  observerCleanup: (() => void) | null;
-  syncState: SyncState;
   docName: string;
   lastAccessedAt: number;
+  syncState: SyncState;
   hasSynced: boolean;
-  tearingDown: boolean;
-  pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
   /**
-   * True when `setupObservers` threw during initial sync. The provider stays
-   * pool-resident so `EditorArea` keeps rendering the boundary subtree (which
-   * shows `DocumentErrorBoundary`'s `BridgeSetupError` UI), but the entry is
-   * inert — observers are not wired, no further writes will land. The user's
-   * "Try again" path calls `pool.recycle(docName)` which destroys + recreates
-   * the entry to retry from a clean slate.
+   * True when `setupObservers` threw during initial sync. The provider
+   * stays pool-resident so `EditorArea` keeps rendering the boundary
+   * subtree (which shows `DocumentErrorBoundary`'s `BridgeSetupError`
+   * UI), but the entry is inert — observers not wired, no further writes
+   * will land. The user's "Try again" path calls `pool.recycle(docName)`
+   * which destroys + recreates the entry to retry from a clean slate.
    */
   bridgeSetupFailed: boolean;
+  /**
+   * Server state vector captured after every Y.js `synced` event ("server
+   * has accepted your update into its in-memory Y.Doc"). The delta
+   * between this and the doc's current state is the unsynced buffer
+   * captured before `clearData` on a `server-instance-mismatch` recycle.
+   * `handleServerInstanceMismatch` falls back to this when
+   * `lastDiskAckedSV` is null (no disk-ack received yet).
+   */
+  lastServerSyncedSV: Uint8Array | null;
+  /**
+   * Stricter watermark advanced by the server's CC1 `disk-ack` channel
+   * after L1 markdown flush ("server has durably persisted your update
+   * to disk"). `handleServerInstanceMismatch` prefers this over
+   * `lastServerSyncedSV` when present — disk-ack'd updates will survive
+   * the markdown rebuild on a server-restart, so the recycle buffer
+   * doesn't need to replay them. Closes the T11 mid-drain duplication
+   * bug class.
+   */
+  lastDiskAckedSV: Uint8Array | null;
 }
+
+/**
+ * Live pool entry. Most consumers narrow to this kind via
+ * `if (entry.kind === 'active') { … }` so `persistence` is non-null.
+ */
+interface ActivePoolEntry extends PoolEntryBase {
+  kind: 'active';
+  /**
+   * Client-side Yjs persistence attached to this entry's Y.Doc. Hydrates
+   * from IndexedDB on cold mount (instant Cmd-R), persists every
+   * non-self update back, and is the handle the mismatch recycle flow
+   * uses to `clearData()` before destroying the provider.
+   */
+  persistence: ClientPersistenceProvider;
+  /** Wired by `setupObservers` after first sync; null until then. */
+  observerCleanup: (() => void) | null;
+  /** Set when a disconnect schedules a debounced recycle; null otherwise. */
+  pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * Transient state inside `destroyEntry` between the kind flip and
+ * removal from `entries`. All cleanup-fields are nulled by the time
+ * `destroyEntry` finishes; consumers that observe a `TearingDown` entry
+ * via a stale event-handler closure should bail.
+ */
+interface TearingDownPoolEntry extends PoolEntryBase {
+  kind: 'tearing-down';
+  persistence: null;
+  observerCleanup: null;
+  pendingRecycleTimer: null;
+}
+
+type PoolEntry = ActivePoolEntry | TearingDownPoolEntry;
 
 type PoolChangeCallback = () => void;
 
@@ -477,30 +534,31 @@ export class ProviderPool {
     // unsynced edits before clearData + recycle.
     const persistence = createClientPersistence(docName, provider.document);
 
-    const entry: PoolEntry = {
+    const entry: ActivePoolEntry = {
+      kind: 'active',
       provider,
       persistence,
       lastServerSyncedSV: null,
+      lastDiskAckedSV: null,
       observerCleanup: null,
       syncState: 'connecting',
       docName,
       lastAccessedAt: Date.now(),
       hasSynced: false,
-      tearingDown: false,
       pendingRecycleTimer: null,
       bridgeSetupFailed: false,
     };
 
     // Track sync state
     const onStatus = ({ status }: { status: string }) => {
-      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+      if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
       if (status === 'disconnected') {
         entry.syncState = 'disconnected';
         this.notify();
       }
     };
     const onSynced = () => {
-      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+      if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
       entry.syncState = 'synced';
       entry.hasSynced = true;
       // Refresh the "last server acked" state vector on every sync event —
@@ -551,7 +609,7 @@ export class ProviderPool {
       }
     };
     const onDisconnect = () => {
-      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+      if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
       entry.syncState = 'disconnected';
       this.notify();
 
@@ -564,8 +622,13 @@ export class ProviderPool {
       // means "still can't reach the server."
       if (entry.hasSynced && provider.unsyncedChanges === 0 && !entry.pendingRecycleTimer) {
         entry.pendingRecycleTimer = setTimeout(() => {
+          // Re-narrow inside the timer closure — `entry` was Active when the
+          // timer was scheduled, but TS doesn't carry the narrowing across
+          // the async boundary, and the entry may have been torn down before
+          // the timer fired.
+          if (entry.kind !== 'active') return;
           entry.pendingRecycleTimer = null;
-          if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+          if (this.entries.get(docName) !== entry) return;
           this.recycleDisconnectedEntry(docName);
         }, this.recycleDebounceMs);
       }
@@ -645,7 +708,7 @@ export class ProviderPool {
     if (buffered !== undefined) {
       const replayOnce = (): void => {
         provider.off('synced', replayOnce);
-        if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+        if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
         const current = this.bufferedUpdates.get(docName);
         if (current === undefined) return;
         this.bufferedUpdates.delete(docName);
@@ -674,19 +737,21 @@ export class ProviderPool {
     const snapshot = Array.from(this.entries.entries());
 
     for (const [docName, poolEntry] of snapshot) {
-      if (poolEntry.tearingDown) continue;
-      // No sync baseline → we have nothing to compute a delta against. Any
-      // Y.Doc state at this point came from IDB hydration of a prior session
-      // whose server is, by definition, a different instance than the one we
-      // just failed to authenticate against — preserving it would duplicate
-      // content when the fresh provider syncs from markdown-rebuilt state.
-      // A tab typing within the 50–500 ms window before first sync can lose
-      // those keystrokes here; that's the accepted trade-off (SPEC §6).
-      if (poolEntry.lastServerSyncedSV === null) continue;
-      const unsynced = computeUnsyncedUpdate(
-        poolEntry.provider.document,
-        poolEntry.lastServerSyncedSV,
-      );
+      if (poolEntry.kind !== 'active') continue;
+      // Baseline-selection: prefer `lastDiskAckedSV` (server has durably
+      // persisted) when present — the markdown rebuild on restart will
+      // already include those updates, so the recycle buffer doesn't need
+      // to replay them. Falls back to `lastServerSyncedSV` for the
+      // cold-connect window where no disk-ack has arrived yet
+      // (preserving today's "in-memory ack is the best we have" behavior).
+      // No baseline at all → drop unsynced state. Any Y.Doc state at this
+      // point came from IDB hydration of a prior session whose server is,
+      // by definition, a different instance — preserving it would
+      // duplicate content. The 50–500 ms cold-connect-then-immediate-
+      // mismatch window can lose keystrokes; accepted trade-off (SPEC §6).
+      const baseline = poolEntry.lastDiskAckedSV ?? poolEntry.lastServerSyncedSV;
+      if (baseline === null) continue;
+      const unsynced = computeUnsyncedUpdate(poolEntry.provider.document, baseline);
       if (unsynced.byteLength > 0) {
         this.bufferedUpdates.set(docName, unsynced);
       }
@@ -694,10 +759,13 @@ export class ProviderPool {
 
     const clears: Promise<void>[] = [];
     for (const [docName, poolEntry] of snapshot) {
-      const persistence = poolEntry.persistence;
-      if (poolEntry.tearingDown || persistence === null) continue;
+      // TearingDown entries have null persistence by construction; the
+      // discriminator narrowing ensures we never call .clearData() on a
+      // null. BridgeFailed entries (Active with bridgeSetupFailed=true)
+      // still have persistence attached and SHOULD be cleared.
+      if (poolEntry.kind !== 'active') continue;
       clears.push(
-        persistence.clearData().catch((err: unknown) => {
+        poolEntry.persistence.clearData().catch((err: unknown) => {
           console.warn(
             JSON.stringify({
               event: 'ok-client-persistence-clear-failed',
@@ -907,17 +975,35 @@ export class ProviderPool {
   }
 
   private destroyEntry(entry: PoolEntry): void {
-    entry.tearingDown = true;
-    if (entry.pendingRecycleTimer) {
-      clearTimeout(entry.pendingRecycleTimer);
-      entry.pendingRecycleTimer = null;
-    }
+    // Idempotent: a second destroyEntry call on a torn-down entry no-ops.
+    if (entry.kind === 'tearing-down') return;
+
+    // Capture variant-specific Active fields BEFORE the kind flip so we
+    // can run the cleanup work after we've put the entry into a state
+    // where event-handler closures will bail on `kind !== 'active'`.
+    const observerCleanup = entry.observerCleanup;
+    const persistence = entry.persistence;
+    const pendingRecycleTimer = entry.pendingRecycleTimer;
+    const docName = entry.docName;
+
+    // Flip kind to 'tearing-down' atomically + null variant-specific
+    // fields. The cast through `unknown` is unavoidable because TS's
+    // discriminated unions don't model in-place kind mutations — both
+    // sides of the union are structurally compatible at the JS level.
+    const torn = entry as unknown as TearingDownPoolEntry;
+    torn.kind = 'tearing-down';
+    torn.persistence = null;
+    torn.observerCleanup = null;
+    torn.pendingRecycleTimer = null;
+
+    if (pendingRecycleTimer) clearTimeout(pendingRecycleTimer);
+
     // Detach the syncPromise cache entry BEFORE destroy() fires the provider's
     // `close` event — otherwise the sync-promise listener would reject the
     // already-consumed promise with PreSyncDisconnectError on pool-triggered
     // teardown. Natural (network-triggered) close events still reject as
     // expected because this path only runs inside pool destroy/recycle/evict.
-    invalidateSyncPromise(entry.docName);
+    invalidateSyncPromise(docName);
     // Evict V2 editor cache entries BEFORE destroying the provider: the cache
     // holds Editor/EditorView instances bound to `provider.document` via
     // Collaboration.configure / y-codemirror.next. If the cache survived the
@@ -929,11 +1015,11 @@ export class ProviderPool {
     // editor.destroy() itself, so the React subtree receives a destroyed
     // editor on next mount and falls through to factory-construct a fresh
     // one.
-    evictTiptapEditor(entry.docName);
-    evictCmEditor(entry.docName);
-    // Observer cleanup first (observers reference Y.Doc state), then full teardown
-    entry.observerCleanup?.();
-    entry.observerCleanup = null;
+    evictTiptapEditor(docName);
+    evictCmEditor(docName);
+    // Observer cleanup (observers reference Y.Doc state). Captured pre-flip
+    // because the post-flip variant has `observerCleanup: null`.
+    observerCleanup?.();
 
     // Tear down client-side persistence BEFORE the provider. The synchronous
     // part of y-indexeddb's `destroy()` runs `doc.off('update', _storeUpdate)`
@@ -944,22 +1030,21 @@ export class ProviderPool {
     // to run asynchronously against a separate IDB handle. We intentionally
     // do not `await` here — keeping `destroyEntry` synchronous preserves all
     // call-site shapes.
-    const pendingPersistenceDestroy = entry.persistence?.destroy();
-    pendingPersistenceDestroy?.catch((err) => {
-      console.warn(`[ProviderPool] persistence destroy failed for ${entry.docName}:`, err);
+    const pendingPersistenceDestroy = persistence.destroy();
+    pendingPersistenceDestroy.catch((err) => {
+      console.warn(`[ProviderPool] persistence destroy failed for ${docName}:`, err);
     });
-    entry.persistence = null;
 
     try {
-      entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
+      torn.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
     } catch (err) {
-      console.warn(`[ProviderPool] Provider destroy failed for ${entry.docName}:`, err);
+      console.warn(`[ProviderPool] Provider destroy failed for ${docName}:`, err);
     }
   }
 
   private recycleDisconnectedEntry(docName: string): void {
     const entry = this.entries.get(docName);
-    if (!entry || entry.tearingDown) return;
+    if (!entry || entry.kind !== 'active') return;
 
     const wasActive = this.activeDocName === docName;
     mark('ok/pool/recycle-disconnected', { docName, wasActive });

@@ -83,14 +83,22 @@ describe('handleBranchSwitched', () => {
     const e1 = pool.open(d1);
     const e2 = pool.open(d2);
     if (!e1 || !e2) throw new Error('pool.open returned null');
-    if (!e1.persistence || !e2.persistence) throw new Error('entry missing persistence');
+    if (e1.kind !== 'active' || e2.kind !== 'active') throw new Error('expected active');
 
     const clear1 = mock(() => Promise.resolve());
     const clear2 = mock(() => Promise.resolve());
     e1.persistence.clearData = clear1;
     e2.persistence.clearData = clear2;
 
-    e1.tearingDown = true;
+    // Flip e1 to tearing-down (matches the variant `destroyEntry` produces).
+    const torn = e1 as unknown as {
+      kind: 'tearing-down';
+      persistence: null;
+      observerCleanup: null;
+      pendingRecycleTimer: null;
+    };
+    torn.kind = 'tearing-down';
+    torn.persistence = null;
 
     await handleBranchSwitched(pool, 'feature');
 
@@ -98,19 +106,12 @@ describe('handleBranchSwitched', () => {
     expect(clear2).toHaveBeenCalledTimes(1);
   });
 
-  test('skips entries whose persistence is null (mid-teardown)', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    const d1 = docName('d1');
-    const e1 = pool.open(d1);
-    if (!e1) throw new Error('pool.open returned null');
-
-    e1.persistence = null;
-
-    // Should not throw.
-    await handleBranchSwitched(pool, 'feature');
-
-    expect(pool.has(d1)).toBe(false);
-  });
+  // The pre-PR-#311 case "active entry with null persistence (mid-teardown)"
+  // is now structurally impossible: the discriminated union enforces that
+  // `persistence === null` only on `kind: 'tearing-down'` variants. The
+  // tearing-down skip is covered by the test above ('skips entries that
+  // are tearing down'). The runtime null-persistence guard the old test
+  // was checking has been replaced by a static type invariant.
 
   test('swallows clearData failures and still recycles', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
