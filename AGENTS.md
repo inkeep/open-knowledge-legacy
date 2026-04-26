@@ -43,6 +43,7 @@ bun run format                       # Biome --write
 bun run build                        # turbo build (cli, app, docs)
 bun run build:desktop                # electron-vite (no DMG; see packages/desktop)
 bun run changeset                    # Create changeset
+bun run notices                      # Regenerate THIRD_PARTY_NOTICES.md (drift-checked in `bun run check`)
 
 cd packages/app && bun run dev       # Dev server (Vite + Hocuspocus on 5173)
 cd docs && bun run dev               # Docs (Next.js + Fumadocs)
@@ -138,7 +139,7 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 
 **CC1 push-over-awareness** — pure-signal push primitive for derived views. Contract v1: `{v:1, ch:string, seq:number}`. 100 ms trailing-edge debounce per channel. Emitter: `packages/server/src/cc1-broadcast.ts`. Subsystems keyed off `documentName` MUST short-circuit via `isSystemDoc()` (STOP rule below). Channels: `server-info` (instanceId), `files`/`backlinks`/`graph` (derived-view invalidation), `branch-switched` (clients clear IDB + recycle).
 
-**Client-side Yjs persistence.** `ProviderPool` wraps each `HocuspocusProvider` with `ClientPersistenceProvider` over patched `y-indexeddb@9.0.12` (DB `ok-ydoc:${docName}`). On `server-instance-mismatch`: buffer → `clearData()` → `recycleAllEntries()` → replay under `TAB_REPLAY_ORIGIN`. `handleBranchSwitched` clears + recycles without buffering.
+**Client-side Yjs persistence.** `ProviderPool` wraps each `HocuspocusProvider` with `ClientPersistenceProvider` over patched `y-indexeddb@9.0.12`. On `server-instance-mismatch`: buffer → `clearData()` → `recycleAllEntries()` → replay. `handleBranchSwitched` clears + recycles without buffering.
 
 ## Testing
 
@@ -197,7 +198,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Don't narrow PM mark `excludes` fields.** Precedent #9 covers mark attrs as add-only. US-017 widened `Code` via `CodeMarkFidelity` (`excludes: ''`) to let emphasis/strong coexist with inline code per CommonMark. Reverting via a Tiptap upgrade reintroduces idempotence failures.
 - **Server-side disk writes go through `fs-traced.ts` wrappers.** Use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (+ `*Sync`) from `packages/server/src/fs-traced.ts` rather than importing raw `node:fs` write functions in production paths — every disk write needs an `fs.*` span with bounded-cardinality attributes. `@opentelemetry/instrumentation-fs` does not work on Bun (oven-sh/bun#6546). Test-only code is exempt.
 - **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
-- **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates content (stale IDB + new clientID → markers twice). Auth-token claim Zod-validated via `parseHocuspocusAuthToken`. Ref: `packages/app/src/editor/provider-pool.ts`.
+- **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates (stale IDB + new clientID → markers twice). Auth-token Zod-validated via `parseHocuspocusAuthToken`. Ref: `provider-pool.ts`.
 
 ## WARN rules
 
