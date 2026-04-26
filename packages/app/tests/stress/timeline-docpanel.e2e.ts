@@ -138,13 +138,11 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     // Wait for at least one mocked historical entry to render.
     await expect(timelinePanel.getByText('Test User').first()).toBeVisible();
 
-    // Click the checkpoint EntryRow. Three button-roled descendants live in
-    // the tabpanel: the "Current version" pinned row (CurrentVersionRow),
-    // the WipGroup `<button>` expanders ("Show N auto-save"), and the
-    // EntryRow `<div role="button">` rows. Author name "Test User" is
-    // unique to EntryRow — checkpoint rows always render visible (not
-    // gated by expander state), so this filter resolves deterministically
-    // regardless of the WipGroup default-expand state.
+    // Click the first visible EntryRow. The pre-checkpoint WIP group (wip-0)
+    // renders expanded by default (`isPreCheckpoint=true`), so it appears
+    // before the checkpoint row in DOM order — `.filter({ hasText: 'Test User' })
+    // .first()` resolves to wip-0. Any historical row exercises the same
+    // onEntrySelect path these tests care about.
     const historicalRow = timelinePanel
       .getByRole('button')
       .filter({ hasText: 'Test User' })
