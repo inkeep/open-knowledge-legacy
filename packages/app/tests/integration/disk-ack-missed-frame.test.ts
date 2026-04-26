@@ -132,25 +132,29 @@ describe('T15: Missed disk-ack frame recovery via /api/server-info', () => {
     const preRestartDisk = readFileSync(join(server.contentDir, 'test-doc.md'), 'utf-8');
     expect(preRestartDisk.includes(MARKER)).toBe(true);
 
-    // Phase 4 — reconnect the system-doc subscriber. The reconnect
-    // triggers `refreshServerInfo(pool, baseUrl)` via the harness's
-    // `synced`-after-first wiring, refreshing `lastDiskAckedSV` for
-    // 'test-doc' to the post-disk-write SV. WITHOUT the
-    // /api/server-info refresh, this watermark would stay at Phase 1's
-    // (pre-marker) SV.
+    // Phase 4 — refresh from /api/server-info to recover the missed
+    // disk-ack watermarks. We call `refreshServerInfo` directly
+    // rather than instantiating a new `attachSystemDocSubscriber`
+    // because dispose + recreate is structurally NOT a WebSocket
+    // reconnect: the gate (`createSyncedReconnectGate`) only fires on
+    // a SECOND `synced` within the SAME provider lifetime, mirroring
+    // the production semantics where reconnects happen via
+    // HocuspocusProvider's built-in exponential-backoff inside one
+    // provider instance. A fresh provider's first `synced` is treated
+    // as a cold boot (the initial DocumentContext fetch already
+    // covered it).
+    //
+    // Production gate behavior is locked separately by the unit tests
+    // on `createSyncedReconnectGate` in
+    // `packages/app/src/lib/server-info-refresh.test.ts`; T15's job
+    // is the end-to-end mechanism (`refreshServerInfo` correctly
+    // dispatches the missed-frame data into the recycle baseline),
+    // which is independent of how the trigger fires.
+    await refreshServerInfo(pool, baseUrl);
+    // Reconnect a fresh systemSub for downstream cleanup / parity
+    // with the previous test shape. No-op for the assertion path.
     systemSub = attachSystemDocSubscriber(pool, server.port);
     cleanups.push(() => systemSub.dispose());
-    // Allow the systemSub's first synced + reconnect refresh fetch to
-    // land before we trigger the restart. The dispatcher pattern
-    // (first synced is the seed; subsequent synceds trigger refetch)
-    // means we need ANOTHER synced cycle to count as a "reconnect"
-    // refresh. A small wait gives the harness's refetch path time
-    // to land.
-    await wait(500);
-    // Manually invoke refreshServerInfo to mirror what the second
-    // synced event would do — explicit so this test is deterministic
-    // regardless of internal first-synced gate timing.
-    await refreshServerInfo(pool, baseUrl);
 
     // Phase 5 — restart the server. New serverInstanceId triggers
     // server-instance-mismatch on reconnect → mismatch-recycle uses

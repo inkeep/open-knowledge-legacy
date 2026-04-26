@@ -35,6 +35,36 @@ import { handleBranchSwitched } from '../editor/branch-invalidation';
 import type { ProviderPool } from '../editor/provider-pool';
 
 /**
+ * Single-source-of-truth gate for "fire on every `synced` event AFTER
+ * the first." Used by both `SystemDocSubscriber` (production) and
+ * `attachSystemDocSubscriber` (integration harness) so the trigger
+ * semantics for `__system__` reconnect-refresh are identical across
+ * both surfaces and testable as a pure function.
+ *
+ * Why a separate helper: a real WebSocket reconnect manifests as a
+ * second `synced` event WITHIN THE SAME `HocuspocusProvider` lifetime
+ * (provider's built-in exponential-backoff reconnect re-emits
+ * `synced` on each successful re-handshake). Disposing the provider
+ * and creating a new one is NOT a reconnect — it's a fresh provider
+ * whose first-synced is the cold boot, and the gate correctly skips
+ * a refresh in that case (the boot path already does its own fetch).
+ *
+ * The returned closure is the only side-effect the consumer needs to
+ * wire — call it inside the `provider.on('synced', ...)` handler and
+ * `onReconnect` fires for the second-and-beyond syncs.
+ */
+export function createSyncedReconnectGate(onReconnect: () => void): () => void {
+  let hadFirstSynced = false;
+  return () => {
+    if (hadFirstSynced) {
+      onReconnect();
+    } else {
+      hadFirstSynced = true;
+    }
+  };
+}
+
+/**
  * Decode a base64 string to `Uint8Array`. Browser-safe (uses `atob`).
  * Throws on invalid base64 — callers wrap in try/catch to honor the
  * helper's "never throws" contract.

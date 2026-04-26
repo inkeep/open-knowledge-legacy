@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { createSyncedReconnectGate } from '@/lib/server-info-refresh';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
@@ -95,21 +96,21 @@ export function SystemDocSubscriber() {
       }
     });
 
-    // Track first-sync vs subsequent-sync so the boot fetch
-    // (DocumentContext) doesn't race with a redundant SystemDocSubscriber
-    // refetch on the initial connect. After that, every `synced` is a
-    // reconnect — re-fetch /api/server-info to recover any disk-ack /
-    // server-info / branch-switched frames missed during the WS drop.
-    // Idempotent dispatch in `refreshServerInfo` makes this safe even
-    // if the first-sync gate ever leaks.
-    let hadFirstSynced = false;
+    // Track first-sync vs subsequent-sync via the shared
+    // `createSyncedReconnectGate` helper — same semantics as the
+    // integration harness's `attachSystemDocSubscriber`, single
+    // source of truth for the "fire-on-reconnect-only" wire-up. The
+    // boot fetch (DocumentContext) already covers the initial sync,
+    // so we skip the first one to avoid a redundant request. After
+    // that, every `synced` is a real WebSocket reconnect — re-fetch
+    // /api/server-info to recover any disk-ack / server-info /
+    // branch-switched frames missed during the WS drop.
+    const onReconnectSynced = createSyncedReconnectGate(() => {
+      void refreshServerInfoRef.current();
+    });
     provider.on('synced', () => {
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
-      if (hadFirstSynced) {
-        void refreshServerInfoRef.current();
-      } else {
-        hadFirstSynced = true;
-      }
+      onReconnectSynced();
     });
 
     // One-shot per-clientID warning when a stale bundled client still publishes

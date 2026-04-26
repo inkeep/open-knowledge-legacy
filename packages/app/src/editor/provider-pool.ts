@@ -12,6 +12,7 @@ import {
   captureStateVector,
   computeUnsyncedUpdate,
   createClientPersistence,
+  mergeStateVectors,
   UNKNOWN_BRANCH_SENTINEL,
 } from './client-persistence';
 import { appendTraceContextToCollabUrl } from './collab-otel';
@@ -336,14 +337,27 @@ export class ProviderPool {
   }
 
   /**
-   * Advance the entry's `lastDiskAckedSV` watermark. Called by
-   * `SystemDocSubscriber` for every CC1 `disk-ack` payload — the
-   * server has just durably written the doc up to this state vector.
-   * `handleServerInstanceMismatch` prefers `lastDiskAckedSV` over
-   * `lastServerSyncedSV` when computing the recycle buffer baseline:
-   * disk-ack'd updates will survive the markdown rebuild on
-   * server-restart, so they don't need to be replayed (and replaying
-   * them is what causes the T11 mid-drain duplication bug).
+   * Advance the entry's `lastDiskAckedSV` watermark via element-wise
+   * max-merge with any prior value. Called by `SystemDocSubscriber`
+   * for every CC1 `disk-ack` payload AND by every `/api/server-info`
+   * batch refresh — the server has just durably written the doc up to
+   * this state vector. `handleServerInstanceMismatch` prefers
+   * `lastDiskAckedSV` over `lastServerSyncedSV` when computing the
+   * recycle buffer baseline: disk-ack'd updates will survive the
+   * markdown rebuild on server-restart, so they don't need to be
+   * replayed (and replaying them is what causes the T11 mid-drain
+   * duplication bug).
+   *
+   * **Why merge, not overwrite.** Disk-ack updates flow over two
+   * independent channels (CC1 stateless WS + `/api/server-info` HTTP)
+   * that aren't ordered relative to each other. The server's per-doc
+   * SV is monotonic at emit time, but a slow HTTP response can land
+   * AFTER a newer WS broadcast — a pure overwrite would regress
+   * `lastDiskAckedSV` from the newer to the older value, reopening
+   * the disk-ack-staleness duplication path on the next
+   * mismatch-recycle. Element-wise max-merge is conservative across
+   * out-of-order receives: the merged SV is at least as advanced as
+   * either input in every clientID dimension.
    *
    * No-op when no entry exists for `docName` or the entry is
    * tearing-down — both signal "this doc isn't an active part of the
@@ -353,12 +367,13 @@ export class ProviderPool {
   observeDiskAck(docName: string, sv: Uint8Array): void {
     const entry = this.entries.get(docName);
     if (!entry || entry.kind !== 'active') return;
-    entry.lastDiskAckedSV = sv;
+    entry.lastDiskAckedSV = mergeStateVectors(entry.lastDiskAckedSV, sv);
   }
 
   /**
    * Refresh the `lastDiskAckedSV` watermark for every doc named in the
-   * batch. Called by the boot fetch + every `__system__` reconnect via
+   * batch via the same element-wise max-merge as `observeDiskAck`.
+   * Called by the boot fetch + every `__system__` reconnect via
    * `GET /api/server-info`'s `currentDiskAckSVs` field — closes the
    * missed-frame gap that CC1 stateless broadcasts leave open (no
    * replay; a brief `__system__` WS drop during a write burst would
@@ -368,10 +383,9 @@ export class ProviderPool {
    * Per-doc semantics match `observeDiskAck`: skip when no entry
    * exists for the doc or when the entry is tearing-down. Docs in the
    * batch that the client doesn't have open are silently ignored.
-   *
-   * No staleness check (overwrite-on-receive) — the server's snapshot
-   * is monotonic per-doc (`emitDiskAck` only ever moves forward), so
-   * a fresh batch can never carry an older value than what we have.
+   * The merge protects against the WS+HTTP cross-over window where
+   * a slow batch response could otherwise overwrite a newer
+   * live-broadcast SV.
    */
   observeDiskAckBatch(svsByDocName: Record<string, Uint8Array>): void {
     for (const [docName, sv] of Object.entries(svsByDocName)) {

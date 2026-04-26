@@ -21,6 +21,7 @@ import {
   captureStateVector,
   computeUnsyncedUpdate,
   createClientPersistence,
+  mergeStateVectors,
 } from './client-persistence';
 
 function uniqueDocName(prefix = 'cp-test'): string {
@@ -268,5 +269,99 @@ describe('computeUnsyncedUpdate', () => {
 
     clientDoc.destroy();
     peerDoc.destroy();
+  });
+});
+
+describe('mergeStateVectors', () => {
+  test('returns the non-null arg when one side is null', () => {
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'hello');
+    const sv = Y.encodeStateVector(doc);
+    expect(mergeStateVectors(null, sv)).toBe(sv);
+    expect(mergeStateVectors(sv, null)).toBe(sv);
+    expect(mergeStateVectors(null, null)).toBeNull();
+    doc.destroy();
+  });
+
+  // Element-wise max-merge picks the larger clock per clientID. When
+  // one SV strictly dominates the other (every clientID-clock pair is
+  // ≥), the merged result equals the dominating SV byte-for-byte.
+  test('strictly-dominating SV wins regardless of arg order', () => {
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'A');
+    const svAfterA = Y.encodeStateVector(doc);
+    doc.getText('t').insert(1, 'B');
+    const svAfterAB = Y.encodeStateVector(doc);
+    doc.destroy();
+
+    expect(mergeStateVectors(svAfterA, svAfterAB)).toEqual(svAfterAB);
+    expect(mergeStateVectors(svAfterAB, svAfterA)).toEqual(svAfterAB);
+  });
+
+  // Cross-clientID merge: both SVs contribute different clientIDs, the
+  // merged SV carries the union of clientID→clock pairs. This is the
+  // load-bearing case for the WS+HTTP race (server-side monotonic SVs
+  // that interleave writes from multiple authors), but also for any
+  // scenario where two channels each carry SVs spanning disjoint
+  // clientID sets.
+  test('union-merges disjoint clientID sets', () => {
+    // Build two docs with distinct clientIDs.
+    const docA = new Y.Doc();
+    docA.getText('t').insert(0, 'A1');
+    const svA = Y.encodeStateVector(docA);
+    const clientA = docA.clientID;
+    docA.destroy();
+
+    const docB = new Y.Doc();
+    docB.getText('t').insert(0, 'B1');
+    const svB = Y.encodeStateVector(docB);
+    const clientB = docB.clientID;
+    docB.destroy();
+
+    // Sanity: distinct clientIDs (Y.Doc generates random clientIDs).
+    expect(clientA).not.toBe(clientB);
+
+    const merged = mergeStateVectors(svA, svB);
+    if (merged === null) throw new Error('expected merged SV');
+    const decoded = Y.decodeStateVector(merged);
+    expect(decoded.has(clientA)).toBe(true);
+    expect(decoded.has(clientB)).toBe(true);
+  });
+
+  // Same-clientID, larger-clock wins regardless of arg order. Proves
+  // the merge actually does element-wise max rather than naive
+  // concatenation.
+  test('same-clientID picks the larger clock', () => {
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'A');
+    const svAfterA = Y.encodeStateVector(doc);
+    doc.getText('t').insert(1, 'B');
+    doc.getText('t').insert(2, 'C');
+    const svAfterABC = Y.encodeStateVector(doc);
+    const clientID = doc.clientID;
+    doc.destroy();
+
+    const mapA = Y.decodeStateVector(svAfterA);
+    const mapABC = Y.decodeStateVector(svAfterABC);
+    const clockAfterA = mapA.get(clientID);
+    const clockAfterABC = mapABC.get(clientID);
+    if (clockAfterA === undefined || clockAfterABC === undefined) {
+      throw new Error('expected clocks');
+    }
+    expect(clockAfterABC).toBeGreaterThan(clockAfterA);
+
+    const merged = mergeStateVectors(svAfterA, svAfterABC);
+    if (merged === null) throw new Error('expected merged SV');
+    const mergedMap = Y.decodeStateVector(merged);
+    expect(mergedMap.get(clientID)).toBe(clockAfterABC);
+  });
+
+  // Idempotence: merging an SV with itself returns the same content.
+  test('merging an SV with itself is idempotent', () => {
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'idempotent');
+    const sv = Y.encodeStateVector(doc);
+    doc.destroy();
+    expect(mergeStateVectors(sv, sv)).toEqual(sv);
   });
 });

@@ -1597,17 +1597,53 @@ describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
     expect(entry.lastDiskAckedSV).toBe(sv);
   });
 
-  test('overwrites prior watermark on subsequent observe', () => {
+  test('advances on subsequent observe with a strictly-newer SV', async () => {
+    // Use real Yjs-encoded SVs so the element-wise max-merge has valid
+    // structure to decode. Synthetic byte arrays would fail the
+    // decode step inside `mergeStateVectors`.
+    const Y = await import('yjs');
     pool = new ProviderPool(3, DUMMY_WS);
     const docName = uniqueDocName('pp-dack');
     const entry = pool.open(docName);
     if (!entry) throw new Error('expected entry');
 
-    const sv1 = new Uint8Array([0x01]);
-    const sv2 = new Uint8Array([0x01, 0x02]);
-    pool.observeDiskAck(docName, sv1);
-    pool.observeDiskAck(docName, sv2);
-    expect(entry.lastDiskAckedSV).toBe(sv2);
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'A');
+    const svAfterA = Y.encodeStateVector(doc);
+    doc.getText('t').insert(1, 'B');
+    const svAfterAB = Y.encodeStateVector(doc);
+    doc.destroy();
+
+    pool.observeDiskAck(docName, svAfterA);
+    pool.observeDiskAck(docName, svAfterAB);
+    expect(entry.lastDiskAckedSV).toEqual(svAfterAB);
+  });
+
+  // Out-of-order receive across two channels (CC1 WS + /api/server-info
+  // HTTP): a slow HTTP response can land AFTER a newer WS broadcast. A
+  // pure overwrite-on-receive would regress lastDiskAckedSV from the
+  // newer WS value to the older HTTP value, reopening the disk-ack
+  // staleness duplication path. Element-wise max-merge protects
+  // against this by keeping the larger clock per clientID.
+  test('does NOT regress on out-of-order observe with a strictly-older SV', async () => {
+    const Y = await import('yjs');
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-dack');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+
+    const doc = new Y.Doc();
+    doc.getText('t').insert(0, 'A');
+    const svAfterA = Y.encodeStateVector(doc);
+    doc.getText('t').insert(1, 'B');
+    const svAfterAB = Y.encodeStateVector(doc);
+    doc.destroy();
+
+    // Newer SV arrives first (live WS broadcast), older SV arrives
+    // second (stale HTTP response). Merge keeps the newer.
+    pool.observeDiskAck(docName, svAfterAB);
+    pool.observeDiskAck(docName, svAfterA);
+    expect(entry.lastDiskAckedSV).toEqual(svAfterAB);
   });
 
   test('no-op when entry does not exist for docName', () => {
@@ -1647,7 +1683,8 @@ describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
 });
 
 describe('ProviderPool observeDiskAckBatch (missed-frame recovery)', () => {
-  test('updates lastDiskAckedSV for every doc named in the batch', () => {
+  test('updates lastDiskAckedSV for every doc named in the batch', async () => {
+    const Y = await import('yjs');
     pool = new ProviderPool(3, DUMMY_WS);
     const docA = uniqueDocName('pp-batch');
     const docB = uniqueDocName('pp-batch');
@@ -1655,56 +1692,107 @@ describe('ProviderPool observeDiskAckBatch (missed-frame recovery)', () => {
     const entryB = pool.open(docB);
     if (!entryA || !entryB) throw new Error('expected entries');
 
-    const svA = new Uint8Array([0x01, 0x02]);
-    const svB = new Uint8Array([0x03, 0x04, 0x05]);
+    const yDocA = new Y.Doc();
+    yDocA.getText('t').insert(0, 'A');
+    const svA = Y.encodeStateVector(yDocA);
+    yDocA.destroy();
+    const yDocB = new Y.Doc();
+    yDocB.getText('t').insert(0, 'BB');
+    const svB = Y.encodeStateVector(yDocB);
+    yDocB.destroy();
+
     pool.observeDiskAckBatch({ [docA]: svA, [docB]: svB });
 
-    expect(entryA.lastDiskAckedSV).toBe(svA);
-    expect(entryB.lastDiskAckedSV).toBe(svB);
+    expect(entryA.lastDiskAckedSV).toEqual(svA);
+    expect(entryB.lastDiskAckedSV).toEqual(svB);
   });
 
-  test('silently ignores docs in the batch that the pool does not have open', () => {
+  test('silently ignores docs in the batch that the pool does not have open', async () => {
+    const Y = await import('yjs');
     pool = new ProviderPool(3, DUMMY_WS);
     const docA = uniqueDocName('pp-batch');
     const entryA = pool.open(docA);
     if (!entryA) throw new Error('expected entry');
+
+    const yDoc = new Y.Doc();
+    yDoc.getText('t').insert(0, 'X');
+    const sv = Y.encodeStateVector(yDoc);
+    yDoc.destroy();
 
     expect(() => {
       pool.observeDiskAckBatch({
-        [docA]: new Uint8Array([0x01]),
-        'nonexistent-doc': new Uint8Array([0x02]),
+        [docA]: sv,
+        'nonexistent-doc': sv,
       });
     }).not.toThrow();
-    expect(entryA.lastDiskAckedSV).toEqual(new Uint8Array([0x01]));
+    expect(entryA.lastDiskAckedSV).toEqual(sv);
   });
 
-  test('empty batch is a no-op', () => {
+  test('empty batch is a no-op', async () => {
+    const Y = await import('yjs');
     pool = new ProviderPool(3, DUMMY_WS);
     const docA = uniqueDocName('pp-batch');
     const entryA = pool.open(docA);
     if (!entryA) throw new Error('expected entry');
-    pool.observeDiskAck(docA, new Uint8Array([0xab]));
+
+    const yDoc = new Y.Doc();
+    yDoc.getText('t').insert(0, 'A');
+    const sv = Y.encodeStateVector(yDoc);
+    yDoc.destroy();
+    pool.observeDiskAck(docA, sv);
 
     pool.observeDiskAckBatch({});
-    expect(entryA.lastDiskAckedSV).toEqual(new Uint8Array([0xab]));
+    expect(entryA.lastDiskAckedSV).toEqual(sv);
   });
 
   // Late-join recovery contract: after a __system__ reconnect, the
-  // batch refresh MUST overwrite a stale per-entry watermark with the
-  // server's authoritative value. Without this, the missed-frame path
-  // re-opens disk-ack staleness — the very bug the /api/server-info
-  // dispatch was added to close.
-  test('overwrites a stale lastDiskAckedSV with the fresh batch value', () => {
+  // batch refresh MUST advance a stale per-entry watermark to the
+  // server's authoritative value. The merge guarantees this when the
+  // batch carries a strictly-newer SV.
+  test('advances a stale lastDiskAckedSV when the batch carries a strictly-newer SV', async () => {
+    const Y = await import('yjs');
     pool = new ProviderPool(3, DUMMY_WS);
     const docA = uniqueDocName('pp-batch');
     const entryA = pool.open(docA);
     if (!entryA) throw new Error('expected entry');
 
-    const stale = new Uint8Array([0x01]);
-    const fresh = new Uint8Array([0x01, 0x02, 0x03]);
+    const yDoc = new Y.Doc();
+    yDoc.getText('t').insert(0, 'A');
+    const stale = Y.encodeStateVector(yDoc);
+    yDoc.getText('t').insert(1, 'B');
+    const fresh = Y.encodeStateVector(yDoc);
+    yDoc.destroy();
+
     pool.observeDiskAck(docA, stale);
     pool.observeDiskAckBatch({ [docA]: fresh });
-    expect(entryA.lastDiskAckedSV).toBe(fresh);
+    expect(entryA.lastDiskAckedSV).toEqual(fresh);
+  });
+
+  // Cross-channel out-of-order receive contract: a batch refresh MUST
+  // NOT regress a per-entry watermark when the batch carries an
+  // older SV than what's already there. This is the WS+HTTP race
+  // the merge-on-receive policy exists to defuse — the live broadcast
+  // landed first, the stale HTTP response landed second, and the
+  // merged result keeps the live broadcast's clocks.
+  test('does NOT regress a current lastDiskAckedSV when the batch carries an older SV', async () => {
+    const Y = await import('yjs');
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docA = uniqueDocName('pp-batch');
+    const entryA = pool.open(docA);
+    if (!entryA) throw new Error('expected entry');
+
+    const yDoc = new Y.Doc();
+    yDoc.getText('t').insert(0, 'A');
+    const olderSV = Y.encodeStateVector(yDoc);
+    yDoc.getText('t').insert(1, 'B');
+    const newerSV = Y.encodeStateVector(yDoc);
+    yDoc.destroy();
+
+    // WS broadcast lands first with newer SV; HTTP batch arrives
+    // afterwards with older SV. Merged result keeps newer.
+    pool.observeDiskAck(docA, newerSV);
+    pool.observeDiskAckBatch({ [docA]: olderSV });
+    expect(entryA.lastDiskAckedSV).toEqual(newerSV);
   });
 });
 

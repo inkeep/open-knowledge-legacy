@@ -152,3 +152,41 @@ export function computeUnsyncedUpdate(doc: Y.Doc, lastAckedSV: Uint8Array | null
     ? Y.encodeStateAsUpdate(doc)
     : Y.encodeStateAsUpdate(doc, lastAckedSV);
 }
+
+/**
+ * Element-wise max-merge of two Yjs state vectors. Conservative under
+ * out-of-order receives across independent channels — the server's
+ * per-doc SV is monotonic at emit time, but the client receives via
+ * two channels (CC1 stateless WS + `/api/server-info` HTTP) that
+ * aren't ordered relative to each other. A pure overwrite-on-receive
+ * could regress when an older HTTP response lands AFTER a newer WS
+ * broadcast (HTTP RTT ~ 30–100 ms; WS frame ~ 5–20 ms; the cross-
+ * over window is realistic), reopening the disk-ack staleness
+ * duplication path on the next mismatch-recycle.
+ *
+ * Yjs SVs are `Map<clientID, clock>` shapes encoded as variable-
+ * length integers. `Y.decodeStateVector` returns the map; element-
+ * wise max picks the larger clock per clientID; `Y.encodeStateVector`
+ * accepts a `Map<number, number>` directly (per its public type
+ * declaration in `node_modules/yjs/dist/src/utils/encoding.d.ts`),
+ * so the round-trip stays in-process and doesn't need a synthetic
+ * `Y.Doc`.
+ *
+ * `null` arg = "no current value"; the other side wins. Both null
+ * is degenerate but honored — caller chose this state explicitly.
+ */
+export function mergeStateVectors(a: Uint8Array | null, b: Uint8Array | null): Uint8Array | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const mapA = Y.decodeStateVector(a);
+  const mapB = Y.decodeStateVector(b);
+  const merged = new Map<number, number>();
+  for (const [clientID, clock] of mapA) merged.set(clientID, clock);
+  for (const [clientID, clock] of mapB) {
+    const existing = merged.get(clientID);
+    if (existing === undefined || clock > existing) {
+      merged.set(clientID, clock);
+    }
+  }
+  return Y.encodeStateVector(merged);
+}

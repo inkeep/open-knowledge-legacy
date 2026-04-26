@@ -50,7 +50,7 @@ import {
 } from '../../src/editor/observers';
 import type { ProviderPool } from '../../src/editor/provider-pool';
 import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '../../src/lib/cc1';
-import { refreshServerInfo } from '../../src/lib/server-info-refresh';
+import { createSyncedReconnectGate, refreshServerInfo } from '../../src/lib/server-info-refresh';
 import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
@@ -1551,20 +1551,21 @@ export function attachSystemDocSubscriber(
     },
   });
 
-  // Late-join recovery: on every reconnect (subsequent `synced` event),
-  // re-fetch /api/server-info to refresh the per-doc disk-ack
-  // watermarks. CC1 stateless broadcasts have no replay; without this
-  // refresh, a brief `__system__` WS drop during a write burst would
-  // leave `lastDiskAckedSV` permanently stale and reopen the
-  // missed-frame duplication path on the next mismatch-recycle.
-  // Mirrors the production wiring in `SystemDocSubscriber.tsx`.
-  let hadFirstSynced = false;
+  // Late-join recovery: on every WebSocket reconnect (subsequent
+  // `synced` event within the same provider lifetime), re-fetch
+  // /api/server-info to refresh the per-doc disk-ack watermarks. CC1
+  // stateless broadcasts have no replay; without this refresh, a brief
+  // `__system__` WS drop during a write burst would leave
+  // `lastDiskAckedSV` permanently stale and reopen the missed-frame
+  // duplication path on the next mismatch-recycle. Same gate the
+  // production `SystemDocSubscriber` uses, via the shared
+  // `createSyncedReconnectGate` helper — single source of truth for
+  // the "fire-on-reconnect-only" semantics.
+  const onReconnectSynced = createSyncedReconnectGate(() => {
+    void refreshServerInfo(pool, baseUrl);
+  });
   provider.on('synced', () => {
-    if (hadFirstSynced) {
-      void refreshServerInfo(pool, baseUrl);
-    } else {
-      hadFirstSynced = true;
-    }
+    onReconnectSynced();
   });
 
   return {
