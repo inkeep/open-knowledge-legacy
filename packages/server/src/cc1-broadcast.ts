@@ -21,6 +21,16 @@ import {
 
 const DEBOUNCE_MS = 100;
 
+/**
+ * LRU cap on the per-process `latestDiskAckSVs` map. Bounds the JSON size
+ * shipped on every `/api/server-info` request — at ~50-100 bytes per
+ * entry (base64-encoded SV + docName), 1000 entries fits comfortably in
+ * the ~100 KB range while covering active workspaces of any plausible
+ * size. Evicted entries fall back to the client's `lastServerSyncedSV`
+ * (the pre-disk-ack baseline), a safe degradation.
+ */
+const MAX_DISK_ACK_SVS = 1000;
+
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export function isSystemDoc(documentName: string): boolean {
@@ -54,6 +64,14 @@ export class CC1Broadcaster {
    * gap. Map is per-process (lifetime = server instance), which is the
    * correct scope: a server restart issues a new `serverInstanceId`,
    * triggers full recycle, and rebuilds the Y.Docs from disk.
+   *
+   * LRU-bounded at `MAX_DISK_ACK_SVS` entries. `JS Map` preserves
+   * insertion order, so `delete` + `set` on each emit promotes the entry
+   * to MRU. When the map reaches the cap, the oldest entry is evicted on
+   * next set. Clients that miss the watermark for an evicted doc fall
+   * back to `lastServerSyncedSV` (the in-memory-acked SV) per the
+   * existing baseline-selection — that's the pre-disk-ack behavior, a
+   * safe (if slightly less conservative) degradation.
    */
   private readonly latestDiskAckSVs = new Map<string, Uint8Array>();
 
@@ -216,7 +234,19 @@ export class CC1Broadcaster {
     // map updates run regardless of broadcast success because the
     // snapshot's purpose is recovery — clients that missed the
     // broadcast read it via /api/server-info instead.
+    //
+    // LRU promotion: delete-then-set moves the entry to the back of
+    // Map's insertion order so the oldest entries fall off first when
+    // the cap is hit.
+    this.latestDiskAckSVs.delete(docName);
     this.latestDiskAckSVs.set(docName, sv);
+    if (this.latestDiskAckSVs.size > MAX_DISK_ACK_SVS) {
+      // Evict the oldest entry (front of insertion order).
+      const oldest = this.latestDiskAckSVs.keys().next().value;
+      if (oldest !== undefined) {
+        this.latestDiskAckSVs.delete(oldest);
+      }
+    }
     try {
       const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
       if (!doc) {

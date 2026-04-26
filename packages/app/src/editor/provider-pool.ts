@@ -164,6 +164,21 @@ const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
 const FORCE_SYNC_INTERVAL_MS = 5_000;
 
 /**
+ * Per-doc cap on the in-memory unsynced-update buffer captured during a
+ * `server-instance-mismatch` recycle. A long disconnect window with paste-
+ * heavy / agent-driven typing can produce an arbitrarily large
+ * `Y.encodeStateAsUpdate(doc, lastAckedSV)` result; without a cap, the pool
+ * could hold tens of MB across `MAX_POOL` entries while waiting for the
+ * post-recycle `synced` event. 1 MiB matches the pattern used by
+ * comparable buffer-and-replay implementations (Liveblocks, AFFiNE) and
+ * comfortably fits typical session-length deltas while bounding the
+ * pathological case. On overflow the buffer entry is dropped and a
+ * loud-fail `mark` event fires so the user-visible "unsynced edits lost"
+ * outcome is observable.
+ */
+const MAX_BUFFER_BYTES = 1 * 1024 * 1024;
+
+/**
  * Default pool capacity. Exported so the single point of truth lives in this
  * module (the pool that owns the constraint), and so callers that construct
  * a `ProviderPool` can reference the same name rather than a magic literal.
@@ -240,7 +255,24 @@ export function buildAuthToken(
  * extend the multi-client test harness with a port-change scenario.
  */
 export class ProviderPool {
-  readonly entries = new Map<string, PoolEntry>();
+  /**
+   * Internal mutable map. External callers see the read-only `entries`
+   * getter below — `readonly` on the field would prevent reassignment
+   * but not Map-level mutation (`set`/`delete`/`clear`). The getter
+   * widens the type to `ReadonlyMap` so accidental external writes fail
+   * compile.
+   */
+  private readonly _entries = new Map<string, PoolEntry>();
+  /**
+   * Read-only view of the live pool. Returned snapshot is the same Map
+   * instance — iteration and reads stay zero-copy. Compile-time
+   * `ReadonlyMap` typing prevents external `.set` / `.delete` /
+   * `.clear` calls; runtime bypass via type-cast is theoretically
+   * possible but requires deliberate effort.
+   */
+  get entries(): ReadonlyMap<string, PoolEntry> {
+    return this._entries;
+  }
   private lruOrder: string[] = [];
   private activeDocName: string | null = null;
   private readonly maxSize: number;
@@ -869,7 +901,7 @@ export class ProviderPool {
       provider.on('synced', replayOnce);
     }
 
-    this.entries.set(docName, entry);
+    this._entries.set(docName, entry);
     this.touch(docName);
     this.notify();
 
@@ -904,6 +936,15 @@ export class ProviderPool {
       const baseline = poolEntry.lastDiskAckedSV ?? poolEntry.lastServerSyncedSV;
       if (baseline === null) continue;
       const unsynced = computeUnsyncedUpdate(poolEntry.provider.document, baseline);
+      if (unsynced.byteLength > MAX_BUFFER_BYTES) {
+        // Drop the buffer for this doc; the post-recycle replay would
+        // otherwise pin tens of MB on the pool while waiting for sync.
+        // Loud-fail so the resulting "unsynced edits lost" outcome is
+        // visible — silent-drop would mask the same data-loss class
+        // buffer-and-replay exists to prevent.
+        mark('ok/pool/buffer-overflow', { docName, bytes: unsynced.byteLength });
+        continue;
+      }
       if (unsynced.byteLength > 0) {
         this.bufferedUpdates.set(docName, unsynced);
       }
@@ -1045,7 +1086,7 @@ export class ProviderPool {
     if (!entry) return;
 
     this.destroyEntry(entry);
-    this.entries.delete(docName);
+    this._entries.delete(docName);
     this.lruOrder = this.lruOrder.filter((n) => n !== docName);
     // Explicit close discards any pending replay buffer — the user closed
     // the tab; resurrecting unsynced edits later would surprise them.
@@ -1143,10 +1184,10 @@ export class ProviderPool {
 
   /** Dispose of all entries and pool-owned mutable state. */
   dispose(): void {
-    for (const entry of this.entries.values()) {
+    for (const entry of this._entries.values()) {
       this.destroyEntry(entry);
     }
-    this.entries.clear();
+    this._entries.clear();
     this.lruOrder = [];
     this.activeDocName = null;
     this.onChange = null;
@@ -1244,7 +1285,7 @@ export class ProviderPool {
     mark('ok/pool/recycle-disconnected', { docName, wasActive });
 
     this.destroyEntry(entry);
-    this.entries.delete(docName);
+    this._entries.delete(docName);
     this.lruOrder = this.lruOrder.filter((n) => n !== docName);
 
     if (wasActive) {
