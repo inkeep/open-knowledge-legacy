@@ -37,9 +37,20 @@ import * as Y from 'yjs';
 
 /**
  * Branch identifier used when no `lastObservedBranch` is available
- * (fresh tab, cleared localStorage). Cannot collide with a real git
- * branch name — git refuses underscore-only or whitespace-bracketed
- * names. Mirrors the `__system__` pseudo-doc convention.
+ * (fresh tab, cleared localStorage) and the boot fetch hasn't yet
+ * completed. Mirrors the `__system__` pseudo-doc's leading-and-trailing
+ * underscore convention.
+ *
+ * `_unknown_` is NOT structurally rejected by git — `git branch _unknown_`
+ * succeeds. The sentinel is deliberately shaped to be unusual but
+ * collision is theoretically possible. Operational impact of a real
+ * `_unknown_` branch is zero: the auth-token claim on first connect
+ * carries `expectedBranch: '_unknown_'`; if the server's actual branch
+ * matches, the IDB is correctly scoped; if not, the
+ * `branch-mismatch` recycle path (server's `onAuthenticate` reject →
+ * client's `handleServerInstanceMismatch` recycle) reconciles via
+ * IDB clear + fresh provider, which is the same recovery used for any
+ * other stale-claim scenario.
  */
 export const UNKNOWN_BRANCH_SENTINEL = '_unknown_';
 

@@ -112,9 +112,15 @@ export type CC1DerivedViewPayload = z.infer<typeof CC1DerivedViewPayloadSchema>;
  *
  * `sv` is base64-encoded `Uint8Array` (the output of
  * `Y.encodeStateVector`). Base64 keeps the JSON wire-format printable
- * while preserving byte-fidelity. `seq` follows the convention of
- * every other CC1 channel even though disk-ack consumers don't use it
- * for ordering — keeps schemas uniform, helps future debugging. */
+ * while preserving byte-fidelity.
+ *
+ * `seq` is per-channel monotonic, NOT per-doc. Disk-ack consumers do
+ * NOT use it for ordering — `pool.observeDiskAck` ignores it entirely.
+ * The field is retained for wire-format uniformity with other CC1
+ * channels (debugging, future tooling that aggregates across
+ * channels). Do NOT rely on it for inter-doc ordering — that semantic
+ * is not preserved at this granularity. If per-doc ordering becomes
+ * necessary, add a separate `docSeq` field (additive, `.loose()`-permitted). */
 export const CC1DiskAckPayloadSchema = z
   .object({
     v: z.literal(CC1_CONTRACT_VERSION),

@@ -50,7 +50,6 @@ import {
 } from '../../src/editor/observers';
 import type { ProviderPool } from '../../src/editor/provider-pool';
 import {
-  decodeStateVector,
   parseCC1BranchSwitched,
   parseCC1DiskAck,
   parseCC1ServerInfo,
@@ -1549,7 +1548,7 @@ export function attachSystemDocSubscriber(
       }
       const diskAck = parseCC1DiskAck(payload);
       if (diskAck) {
-        pool.observeDiskAck(diskAck.docName, decodeStateVector(diskAck.sv));
+        pool.observeDiskAck(diskAck.docName, diskAck.sv);
         return;
       }
       // derived-view payloads ignored — see header comment.

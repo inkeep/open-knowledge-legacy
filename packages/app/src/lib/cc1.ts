@@ -24,7 +24,6 @@ import {
   CC1BranchSwitchedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
-  type CC1DiskAckPayload,
   CC1DiskAckPayloadSchema,
   type CC1ServerInfoPayload,
   CC1ServerInfoPayloadSchema,
@@ -41,6 +40,20 @@ export {
   SYSTEM_DOC_NAME,
 };
 
+/**
+ * Client-side projection of a `disk-ack` frame. The wire format carries
+ * the state vector as a base64 string (so JSON serialization is safe);
+ * the parser decodes it into a `Uint8Array` so consumers
+ * (`pool.observeDiskAck`, `Y.encodeStateAsUpdate`) get the raw bytes
+ * directly. Diverges from the wire shape per `/typescript-api-design`
+ * "diverge input/output types deliberately" — input is `string`, output
+ * is `Uint8Array`, decode happens once at the trust boundary.
+ */
+export interface CC1DiskAckParsed {
+  readonly docName: string;
+  readonly sv: Uint8Array;
+}
+
 export function parseCC1DerivedView(payload: string): CC1DerivedViewPayload | null {
   return safeParseJson(payload, CC1DerivedViewPayloadSchema);
 }
@@ -53,18 +66,32 @@ export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedPayloa
   return safeParseJson(payload, CC1BranchSwitchedPayloadSchema);
 }
 
-export function parseCC1DiskAck(payload: string): CC1DiskAckPayload | null {
-  return safeParseJson(payload, CC1DiskAckPayloadSchema);
+/**
+ * Parse a CC1 `disk-ack` payload AND decode its base64 state-vector in
+ * one pass. Returns `null` on either schema-mismatch or invalid base64
+ * — the contract is "never throws" per the module docstring, so the
+ * dispatcher in `SystemDocSubscriber` can call this without `try`/
+ * `catch` (a misbehaving emitter or a downgraded WS frame can't escape
+ * as an unhandled rejection inside React).
+ */
+export function parseCC1DiskAck(payload: string): CC1DiskAckParsed | null {
+  const validated = safeParseJson(payload, CC1DiskAckPayloadSchema);
+  if (!validated) return null;
+  try {
+    return { docName: validated.docName, sv: decodeStateVector(validated.sv) };
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Decode the base64-encoded `sv` field from a `disk-ack` payload back
- * into a `Uint8Array`. Wire format keeps the SV printable inside JSON;
- * consumers that pass it to `Y.encodeStateAsUpdate` (e.g. for
- * computing the unsynced delta on `server-instance-mismatch`) need
- * the raw bytes. Browser-safe — uses `atob` rather than `Buffer`.
+ * Decode a base64-encoded state vector to `Uint8Array`. `atob` throws
+ * `DOMException("invalid characters")` on malformed base64 — this
+ * helper preserves that behavior. Module-internal: `parseCC1DiskAck`
+ * is the only sanctioned caller and wraps the throw in a try/catch
+ * to honor the parser's "never throws" contract.
  */
-export function decodeStateVector(svBase64: string): Uint8Array {
+function decodeStateVector(svBase64: string): Uint8Array {
   const binary = atob(svBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

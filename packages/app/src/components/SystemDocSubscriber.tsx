@@ -4,7 +4,6 @@ import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import {
-  decodeStateVector,
   parseCC1BranchSwitched,
   parseCC1DerivedView,
   parseCC1DiskAck,
@@ -76,7 +75,7 @@ export function SystemDocSubscriber() {
         }
         const diskAck = parseCC1DiskAck(payload);
         if (diskAck) {
-          observeDiskAckRef.current(diskAck.docName, decodeStateVector(diskAck.sv));
+          observeDiskAckRef.current(diskAck.docName, diskAck.sv);
           return;
         }
         const signal = parseCC1DerivedView(payload);
