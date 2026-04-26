@@ -19,6 +19,9 @@ export {
   safeSubdir,
 } from './api-extension.ts';
 export {
+  HOCUSPOCUS_AUTH_REJECTION_REASONS,
+  HocuspocusAuthRejection,
+  type HocuspocusAuthRejectionReason,
   type HocuspocusAuthToken,
   HocuspocusAuthTokenSchema,
   parseHocuspocusAuthToken,

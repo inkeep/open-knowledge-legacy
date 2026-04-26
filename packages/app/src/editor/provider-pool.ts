@@ -1,6 +1,9 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
-import type { HocuspocusAuthToken } from '@inkeep/open-knowledge-server';
+import type {
+  HocuspocusAuthRejectionReason,
+  HocuspocusAuthToken,
+} from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import * as Y from 'yjs';
 import { mark } from '../lib/perf/mark';
@@ -79,6 +82,16 @@ const editorSchema = getSchema(sharedExtensions);
  * Validated by the Liveblocks `lostConnectionTimeout` pattern (default 5s).
  */
 const RECYCLE_DEBOUNCE_MS = 4_000;
+
+/**
+ * localStorage key for the persisted last-observed git branch. Used by
+ * `ProviderPool` to seed the cross-branch defense's in-memory cache on
+ * a fresh tab so the very first auth-token claim is checked against
+ * the server's current branch (closes the fresh-tab-with-stale-IDB
+ * gap noted in Round 6 review). Single key per origin is fine — a
+ * single Hocuspocus server's branch is global to the project.
+ */
+const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
 
 /**
  * Periodic full-sync nudge for HocuspocusProvider. Secondary defense against
@@ -242,12 +255,65 @@ export class ProviderPool {
 
   /**
    * Last-observed git branch reported by the server (via `/api/server-info`
-   * boot fetch + CC1 `server-info` broadcasts). Used by the late-join
-   * backstop in `branch-invalidation.ts` to detect a missed live
-   * `branch-switched` broadcast: a reconnect that surfaces a different
-   * branch replays `handleBranchSwitched` client-side.
+   * boot fetch + CC1 `server-info` broadcasts).
+   *
+   * Persisted to `localStorage` so cold-boot tabs claim the correct branch
+   * in their first auth token. Without persistence the in-memory cache is
+   * empty on a fresh tab → `expectedBranch` claim is omitted → server
+   * accepts unconditionally → the IndexeddbPersistence then hydrates
+   * stale-branch Y.Doc state, which Yjs sync union-merges with the
+   * server's current-branch state (ghost items, the exact bug class this
+   * defense exists to prevent). The persisted value lets the very first
+   * post-restore connect's auth-token claim be checked against the
+   * server's current branch, so a fresh tab against a switched branch
+   * gets rejected → recycled → IDB cleared before sync runs.
+   *
+   * Lazily seeded from localStorage on first read (see
+   * `getOrInitObservedBranch` below) — `localStorage` access at module
+   * load would break SSR / Node test environments where `localStorage`
+   * is undefined.
    */
   private lastObservedBranch: string | null = null;
+  private lastObservedBranchInitialized = false;
+
+  /**
+   * Lazy-init the in-memory cache from `localStorage`. Idempotent.
+   * Tolerant of missing `localStorage` (Node tests, SSR) — falls back
+   * to the initial null value.
+   */
+  private getOrInitObservedBranch(): string | null {
+    if (this.lastObservedBranchInitialized) return this.lastObservedBranch;
+    this.lastObservedBranchInitialized = true;
+    try {
+      const stored = globalThis.localStorage?.getItem(LAST_OBSERVED_BRANCH_KEY) ?? null;
+      if (stored !== null && stored.length > 0) {
+        this.lastObservedBranch = stored;
+      }
+    } catch {
+      // localStorage access can throw in private-mode browsers / sandboxed
+      // iframes — fall back to in-memory only.
+    }
+    return this.lastObservedBranch;
+  }
+
+  /**
+   * Persist the observed branch alongside the in-memory cache. Tolerant
+   * of localStorage failures (private browsing, quota exceeded) — the
+   * in-memory cache always succeeds.
+   */
+  private persistObservedBranch(branch: string | null): void {
+    this.lastObservedBranch = branch;
+    this.lastObservedBranchInitialized = true;
+    try {
+      if (branch === null || branch.length === 0) {
+        globalThis.localStorage?.removeItem(LAST_OBSERVED_BRANCH_KEY);
+      } else {
+        globalThis.localStorage?.setItem(LAST_OBSERVED_BRANCH_KEY, branch);
+      }
+    } catch {
+      // localStorage write failures are non-fatal — see read-side comment.
+    }
+  }
 
   /**
    * Update the observed branch without triggering invalidation. Called by
@@ -256,7 +322,7 @@ export class ProviderPool {
    * doesn't double-invalidate.
    */
   setObservedBranch(branch: string): void {
-    this.lastObservedBranch = branch;
+    this.persistObservedBranch(branch);
   }
 
   /**
@@ -267,8 +333,8 @@ export class ProviderPool {
    * to the supplied value.
    */
   compareAndUpdateObservedBranch(branch: string): boolean {
-    const prior = this.lastObservedBranch;
-    this.lastObservedBranch = branch;
+    const prior = this.getOrInitObservedBranch();
+    this.persistObservedBranch(branch);
     return prior !== null && prior !== branch;
   }
 
@@ -276,13 +342,35 @@ export class ProviderPool {
    * Handler invoked when the server rejects a connect with
    * `reason: 'branch-mismatch'`. Set by DocumentContext (which owns
    * `handleBranchSwitched` invocation) after pool construction so the
-   * pool itself stays free of React/UI imports. Pool clears the cached
-   * branch claim before invoking — the handler fetches the fresh value
-   * via `/api/server-info` or the next CC1 `server-info` frame.
+   * pool itself stays free of React/UI imports.
+   *
+   * In-flight gate: when a branch switch happens server-side that the
+   * client missed (offline window, stale IDB), every open provider's
+   * auth fails with `branch-mismatch` in quick succession — N parallel
+   * `/api/server-info` fetches + N concurrent `handleBranchSwitched`
+   * calls would otherwise fan out. The gate collapses concurrent
+   * dispatches into a single in-flight promise: the first call runs
+   * the user-supplied callback; subsequent calls during that window
+   * are dropped (the recycle is already in progress for the whole
+   * pool, so re-entry would just churn the active doc's fresh
+   * provider).
    */
-  private onBranchMismatch: (() => void) | null = null;
-  setOnBranchMismatch(cb: (() => void) | null): void {
-    this.onBranchMismatch = cb;
+  private onBranchMismatch: (() => void | Promise<void>) | null = null;
+  private branchMismatchInFlight: Promise<void> | null = null;
+  setOnBranchMismatch(cb: (() => void | Promise<void>) | null): void {
+    if (cb === null) {
+      this.onBranchMismatch = null;
+      return;
+    }
+    this.onBranchMismatch = () => {
+      if (this.branchMismatchInFlight !== null) return;
+      const inflight = Promise.resolve(cb()).finally(() => {
+        if (this.branchMismatchInFlight === inflight) {
+          this.branchMismatchInFlight = null;
+        }
+      });
+      this.branchMismatchInFlight = inflight;
+    };
   }
 
   /** Register a callback that fires whenever pool state changes. */
@@ -326,7 +414,7 @@ export class ProviderPool {
     const token = buildAuthToken(
       this.tabIdentity,
       this.cachedServerInstanceId,
-      this.lastObservedBranch,
+      this.getOrInitObservedBranch(),
     );
     const provider = new HocuspocusProvider({
       // OTel trace context propagation for the WebSocket handshake. The
@@ -462,7 +550,13 @@ export class ProviderPool {
     // authenticationFailed in quick succession. The first call nulls the
     // cached ID; subsequent calls find it already null and short-circuit.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
-      if (reason === 'server-instance-mismatch') {
+      // Reasons enumerated by `HocuspocusAuthRejectionReason` in
+      // packages/server/src/auth-token-schema.ts. Using the type-only
+      // narrow ensures a future rename on either side fails compile —
+      // exhaustive check below catches a string the server emits that
+      // the client doesn't yet handle (drift signal).
+      const typed = reason as HocuspocusAuthRejectionReason;
+      if (typed === 'server-instance-mismatch') {
         if (this.cachedServerInstanceId === null) return;
         this.cachedServerInstanceId = null;
         this.handleServerInstanceMismatch();
@@ -479,10 +573,16 @@ export class ProviderPool {
       // DocumentContext after construction so the pool stays free of
       // React/UI dependencies; missing handler = legacy behavior (no
       // invalidation, accept current state).
-      if (reason === 'branch-mismatch') {
+      if (typed === 'branch-mismatch') {
         this.onBranchMismatch?.();
         return;
       }
+      // Compile-time exhaustiveness check — reaching this with `_never`
+      // typed narrowed to the empty type means the server added a new
+      // reason without updating the client switch. Production: we don't
+      // throw; just no-op so legacy / unknown reasons fall through.
+      const _never: never = typed;
+      void _never;
     };
 
     provider.on('status', onStatus);

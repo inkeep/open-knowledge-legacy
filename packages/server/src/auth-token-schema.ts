@@ -61,6 +61,33 @@ export const HocuspocusAuthTokenSchema = z
 export type HocuspocusAuthToken = z.infer<typeof HocuspocusAuthTokenSchema>;
 
 /**
+ * Reasons the server may attach to an `Error` thrown from `onAuthenticate`.
+ * Hocuspocus surfaces the `reason` field to the client as the second
+ * argument of `provider.on('authenticationFailed', ({ reason }) => …)`.
+ *
+ * Defining the union as a const-string and the carrier as a typed
+ * subclass closes the cross-process drift gap noted in the Round 6
+ * review: a rename on either side now fails the TypeScript build
+ * instead of silently letting the client see `reason: undefined` and
+ * skipping its recycle path.
+ */
+export const HOCUSPOCUS_AUTH_REJECTION_REASONS = [
+  'server-instance-mismatch',
+  'branch-mismatch',
+] as const;
+export type HocuspocusAuthRejectionReason = (typeof HOCUSPOCUS_AUTH_REJECTION_REASONS)[number];
+
+export class HocuspocusAuthRejection extends Error {
+  readonly reason: HocuspocusAuthRejectionReason;
+
+  constructor(reason: HocuspocusAuthRejectionReason, message: string) {
+    super(message);
+    this.name = 'HocuspocusAuthRejection';
+    this.reason = reason;
+  }
+}
+
+/**
  * Parse a token string into the typed shape. Returns `undefined` on any
  * parse failure (malformed JSON, schema mismatch) — callers should treat
  * `undefined` identically to "no token provided" per the existing legacy

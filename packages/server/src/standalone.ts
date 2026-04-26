@@ -10,7 +10,7 @@ import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import { parseHocuspocusAuthToken } from './auth-token-schema.ts';
+import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
@@ -323,11 +323,10 @@ export function createServer(options: ServerOptions): ServerInstance {
         // are accepted unconditionally for backward compat.
         const claimed = parsed?.expectedServerInstanceId;
         if (typeof claimed === 'string' && claimed.length > 0 && claimed !== serverInstanceId) {
-          const err = new Error(
+          throw new HocuspocusAuthRejection(
+            'server-instance-mismatch',
             `server instance mismatch: client claimed ${claimed}, this server is ${serverInstanceId}`,
-          ) as Error & { reason: string };
-          err.reason = 'server-instance-mismatch';
-          throw err;
+          );
         }
 
         // Cross-branch invalidation late-join backstop. Mirrors the
@@ -347,11 +346,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           claimedBranch.length > 0 &&
           claimedBranch !== currentBranch
         ) {
-          const err = new Error(
+          throw new HocuspocusAuthRejection(
+            'branch-mismatch',
             `branch mismatch: client claimed ${claimedBranch}, server is on ${currentBranch}`,
-          ) as Error & { reason: string };
-          err.reason = 'branch-mismatch';
-          throw err;
+          );
         }
 
         if (!parsed) return;

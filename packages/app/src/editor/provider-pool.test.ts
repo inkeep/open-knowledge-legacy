@@ -608,6 +608,27 @@ describe('buildAuthToken (MECHANISM-ONLY — CRDT restart recovery / US-001)', (
     expect(parsed.principalId).toBeUndefined();
     expect(parsed.tabSessionId).toBeUndefined();
   });
+
+  // expectedBranch — the cross-branch late-join backstop. Mirrors the
+  // expectedServerInstanceId pattern: client carries the cached branch
+  // in every connect token; server rejects on mismatch.
+  test('includes expectedBranch when supplied', () => {
+    const token = buildAuthToken(null, null, 'feature');
+    expect(token).toBeDefined();
+    const parsed = parseHocuspocusAuthToken(token as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedBranch).toBe('feature');
+  });
+
+  test('omits expectedBranch when null or empty', () => {
+    const tabId = { principalId: 'p-1', tabSessionId: 's-1' };
+    expect(
+      parseHocuspocusAuthToken(buildAuthToken(tabId, 'sid-x', null) as string)?.expectedBranch,
+    ).toBeUndefined();
+    expect(
+      parseHocuspocusAuthToken(buildAuthToken(tabId, 'sid-x', '') as string)?.expectedBranch,
+    ).toBeUndefined();
+  });
 });
 
 describe('ProviderPool server-instance-ID claim (US-001)', () => {
@@ -656,6 +677,93 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     const parsed = parseHocuspocusAuthToken(resolved as string);
     if (!parsed) throw new Error('expected valid token');
     expect(parsed.expectedServerInstanceId).toBeUndefined();
+  });
+
+  // Cross-branch late-join backstop. Mirrors the
+  // setExpectedServerInstanceId → token.expectedServerInstanceId
+  // wiring above. A pool that has observed a branch (via boot fetch
+  // or CC1 server-info) carries it as `expectedBranch` on every open;
+  // server rejects on mismatch with `reason: 'branch-mismatch'` —
+  // tested server-side in standalone.test.ts and dispatched on the
+  // client below.
+  test('token serialized on open() reflects setObservedBranch', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
+    pool.setObservedBranch('feature');
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+    if (!parsed) throw new Error('expected valid token');
+    expect(parsed.expectedBranch).toBe('feature');
+  });
+
+  test('branch-mismatch authenticationFailed invokes onBranchMismatch', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let called = 0;
+    pool.setOnBranchMismatch(() => {
+      called++;
+    });
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    // Synthesize the rejection the server emits on branch mismatch.
+    // `as unknown as { emit }` works around HocuspocusProvider's
+    // protected emit — the suite already uses this pattern (see emit
+    // sites earlier in this file).
+    (entry.provider as unknown as { emit: (e: string, p: unknown) => void }).emit(
+      'authenticationFailed',
+      { reason: 'branch-mismatch' },
+    );
+    expect(called).toBe(1);
+  });
+
+  test('branch-mismatch with no handler set is a clean no-op', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    // No setOnBranchMismatch call — handler is null.
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    expect(() => {
+      (entry.provider as unknown as { emit: (e: string, p: unknown) => void }).emit(
+        'authenticationFailed',
+        { reason: 'branch-mismatch' },
+      );
+    }).not.toThrow();
+  });
+
+  test('concurrent branch-mismatch rejections collapse to a single in-flight callback', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let pending: (() => void) | null = null;
+    let called = 0;
+    pool.setOnBranchMismatch(
+      () =>
+        new Promise<void>((resolve) => {
+          called++;
+          pending = () => resolve();
+        }),
+    );
+    const e1 = pool.open('doc1');
+    const e2 = pool.open('doc2');
+    if (!e1 || !e2) throw new Error('expected entries');
+
+    const emit = (entry: typeof e1) => {
+      (entry.provider as unknown as { emit: (e: string, p: unknown) => void }).emit(
+        'authenticationFailed',
+        { reason: 'branch-mismatch' },
+      );
+    };
+    emit(e1);
+    emit(e2); // second dispatch while first is still in-flight
+
+    // Both providers fired authenticationFailed but only one callback
+    // ran; the second was gated.
+    expect(called).toBe(1);
+
+    // Resolve the in-flight promise; subsequent dispatches should run
+    // a fresh callback (the gate self-clears on settle).
+    if (pending !== null) (pending as () => void)();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    emit(e1);
+    expect(called).toBe(2);
   });
 
   test('setExpectedServerInstanceId affects future opens, not existing providers', () => {
