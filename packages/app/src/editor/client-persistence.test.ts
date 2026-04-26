@@ -81,7 +81,11 @@ describe('createClientPersistence', () => {
   test('creates provider for empty IDB and emits synced event', async () => {
     const docName = uniqueDocName();
     const doc = new Y.Doc();
-    const provider: ClientPersistenceProvider = createClientPersistence(TEST_BRANCH, docName, doc);
+    const provider: ClientPersistenceProvider = createClientPersistence({
+      branch: TEST_BRANCH,
+      docName,
+      doc,
+    });
 
     expect(provider.synced).toBe(false);
 
@@ -98,7 +102,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
+    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
     await providerA.whenSynced;
     docA.getMap('m').set('greeting', 'hello-persistence');
     docA.getArray('a').push(['one', 'two']);
@@ -109,7 +113,7 @@ describe('createClientPersistence', () => {
     docA.destroy();
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
+    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
     await providerB.whenSynced;
 
     expect(docB.getMap('m').get('greeting')).toBe('hello-persistence');
@@ -129,7 +133,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
+    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'a');
     docA.getText('t').insert(1, 'b');
@@ -143,7 +147,7 @@ describe('createClientPersistence', () => {
     expect(countBeforeHydrate).toBeGreaterThanOrEqual(4);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
+    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
     await providerB.whenSynced;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -162,7 +166,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
+    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'will be wiped');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -175,7 +179,7 @@ describe('createClientPersistence', () => {
     expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBe(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
+    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
     await providerB.whenSynced;
 
     expect(docB.getText('t').toString()).toBe('');
@@ -188,7 +192,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
+    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'survive-destroy');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -199,7 +203,7 @@ describe('createClientPersistence', () => {
     expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBeGreaterThan(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
+    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
     await providerB.whenSynced;
     expect(docB.getText('t').toString()).toBe('survive-destroy');
 

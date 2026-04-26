@@ -601,7 +601,11 @@ export class ProviderPool {
     // auth-token mismatch on first connect drives the recycle to the
     // correct branch-prefixed name.
     const branch = this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL;
-    const persistence = createClientPersistence(branch, docName, provider.document);
+    const persistence = createClientPersistence({
+      branch,
+      docName,
+      doc: provider.document,
+    });
 
     const entry: ActivePoolEntry = {
       kind: 'active',

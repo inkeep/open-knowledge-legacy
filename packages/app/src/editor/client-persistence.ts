@@ -61,12 +61,26 @@ export interface ClientPersistenceProvider {
   clearData(): Promise<void>;
 }
 
+/**
+ * Construction shape for `createClientPersistence`. Object-literal form
+ * (rather than positional `(branch, docName, doc)`) protects against
+ * the confusable-string-arg-swap class of bugs — `branch` and `docName`
+ * are both `string` and a swap would compile cleanly while silently
+ * producing the wrong IDB name (`ok-ydoc:${docName}:${branch}`), which
+ * would make the cross-branch defense ineffective.
+ */
+export interface CreateClientPersistenceArgs {
+  readonly branch: string;
+  readonly docName: string;
+  readonly doc: Y.Doc;
+}
+
 class ClientPersistenceImpl implements ClientPersistenceProvider {
   private readonly _idb: IndexeddbPersistence;
   private readonly _dbName: string;
   readonly whenSynced: Promise<this>;
 
-  constructor(branch: string, docName: string, doc: Y.Doc) {
+  constructor({ branch, docName, doc }: CreateClientPersistenceArgs) {
     this._dbName = `ok-ydoc:${branch}:${docName}`;
     this._idb = new IndexeddbPersistence(this._dbName, doc);
     this.whenSynced = this._idb.whenSynced.then(() => this);
@@ -102,11 +116,9 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
 }
 
 export function createClientPersistence(
-  branch: string,
-  docName: string,
-  doc: Y.Doc,
+  args: CreateClientPersistenceArgs,
 ): ClientPersistenceProvider {
-  return new ClientPersistenceImpl(branch, docName, doc);
+  return new ClientPersistenceImpl(args);
 }
 
 export function captureStateVector(doc: Y.Doc): Uint8Array {
