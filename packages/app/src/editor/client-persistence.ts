@@ -11,8 +11,18 @@
  *      server-acked state vector) so the ProviderPool can replay it
  *      onto the fresh provider after mismatch-recycle.
  *
- * IDB database names are prefixed `ok-ydoc:` so they don't collide with
- * other origins' IndexedDB consumers.
+ * IDB database names follow the canonical Yjs-ecosystem pattern of
+ * "DB-per-tenant, named synchronously" (AFFiNE, tldraw, Liveblocks).
+ * Format: `ok-ydoc:${branch}:${docName}` — branch is the tenant key,
+ * docName is the resource within. Different branches → different IDBs
+ * by construction, eliminating cross-branch ghost-item bleed without
+ * relying on a synchronous `localStorage` + IDB co-eviction assumption.
+ *
+ * `UNKNOWN_BRANCH_SENTINEL` is the placeholder used when the pool has
+ * not yet observed a branch (cold-boot tab with no persisted
+ * `lastObservedBranch`). The IDB at the sentinel name will be empty
+ * (never written to in production); auth-token mismatch on first
+ * connect drives the recycle to the correct branch-prefixed name.
  *
  * Origin filtering (no write-back loop) is inherent to upstream
  * `y-indexeddb`: its `_storeUpdate` listener short-circuits when the
@@ -24,6 +34,14 @@
 
 import { IndexeddbPersistence } from 'y-indexeddb';
 import * as Y from 'yjs';
+
+/**
+ * Branch identifier used when no `lastObservedBranch` is available
+ * (fresh tab, cleared localStorage). Cannot collide with a real git
+ * branch name — git refuses underscore-only or whitespace-bracketed
+ * names. Mirrors the `__system__` pseudo-doc convention.
+ */
+export const UNKNOWN_BRANCH_SENTINEL = '_unknown_';
 
 export interface ClientPersistenceProvider {
   readonly whenSynced: Promise<this>;
@@ -37,8 +55,8 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   private readonly _dbName: string;
   readonly whenSynced: Promise<this>;
 
-  constructor(docName: string, doc: Y.Doc) {
-    this._dbName = `ok-ydoc:${docName}`;
+  constructor(branch: string, docName: string, doc: Y.Doc) {
+    this._dbName = `ok-ydoc:${branch}:${docName}`;
     this._idb = new IndexeddbPersistence(this._dbName, doc);
     this.whenSynced = this._idb.whenSynced.then(() => this);
   }
@@ -72,8 +90,12 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   }
 }
 
-export function createClientPersistence(docName: string, doc: Y.Doc): ClientPersistenceProvider {
-  return new ClientPersistenceImpl(docName, doc);
+export function createClientPersistence(
+  branch: string,
+  docName: string,
+  doc: Y.Doc,
+): ClientPersistenceProvider {
+  return new ClientPersistenceImpl(branch, docName, doc);
 }
 
 export function captureStateVector(doc: Y.Doc): Uint8Array {

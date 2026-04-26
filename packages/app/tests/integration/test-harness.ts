@@ -407,28 +407,30 @@ export async function resetFakeIndexedDB(): Promise<void> {
 }
 
 /**
- * Pre-populate the fake-IDB database at `ok-ydoc:${docName}` with the given
- * Y.Doc updates, simulating a browser tab that had previously connected and
- * persisted some content. Used by T14 (populated-IDB meets stale server) to
- * stage the precondition.
+ * Pre-populate the fake-IDB database at `ok-ydoc:${branch}:${docName}`
+ * with the given Y.Doc updates, simulating a browser tab that had
+ * previously connected and persisted some content. Used by T14
+ * (populated-IDB meets stale server) to stage the precondition.
  *
- * Spins up an ephemeral `ClientPersistenceProvider`, applies each update via
- * `Y.applyUpdate`, lets the upstream y-indexeddb `_storeUpdate` listener
- * flush to IDB, then cleanly destroys the provider + doc. On return the IDB
- * data survives — the next `new IndexeddbPersistence(sameName, ...)` will
- * hydrate from it.
+ * The default branch `'main'` matches what tests use when they don't
+ * exercise the cross-branch axis. Pass a different branch to set up
+ * cross-branch scenarios (e.g., seed a stale branch-A IDB, then have
+ * the pool open against branch-B).
  *
- * NOTE: updates must be valid Yjs update bytes (from `Y.encodeStateAsUpdate`
- * or listening on `doc.on('update', ...)`). Malformed bytes are best-effort
- * applied; use the helpers in `client-persistence.ts` to construct them.
+ * Spins up an ephemeral `ClientPersistenceProvider`, applies each
+ * update via `Y.applyUpdate`, lets the upstream y-indexeddb
+ * `_storeUpdate` listener flush to IDB, then cleanly destroys the
+ * provider + doc. On return the IDB data survives — the next
+ * `new IndexeddbPersistence(sameName, ...)` will hydrate from it.
  */
 export async function seedClientPersistenceState(
   docName: string,
   updates: Uint8Array[],
+  branch: string = 'main',
 ): Promise<void> {
   const { createClientPersistence } = await import('../../src/editor/client-persistence');
   const doc = new Y.Doc();
-  const persistence = createClientPersistence(docName, doc);
+  const persistence = createClientPersistence(branch, docName, doc);
   try {
     await persistence.whenSynced;
     for (const update of updates) {
@@ -445,17 +447,19 @@ export async function seedClientPersistenceState(
 }
 
 /**
- * Assert that the fake-IDB database at `ok-ydoc:${docName}` is empty — either
- * the database doesn't exist at all (the `clearData` happy path: `deleteDB`
- * removed it), or it exists but has zero records in the `updates` store
- * (defensive: if a schema quirk leaves the DB with a fresh empty store).
+ * Assert that the fake-IDB database at `ok-ydoc:${branch}:${docName}` is
+ * empty — either the database doesn't exist at all (the `clearData`
+ * happy path: `deleteDB` removed it), or it exists but has zero records
+ * in the `updates` store (defensive: if a schema quirk leaves the DB
+ * with a fresh empty store).
  *
+ * Default branch `'main'` matches the integration-test seed default.
  * Throws if the DB exists AND has at least one persisted update, with a
  * count in the error message.
  */
-export async function assertIDBEmpty(docName: string): Promise<void> {
+export async function assertIDBEmpty(docName: string, branch: string = 'main'): Promise<void> {
   if (typeof indexedDB === 'undefined') return;
-  const dbName = `ok-ydoc:${docName}`;
+  const dbName = `ok-ydoc:${branch}:${docName}`;
   const dbs = await indexedDB.databases();
   const info = dbs.find((d) => d.name === dbName);
   if (info === undefined) return;

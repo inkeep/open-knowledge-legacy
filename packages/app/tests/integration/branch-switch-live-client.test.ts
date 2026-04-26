@@ -140,6 +140,10 @@ describe('T5: Branch switch while tab open', () => {
       onStateless: ({ payload }: { payload: string }) => {
         const switched = parseCC1BranchSwitched(payload);
         if (switched) {
+          // Mirror production wiring in DocumentContext.tsx: update the pool's
+          // observed branch BEFORE invalidating, so the recycle's fresh
+          // `pool.open()` constructs IDB names under the new-branch prefix.
+          pool.setObservedBranch(switched.branch);
           void handleBranchSwitched(pool, switched.branch);
         }
       },
@@ -169,6 +173,12 @@ describe('T5: Branch switch while tab open', () => {
     cleanups.push(() => {
       (indexedDB as { deleteDatabase: DeleteDatabaseFn }).deleteDatabase = originalDeleteDatabase;
     });
+
+    // Mirror production: DocumentContext seeds the pool's observed branch
+    // from the boot fetch before any doc opens. Without this, the pool's
+    // first IDB attach uses the `_unknown_` sentinel branch and the
+    // post-switch deletion target wouldn't be `ok-ydoc:main:test-doc`.
+    pool.setObservedBranch('main');
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -268,11 +278,13 @@ describe('T5: Branch switch while tab open', () => {
 
     // Client-side invalidation fired: `handleBranchSwitched` called
     // `clearData()` on the pool's active persistence, which deletes the
-    // `ok-ydoc:test-doc` IndexedDB database. The branch-switched CC1 signal
-    // rides the __system__ doc's stateless channel and travels
-    // independently of the main doc's sync round-trip, so poll to absorb
-    // the handshake latency.
-    await pollUntil(() => deletedDbs.includes('ok-ydoc:test-doc'), 10_000, 50);
-    expect(deletedDbs).toContain('ok-ydoc:test-doc');
+    // OLD-branch-prefixed IDB. The pool's default observed branch on
+    // first observation was `main` (the server's startup branch), so
+    // the deleted DB is `ok-ydoc:main:test-doc`. The branch-switched
+    // CC1 signal rides the __system__ doc's stateless channel and
+    // travels independently of the main doc's sync round-trip, so poll
+    // to absorb the handshake latency.
+    await pollUntil(() => deletedDbs.includes('ok-ydoc:main:test-doc'), 10_000, 50);
+    expect(deletedDbs).toContain('ok-ydoc:main:test-doc');
   }, 45_000);
 });

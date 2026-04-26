@@ -12,6 +12,7 @@ import {
   captureStateVector,
   computeUnsyncedUpdate,
   createClientPersistence,
+  UNKNOWN_BRANCH_SENTINEL,
 } from './client-persistence';
 import { appendTraceContextToCollabUrl } from './collab-otel';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -570,10 +571,16 @@ export class ProviderPool {
     });
 
     // Attach client-side Yjs persistence to the provider's Y.Doc. Hydrates
-    // from `ok-ydoc:${docName}` on cold mount and persists every non-self
-    // update back. On server-instance-mismatch, buffer-and-replay captures
-    // unsynced edits before clearData + recycle.
-    const persistence = createClientPersistence(docName, provider.document);
+    // from `ok-ydoc:${branch}:${docName}` on cold mount and persists every
+    // non-self update back. On server-instance-mismatch, buffer-and-replay
+    // captures unsynced edits before clearData + recycle. The branch
+    // prefix isolates per-branch state by IDB-name boundary — different
+    // branches → different IDBs by construction. `UNKNOWN_BRANCH_SENTINEL`
+    // is used when no branch has been observed yet (fresh tab); the
+    // auth-token mismatch on first connect drives the recycle to the
+    // correct branch-prefixed name.
+    const branch = this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL;
+    const persistence = createClientPersistence(branch, docName, provider.document);
 
     const entry: ActivePoolEntry = {
       kind: 'active',

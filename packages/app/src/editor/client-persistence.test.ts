@@ -27,8 +27,13 @@ function uniqueDocName(prefix = 'cp-test'): string {
   return `${prefix}-${randomUUID()}`;
 }
 
-async function countPersistedUpdates(docName: string): Promise<number> {
-  const dbName = `ok-ydoc:${docName}`;
+// Branch used by tests that don't exercise the cross-branch axis. Real
+// production callers always pass the observed branch via the pool; tests
+// mostly only care that persistence works for SOME branch.
+const TEST_BRANCH = 'main';
+
+async function countPersistedUpdates(branch: string, docName: string): Promise<number> {
+  const dbName = `ok-ydoc:${branch}:${docName}`;
   // Calling `indexedDB.open(dbName)` without a version on a DB that doesn't
   // exist creates a brand-new empty v1 DB with no object stores — which is
   // a destructive side effect for our test scenarios (the subsequent
@@ -76,7 +81,7 @@ describe('createClientPersistence', () => {
   test('creates provider for empty IDB and emits synced event', async () => {
     const docName = uniqueDocName();
     const doc = new Y.Doc();
-    const provider: ClientPersistenceProvider = createClientPersistence(docName, doc);
+    const provider: ClientPersistenceProvider = createClientPersistence(TEST_BRANCH, docName, doc);
 
     expect(provider.synced).toBe(false);
 
@@ -93,7 +98,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(docName, docA);
+    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
     await providerA.whenSynced;
     docA.getMap('m').set('greeting', 'hello-persistence');
     docA.getArray('a').push(['one', 'two']);
@@ -104,7 +109,7 @@ describe('createClientPersistence', () => {
     docA.destroy();
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(docName, docB);
+    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
     await providerB.whenSynced;
 
     expect(docB.getMap('m').get('greeting')).toBe('hello-persistence');
@@ -124,7 +129,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(docName, docA);
+    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'a');
     docA.getText('t').insert(1, 'b');
@@ -134,15 +139,15 @@ describe('createClientPersistence', () => {
     await providerA.destroy();
     docA.destroy();
 
-    const countBeforeHydrate = await countPersistedUpdates(docName);
+    const countBeforeHydrate = await countPersistedUpdates(TEST_BRANCH, docName);
     expect(countBeforeHydrate).toBeGreaterThanOrEqual(4);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(docName, docB);
+    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
     await providerB.whenSynced;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const countAfterHydrate = await countPersistedUpdates(docName);
+    const countAfterHydrate = await countPersistedUpdates(TEST_BRANCH, docName);
     // Without the filter, the N hydrated updates would be re-written
     // (producing linear growth in N). With it, only the consolidation
     // snapshot from the patched `beforeApplyUpdatesCallback` is added.
@@ -157,20 +162,20 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(docName, docA);
+    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'will be wiped');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    expect(await countPersistedUpdates(docName)).toBeGreaterThan(0);
+    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBeGreaterThan(0);
 
     await providerA.clearData();
     docA.destroy();
 
-    expect(await countPersistedUpdates(docName)).toBe(0);
+    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBe(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(docName, docB);
+    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
     await providerB.whenSynced;
 
     expect(docB.getText('t').toString()).toBe('');
@@ -183,7 +188,7 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence(docName, docA);
+    const providerA = createClientPersistence(TEST_BRANCH, docName, docA);
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'survive-destroy');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -191,10 +196,10 @@ describe('createClientPersistence', () => {
     docA.destroy();
 
     // Destroy is supposed to unhook without deleting — data must remain.
-    expect(await countPersistedUpdates(docName)).toBeGreaterThan(0);
+    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBeGreaterThan(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence(docName, docB);
+    const providerB = createClientPersistence(TEST_BRANCH, docName, docB);
     await providerB.whenSynced;
     expect(docB.getText('t').toString()).toBe('survive-destroy');
 
