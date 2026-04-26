@@ -126,6 +126,10 @@ const bridge: OkDesktopBridge = {
     close: () => invoke('ok:project:close'),
   },
 
+  navigator: {
+    open: () => invoke('ok:navigator:open'),
+  },
+
   seed: {
     plan: () => invoke('ok:seed:plan'),
     apply: (plan) => invoke('ok:seed:apply', plan),

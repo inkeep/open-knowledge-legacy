@@ -44,6 +44,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run knip
       - run: bun run lint
+      - name: THIRD_PARTY_NOTICES.md drift check
+        run: bash scripts/check-notices-clean.sh
 
   # KEEP IN SYNC WITH release.yml test matrix (task list, node-version, cache
   # key shape). The shared cache-key contract is load-bearing — diverging

@@ -3,7 +3,7 @@
  *
  * Covers the SPEC §8.2 File / Edit / View / Window scope at the minimum
  * useful level for M1:
- *   - File: New Project (open Navigator), Open Folder (native picker),
+ *   - File: Switch Project (open Navigator), Open Folder (native picker),
  *     Open Recent submenu, Close Window
  *   - Edit: macOS defaults (Undo/Redo/Cut/Copy/Paste/Select All)
  *   - View: Reload / Toggle DevTools / zoom / fullscreen (Electron built-in roles)
@@ -33,6 +33,7 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
@@ -43,7 +44,7 @@ export interface MenuDeps {
    *  can call `promptForFolder(dialog)` without importing `dialog` at module
    *  scope (breaks Bun-test module load; see file header). */
   dialog: Dialog;
-  /** Open the Project Navigator window (File → New Project…). */
+  /** Open the Project Navigator window (File → Switch Project…). */
   openNavigator(): void;
   /** Open a specific project folder (File → Open Folder… or File → Open Recent ▸ <row>). */
   openProject(projectPath: string): Promise<void>;
@@ -157,7 +158,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       label: 'File',
       submenu: [
         {
-          label: 'New Project\u2026',
+          label: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS,
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => deps.openNavigator(),
         },

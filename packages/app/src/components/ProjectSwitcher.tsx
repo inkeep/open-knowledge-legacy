@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenuButton } from '@/components/ui/sidebar';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 
 /**
@@ -83,6 +84,11 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
     }, 'Failed to open folder.');
   };
 
+  const onSwitchProject = () => {
+    setOpen(false);
+    void runWithToast(() => bridge.navigator.open(), 'Failed to open Project Navigator.');
+  };
+
   // Filter out the current project from recents — no value in "switch to the
   // one you're already in" since it would hit the D44 case (a) focus-existing
   // dialog and do nothing useful. The current project name is already in the
@@ -96,7 +102,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         <SidebarMenuButton
           className="justify-between text-sidebar-foreground/70"
           data-testid="project-switcher-trigger"
-          title="Switch project"
+          title="Open project menu"
         >
           <span className="truncate">{bridge.config.projectName}</span>
           <ChevronsUpDown aria-hidden="true" className="opacity-60" />
@@ -109,7 +115,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         data-testid="project-switcher-menu"
       >
         <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
-          Switch project
+          Recent projects
         </DropdownMenuLabel>
         {switchable.length === 0 ? (
           <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">
@@ -135,6 +141,9 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onOpenFolder} data-testid="project-switcher-open-folder">
           Open folder…
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onSwitchProject} data-testid="project-switcher-switch-project">
+          {SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

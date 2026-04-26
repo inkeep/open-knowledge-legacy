@@ -51,7 +51,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun --conditions=development test"
   },
   "devDependencies": {
     "@types/picomatch": "^4.0.3",

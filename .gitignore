@@ -36,6 +36,9 @@ tmp/
 .claude/scheduled_tasks.lock
 .worktrees/
 
+# Vercel CLI link state — per-machine; auto-created by `vercel` / `vercel link`
+.vercel/
+
 # Runtime content file — accumulates test artifacts from dev/agent-sim runs
 init_spike/content/test-doc.md
 
@@ -74,4 +77,3 @@ packages/core/tests/perf/results.*.json
 # boot paths still create this directory; it's per-workspace runtime state
 # and must never be committed.
 .openknowledge/
-.vercel
