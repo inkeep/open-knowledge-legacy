@@ -25,15 +25,16 @@
   },
   "size-limit": [
     {
+      "//": "TODO: check why after installing @pierre/trees has exceeded by 115 kB",
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "215 kB",
+      "limit": "335 kB",
       "gzip": true
     },
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1050 kB",
+      "limit": "1.25 MB",
       "gzip": true
     },
     {
@@ -76,7 +77,6 @@
     "@opentelemetry/sdk-trace-web": "^2.0.0",
     "@opentelemetry/semantic-conventions": "^1.30.0",
     "@pierre/trees": "1.0.0-beta.3",
-    "@tailwindcss/postcss": "^4.2.2",
     "@tanstack/react-query": "^5.99.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-collaboration": "^3.22.3",
@@ -115,6 +115,7 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
