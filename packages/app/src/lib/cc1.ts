@@ -49,7 +49,7 @@ export {
  * "diverge input/output types deliberately" — input is `string`, output
  * is `Uint8Array`, decode happens once at the trust boundary.
  */
-export interface CC1DiskAckParsed {
+interface CC1DiskAckParsed {
   readonly docName: string;
   readonly sv: Uint8Array;
 }
@@ -58,7 +58,7 @@ export function parseCC1DerivedView(payload: string): CC1DerivedViewPayload | nu
   return safeParseJson(payload, CC1DerivedViewPayloadSchema);
 }
 
-export function parseCC1ServerInfo(payload: string): CC1ServerInfoPayload | null {
+function parseCC1ServerInfo(payload: string): CC1ServerInfoPayload | null {
   return safeParseJson(payload, CC1ServerInfoPayloadSchema);
 }
 
@@ -106,7 +106,7 @@ function decodeStateVector(svBase64: string): Uint8Array {
  * care about. `onUnknown` fires when no parser matches (dropped
  * frame, observability hook).
  */
-export interface CC1StatelessHandlers {
+interface CC1StatelessHandlers {
   onServerInfo?: (payload: CC1ServerInfoPayload) => void;
   onBranchSwitched?: (payload: CC1BranchSwitchedPayload) => void;
   onDiskAck?: (parsed: CC1DiskAckParsed) => void;

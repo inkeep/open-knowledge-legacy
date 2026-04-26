@@ -69,7 +69,7 @@ export interface ClientPersistenceProvider {
  * producing the wrong IDB name (`ok-ydoc:${docName}:${branch}`), which
  * would make the cross-branch defense ineffective.
  */
-export interface CreateClientPersistenceArgs {
+interface CreateClientPersistenceArgs {
   readonly branch: string;
   readonly docName: string;
   readonly doc: Y.Doc;
