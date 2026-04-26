@@ -330,6 +330,30 @@ export function createServer(options: ServerOptions): ServerInstance {
           throw err;
         }
 
+        // Cross-branch invalidation late-join backstop. Mirrors the
+        // expectedServerInstanceId pattern. CC1 `branch-switched` is a
+        // stateless broadcast with no replay; clients offline during the
+        // emit, or fresh tabs restored from stale-branch IDB, would
+        // otherwise re-sync against the new branch with branch-A items
+        // still in IDB. Comparing the claimed branch against the live
+        // `getActiveBranch()` and rejecting on mismatch routes those
+        // clients through `handleBranchSwitched` BEFORE Yjs sync can
+        // union-merge stale-branch state. Empty / absent claim = legacy
+        // path (accepted unconditionally).
+        const claimedBranch = parsed?.expectedBranch;
+        const currentBranch = getActiveBranch();
+        if (
+          typeof claimedBranch === 'string' &&
+          claimedBranch.length > 0 &&
+          claimedBranch !== currentBranch
+        ) {
+          const err = new Error(
+            `branch mismatch: client claimed ${claimedBranch}, server is on ${currentBranch}`,
+          ) as Error & { reason: string };
+          err.reason = 'branch-mismatch';
+          throw err;
+        }
+
         if (!parsed) return;
         const ctx = payload.context as Record<string, unknown>;
         if (typeof parsed.principalId === 'string') {

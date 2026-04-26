@@ -311,6 +311,31 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // Sync initial state
     setSnapshot(takeSnapshot(p));
 
+    // Late-join branch backstop. Auth-token `expectedBranch` claim
+    // mismatch (server is on branch B, client claims branch A) routes
+    // through the same handleBranchSwitched flow as the live CC1
+    // broadcast. The fresh branch comes from /api/server-info — the
+    // pool's lastObservedBranch is stale by definition (it's what the
+    // failed claim was built from).
+    p.setOnBranchMismatch(() => {
+      void fetch('/api/server-info')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((info: unknown) => {
+          const result = ServerInfoResponseSchema.safeParse(info);
+          if (!result.success || result.data.currentBranch === undefined) return;
+          // setObservedBranch (not compareAndUpdate) — we're inside the
+          // mismatch handler so the comparison already happened on the
+          // server side; just record the new value and run the recycle.
+          p.setObservedBranch(result.data.currentBranch);
+          return handleBranchSwitched(p, result.data.currentBranch);
+        })
+        .catch(() => {
+          // /api/server-info unavailable — log and skip; the next CC1
+          // server-info frame on `__system__` reconnect will recover.
+          console.warn(JSON.stringify({ event: 'branch-mismatch-recovery-failed' }));
+        });
+    });
+
     // Subscribe to pool changes
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
 

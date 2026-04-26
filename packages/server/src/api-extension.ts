@@ -3256,18 +3256,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * GET /api/server-info
    *
-   * Returns `{ ok: true, serverInstanceId, currentBranch? }`. Called by
+   * Returns `{ ok: true, serverInstanceId, currentBranch }`. Called by
    * the client's `ProviderPool` as a boot-time warmup BEFORE any
    * WebSocket provider opens, so the first provider's auth token can
-   * carry `expectedServerInstanceId` on the very first connect (avoiding
-   * one "null-claim accept → broadcast → populate cache → next connect
-   * claim" cycle on cold start).
+   * carry `expectedServerInstanceId` and `expectedBranch` on the very
+   * first connect (avoiding one "null-claim accept → broadcast →
+   * populate cache → next connect claim" cycle on cold start).
    *
    * `currentBranch` is the late-join backstop for CC1's `branch-switched`
-   * stateless broadcast — disconnected clients reconnecting compare the
-   * current value against their last-observed branch and trigger
-   * `handleBranchSwitched` on mismatch. Omitted when git tracking is
-   * disabled.
+   * stateless broadcast — disconnected clients reconnecting compare it
+   * against their last-observed branch and trigger `handleBranchSwitched`
+   * on mismatch (also surfaced as the `expectedBranch` auth-token claim,
+   * see `auth-token-schema.ts`). Always populated — `getActiveBranch()`
+   * defaults to `'main'` when git is disabled.
    *
    * Public by design (no loopback / Host-header gate). Neither field is
    * sensitive — both are explicitly advertised to any client that may

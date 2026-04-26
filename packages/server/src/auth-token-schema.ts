@@ -38,6 +38,14 @@
  *   mismatch bug class. Clients cache the last-observed server instance ID
  *   and claim it on every reconnect; server rejects on mismatch so a
  *   stale-client reconnect is recycled BEFORE Yjs sync can merge.
+ * - `expectedBranch` — late-join backstop for the cross-branch invalidation
+ *   flow. Mirrors `expectedServerInstanceId`. Clients cache the last
+ *   observed branch (boot HTTP fetch + CC1 server-info) and claim it on
+ *   every reconnect; server rejects with `reason: 'branch-mismatch'` on
+ *   non-empty mismatch so a client reconnecting after a branch switch they
+ *   missed (offline window, fresh tab restored from stale IDB) is forced
+ *   through `handleBranchSwitched` BEFORE Yjs sync can union-merge stale
+ *   branch state. Empty / absent claims are accepted (legacy / non-git).
  */
 import { z } from 'zod';
 
@@ -46,6 +54,7 @@ export const HocuspocusAuthTokenSchema = z
     principalId: z.string().optional(),
     tabSessionId: z.string().optional(),
     expectedServerInstanceId: z.string().optional(),
+    expectedBranch: z.string().optional(),
   })
   .loose();
 

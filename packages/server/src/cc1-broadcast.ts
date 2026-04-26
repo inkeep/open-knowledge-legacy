@@ -86,14 +86,23 @@ export class CC1Broadcaster {
   }
 
   /**
-   * Broadcast the server's per-process instance ID on the `server-info`
-   * CC1 channel. Bypasses the debounce + seq machinery used by the
-   * derived-view channels — instance ID does not change during a process
-   * lifetime and new subscribers need an immediate signal on first
-   * `__system__` connect. Call once at startup after `__system__` is
-   * materialized, and additionally on every new subscriber if desired
-   * (Hocuspocus's awareness replay covers late joiners without us
-   * needing to re-broadcast, but a re-broadcast is cheap and idempotent).
+   * Broadcast the server's per-process instance ID + active branch on
+   * the `server-info` CC1 channel. Bypasses the debounce + seq machinery
+   * used by the derived-view channels — instance ID is per-process
+   * stable and the branch only changes via the explicit
+   * `emitBranchSwitched` path.
+   *
+   * `broadcastStateless` reaches only the `__system__` subscribers
+   * connected at the moment of emit — there is no Hocuspocus-side
+   * replay for stateless frames (distinct from awareness state, which
+   * does replay on connect). Late joiners receive the values via the
+   * `/api/server-info` HTTP boot fetch and the auth-token
+   * `expectedServerInstanceId` / `expectedBranch` claims, both of which
+   * are validated server-side per connect — the auth path is the
+   * actual late-join backstop, not this broadcast.
+   *
+   * Call once at startup after `__system__` is materialized to seed any
+   * subscribers connected during the boot window.
    */
   emitServerInfo(serverInstanceId: string, currentBranch?: string): void {
     try {

@@ -125,6 +125,7 @@ export const MAX_POOL = 10;
 export function buildAuthToken(
   tabIdentity: { principalId: string; tabSessionId: string } | null,
   expectedServerInstanceId: string | null,
+  expectedBranch: string | null = null,
 ): string | undefined {
   // Type is type-only-imported from the server package — the schema's
   // single source of truth is `HocuspocusAuthTokenSchema`. Adding a field
@@ -136,6 +137,9 @@ export function buildAuthToken(
   }
   if (expectedServerInstanceId !== null && expectedServerInstanceId.length > 0) {
     claim.expectedServerInstanceId = expectedServerInstanceId;
+  }
+  if (expectedBranch !== null && expectedBranch.length > 0) {
+    claim.expectedBranch = expectedBranch;
   }
   if (Object.keys(claim).length === 0) return undefined;
   return JSON.stringify(claim);
@@ -268,6 +272,19 @@ export class ProviderPool {
     return prior !== null && prior !== branch;
   }
 
+  /**
+   * Handler invoked when the server rejects a connect with
+   * `reason: 'branch-mismatch'`. Set by DocumentContext (which owns
+   * `handleBranchSwitched` invocation) after pool construction so the
+   * pool itself stays free of React/UI imports. Pool clears the cached
+   * branch claim before invoking — the handler fetches the fresh value
+   * via `/api/server-info` or the next CC1 `server-info` frame.
+   */
+  private onBranchMismatch: (() => void) | null = null;
+  setOnBranchMismatch(cb: (() => void) | null): void {
+    this.onBranchMismatch = cb;
+  }
+
   /** Register a callback that fires whenever pool state changes. */
   setOnChange(cb: PoolChangeCallback | null): void {
     this.onChange = cb;
@@ -306,7 +323,11 @@ export class ProviderPool {
       this.evictLru();
     }
 
-    const token = buildAuthToken(this.tabIdentity, this.cachedServerInstanceId);
+    const token = buildAuthToken(
+      this.tabIdentity,
+      this.cachedServerInstanceId,
+      this.lastObservedBranch,
+    );
     const provider = new HocuspocusProvider({
       // OTel trace context propagation for the WebSocket handshake. The
       // browser's WebSocket API cannot set request headers, so traceparent
@@ -441,10 +462,27 @@ export class ProviderPool {
     // authenticationFailed in quick succession. The first call nulls the
     // cached ID; subsequent calls find it already null and short-circuit.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
-      if (reason !== 'server-instance-mismatch') return;
-      if (this.cachedServerInstanceId === null) return;
-      this.cachedServerInstanceId = null;
-      this.handleServerInstanceMismatch();
+      if (reason === 'server-instance-mismatch') {
+        if (this.cachedServerInstanceId === null) return;
+        this.cachedServerInstanceId = null;
+        this.handleServerInstanceMismatch();
+        return;
+      }
+      // Branch-mismatch is the late-join backstop for the cross-branch
+      // invalidation flow: the client's auth-token claim
+      // (`expectedBranch = lastObservedBranch`) didn't match the server's
+      // current branch, which means a `branch-switched` broadcast happened
+      // while this client was offline (or the tab was restored from
+      // stale-branch IDB). Routing through the same recycle pathway as
+      // CC1 `branch-switched` ensures `clearData` runs BEFORE Yjs sync
+      // can union-merge stale-branch state. The handler is set by
+      // DocumentContext after construction so the pool stays free of
+      // React/UI dependencies; missing handler = legacy behavior (no
+      // invalidation, accept current state).
+      if (reason === 'branch-mismatch') {
+        this.onBranchMismatch?.();
+        return;
+      }
     };
 
     provider.on('status', onStatus);
@@ -631,6 +669,24 @@ export class ProviderPool {
    */
   clearBufferedUpdates(): void {
     this.bufferedUpdates.clear();
+  }
+
+  /**
+   * Test-only buffer manipulation. The cross-branch buffer-leak fix is
+   * load-bearing but invisible from public APIs (the buffer is a private
+   * Map populated only by `handleServerInstanceMismatch` mid-recycle).
+   * Tests need a way to seed the buffer + observe its size to assert
+   * branch-switched / close drain semantics. Naming-prefix `__test`
+   * keeps these out of production call sites by convention.
+   */
+  __test_seedBufferedUpdate(docName: string, update: Uint8Array): void {
+    this.bufferedUpdates.set(docName, update);
+  }
+  __test_bufferedUpdatesSize(): number {
+    return this.bufferedUpdates.size;
+  }
+  __test_hasBufferedUpdate(docName: string): boolean {
+    return this.bufferedUpdates.has(docName);
   }
 
   /** Set the active document. Must already be open. */
