@@ -62,13 +62,13 @@ import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 const log = getLogger('persistence');
 
 /**
- * Derive a WriterIdentity from a Hocuspocus transaction origin (D31, D32, FR-16).
+ * Derive a WriterIdentity from a Hocuspocus transaction origin.
  *
  * Called from onStoreDocument to determine which writer triggered the store.
  * Handles the three origin shapes Hocuspocus surfaces:
  *   - local  + context.session_id  → per-session agent writer
  *   - local  + context.origin      → classified service writer
- *   - connection + principalId     → human-browser principal writer (US-024)
+ *   - connection + principalId     → human-browser principal writer
  *
  * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
  * Exported for unit-testing the dispatch table without spinning up a server.
@@ -104,7 +104,7 @@ export function resolveWriterFromOrigin(
   }
 
   if (o.source === 'connection') {
-    // Human browser write — principalId set via onAuthenticate (D50, US-024)
+    // Human browser write — principalId set via onAuthenticate.
     const conn = o.connection as Record<string, unknown> | undefined;
     const ctx = conn?.context as Record<string, unknown> | undefined;
     if (typeof ctx?.principalId === 'string') {
@@ -791,14 +791,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             return;
           }
 
-          // Thread origin → contributor tracker (D31, D32, FR-16).
-          // This is a safety-net for writes that bypass api-extension.ts handlers.
-          // Agent write handlers already call recordContributor explicitly; this
-          // handles human-browser connection writes (US-024) and any other origin
-          // that doesn't go through a handler. Gated on `markdown !== currentBase`
-          // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
-          // not record the principal, so the L2 fan-out no longer attributes
-          // phantom commits to the browser alongside a legitimate agent write.
+          // Thread origin → contributor tracker. Safety-net for writes that
+          // bypass api-extension.ts handlers. Agent write handlers already
+          // call recordContributor explicitly; this handles human-browser
+          // connection writes and any other origin that doesn't go through a
+          // handler. Gated on `markdown !== currentBase` above — semantic
+          // no-op writes (y-prosemirror empty-paragraph init) do not record
+          // the principal, so the L2 fan-out no longer attributes phantom
+          // commits to the browser alongside a legitimate agent write.
           const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
           if (writer && writer.id !== SERVICE_WRITER.id) {
             // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc

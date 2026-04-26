@@ -114,7 +114,7 @@ interface DocumentContextValue {
    * Update the pool's cached server instance ID. Called by
    * `SystemDocSubscriber` on every `__system__` CC1 `server-info` broadcast
    * so the pool's next provider-open claim matches the live server. Null
-   * clears the claim (used by the auth-failure recycle path in Commit 4).
+   * clears the claim (used by the auth-failure recycle path).
    */
   updateServerInstanceId: (id: string | null) => void;
   /**
@@ -360,8 +360,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const persisted = loadPinFromStorage();
     if (persisted !== null) setPinnedDoc(persisted);
 
-    // D50 / US-024: fetch principal and wire tab identity so HocuspocusProvider
-    // includes {principalId, tabSessionId} in its auth token. The server's
+    // Fetch principal and wire tab identity so HocuspocusProvider includes
+    // {principalId, tabSessionId} in its auth token. The server's
     // onAuthenticate hook reads this to set connection.context.principalId for
     // correct writer attribution. Silent on failure — pool uses anonymous token.
     fetch('/api/principal')

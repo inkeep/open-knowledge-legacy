@@ -1591,6 +1591,73 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     expect(pool.has(doc2)).toBe(false);
     expect(pool.has(doc1)).toBe(true);
   });
+
+  // Partial clearData failure: when only some entries' clears succeed, the
+  // pool must still recycle the cleared entries (their IDB is empty + safe
+  // to recycle into) while leaving failed entries inert. An all-or-none
+  // gate would re-open the duplication class for the cleared docs because
+  // `cachedServerInstanceId` is nulled at the mismatch-handler entry —
+  // the next reconnect carries no claim, the server accepts on the legacy
+  // path, and Yjs additively merges pre-restart-clientID items into the
+  // post-restart server state.
+  test('server-instance-mismatch with partial clearData failure recycles cleared entries only', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const doc1 = uniqueDocName('pp-partial-ok');
+    const doc2 = uniqueDocName('pp-partial-fail');
+    const doc3 = uniqueDocName('pp-partial-ok2');
+    const e1 = pool.open(doc1);
+    const e2 = pool.open(doc2);
+    const e3 = pool.open(doc3);
+    if (!e1?.persistence || !e2?.persistence || !e3?.persistence) {
+      throw new Error('expected persistences');
+    }
+    pool.setActive(doc1);
+    // Pre-set observerCleanup so onSynced skips setupObservers paths
+    e1.observerCleanup = () => {};
+    e2.observerCleanup = () => {};
+    e3.observerCleanup = () => {};
+
+    // Capture pre-recycle provider refs so we can detect identity change
+    // after the per-entry recycle.
+    const preProvider1 = e1.provider;
+    const preProvider2 = e2.provider;
+    const preProvider3 = e3.provider;
+
+    const clearOk1 = mock(async () => {});
+    const clearFail = mock(() => Promise.reject(new Error('idb-clear-blocked')));
+    const clearOk2 = mock(async () => {});
+    e1.persistence.clearData = clearOk1;
+    e2.persistence.clearData = clearFail;
+    e3.persistence.clearData = clearOk2;
+
+    e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Every clearData was attempted.
+    expect(clearOk1).toHaveBeenCalledTimes(1);
+    expect(clearFail).toHaveBeenCalledTimes(1);
+    expect(clearOk2).toHaveBeenCalledTimes(1);
+
+    // doc1 is active — re-opened with a fresh provider after recycle.
+    const post1 = pool.entries.get(doc1);
+    if (!post1 || post1.kind !== 'active') throw new Error('expected active doc1 post-recycle');
+    expect(post1.provider).not.toBe(preProvider1);
+
+    // doc3 cleared successfully but is non-active — recycled (entry removed).
+    expect(pool.has(doc3)).toBe(false);
+
+    // doc2 cleared FAILED — entry NOT recycled. The pre-recycle provider
+    // must still be the one in the pool (proves the failed-clear path
+    // didn't tear it down or replace it).
+    const post2 = pool.entries.get(doc2);
+    if (!post2 || post2.kind !== 'active') throw new Error('expected active doc2 still in pool');
+    expect(post2.provider).toBe(preProvider2);
+    // Silence unused warning: preProvider3 is captured for symmetry but
+    // doc3 was non-active and was destroyed, so there's no post-state ref
+    // to compare against.
+    void preProvider3;
+  });
 });
 
 // ---------------------------------------------------------------------------

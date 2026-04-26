@@ -615,9 +615,9 @@ export interface ApiExtensionOptions {
    */
   projectDir?: string;
   /**
-   * Getter for the server's principal record (D50, US-024).
-   * Called at request time so deferred async init propagates.
-   * Returns null if principal has not yet been loaded or loading failed.
+   * Getter for the server's principal record. Called at request time so
+   * deferred async init propagates. Returns null if principal has not
+   * yet been loaded or loading failed.
    */
   getPrincipal?: () => Principal | null;
   /**
@@ -3313,12 +3313,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // schema's `.optional()` keeps the response shape valid in both
     // cases without a separate "no broadcaster" branch on the client.
     const currentDiskAckSVs = getDiskAckSVs?.();
-    json(res, 200, {
-      ok: true,
-      serverInstanceId,
-      currentBranch,
-      ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
-    });
+    // `Cache-Control: no-store` matches the disclosure semantics: every
+    // field is per-process / per-moment state. A back/forward-cached
+    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
+    // the recycle baseline-selection on the next mismatch.
+    json(
+      res,
+      200,
+      {
+        ok: true,
+        serverInstanceId,
+        currentBranch,
+        ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
+      },
+      { 'Cache-Control': 'no-store' },
+    );
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {

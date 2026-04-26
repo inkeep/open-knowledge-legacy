@@ -228,7 +228,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
   let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
-  // Mutable principal holder — populated in initAsync (D50, US-024)
+  // Mutable principal holder — populated by the async load in initAsync.
   let loadedPrincipal: Principal | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
@@ -287,7 +287,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
-    // D50 / US-024: Browser tabs supply { principalId, tabSessionId } via token.
+    // Browser tabs supply { principalId, tabSessionId } via the auth token.
     // onAuthenticate parses the JSON token and hoists identity into connection
     // context so persistence.resolveWriterFromOrigin sees source:'connection'
     // with ctx.principalId set. Missing or invalid tokens are silently ignored
@@ -316,12 +316,12 @@ export function createServer(options: ServerOptions): ServerInstance {
         // return `undefined` — we continue through the existing accept path.
         const parsed = parseHocuspocusAuthToken(tokenStr);
 
-        // CRDT server-restart recovery (US-002 / Commit 4): if the client
-        // claimed a specific serverInstanceId and it doesn't match OUR
-        // instance ID, throw with `reason: 'server-instance-mismatch'` so
-        // the client's `authenticationFailed` handler can recycle all
-        // providers BEFORE any Yjs sync runs (which would merge ghost
-        // items under the stale clientID — the root cause the plan fixes).
+        // CRDT server-restart recovery: if the client claimed a specific
+        // serverInstanceId and it doesn't match OUR instance ID, throw with
+        // `reason: 'server-instance-mismatch'` so the client's
+        // `authenticationFailed` handler can recycle all providers BEFORE
+        // any Yjs sync runs (which would merge ghost items under the stale
+        // clientID — the root cause this defends).
         // Empty-string claim is treated as absent (matches client-side
         // `buildAuthToken` behavior). Legacy clients without the field
         // are accepted unconditionally for backward compat.
@@ -1105,7 +1105,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
-    // Load (or create) the principal record — non-blocking best-effort (D50, US-024)
+    // Load (or create) the principal record — non-blocking best-effort.
     try {
       loadedPrincipal = await loadPrincipal(contentDir);
       log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');

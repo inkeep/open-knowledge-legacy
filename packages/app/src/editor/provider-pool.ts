@@ -183,15 +183,13 @@ export const MAX_POOL = 10;
 
 /**
  * Build the stringified JSON `token` HocuspocusProvider sends on every
- * connect, or `undefined` when no claim is set. Returning `undefined` (vs.
- * `'{}'`) preserves the pre-US-001 shape where the `token` option is simply
- * absent for anonymous connections — older servers that don't parse the
- * token see no change in the wire protocol.
+ * connect, or `undefined` when no claim is set. Returning `undefined`
+ * (rather than `'{}'`) keeps the wire shape identical for anonymous
+ * connections — older servers that don't parse the token see no change.
  *
- * Exported for the MECHANISM-ONLY unit tests in `provider-pool.test.ts` per
- * the Commit 3 acceptance criteria in the spec. Callers inside this module
- * pass the current pool state; external callers should not depend on this
- * symbol.
+ * Exported for the mechanism-only unit tests in `provider-pool.test.ts`.
+ * Callers inside this module pass the current pool state; external
+ * callers should not depend on this symbol.
  */
 export function buildAuthToken(
   tabIdentity: { principalId: string; tabSessionId: string } | null,
@@ -256,7 +254,7 @@ export class ProviderPool {
    * on every `__system__` CC1 `server-info` broadcast arriving through
    * `SystemDocSubscriber`. When non-null, included in the auth token's
    * `expectedServerInstanceId` field on every `open()`. When the server
-   * rejects with `reason: 'server-instance-mismatch'` (Commit 4), the
+   * rejects with `reason: 'server-instance-mismatch'`, the
    * `authenticationFailed` handler nulls this field so the recycled
    * providers re-open with an anonymous claim and resync cleanly.
    *
@@ -315,7 +313,7 @@ export class ProviderPool {
    * principal has been fetched from the server. New provider opens will
    * include this as a JSON `token` in the HocuspocusProvider so the server's
    * `onAuthenticate` hook can set `connection.context.principalId` for
-   * correct writer attribution (D50, US-024).
+   * correct writer attribution.
    */
   setTabIdentity(identity: { principalId: string; tabSessionId: string }): void {
     this.tabIdentity = identity;
@@ -324,12 +322,12 @@ export class ProviderPool {
   /**
    * Update the cached server instance ID the pool will claim in every future
    * provider's auth token. Pass `null` to clear (used by the auth-failure
-   * recycle path in Commit 4, and by the boot fetch on network failure).
+   * recycle path and by the boot fetch on network failure).
    *
    * Idempotent: if the new ID matches the cached one, no-op. Does NOT
    * recycle existing providers — the claim only affects new `open()` calls.
-   * Commit 4 wires recycle on server-side rejection, which is the path that
-   * flips stale pools to the new ID.
+   * The auth-failure path is what flips stale pools to the new ID via
+   * recycle on server-side rejection.
    */
   setExpectedServerInstanceId(id: string | null): void {
     if (this.cachedServerInstanceId === id) return;
@@ -780,17 +778,24 @@ export class ProviderPool {
     // cached ID; subsequent calls find it already null and short-circuit.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
       // Trust-boundary narrow: `reason` is a wire-foreign string from
-      // Hocuspocus. The `satisfies` constraint below pins the local
-      // literal-set to the server-side `HocuspocusAuthRejectionReason`
-      // type, so a future server-side rename / addition fails this
-      // compile site instead of silently dropping into the unknown-
-      // reason branch. Inlined (not imported from the server's runtime
-      // helper) because a runtime import would pull the entire server
-      // bundle into the browser via tree-shake leaks.
-      const KNOWN: readonly HocuspocusAuthRejectionReason[] = [
+      // Hocuspocus. Inlined (not imported from the server's runtime
+      // helper) because a runtime import pulls the entire server bundle
+      // into the browser via tree-shake leaks (rolldown traces into
+      // `@parcel/watcher`'s `.node` binary). The bidirectional drift
+      // guard catches additions on either side: `satisfies` ensures
+      // every local literal is in the server-side type; the
+      // `_AssertCovers` extends-check fails when the server-side type
+      // widens past the local set (the conditional resolves to `never`
+      // and the `true` initializer fails to compile).
+      const KNOWN = [
         'server-instance-mismatch',
         'branch-mismatch',
-      ] satisfies readonly HocuspocusAuthRejectionReason[];
+      ] as const satisfies readonly HocuspocusAuthRejectionReason[];
+      type _AssertCovers = HocuspocusAuthRejectionReason extends (typeof KNOWN)[number]
+        ? true
+        : never;
+      const _assertCovers: _AssertCovers = true;
+      void _assertCovers;
       if (!(KNOWN as readonly string[]).includes(reason)) {
         console.warn(JSON.stringify({ event: 'ok-auth-failed-unknown-reason', reason }));
         return;
@@ -925,9 +930,10 @@ export class ProviderPool {
 
     void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
       const failed: string[] = [];
+      const cleared: string[] = [];
       results.forEach((result, i) => {
+        const docName = clears[i]?.docName ?? '<unknown>';
         if (result.status === 'rejected') {
-          const docName = clears[i]?.docName ?? '<unknown>';
           failed.push(docName);
           console.warn(
             JSON.stringify({
@@ -937,22 +943,34 @@ export class ProviderPool {
                 result.reason instanceof Error ? result.reason.message : String(result.reason),
             }),
           );
+        } else {
+          cleared.push(docName);
         }
       });
       if (failed.length > 0) {
-        // Abort recycle. Leaving the un-cleared IDBs in place + skipping
-        // the recycle is the safe failure mode: the next reconnect will
-        // see the un-nulled cachedServerInstanceId still null, but the
-        // pool entries continue to drive their existing providers
-        // (which are now in the auth-rejected state). User-visible
-        // recovery prompt belongs at the UI layer; here the contract is
-        // "don't corrupt content under failed clears."
+        // Per-doc recycle. An all-or-none gate would re-open the
+        // duplication class for the cleared docs: their providers will
+        // reconnect (`cachedServerInstanceId` was nulled at the
+        // mismatch-handler entry, so the next auth carries no claim and
+        // is accepted on the legacy path), then Yjs sync runs against
+        // the still-pre-restart Y.Doc and additively merges with post-
+        // restart server state — exactly the bug class clearData was
+        // supposed to prevent. Recycle the cleared entries (their IDB
+        // is empty, their fresh providers will sync cleanly) and leave
+        // the failed entries inert. The failed entries' un-cleared
+        // IDBs will surface the same mismatch on the next provider
+        // reconnect cycle; they need user-visible recovery (close the
+        // blocking tab/DevTools, then reload).
         console.warn(
           JSON.stringify({
-            event: 'ok-mismatch-recycle-aborted-clears-failed',
+            event: 'ok-mismatch-recycle-partial-clears-failed',
             failedDocs: failed,
+            clearedDocs: cleared,
           }),
         );
+        for (const docName of cleared) {
+          this.recycleDisconnectedEntry(docName);
+        }
         return;
       }
       this.recycleAllEntries();
@@ -1123,7 +1141,7 @@ export class ProviderPool {
     this.recycleDisconnectedEntry(docName);
   }
 
-  /** Dispose of all entries. */
+  /** Dispose of all entries and pool-owned mutable state. */
   dispose(): void {
     for (const entry of this.entries.values()) {
       this.destroyEntry(entry);
@@ -1132,6 +1150,16 @@ export class ProviderPool {
     this.lruOrder = [];
     this.activeDocName = null;
     this.onChange = null;
+    // Reset every mutable field so a disposed pool can't bleed stale state
+    // into a future test or reused harness instance. Production HMR drops
+    // the whole pool reference, but tests and the `[collabUrl]` cleanup in
+    // DocumentContext call dispose() and may keep the reference around.
+    this.bufferedUpdates.clear();
+    this.onBranchMismatch = null;
+    this.branchMismatchInFlight = null;
+    this.evictListeners.clear();
+    this.cachedServerInstanceId = null;
+    this.tabIdentity = null;
   }
 
   private evictLru(): void {

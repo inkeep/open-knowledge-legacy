@@ -110,7 +110,18 @@ export async function refreshServerInfo(pool: ProviderPool, baseUrl = ''): Promi
     return;
   }
   const result = ServerInfoResponseSchema.safeParse(info);
-  if (!result.success) return;
+  if (!result.success) {
+    // Schema mismatch is a programmer-actionable signal (server-client
+    // version skew), distinct from the silent network-error class above.
+    // Warn once with the Zod issue list so a sustained skew is visible
+    // in the console without flooding (no rate-limit needed today
+    // because mismatches are deploy-time / version-bump events, not
+    // per-frame).
+    console.warn(
+      JSON.stringify({ event: 'ok-server-info-schema-mismatch', issues: result.error.issues }),
+    );
+    return;
+  }
 
   pool.setExpectedServerInstanceId(result.data.serverInstanceId);
 

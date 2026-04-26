@@ -2,7 +2,7 @@
  * V2 editor cache — module-level `Map<docName, Entry>` that survives React
  * unmount, SPA navigation, Activity mode flips, StrictMode double-invoke, HMR.
  *
- * Contract (US-001, V2 spec §9.1, §10 D3 / precedent #18(g)/(h)):
+ * Contract (precedent #18(g)/(h)):
  *
  *   mount{Tiptap,Cm}Editor({ docName, container, factory })
  *     — CACHE HIT: reparent editor.editorView.dom / view.dom into `container`,
