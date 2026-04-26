@@ -10,20 +10,21 @@ import {
 } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
-  Bot,
   Copy,
   FolderPlus,
   FoldVertical,
-  Link2,
   Pencil,
   SquarePen,
   Trash2,
   UnfoldVertical,
 } from 'lucide-react';
+// @ts-expect-error -- no types
+import { __iconNode as botIcon } from 'lucide-react/dist/esm/icons/bot';
+// @ts-expect-error -- no types
+import { __iconNode as link2Icon } from 'lucide-react/dist/esm/icons/link-2';
 import { useTheme } from 'next-themes';
 import {
   type CSSProperties,
-  type ReactElement,
   type MouseEvent as ReactMouseEvent,
   type Ref,
   startTransition,
@@ -33,7 +34,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
 import {
@@ -107,15 +107,30 @@ const AGENT_FILE_NAMES = new Set(['agents', 'agent', 'claude', 'skill']);
 const LINK_DECORATION_ICON_ID = 'ok-file-tree-link-decoration';
 const AGENT_DECORATION_ICON_ID = 'ok-file-tree-agent-decoration';
 
-function createLucideSpriteSymbol(id: string, icon: ReactElement): string {
-  const svgMarkup = renderToStaticMarkup(icon);
-  const symbolContent = svgMarkup.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
+type IconNode = [string, Record<string, string>][];
+
+function iconNodeToSvg(iconNode: IconNode): string {
+  return (
+    iconNode
+      // remove React key
+      .map(([tag, { key, ...attrs }]) => {
+        const attrString = Object.entries(attrs)
+          .map(([k, v]) => `${k}="${v}"`)
+          .join(' ');
+        return `<${tag} ${attrString} />`;
+      })
+      .join('')
+  );
+}
+
+function createLucideSpriteSymbol(id: string, iconNode: IconNode): string {
+  const symbolContent = iconNodeToSvg(iconNode);
   return `<symbol id="${id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${symbolContent}</symbol>`;
 }
 
 const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="true" width="0" height="0">
-  ${createLucideSpriteSymbol(LINK_DECORATION_ICON_ID, <Link2 />)}
-  ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, <Bot />)}
+  ${createLucideSpriteSymbol(LINK_DECORATION_ICON_ID, link2Icon)}
+  ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
 
 function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
