@@ -1,23 +1,21 @@
 /**
- * Timeline-in-DocPanel E2E coverage.
+ * Timeline-in-DocPanel E2E coverage. Locks three behavioral invariants:
  *
- * Locks the three behavioral invariants from
- * `specs/2026-04-20-timeline-to-docpanel/SPEC.md`:
+ *   File-switch diff-clear — navigating from doc A to doc B while previewing
+ *   a historical version exits diff mode and the Timeline tab refetches for
+ *   the new document. (The prior cleanup only fired on folder navigation, not
+ *   file-to-file transitions — fixed by the `activeDocName` cleanup effect in
+ *   EditorPane.)
  *
- *   FR-3 (D3 LOCKED) — file-to-file navigation while previewing a historical
- *   version exits diff mode and the Timeline tab refetches for the new doc
- *   (replaces the prior folder-only `useEffect` at `EditorPane.tsx:101-108`
- *   that silently left a stale diff visible).
+ *   Tab-switch diff-persistence — switching from the Timeline tab to another
+ *   DocPanel tab while a historical entry is selected keeps the diff and the
+ *   EditorHeader banner visible; returning to the Timeline tab finds the same
+ *   entry still highlighted.
  *
- *   D6 LOCKED — diff mode persists across DocPanel tab switches. Switching
- *   from Timeline to another tab while a historical entry is selected
- *   keeps the diff and the EditorHeader banner visible; returning to the
- *   Timeline tab finds the same entry still highlighted.
+ *   Tab-local exit — the in-tab "Current version" row is the tab-local exit
+ *   affordance. Clicking it returns the editor to the prior editing mode.
  *
- *   FR-8 — the in-tab "Current version" row is the tab-local exit affordance.
- *   Clicking it returns the editor to the prior editing mode.
- *
- * Pre-existing implementation lives at
+ * Pre-existing implementation:
  * `packages/app/src/components/{TimelinePanel,DocPanel,EditorPane,EditorArea}.tsx`.
  *
  * Why we mock `/api/history` rather than seeding via `/api/save-version`:
@@ -29,11 +27,11 @@
  * The same reasoning is documented in `agent-activity-panel.e2e.ts` (which
  * relies on integration coverage at
  * `packages/app/tests/integration/c11-activity-panel-undo.test.ts` for the
- * git-dependent paths). For the spec's pure UI lifecycle (entry click →
- * diff mode, file switch → exit diff, tab switch → diff persists, current
- * version → exit diff), Playwright's `page.route()` is the idiomatic seam:
- * it isolates the React state machine under test from the shadow-repo
- * subsystem that's already covered by integration tests.
+ * git-dependent paths). For the pure UI lifecycle (entry click → diff mode,
+ * file switch → exit diff, tab switch → diff persists, current version → exit
+ * diff), Playwright's `page.route()` is the idiomatic seam: it isolates the
+ * React state machine under test from the shadow-repo subsystem that's already
+ * covered by integration tests.
  */
 
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
@@ -73,16 +71,11 @@ const HISTORY_BY_DOC: Record<string, TimelineEntry[]> = {
   ],
 };
 
-// Per-sha historical content. Bodies deliberately differ from the current
-// seeded content so DiffView's `norm(historical) === norm(current)` short-
-// circuit (which fires `onNoDiff` and exits diff) does not trigger.
+// Historical content for SHA lookup. Only the SHAs actually clicked in tests
+// are included; doc-b entries are never diff-previewed across this suite.
 const HISTORICAL_BY_SHA: Record<string, string> = {
   'doc-a-wip-0': '# Doc A\n\nHistorical body — wip 0.',
   'doc-a-checkpoint-1': '# Doc A\n\nHistorical body — checkpoint 1.',
-  'doc-a-wip-2': '# Doc A\n\nHistorical body — wip 2.',
-  'doc-b-wip-0': '# Doc B\n\nHistorical body — wip 0.',
-  'doc-b-checkpoint-1': '# Doc B\n\nHistorical body — checkpoint 1.',
-  'doc-b-wip-2': '# Doc B\n\nHistorical body — wip 2.',
 };
 
 const DOC_A_CURRENT = '# Doc A\n\nDoc A current content.';
@@ -103,7 +96,7 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ entries }),
+        body: JSON.stringify({ ok: true, entries }),
       });
     });
 
@@ -116,14 +109,32 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ ok: true, content }),
       });
     });
   });
 
-  test('FR-3: file switch exits diff mode and Timeline tab refetches for the new doc', async ({
+  test('file switch exits diff mode and Timeline tab refetches for the new doc', async ({
     page,
   }) => {
+    // Override beforeEach route to capture which docNames are fetched.
+    // This distinguishes "doc-b history was loaded" from "stale doc-a entries
+    // still mounted" — both show a "Current version" row (renders whenever
+    // entries.length > 0), so visibility alone is not a sufficient assertion.
+    const fetchedDocNames: string[] = [];
+    await page.unroute(/\/api\/history\?docName=/);
+    await page.route(/\/api\/history\?docName=/, async (route) => {
+      const url = new URL(route.request().url());
+      const docName = url.searchParams.get('docName') ?? '';
+      fetchedDocNames.push(docName);
+      const entries = HISTORY_BY_DOC[docName] ?? [];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, entries }),
+      });
+    });
+
     await page.goto('/#/doc-a');
     await waitForActiveProviderSynced(page);
     await expect(page.locator('.ProseMirror')).toContainText('Doc A');
@@ -170,9 +181,11 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     // is selected (the implicit "now" state).
     await expect(timelinePanel).toBeVisible();
     await expect(timelinePanel.getByText('Current version')).toBeVisible();
+    // doc-b history was actually fetched — not just stale doc-a entries mounted.
+    expect(fetchedDocNames).toContain('doc-b');
   });
 
-  test('D6: diff persists across DocPanel tab switches and survives return to Timeline', async ({
+  test('diff persists across DocPanel tab switches and survives return to Timeline', async ({
     page,
   }) => {
     await page.goto('/#/doc-a');
@@ -200,14 +213,16 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(page.getByText(/^Viewing: /)).toBeVisible();
 
     // Return to Timeline — diff still shows; the previously-selected entry
-    // is still in the entry list and clickable.
+    // is still visible and highlighted (bg-muted confirms selectedSha is
+    // still wired through EditorArea → DocPanel → TimelineContent).
     await page.getByRole('tab', { name: 'Timeline' }).click();
     await expect(timelinePanel).toBeVisible();
     await expect(page.locator('.diff-view')).toBeVisible();
     await expect(historicalRow).toBeVisible();
+    await expect(historicalRow).toHaveClass('bg-muted');
   });
 
-  test('FR-8: clicking the in-tab "Current version" row exits diff mode', async ({ page }) => {
+  test('clicking the in-tab "Current version" row exits diff mode', async ({ page }) => {
     await page.goto('/#/doc-a');
     await waitForActiveProviderSynced(page);
     await page.getByRole('tab', { name: 'Timeline' }).click();
@@ -232,7 +247,7 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(page.locator('.ProseMirror')).toBeVisible();
   });
 
-  test('QA-004: clicking a second entry while in diff updates diff without panel close', async ({
+  test('clicking a second entry while in diff updates diff without panel close', async ({
     page,
   }) => {
     await page.goto('/#/doc-a');
@@ -264,19 +279,23 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(page.getByText(/^Viewing: /)).toBeVisible();
   });
 
-  test('QA-008: Timeline tab shows loading skeleton while fetch is in flight', async ({ page }) => {
-    // Override the history list mock to delay so the loading state is observable.
+  test('Timeline tab shows loading skeleton while fetch is in flight', async ({ page }) => {
+    // Use a causal gate so the mock only resolves after the skeleton has been
+    // asserted — no wall-clock delay needed.
+    let gateResolve!: () => void;
+    const historyGate = new Promise<void>((resolve) => {
+      gateResolve = resolve;
+    });
     await page.unroute(/\/api\/history\?docName=/);
     await page.route(/\/api\/history\?docName=/, async (route) => {
       const url = new URL(route.request().url());
       const docName = url.searchParams.get('docName') ?? '';
       const entries = HISTORY_BY_DOC[docName] ?? [];
-      // Delay 1500ms so the skeleton renders before entries arrive.
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await historyGate;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ entries }),
+        body: JSON.stringify({ ok: true, entries }),
       });
     });
 
@@ -288,23 +307,22 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     // Skeleton: status role with aria-label 'Loading timeline history'.
     await expect(
       timelinePanel.getByRole('status', { name: 'Loading timeline history' }),
-    ).toBeVisible({ timeout: 1000 });
+    ).toBeVisible();
+    gateResolve();
 
-    // After the 1500ms delay, entries arrive; skeleton goes away.
+    // After the gate resolves, entries arrive; skeleton goes away.
     await expect(timelinePanel.getByText('Test User').first()).toBeVisible({
       timeout: 5000,
     });
   });
 
-  test('QA-009: Timeline tab shows "No history yet" when entries list is empty', async ({
-    page,
-  }) => {
+  test('Timeline tab shows "No history yet" when entries list is empty', async ({ page }) => {
     await page.unroute(/\/api\/history\?docName=/);
     await page.route(/\/api\/history\?docName=/, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ entries: [] }),
+        body: JSON.stringify({ ok: true, entries: [] }),
       });
     });
 
@@ -316,7 +334,7 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(timelinePanel.getByText('No history yet')).toBeVisible();
   });
 
-  test('QA-010: Timeline tab shows "History unavailable" on fetch failure', async ({ page }) => {
+  test('Timeline tab shows "History unavailable" on fetch failure', async ({ page }) => {
     await page.unroute(/\/api\/history\?docName=/);
     await page.route(/\/api\/history\?docName=/, async (route) => {
       await route.fulfill({
@@ -337,9 +355,12 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(page.locator('.ProseMirror')).toContainText('Doc A');
   });
 
-  test('QA-013: DocPanel tab bar fits all 5 tabs at minimum width without overflow', async ({
+  test('DocPanel tab bar fits all 5 tabs at the 300px minimum width without overflow', async ({
     page,
   }) => {
+    // Resize viewport so 25% defaultSize = 270px < 300px minSize, forcing the
+    // panel to clamp to its 300px floor — the actual minimum rendering width.
+    await page.setViewportSize({ width: 1080, height: 720 });
     await page.goto('/#/doc-a');
     await waitForActiveProviderSynced(page);
 
@@ -350,10 +371,7 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
       await expect(tabsGroup.getByRole('tab', { name: label })).toBeVisible();
     }
 
-    // Verify no horizontal overflow on the tabs group at the rendered width
-    // (Playwright default viewport is 1280×720 — well above the desktop
-    // panel-min 300 px floor; the tab bar lives in a flex container so any
-    // overflow would show as scrollWidth > clientWidth).
+    // Verify no horizontal overflow on the tabs group at the 300px minimum.
     const overflow = await tabsGroup.evaluate((el) => ({
       scrollWidth: el.scrollWidth,
       clientWidth: el.clientWidth,
