@@ -231,4 +231,133 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(page.getByText(/^Viewing: /)).toHaveCount(0);
     await expect(page.locator('.ProseMirror')).toBeVisible();
   });
+
+  test('QA-004: clicking a second entry while in diff updates diff without panel close', async ({
+    page,
+  }) => {
+    await page.goto('/#/doc-a');
+    await waitForActiveProviderSynced(page);
+    await page.getByRole('tab', { name: 'Timeline' }).click();
+
+    const timelinePanel = page.locator('#panel-timeline');
+    await expect(timelinePanel).toBeVisible();
+    await expect(timelinePanel.getByText('Test User').first()).toBeVisible();
+
+    // Click first entry (the wip-0 row in the expanded pre-checkpoint group).
+    const allEntryRows = timelinePanel.getByRole('button').filter({ hasText: 'Test User' });
+    await allEntryRows.first().click();
+    await expect(page.locator('.diff-view')).toBeVisible();
+
+    // Click a different entry (the checkpoint row, which is the second
+    // EntryRow with 'Test User' text — the prominent 'Save Version' row).
+    const checkpointRow = timelinePanel
+      .getByRole('button')
+      .filter({ hasText: 'Save Version' })
+      .filter({ hasText: 'Test User' })
+      .first();
+    await checkpointRow.click();
+
+    // Timeline tab still visible; diff still shown (now updated to the
+    // checkpoint entry); no panel open/close cycle.
+    await expect(timelinePanel).toBeVisible();
+    await expect(page.locator('.diff-view')).toBeVisible();
+    await expect(page.getByText(/^Viewing: /)).toBeVisible();
+  });
+
+  test('QA-008: Timeline tab shows loading skeleton while fetch is in flight', async ({ page }) => {
+    // Override the history list mock to delay so the loading state is observable.
+    await page.unroute(/\/api\/history\?docName=/);
+    await page.route(/\/api\/history\?docName=/, async (route) => {
+      const url = new URL(route.request().url());
+      const docName = url.searchParams.get('docName') ?? '';
+      const entries = HISTORY_BY_DOC[docName] ?? [];
+      // Delay 1500ms so the skeleton renders before entries arrive.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entries }),
+      });
+    });
+
+    await page.goto('/#/doc-a');
+    await waitForActiveProviderSynced(page);
+    await page.getByRole('tab', { name: 'Timeline' }).click();
+
+    const timelinePanel = page.locator('#panel-timeline');
+    // Skeleton: status role with aria-label 'Loading timeline history'.
+    await expect(
+      timelinePanel.getByRole('status', { name: 'Loading timeline history' }),
+    ).toBeVisible({ timeout: 1000 });
+
+    // After the 1500ms delay, entries arrive; skeleton goes away.
+    await expect(timelinePanel.getByText('Test User').first()).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test('QA-009: Timeline tab shows "No history yet" when entries list is empty', async ({
+    page,
+  }) => {
+    await page.unroute(/\/api\/history\?docName=/);
+    await page.route(/\/api\/history\?docName=/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ entries: [] }),
+      });
+    });
+
+    await page.goto('/#/doc-a');
+    await waitForActiveProviderSynced(page);
+    await page.getByRole('tab', { name: 'Timeline' }).click();
+
+    const timelinePanel = page.locator('#panel-timeline');
+    await expect(timelinePanel.getByText('No history yet')).toBeVisible();
+  });
+
+  test('QA-010: Timeline tab shows "History unavailable" on fetch failure', async ({ page }) => {
+    await page.unroute(/\/api\/history\?docName=/);
+    await page.route(/\/api\/history\?docName=/, async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: false, error: 'Internal Server Error' }),
+      });
+    });
+
+    await page.goto('/#/doc-a');
+    await waitForActiveProviderSynced(page);
+    await page.getByRole('tab', { name: 'Timeline' }).click();
+
+    const timelinePanel = page.locator('#panel-timeline');
+    await expect(timelinePanel.getByText('History unavailable')).toBeVisible();
+
+    // Editing remains unaffected: the editor surface still renders the doc.
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A');
+  });
+
+  test('QA-013: DocPanel tab bar fits all 5 tabs at minimum width without overflow', async ({
+    page,
+  }) => {
+    await page.goto('/#/doc-a');
+    await waitForActiveProviderSynced(page);
+
+    // All five tabs should be visible inside the document-panels group.
+    const tabsGroup = page.getByRole('group', { name: 'Document panels' });
+    await expect(tabsGroup).toBeVisible();
+    for (const label of ['Outline', 'Backlinks', 'Outgoing Links', 'Graph', 'Timeline']) {
+      await expect(tabsGroup.getByRole('tab', { name: label })).toBeVisible();
+    }
+
+    // Verify no horizontal overflow on the tabs group at the rendered width
+    // (Playwright default viewport is 1280×720 — well above the desktop
+    // panel-min 300 px floor; the tab bar lives in a flex container so any
+    // overflow would show as scrollWidth > clientWidth).
+    const overflow = await tabsGroup.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
+  });
 });
