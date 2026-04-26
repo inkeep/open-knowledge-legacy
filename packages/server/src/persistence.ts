@@ -23,6 +23,7 @@ import {
   formatWipSubject,
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import type { JSONContent } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
@@ -172,6 +173,37 @@ export interface PersistenceOptions {
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+}
+
+/**
+ * Atomic snapshot of a Y.Doc's pre-write state for the L1 persistence path.
+ *
+ * Returned together because the disk-ack watermark contract depends on
+ * the SV being captured at the SAME synchronous instant the JSON is
+ * extracted: any update applied to the doc AFTER `json` is read but
+ * BEFORE `tracedRename` resolves is — by construction — NOT in the
+ * markdown that lands on disk. Including it in the watermark would
+ * tell clients "the server has durably persisted this update" when the
+ * server has not, causing them to drop the corresponding unsynced bytes
+ * from the recycle buffer on the next instance-mismatch.
+ *
+ * Single-threaded JS guarantees this helper is uninterruptible:
+ * `Y.encodeStateVector` and `yXmlFragmentToProseMirrorRootNode` both
+ * run synchronously, so a Y.js transaction cannot interleave between
+ * them. Returning both as a single value (rather than two separate
+ * locals at the call site) makes that uninterruptible-co-capture
+ * a structural property — a future refactor can't naturally split
+ * the SV from the JSON across an `await` boundary without explicitly
+ * undoing the destructure, which is loud at review time.
+ */
+export function captureDocSnapshotForPersistence(document: Y.Doc): {
+  readonly sv: Uint8Array;
+  readonly json: JSONContent;
+} {
+  return {
+    sv: Y.encodeStateVector(document),
+    json: yXmlFragmentToProseMirrorRootNode(document.getXmlFragment('default'), schema).toJSON(),
+  };
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -708,18 +740,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         'persistence.onStoreDocument',
         { attributes: { 'doc.name': documentName } },
         async () => {
-          const xmlFragment = document.getXmlFragment('default');
-          // Capture the state vector at the exact moment we read the doc
-          // for serialization. The disk-ack watermark we broadcast post-
-          // write must reflect this snapshot, NOT a post-write SV — any
-          // update that lands between `getXmlFragment` and `tracedRename`
-          // returning is by construction NOT in the on-disk markdown
-          // (because we serialized before it was applied), so the
-          // watermark must exclude it. Capturing post-write would
-          // overstate disk durability and cause clients to discard
-          // unsynced edits that ARE on the wire but NOT on disk.
-          const stateVectorAtRead = Y.encodeStateVector(document);
-          const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
+          // Atomic pre-write snapshot — `sv` and `json` MUST be captured
+          // at the same synchronous instant. See
+          // `captureDocSnapshotForPersistence` for the timing contract;
+          // splitting the destructure across the upcoming `await`
+          // boundary would silently break the disk-ack watermark.
+          const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
           const body = mdManager.serialize(json);
           const metaMap = document.getMap('metadata');
