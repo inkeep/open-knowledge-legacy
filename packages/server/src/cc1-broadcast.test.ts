@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
   CC1DerivedViewPayloadSchema,
+  CC1DiskAckPayloadSchema,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
 import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
@@ -232,5 +234,74 @@ describe('CC1Broadcaster', () => {
     expect(derived0).toMatchObject({ ch: 'files', seq: 1 });
     expect(branchSwitch).toMatchObject({ ch: CC1_CHANNEL_BRANCH_SWITCHED, seq: 1, branch: 'main' });
     expect(derived2).toMatchObject({ ch: 'files', seq: 2 });
+  });
+
+  test('emitDiskAck publishes payload with docName + base64 sv + seq=1 on first call', () => {
+    const sv = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    broadcaster.emitDiskAck('notes/intro', sv);
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({
+      v: 1,
+      ch: CC1_CHANNEL_DISK_ACK,
+      seq: 1,
+      docName: 'notes/intro',
+      sv: Buffer.from(sv).toString('base64'),
+    });
+  });
+
+  test('emitDiskAck round-trips the state vector via base64', () => {
+    // Realistic SV: encoded by Y.js, several bytes including high bytes.
+    // The wire encoding (base64) must preserve byte-identity so the client's
+    // `decodeStateVector(payload.sv)` reproduces the original Uint8Array.
+    const sv = new Uint8Array([0x00, 0x7f, 0x80, 0xff, 0x42, 0x10]);
+    broadcaster.emitDiskAck('doc-a', sv);
+    const payload = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    const decoded = Buffer.from(payload.sv, 'base64');
+    expect(new Uint8Array(decoded)).toEqual(sv);
+  });
+
+  test('emitDiskAck emits synchronously — no debounce', () => {
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1, 2, 3]));
+    // No wait — disk-ack tracks completed disk writes, emit immediately.
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitDiskAck seq increments monotonically across docs', () => {
+    // Per-document is irrelevant to seq — the seq is per-channel for
+    // observability uniformity, not for client-side ordering.
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([3]));
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map((b) => CC1DiskAckPayloadSchema.parse(JSON.parse(b)).seq);
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitDiskAck graceful no-op when __system__ document missing', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1, 2, 3]));
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitDiskAck updates cc1LastSeq metric for disk-ack channel', () => {
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+    const m = getMetrics();
+    expect(m.cc1LastSeq[CC1_CHANNEL_DISK_ACK]).toBe(2);
+    expect(m.cc1BroadcastCount).toBe(2);
+  });
+
+  test('emitDiskAck seq independent from other channels', async () => {
+    broadcaster.signal('files');
+    await wait(120);
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+
+    const ack1 = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[2]));
+    const ack2 = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[3]));
+    expect(ack1.seq).toBe(1);
+    expect(ack2.seq).toBe(2);
   });
 });

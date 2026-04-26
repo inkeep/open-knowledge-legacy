@@ -37,6 +37,20 @@ export const CC1_CHANNEL_SERVER_INFO = 'server-info' as const;
 export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched' as const;
 
 /**
+ * CC1 channel identifier for the per-document disk-flush watermark.
+ * Server emits one frame per successful `onStoreDocument` write
+ * carrying the state vector captured PRE-WRITE — clients advance their
+ * `lastDiskAckedSV` and use it as the conservative buffer baseline on
+ * `server-instance-mismatch` (covers content the server has
+ * durably persisted, not just the in-memory ack).
+ *
+ * Per-document (not broadcast-wide) — `docName` is required in the
+ * payload because `__system__` is the carrier doc but the watermark
+ * is scoped to a single document.
+ */
+export const CC1_CHANNEL_DISK_ACK = 'disk-ack' as const;
+
+/**
  * Channels that carry derived-view invalidation hints (file list,
  * backlink graph, hub graph, sync-status). Debounced + seq-incrementing
  * on the server; invalidates TanStack Query caches on the client.
@@ -89,3 +103,25 @@ export const CC1DerivedViewPayloadSchema = z
   })
   .loose();
 export type CC1DerivedViewPayload = z.infer<typeof CC1DerivedViewPayloadSchema>;
+
+/** `disk-ack` broadcast shape — per-document state-vector watermark.
+ *
+ * `docName` carries the target document because `__system__` is the
+ * stateless carrier (broadcast doc) but the watermark applies to one
+ * specific document — this is the first per-doc CC1 channel.
+ *
+ * `sv` is base64-encoded `Uint8Array` (the output of
+ * `Y.encodeStateVector`). Base64 keeps the JSON wire-format printable
+ * while preserving byte-fidelity. `seq` follows the convention of
+ * every other CC1 channel even though disk-ack consumers don't use it
+ * for ordering — keeps schemas uniform, helps future debugging. */
+export const CC1DiskAckPayloadSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: z.literal(CC1_CHANNEL_DISK_ACK),
+    seq: z.number(),
+    docName: z.string().min(1),
+    sv: z.string().min(1),
+  })
+  .loose();
+export type CC1DiskAckPayload = z.infer<typeof CC1DiskAckPayloadSchema>;

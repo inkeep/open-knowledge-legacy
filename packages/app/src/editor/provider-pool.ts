@@ -336,6 +336,27 @@ export class ProviderPool {
   }
 
   /**
+   * Advance the entry's `lastDiskAckedSV` watermark. Called by
+   * `SystemDocSubscriber` for every CC1 `disk-ack` payload — the
+   * server has just durably written the doc up to this state vector.
+   * `handleServerInstanceMismatch` prefers `lastDiskAckedSV` over
+   * `lastServerSyncedSV` when computing the recycle buffer baseline:
+   * disk-ack'd updates will survive the markdown rebuild on
+   * server-restart, so they don't need to be replayed (and replaying
+   * them is what causes the T11 mid-drain duplication bug).
+   *
+   * No-op when no entry exists for `docName` or the entry is
+   * tearing-down — both signal "this doc isn't an active part of the
+   * pool right now," and a stale watermark on a future entry would
+   * be incorrect anyway (each fresh entry starts at null).
+   */
+  observeDiskAck(docName: string, sv: Uint8Array): void {
+    const entry = this.entries.get(docName);
+    if (!entry || entry.kind !== 'active') return;
+    entry.lastDiskAckedSV = sv;
+  }
+
+  /**
    * Last-observed git branch reported by the server (via `/api/server-info`
    * boot fetch + CC1 `server-info` broadcasts).
    *

@@ -1575,3 +1575,177 @@ describe('ProviderPool buffer-and-replay (US-004)', () => {
     expect(Object.isFrozen(mod.TAB_REPLAY_ORIGIN)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Disk-ack watermark tests (Phase 4 of PR #311 follow-up). Validates that
+// `observeDiskAck` advances the per-entry slot and that
+// `handleServerInstanceMismatch` prefers it over `lastServerSyncedSV` when
+// computing the recycle buffer baseline. The end-to-end behavior (T11
+// transition from `<= 3` to `=== 1`) is covered by the integration test
+// `mid-drain-restart.test.ts`.
+// ---------------------------------------------------------------------------
+describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
+  test('advances lastDiskAckedSV on the active entry', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-dack');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    expect(entry.lastDiskAckedSV).toBeNull();
+
+    const sv = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    pool.observeDiskAck(docName, sv);
+    expect(entry.lastDiskAckedSV).toBe(sv);
+  });
+
+  test('overwrites prior watermark on subsequent observe', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-dack');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+
+    const sv1 = new Uint8Array([0x01]);
+    const sv2 = new Uint8Array([0x01, 0x02]);
+    pool.observeDiskAck(docName, sv1);
+    pool.observeDiskAck(docName, sv2);
+    expect(entry.lastDiskAckedSV).toBe(sv2);
+  });
+
+  test('no-op when entry does not exist for docName', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    // No entry for 'nonexistent-doc' — must not throw.
+    expect(() => {
+      pool.observeDiskAck('nonexistent-doc', new Uint8Array([1, 2, 3]));
+    }).not.toThrow();
+  });
+
+  test('no-op on tearing-down entries (kind !== active)', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName('pp-dack');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    const initialSV = new Uint8Array([0xab]);
+    pool.observeDiskAck(docName, initialSV);
+
+    pool.close(docName);
+    // After close, the entry is destroyed (or in tearing-down). A
+    // subsequent observeDiskAck must NOT mutate any field.
+    pool.observeDiskAck(docName, new Uint8Array([0xcd]));
+    // Re-opening yields a fresh entry with null watermark — proves
+    // the post-close call did not leak into a future entry.
+    const fresh = pool.open(docName);
+    if (!fresh) throw new Error('expected fresh entry');
+    expect(fresh.lastDiskAckedSV).toBeNull();
+  });
+});
+
+describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
+  // These tests assert the conservative-watermark logic: when
+  // `lastDiskAckedSV` is set, it MUST be used as the baseline for the
+  // unsynced-buffer computation (not `lastServerSyncedSV`) — disk-ack'd
+  // updates will survive the markdown rebuild on server-restart, so they
+  // don't need to be replayed (and replaying them is what causes the T11
+  // mid-drain duplication).
+
+  test('handleServerInstanceMismatch uses lastDiskAckedSV when present', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const docName = uniqueDocName('pp-baseline');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    pool.setActive(docName);
+    entry.observerCleanup = () => {};
+
+    // Two-phase baseline construction. Phase A's content is "already on
+    // disk + already in server memory" (both watermarks would advance
+    // past it under normal flow). Phase B is "in-memory-only" (server
+    // hasn't received the disk-ack yet).
+    const Y = await import('yjs');
+    const cp = await import('./client-persistence');
+    entry.provider.document.getText('source').insert(0, 'AAA');
+    const svAfterAAA = cp.captureStateVector(entry.provider.document);
+    entry.provider.document.getText('source').insert(3, 'BBB');
+    const svAfterAAABBB = cp.captureStateVector(entry.provider.document);
+    entry.provider.document.getText('source').insert(6, 'CCC');
+
+    // Set both SVs explicitly. lastDiskAckedSV (more conservative —
+    // server has durably persisted only 'AAA') must win as baseline.
+    entry.lastDiskAckedSV = svAfterAAA;
+    entry.lastServerSyncedSV = svAfterAAABBB;
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const buffered = (
+      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
+    ).bufferedUpdates.get(docName);
+    if (!buffered) throw new Error('expected buffered update for active doc');
+
+    // The buffered update MUST equal the unsynced-from-disk-ack delta
+    // (covering 'BBB' + 'CCC'), NOT the unsynced-from-server-synced
+    // delta (covering only 'CCC'). Compare byte-identity to encodeStateAsUpdate
+    // computed independently — proves which baseline was used.
+    const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
+    expect(buffered).toEqual(expected);
+
+    // Sanity: the alternative baseline produces a DIFFERENT (shorter) update.
+    const wrong = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAABBB);
+    expect(buffered.byteLength).toBeGreaterThan(wrong.byteLength);
+  });
+
+  test('handleServerInstanceMismatch falls back to lastServerSyncedSV when lastDiskAckedSV is null', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const docName = uniqueDocName('pp-baseline');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    pool.setActive(docName);
+    entry.observerCleanup = () => {};
+
+    const Y = await import('yjs');
+    const cp = await import('./client-persistence');
+    entry.provider.document.getText('source').insert(0, 'AAA');
+    const svAfterAAA = cp.captureStateVector(entry.provider.document);
+    entry.provider.document.getText('source').insert(3, 'BBB');
+
+    // Cold-connect window: server-synced advanced normally; disk-ack
+    // never arrived (server crashed before flush). Pool falls back to
+    // lastServerSyncedSV.
+    entry.lastServerSyncedSV = svAfterAAA;
+    expect(entry.lastDiskAckedSV).toBeNull();
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const buffered = (
+      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
+    ).bufferedUpdates.get(docName);
+    if (!buffered) throw new Error('expected buffered update');
+
+    const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
+    expect(buffered).toEqual(expected);
+  });
+
+  test('handleServerInstanceMismatch skips entries with both watermarks null', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const docName = uniqueDocName('pp-baseline');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    pool.setActive(docName);
+
+    entry.provider.document.getText('source').insert(0, 'unacked content');
+    expect(entry.lastServerSyncedSV).toBeNull();
+    expect(entry.lastDiskAckedSV).toBeNull();
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // No baseline → drop unsynced state. The 50–500 ms cold-connect-then-
+    // immediate-mismatch window can lose keystrokes; accepted trade-off
+    // (SPEC §6).
+    const buffered = (
+      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
+    ).bufferedUpdates.get(docName);
+    expect(buffered).toBeUndefined();
+  });
+});

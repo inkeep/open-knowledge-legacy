@@ -18,11 +18,14 @@
 
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
+  type CC1DiskAckPayload,
+  CC1DiskAckPayloadSchema,
   type CC1ServerInfoPayload,
   CC1ServerInfoPayloadSchema,
   type DerivedViewChannel,
@@ -32,6 +35,7 @@ import type { z } from 'zod';
 
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   type DerivedViewChannel,
   SYSTEM_DOC_NAME,
@@ -47,6 +51,26 @@ export function parseCC1ServerInfo(payload: string): CC1ServerInfoPayload | null
 
 export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedPayload | null {
   return safeParseJson(payload, CC1BranchSwitchedPayloadSchema);
+}
+
+export function parseCC1DiskAck(payload: string): CC1DiskAckPayload | null {
+  return safeParseJson(payload, CC1DiskAckPayloadSchema);
+}
+
+/**
+ * Decode the base64-encoded `sv` field from a `disk-ack` payload back
+ * into a `Uint8Array`. Wire format keeps the SV printable inside JSON;
+ * consumers that pass it to `Y.encodeStateAsUpdate` (e.g. for
+ * computing the unsynced delta on `server-instance-mismatch`) need
+ * the raw bytes. Browser-safe — uses `atob` rather than `Buffer`.
+ */
+export function decodeStateVector(svBase64: string): Uint8Array {
+  const binary = atob(svBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 /**

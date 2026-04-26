@@ -261,6 +261,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       // cc1Broadcaster is initialized after persistence but captured by
       // closure reference — the callback always sees the latest value.
       onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
+      // Emit CC1 ch:'disk-ack' after each successful L1 write so clients
+      // can advance their `lastDiskAckedSV` watermark. Same closure-deferred
+      // pattern as `onAgentCommit` — broadcaster is initialized after
+      // persistence but captured by reference.
+      onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);

@@ -24,6 +24,7 @@ import {
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
@@ -159,6 +160,18 @@ export interface PersistenceOptions {
    * Omitted in plugin mode where no CC1Broadcaster is available.
    */
   onAgentCommit?: () => void;
+  /**
+   * Optional callback fired after each successful L1 disk write
+   * (post-`tracedRename`). The state vector is captured PRE-WRITE so
+   * the watermark reflects exactly the doc state that landed on disk —
+   * any updates received after capture but before the rename completes
+   * are excluded by construction, matching the actual durable state.
+   *
+   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
+   * boot. Omitted in plugin mode where no CC1Broadcaster is available
+   * — the closure shape is identical to `onAgentCommit`.
+   */
+  onDiskFlush?: (docName: string, sv: Uint8Array) => void;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -252,6 +265,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
+  const onDiskFlush = options?.onDiskFlush;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -695,6 +709,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         { attributes: { 'doc.name': documentName } },
         async () => {
           const xmlFragment = document.getXmlFragment('default');
+          // Capture the state vector at the exact moment we read the doc
+          // for serialization. The disk-ack watermark we broadcast post-
+          // write must reflect this snapshot, NOT a post-write SV — any
+          // update that lands between `getXmlFragment` and `tracedRename`
+          // returning is by construction NOT in the on-disk markdown
+          // (because we serialized before it was applied), so the
+          // watermark must exclude it. Capturing post-write would
+          // overstate disk durability and cause clients to discard
+          // unsynced edits that ARE on the wire but NOT on disk.
+          const stateVectorAtRead = Y.encodeStateVector(document);
           const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
 
           const body = mdManager.serialize(json);
@@ -826,6 +850,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             // drops skipStoreHooks, observer writes trigger onStoreDocument
             // and produce amplified disk writes per user/agent edit.
             incrementPersistenceDiskWrite();
+            // Notify clients that disk durability has been achieved up to the
+            // pre-write state vector. Fired AFTER `tracedRename` succeeds so
+            // a write failure (caught below) skips the watermark advance.
+            onDiskFlush?.(documentName, stateVectorAtRead);
           } catch (e) {
             try {
               tracedUnlinkSync(tmpPath);

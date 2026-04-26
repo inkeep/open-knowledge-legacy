@@ -4,8 +4,10 @@ import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import {
+  decodeStateVector,
   parseCC1BranchSwitched,
   parseCC1DerivedView,
+  parseCC1DiskAck,
   parseCC1ServerInfo,
   SYSTEM_DOC_NAME,
 } from '@/lib/cc1';
@@ -13,8 +15,14 @@ import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documen
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { collabUrl, setSystemProvider, updateServerInstanceId, onBranchSwitched, observeBranch } =
-    useDocumentContext();
+  const {
+    collabUrl,
+    setSystemProvider,
+    updateServerInstanceId,
+    onBranchSwitched,
+    observeBranch,
+    observeDiskAck,
+  } = useDocumentContext();
 
   // Ref pattern: dispatchers are re-created per-render in DocumentContext's `value`
   // literal. Capturing them by closure inside `onStateless` would tie the main
@@ -23,6 +31,7 @@ export function SystemDocSubscriber() {
   const updateServerInstanceIdRef = useRef(updateServerInstanceId);
   const onBranchSwitchedRef = useRef(onBranchSwitched);
   const observeBranchRef = useRef(observeBranch);
+  const observeDiskAckRef = useRef(observeDiskAck);
   useEffect(() => {
     updateServerInstanceIdRef.current = updateServerInstanceId;
   }, [updateServerInstanceId]);
@@ -32,6 +41,9 @@ export function SystemDocSubscriber() {
   useEffect(() => {
     observeBranchRef.current = observeBranch;
   }, [observeBranch]);
+  useEffect(() => {
+    observeDiskAckRef.current = observeDiskAck;
+  }, [observeDiskAck]);
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -41,11 +53,12 @@ export function SystemDocSubscriber() {
       name: SYSTEM_DOC_NAME,
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
-        // CC1 stateless channel multiplexes three payload shapes:
+        // CC1 stateless channel multiplexes four payload shapes:
         //   server-info → updates pool's cachedServerInstanceId; piggybacks
         //                 currentBranch as the `branch-switched` late-join
         //                 backstop, dispatched via observeBranch.
         //   branch-switched → triggers handleBranchSwitched (clearData + recycle)
+        //   disk-ack → advances the per-doc lastDiskAckedSV watermark
         //   derived-view (files/backlinks/graph/sync-status/session-activity) → invalidates queries
         // Schemas are mutually exclusive by `ch`; check in order, short-circuit on match.
         const serverInfo = parseCC1ServerInfo(payload);
@@ -59,6 +72,11 @@ export function SystemDocSubscriber() {
         const branchSwitched = parseCC1BranchSwitched(payload);
         if (branchSwitched) {
           void onBranchSwitchedRef.current(branchSwitched.branch);
+          return;
+        }
+        const diskAck = parseCC1DiskAck(payload);
+        if (diskAck) {
+          observeDiskAckRef.current(diskAck.docName, decodeStateVector(diskAck.sv));
           return;
         }
         const signal = parseCC1DerivedView(payload);

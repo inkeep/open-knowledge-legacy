@@ -1,10 +1,12 @@
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
   CC1DerivedViewPayloadSchema,
+  CC1DiskAckPayloadSchema,
   CC1ServerInfoPayloadSchema,
   type DerivedViewChannel,
   SYSTEM_DOC_NAME,
@@ -166,6 +168,49 @@ export class CC1Broadcaster {
       setCC1LastSeq(CC1_CHANNEL_BRANCH_SWITCHED, seq);
     } catch (err) {
       this.log.error({ err }, '[cc1] emitBranchSwitched failed');
+    }
+  }
+
+  /**
+   * Broadcast a `disk-ack` CC1 signal — per-document state-vector
+   * watermark advancing the client's `lastDiskAckedSV`.
+   *
+   * Fired synchronously (no debounce, mirrors `emitBranchSwitched`)
+   * after each successful `onStoreDocument` write. The state vector is
+   * captured PRE-WRITE in `persistence.ts` — capturing post-write
+   * would race against subsequent updates landing between the write
+   * returning and the snapshot, producing a watermark that overstates
+   * what's on disk.
+   *
+   * `sv` is base64-encoded. The wire schema validates `min(1)` so an
+   * empty SV (impossible for a non-empty Y.Doc) is rejected by Zod
+   * before broadcast.
+   */
+  emitDiskAck(docName: string, sv: Uint8Array): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn({}, `[cc1] __system__ document not found at emitDiskAck — dropped`);
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const seq = (this.seqs.get(CC1_CHANNEL_DISK_ACK) ?? 0) + 1;
+      this.seqs.set(CC1_CHANNEL_DISK_ACK, seq);
+      const payload = CC1DiskAckPayloadSchema.parse({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_DISK_ACK,
+        seq,
+        docName,
+        sv: Buffer.from(sv).toString('base64'),
+      });
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_DISK_ACK, seq);
+    } catch (err) {
+      this.log.error({ err, docName }, '[cc1] emitDiskAck failed');
     }
   }
 

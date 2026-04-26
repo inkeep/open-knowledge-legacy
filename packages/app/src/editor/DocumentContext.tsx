@@ -135,6 +135,15 @@ interface DocumentContextValue {
    */
   observeBranch: (branch: string) => Promise<void>;
   /**
+   * Dispatcher for CC1 `disk-ack` payloads — advances the per-entry
+   * `lastDiskAckedSV` watermark. `handleServerInstanceMismatch` reads
+   * this watermark when computing the recycle buffer baseline so the
+   * client only re-replays updates the server has NOT yet durably
+   * persisted. Called by `SystemDocSubscriber` for every recognized
+   * `disk-ack` frame.
+   */
+  observeDiskAck: (docName: string, sv: Uint8Array) => void;
+  /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
    * while `server.lock` is absent — consumers that also need the URL
@@ -597,6 +606,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (p.compareAndUpdateObservedBranch(branch)) {
         await handleBranchSwitched(p, branch);
       }
+    },
+    observeDiskAck: (docName: string, sv: Uint8Array) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.observeDiskAck(docName, sv);
     },
     collabUrl,
     collabTerminal,

@@ -83,11 +83,14 @@ export {
 export { type ServerInfoResponse, ServerInfoResponseSchema } from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
+  type CC1DiskAckPayload,
+  CC1DiskAckPayloadSchema,
   type CC1ServerInfoPayload,
   CC1ServerInfoPayloadSchema,
   type DerivedViewChannel,
