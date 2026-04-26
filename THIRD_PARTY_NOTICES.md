@@ -4822,6 +4822,11 @@ Homepage: https://github.com/yjs/y-codemirror.next#readme
 
 Copyright (c) 2024 - Kevin Jahns <kevin.jahns@protonmail.com>.
 
+### `y-indexeddb@9.0.12`
+Homepage: https://yjs.dev
+
+Copyright (c) 2014 - Kevin Jahns <kevin.jahns@rwth-aachen.de>. - Chair of Computer Science 5 (Databases & Information Systems), RWTH Aachen University, Germany
+
 ### `y-protocols@1.0.7`
 Homepage: https://github.com/yjs/y-protocols#readme
 
@@ -5428,6 +5433,7 @@ The following MIT-licensed packages are patched in this repository via Bun's `pa
 | --- | --- |
 | `@handlewithcare/remark-prosemirror@0.1.5` | `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` |
 | `@tiptap/y-tiptap@3.0.3` | `patches/@tiptap%2Fy-tiptap@3.0.3.patch` |
+| `y-indexeddb@9.0.12` | `patches/y-indexeddb@9.0.12.patch` |
 | `y-prosemirror@1.3.7` | `patches/y-prosemirror@1.3.7.patch` |
 
 ---
