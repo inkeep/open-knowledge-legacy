@@ -3,7 +3,7 @@
 **Date:** 2026-04-24
 **Branch:** `fix-crdt-restart-sidecar` (worktree at `/Users/edwingomezcuellar/projects/open-knowledge/.claude/worktrees/fix-crdt-restart-sidecar`)
 **Supersedes:** The original plan to ship PR #311 as-is with a server-side sidecar. This plan carries forward PR #311's instance-ID defense + test suite unchanged, and replaces the sidecar module with a client-side y-indexeddb + buffer-and-replay implementation.
-**Architectural research:** [`reports/yjs-client-persistence-alternatives/REPORT.md`](../../projects/open-knowledge/.claude/worktrees/fix-crdt-restart-sidecar/reports/yjs-client-persistence-alternatives/REPORT.md) (this adoption plan); [`reports/y-indexeddb-adoption-for-ok-restart-recovery/REPORT.md`](../../projects/open-knowledge/.claude/worktrees/fix-crdt-restart-sidecar/reports/y-indexeddb-adoption-for-ok-restart-recovery/REPORT.md) (prior report whose Shape 0 recommendation this plan revises).
+**Architectural research:** [`reports/yjs-client-persistence-alternatives/REPORT.md`](../../reports/yjs-client-persistence-alternatives/REPORT.md) (this adoption plan); [`reports/y-indexeddb-adoption-for-ok-restart-recovery/REPORT.md`](../../reports/y-indexeddb-adoption-for-ok-restart-recovery/REPORT.md) (prior report whose Shape 0 recommendation this plan revises).
 
 ---
 
@@ -146,7 +146,7 @@ Addresses [y-indexeddb #31](https://github.com/yjs/y-indexeddb/issues/31) (doc g
 - `captureStateVector(doc: Y.Doc): Uint8Array` — thin wrapper on `Y.encodeStateVector`.
 - `computeUnsyncedUpdate(doc: Y.Doc, lastAckedSV: Uint8Array | null): Uint8Array` — computes update payload since last ack. `null` treated as "all updates."
 
-Internals: wraps `IndexeddbPersistence` from y-indexeddb; adds OTel spans via `withSpan('ok.client_persistence.hydrate', ...)` and `withSpan('ok.client_persistence.clearData', ...)`. Cardinality-safe attributes per CLAUDE.md observability rules.
+Internals: wraps `IndexeddbPersistence` from y-indexeddb; adds OTel spans via `withSpan('ok.client_persistence.hydrate', ...)` and `withSpan('ok.client_persistence.clearData', ...)`. Cardinality-safe attributes per CLAUDE.md observability rules. _[Corrected post-ship 2026-04-26: OTel span wrapping deferred — see §6.1 corrigendum._]
 
 #### 2.3 `packages/app/src/editor/client-persistence.test.ts` (new)
 
@@ -324,6 +324,8 @@ Not required for correctness; deferred as future optimization. Emit `emitDocRena
 
 #### 6.1 Telemetry wrap
 
+_[Corrected post-ship 2026-04-26: not landed in this PR. The client-side OTel surface (`packages/app/src/telemetry-impl.ts`) currently exposes only auto-instrumentation (`DocumentLoadInstrumentation`, `FetchInstrumentation`, `UserInteractionInstrumentation`) and `getAppTracer()` — no `withSpan` helper symmetric to the server-side one in `packages/server/src/telemetry.ts`. Adding the helper + wiring spans through `client-persistence.ts` (hydrate / write-batch / clearData / destroy) and the mismatch-recycle path in `provider-pool.ts` is a discrete follow-up (~80-150 LOC across 3 files + 1 test file) deferred outside this PR's scope. The structured `console.warn` events (`ok-ydb-write-failed`, `ok-client-persistence-clear-failed`, `ok-client-persistence-clear-blocked`, `ok-mismatch-recycle-aborted-clears-failed`, `ok-buffer-replay-failed`, `ok-auth-failed-unknown-reason`) provide the observable surface in the meantime.]_
+
 `client-persistence.ts` wraps `persistence.whenSynced` + write hooks in `withSpan('ok.client_persistence.hydrate', ...)` + `withSpan('ok.client_persistence.write', ...)`. Cardinality-bounded attrs: `doc.name` (bounded), `persistence.event` (enum: `hydrate-success | hydrate-error | write-batch | clear-data | destroy`).
 
 #### 6.2 Documentation
@@ -430,6 +432,8 @@ Only after all findings are resolved or explicitly accepted with evidence, proce
 - **Sub-document support** — AFFiNE nbstore patterns; deferred unless OK adds hierarchical docs.
 - **Worker-thread isolation of `Y.applyUpdate` (issue #479 defense)** — complex; pre-existing risk that affects any Yjs consumer; document manual recovery.
 - **Multi-tab offline sync** (y-broadcastchannel) — orthogonal UX enhancement; defer unless users hit multi-tab-offline pain.
+
+_[Corrected post-ship: branch-prefixed IDB names (`ok-ydoc:${branch}:${docName}`) and the per-doc CC1 `disk-ack` channel + `/api/server-info` late-join recovery shipped during implementation. The branch prefix replaced the originally-planned "branch-switch via CC1 broadcast + client clearData" decision; disk-ack narrowed the tab-crash loss boundary to "in-memory edits not yet flushed to disk." Authoritative description: `packages/server/README.md` §"CRDT server-restart recovery"._
 
 ---
 

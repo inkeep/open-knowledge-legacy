@@ -109,11 +109,11 @@ export function resolveWriterFromOrigin(
     const ctx = conn?.context as Record<string, unknown> | undefined;
     if (typeof ctx?.principalId === 'string') {
       const principalId = ctx.principalId as string;
-      // Post-QA review fix: when the claimed principalId matches the loaded
-      // principal record, use the real display_name / display_email (e.g.
-      // git-config user.name) so `ok-actor:` body + Co-Authored-By trailers
-      // mirror the user's git identity. Fall back to a stub only when the
-      // server has no principal loaded or the claim doesn't match.
+      // When the claimed principalId matches the loaded principal record,
+      // use the real display_name / display_email (e.g. git-config user.name)
+      // so `ok-actor:` body + Co-Authored-By trailers mirror the user's git
+      // identity. Fall back to a stub only when the server has no principal
+      // loaded or the claim doesn't match.
       const loaded = getPrincipal?.();
       if (loaded && loaded.id === principalId && loaded.display_name && loaded.display_email) {
         return {
@@ -801,16 +801,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           // phantom commits to the browser alongside a legitimate agent write.
           const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
           if (writer && writer.id !== SERVICE_WRITER.id) {
-            // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
             // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
             // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
             // the handler-path entry is in the tracker by the time we get here.
             // The safety-net only fills in for writes that never pass through an
-            // /api/* handler — specifically browser-principal writes (US-024,
-            // `source: 'connection'`). Skipping when the entry already exists
-            // guarantees the stub `Agent (<short>)` displayName can never
-            // overwrite the handler's rich identity under any ordering edge case
-            // (post-restart replay, test harness, future extension ordering changes).
+            // /api/* handler — specifically browser-principal writes via the
+            // `source: 'connection'` origin path. Skipping when the entry already
+            // exists guarantees the stub `Agent (<short>)` displayName can never
+            // overwrite the handler's rich identity under any ordering edge case.
             if (!hasContributor(writer.id)) {
               recordContributor(documentName, writer.id, writer.name, writer.id);
             }

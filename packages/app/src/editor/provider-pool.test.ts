@@ -857,6 +857,49 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     expect(called).toBe(2);
   });
 
+  // Regression: a callback that returns a real promise must hold the
+  // gate across event-loop turns. The bug shape this guards against:
+  // a `void`-fronted callback that kicks off async work but returns
+  // `undefined` synchronously — the gate would clear on the next
+  // microtask while the work is still in flight, allowing N cross-turn
+  // mismatches to fan out into N callback invocations. The fix is the
+  // type signature (`() => Promise<void>`) which forces callers to
+  // surface their async chain through the return value.
+  test('cross-turn branch-mismatch holds the gate while the callback promise is pending', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let resolveWork: (() => void) | null = null;
+    let called = 0;
+    pool.setOnBranchMismatch(
+      () =>
+        new Promise<void>((resolve) => {
+          called++;
+          resolveWork = () => resolve();
+        }),
+    );
+    const e1 = pool.open('doc1');
+    const e2 = pool.open('doc2');
+    if (!e1 || !e2) throw new Error('expected entries');
+    const emit = (entry: typeof e1) => {
+      (entry.provider as unknown as { emit: (e: string, p: unknown) => void }).emit(
+        'authenticationFailed',
+        { reason: 'branch-mismatch' },
+      );
+    };
+    emit(e1);
+    // Drain microtasks so the gate's `Promise.resolve().then(cb)` has
+    // attached and `cb` has run. The bug shape: a void-returning `cb`
+    // would leave the gate cleared at this point because the wrapping
+    // `.then` resolved with `undefined`. With a Promise-returning `cb`,
+    // the gate must still be held.
+    await Promise.resolve();
+    await Promise.resolve();
+    emit(e2); // cross-turn second dispatch
+    await Promise.resolve();
+    expect(called).toBe(1);
+    if (resolveWork !== null) (resolveWork as () => void)();
+    await new Promise<void>((r) => setTimeout(r, 0));
+  });
+
   // localStorage-persistence path — load-bearing for the fresh-tab-with-
   // stale-IDB defense. Bun's `bun:test` env has no DOM globals, so the
   // pool's storage handle is parameterized via the constructor and we

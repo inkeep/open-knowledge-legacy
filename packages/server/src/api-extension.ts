@@ -3268,11 +3268,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /**
    * GET /api/server-info
    *
-   * Returns `{ ok: true, serverInstanceId, currentBranch }`. Called by
-   * the client's `ProviderPool` as a boot-time warmup BEFORE any
-   * WebSocket provider opens, so the first provider's auth token can
-   * carry `expectedServerInstanceId` and `expectedBranch` on the very
-   * first connect (avoiding one "null-claim accept → broadcast →
+   * Returns `{ ok, serverInstanceId, currentBranch, currentDiskAckSVs }`.
+   * Called by the client's `ProviderPool` as a boot-time warmup BEFORE
+   * any WebSocket provider opens, so the first provider's auth token
+   * can carry `expectedServerInstanceId` and `expectedBranch` on the
+   * very first connect (avoiding one "null-claim accept → broadcast →
    * populate cache → next connect claim" cycle on cold start).
    *
    * `currentBranch` is the late-join backstop for CC1's `branch-switched`
@@ -3282,9 +3282,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * see `auth-token-schema.ts`). Always populated — `getActiveBranch()`
    * defaults to `'main'` when git is disabled.
    *
-   * Public by design (no loopback / Host-header gate). Neither field is
-   * sensitive — both are explicitly advertised to any client that may
-   * reconnect. Cross-origin / LAN peers reading them gain no capability.
+   * `currentDiskAckSVs` is the late-join backstop for the per-doc CC1
+   * `disk-ack` channel — same recovery shape as `currentBranch` but the
+   * per-doc state vector watermark used by mismatch-recycle baseline-
+   * selection. Omitted in dev/plugin mode (no CC1 broadcaster).
+   *
+   * Gating: protected by the global `/api/*` Origin allowlist (CSRF
+   * guard against cross-origin browsers). No-Origin requests (curl,
+   * server-to-server, LAN peers using non-browser tooling) pass through
+   * — the same posture as the rest of the read-side `/api/*` surface
+   * (`/api/documents`, `/api/document`, `/api/pages`, `/api/backlinks`).
+   * Disclosure shape: `serverInstanceId` is a per-process random UUID;
+   * `currentBranch` matches the workspace's git history; the SV map
+   * enumerates the same docName set as `/api/documents` plus per-
+   * client Lamport op counts (random clientID, no wall-clock).
+   * Single-user-loopback deployment model is documented in
+   * `standalone.ts` near the principalAuthExtension; hosted/multi-
+   * tenant deployments must wrap this entire `/api/*` class with
+   * authentication and per-caller scoping.
    */
   async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {

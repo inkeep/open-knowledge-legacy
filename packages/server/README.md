@@ -199,25 +199,25 @@ Tear down on server shutdown with `cc1Broadcaster.destroy()` to clear pending de
 
 ### Subscribing (client-side contract)
 
+Canonical surface: `dispatchCC1Stateless` from `packages/app/src/lib/cc1.ts` parses the payload through the per-channel Zod schemas in `@inkeep/open-knowledge-core` (`CC1ServerInfoPayloadSchema`, `CC1BranchSwitchedPayloadSchema`, `CC1DiskAckPayloadSchema`, `CC1DerivedViewPayloadSchema`) and routes to typed handlers — adding a new channel is a one-place edit there.
+
 ```ts
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { type CC1Signal, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-server';
+import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-server';
+import { dispatchCC1Stateless } from '@/lib/cc1';
 
 const provider = new HocuspocusProvider({
 	url: 'ws://localhost:5173/collab',
 	name: SYSTEM_DOC_NAME, // '__system__'
 	document: new Y.Doc(),
 	onStateless: ({ payload }) => {
-		let signal: CC1Signal;
-		try {
-			signal = JSON.parse(payload) as CC1Signal;
-		} catch {
-			return; // malformed — skip, never disconnect
-		}
-		if (signal.v !== 1) return; // unknown version — skip
-		if (signal.ch === 'files') {
-			// re-fetch GET /api/documents (at-most-one in flight per channel)
-		}
+		dispatchCC1Stateless(payload, {
+			onServerInfo: (p) => { /* p.serverInstanceId, p.currentBranch? */ },
+			onBranchSwitched: (p) => { /* p.branch */ },
+			onDiskAck: (p) => { /* p.docName, p.sv (Uint8Array) */ },
+			onDerivedView: (p) => { /* p.ch === 'files' | 'backlinks' | 'graph' */ },
+			onUnknown: (raw) => { /* schema mismatch — log + skip, never disconnect */ },
+		});
 	},
 });
 ```
@@ -316,7 +316,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 
 **Server instance ID is the authority signal.** `serverInstanceId: string` (readonly on `ServerInstance`), generated once per `createServer()` via `randomUUID()`, advertised via `GET /api/server-info` and the `__system__` CC1 `server-info` channel. On connect, clients present `expectedServerInstanceId` in the Hocuspocus auth token (Zod-typed + `.loose()` via `parseHocuspocusAuthToken`). `onAuthenticate` throws `{ reason: 'server-instance-mismatch' }` when the claim is non-empty and doesn't match this process — before any Y.Doc sync runs.
 
-**Client-side `y-indexeddb` is the recovery cache.** Each browser tab's `ProviderPool` attaches a `ClientPersistenceProvider` (wrapper around upstream `y-indexeddb`, patched — see `patches/y-indexeddb@9.0.12.patch`) per open doc at `ok-ydoc:${docName}`. Hydration is synchronous-ish IDB (ms scale); Cmd-R renders the prior state before the server round-trip completes.
+**Client-side `y-indexeddb` is the recovery cache.** Each browser tab's `ProviderPool` attaches a `ClientPersistenceProvider` (wrapper around upstream `y-indexeddb`, patched — see `patches/y-indexeddb@9.0.12.patch`) per open doc at `ok-ydoc:${branch}:${docName}`. The `${branch}` prefix isolates per-branch state so a checkout doesn't surface stale-branch IDB into the post-switch session. Hydration is synchronous-ish IDB (ms scale); Cmd-R renders the prior state before the server round-trip completes.
 
 **Buffer-and-replay preserves unsynced edits across mismatch-recycle.** On every `synced` event, `ProviderPool` captures `entry.lastServerSyncedSV = captureStateVector(doc)`. On `authenticationFailed({reason: 'server-instance-mismatch'})` the pool:
 
@@ -331,7 +331,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 
 - **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
 - **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
-- **server-lock / server-info / branch-switched** share the `__system__` CC1 channel; emission happens after the `__system__` doc materializes (see `CC1Broadcaster`).
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
 
 ### Test coverage
 
@@ -343,7 +343,13 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 - Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
 - End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.
 
+### Disk-ack and late-join recovery
+
+CC1 `disk-ack` fires per-doc when the persistence layer flushes a write to disk (`emitDiskAck(docName, sv)` from `cc1-broadcast.ts`); the client's `ProviderPool` records it as `entry.lastDiskAckedSV`. The `server-instance-mismatch` recycle then prefers `lastDiskAckedSV` over `lastServerSyncedSV` for baseline-selection — content the server has durably persisted is not in the recycle buffer (the post-restart server's markdown rebuild already includes it, so replaying would duplicate).
+
+`GET /api/server-info` includes `currentDiskAckSVs` so a client booting late or reconnecting after the broadcast missed it can recover the watermark per-doc without waiting for the next emit.
+
 ### Out of scope
 
-- Durable buffer-and-replay across tab crash (localStorage persistence of the unsynced delta). Accepted trade-off: crash within the 50-500ms recycle window loses unsynced edits.
+- Durable buffer-and-replay across tab crash (localStorage persistence of the unsynced delta). Accepted trade-off: a crash inside the 50-500ms recycle window loses unsynced edits. The disk-ack channel narrows the loss boundary further: edits the server has durably persisted are recovered from the post-restart markdown rebuild, so the actual loss window is "in-memory edits the server hasn't yet flushed" (sub-second under typical L1 debounce).
 - Pre-fix attribution cleanup — doubled-content commits under `refs/wip/<branch>/openknowledge-service` from past bug occurrences. Separate one-shot migration task.

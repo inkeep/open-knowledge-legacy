@@ -8,6 +8,7 @@ import {
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
 import { applyExternalChange, BacklinkIndex, reconcile } from '@inkeep/open-knowledge-server';
+import * as encoding from 'lib0/encoding';
 import * as Y from 'yjs';
 import { createTestServer, type TestServer, wait, waitForSync } from './test-harness';
 
@@ -181,6 +182,57 @@ describe('CC1 broadcast — L1 integration', () => {
     const body = (await res.json()) as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
     expect(body.error).toContain('reserved');
+  });
+
+  // CC1 forgery guard. Hocuspocus's MessageReceiver relays every
+  // BroadcastStateless message to all peers on the same document with
+  // no source filter — the server's `beforeHandleMessage` extension
+  // hook rejects inbound BroadcastStateless on `__system__` before the
+  // relay can run. Without this gate, a malicious client could open a
+  // `__system__` WebSocket and forge `branch-switched` (wipes IDB on
+  // every peer) or `disk-ack` (advances the SV watermark past
+  // unsynced bytes, re-opening the T11 content-loss bug class).
+  test('forged BroadcastStateless on __system__ does not relay to other peers', async () => {
+    // Legitimate subscriber that should NEVER receive a forged payload.
+    const { provider: subscriber, signals, destroy } = connectSystemDoc(server.port);
+    try {
+      await waitForSync(subscriber);
+      await wait(50);
+      const baselineCount = signals.length;
+
+      // Construct a forged BroadcastStateless message. Format:
+      //   [varString documentName][varUint MessageType.BroadcastStateless=6]
+      //   [varString payload]
+      // Open a raw WebSocket so we can write the framing manually —
+      // HocuspocusProvider's `sendStateless` only emits MessageType.Stateless
+      // (5), not BroadcastStateless (6).
+      const enc = encoding.createEncoder();
+      encoding.writeVarString(enc, SYSTEM_DOC_NAME);
+      encoding.writeVarUint(enc, 6); // MessageType.BroadcastStateless
+      encoding.writeVarString(
+        enc,
+        JSON.stringify({ v: 1, ch: 'files', seq: 999 } satisfies CC1DerivedViewPayload),
+      );
+      const forgedFrame = encoding.toUint8Array(enc);
+
+      // Raw WS attacker connection.
+      const attackerWs = new WebSocket(`ws://localhost:${server.port}/collab/${SYSTEM_DOC_NAME}`);
+      await new Promise<void>((resolve, reject) => {
+        attackerWs.onopen = () => resolve();
+        attackerWs.onerror = (e) => reject(new Error(`ws error: ${String(e)}`));
+      });
+      attackerWs.send(forgedFrame);
+      // Wait long enough for the server to process the message + relay
+      // (or, with the guard, throw + close). 200ms covers
+      // beforeHandleMessage dispatch + connection.close().
+      await wait(200);
+
+      // Subscriber must NOT have received the forged payload.
+      expect(signals.length).toBe(baselineCount);
+      attackerWs.close();
+    } finally {
+      destroy();
+    }
   });
 
   test('signal payload shape conforms to CC1 contract v1', async () => {

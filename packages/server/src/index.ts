@@ -24,6 +24,7 @@ export {
   type HocuspocusAuthRejectionReason,
   type HocuspocusAuthToken,
   HocuspocusAuthTokenSchema,
+  isHocuspocusAuthRejectionReason,
   parseHocuspocusAuthToken,
 } from './auth-token-schema.ts';
 export {

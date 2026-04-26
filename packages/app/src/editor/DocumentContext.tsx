@@ -1,5 +1,4 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { ServerInfoResponseSchema } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
@@ -274,11 +273,10 @@ function getPool(collabUrl: string): ProviderPool {
     pool = new ProviderPool(MAX_POOL, collabUrl);
     // Wire the editor cache to the pool's eviction events. Without this
     // subscription, cached `Editor` / `EditorView` instances would
-    // outlive the Y.Doc they're bound to (Critical #2 from the
-    // 2026-04-21 review). Single subscription per pool lifetime; the
-    // unsubscribe handle is intentionally dropped — the pool is a
-    // module-level singleton and only torn down on HMR/dispose, at
-    // which point its listener Set is GC'd along with the pool.
+    // outlive the Y.Doc they're bound to. Single subscription per pool
+    // lifetime; the unsubscribe handle is intentionally dropped — the
+    // pool is a module-level singleton and only torn down on HMR/dispose,
+    // at which point its listener Set is GC'd along with the pool.
     subscribePoolEviction(pool);
   }
   return pool;
@@ -347,24 +345,13 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // broadcast. The fresh branch comes from /api/server-info — the
     // pool's lastObservedBranch is stale by definition (it's what the
     // failed claim was built from).
-    p.setOnBranchMismatch(() => {
-      void fetch('/api/server-info')
-        .then((r) => (r.ok ? r.json() : null))
-        .then((info: unknown) => {
-          const result = ServerInfoResponseSchema.safeParse(info);
-          if (!result.success || result.data.currentBranch === undefined) return;
-          // setObservedBranch (not compareAndUpdate) — we're inside the
-          // mismatch handler so the comparison already happened on the
-          // server side; just record the new value and run the recycle.
-          p.setObservedBranch(result.data.currentBranch);
-          return handleBranchSwitched(p, result.data.currentBranch);
-        })
-        .catch(() => {
-          // /api/server-info unavailable — log and skip; the next CC1
-          // server-info frame on `__system__` reconnect will recover.
-          console.warn(JSON.stringify({ event: 'branch-mismatch-recovery-failed' }));
-        });
-    });
+    //
+    // Returning the promise (not `void`) is load-bearing: the pool's
+    // in-flight gate awaits whatever the callback returns. A
+    // `void`-fronted fetch resolves the gate on the next microtask
+    // while the recovery is still in flight, so cross-turn mismatches
+    // (N providers, N RTTs) re-fire the dispatch and double-recycle.
+    p.setOnBranchMismatch(() => refreshServerInfo(p));
 
     // Subscribe to pool changes
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
@@ -468,7 +455,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   // storage-key renames or versioning changes don't silently break E2E
   // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
   // UX via `pin()` button) + `persistPinToStorage` so post-reload
-  // behavior also matches. See review pass 0 finding #8.
+  // behavior also matches.
   //
   // STOP — empty deps is intentional and must stay empty:
   //   - `setPinnedDoc` is a stable React state setter (guaranteed by
@@ -477,9 +464,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   //   - Widening the deps would cause this effect to re-register on
   //     every render, tearing down + re-installing `window.__test_setPin`
   //     mid-test and racing Playwright's `page.evaluate`.
-  // A biome-ignore pragma would fail lint ("suppression has no effect")
-  // because the current Biome version does not flag this effect — see
-  // review pass 1 finding #2 Declined section in the iteration log.
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
     (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (

@@ -170,13 +170,19 @@ describe('handleBranchSwitched', () => {
   // this test makes regressions loud.
   test('drains pool.bufferedUpdates so branch-A bytes never replay onto branch B', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
-    pool.open(docName('d1'));
-    pool.open(docName('d2'));
+    // Bind docNames once and reuse — `docName(prefix)` returns a fresh
+    // UUID on every call, so re-invoking it inline produces unrelated
+    // keys that defeat per-doc assertions (lookups would always return
+    // false regardless of whether the buffer was actually drained).
+    const d1 = docName('d1');
+    const d2 = docName('d2');
+    pool.open(d1);
+    pool.open(d2);
 
     // Seed buffers as if a `server-instance-mismatch` recycle just
     // populated them with unsynced edits captured against branch A.
-    pool.__test_seedBufferedUpdate(docName('d1'), new Uint8Array([0x01, 0x02]));
-    pool.__test_seedBufferedUpdate(docName('d2'), new Uint8Array([0x03, 0x04]));
+    pool.__test_seedBufferedUpdate(d1, new Uint8Array([0x01, 0x02]));
+    pool.__test_seedBufferedUpdate(d2, new Uint8Array([0x03, 0x04]));
     expect(pool.__test_bufferedUpdatesSize()).toBe(2);
 
     await handleBranchSwitched(pool, 'feature');
@@ -184,8 +190,8 @@ describe('handleBranchSwitched', () => {
     // Buffers must be empty after branch switch — branch-A edits are
     // semantically invalid against branch B's content.
     expect(pool.__test_bufferedUpdatesSize()).toBe(0);
-    expect(pool.__test_hasBufferedUpdate(docName('d1'))).toBe(false);
-    expect(pool.__test_hasBufferedUpdate(docName('d2'))).toBe(false);
+    expect(pool.__test_hasBufferedUpdate(d1)).toBe(false);
+    expect(pool.__test_hasBufferedUpdate(d2)).toBe(false);
   });
 });
 

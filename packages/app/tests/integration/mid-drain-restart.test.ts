@@ -85,9 +85,6 @@ describe('T11: Mid-drain server restart', () => {
     pool.setActive('test-doc');
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
 
-    const firstProvider = pool.getActive()?.provider;
-    if (!firstProvider) throw new Error('pre-restart provider missing');
-
     // Agent write — content + marker appears on disk when L1 flushes. L2
     // commit fires ~2s later.
     await agentWriteMd(server.port, `\n\n${DURABILITY_MARKER}\n`, {
@@ -147,7 +144,14 @@ describe('T11: Mid-drain server restart', () => {
     //   5. The (empty or near-empty) buffer is replayed onto the fresh
     //      Y.Doc — no duplication because the durably-persisted content
     //      is already in the post-restart server state.
-    const clientText = firstProvider.document.getText('source').toString();
+    // Read from the post-recycle provider via pool.getActive(). The
+    // pre-restart provider's Y.Doc is destroyed by the recycle —
+    // Y.Doc.destroy() does NOT clear the share map, so a captured
+    // pre-recycle reference would silently return content frozen at
+    // the moment of recycle, masking any post-recycle duplication.
+    const postEntry = pool.getActive();
+    if (!postEntry) throw new Error('no active entry post-restart');
+    const clientText = postEntry.provider.document.getText('source').toString();
     const markerCountClient = (clientText.match(new RegExp(DURABILITY_MARKER, 'g')) ?? []).length;
     const markerCountDisk = (postRestartDisk.match(new RegExp(DURABILITY_MARKER, 'g')) ?? [])
       .length;

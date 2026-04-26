@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { Hocuspocus } from '@hocuspocus/server';
+import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -294,7 +294,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
     // like test harness and MCP never send tokens).
     //
-    // Post-QA review fix (principalId-token-unverified, Consider):
     // The token is unauthenticated — a rogue browser tab (or a page that
     // discovers the localhost port + passes the Origin allowlist) could claim
     // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
@@ -391,6 +390,41 @@ export function createServer(options: ServerOptions): ServerInstance {
       },
     };
     hocuspocus.configuration.extensions.push(principalAuthExtension);
+
+    // CC1 forgery guard. Hocuspocus's MessageReceiver relays every
+    // BroadcastStateless message from any peer to all peers on the
+    // same document with NO source filter (MessageReceiver.ts:88-94).
+    // The `__system__` doc is server→client only by design — every CC1
+    // channel (`server-info`, `branch-switched`, `disk-ack`, derived-
+    // view) flows out via the server's own DirectConnection through
+    // Document.broadcastStateless. A malicious client that opens a
+    // `__system__` WebSocket and sends a BroadcastStateless can forge
+    // any payload dispatchCC1Stateless accepts: a forged
+    // `branch-switched` would wipe IDB on every other peer, and a
+    // forged `disk-ack` would advance lastDiskAckedSV past unsynced
+    // bytes (re-opening the T11 content-loss bug class).
+    //
+    // Reject inbound BroadcastStateless on `__system__` from every
+    // client. The hook throws to abort message dispatch — Hocuspocus's
+    // Connection.ts catches and closes the offending connection,
+    // which is the right outcome (legitimate subscribers only receive,
+    // never broadcast). The IncomingMessage decoder reads the
+    // documentName prefix first, then the message type varUint.
+    const systemDocBroadcastGuard: Extension & { __kind: 'system-doc-broadcast-guard' } = {
+      __kind: 'system-doc-broadcast-guard',
+      async beforeHandleMessage(payload) {
+        if (payload.documentName !== SYSTEM_DOC_NAME) return;
+        const message = new IncomingMessage(payload.update);
+        message.readVarString();
+        const type = message.readVarUint();
+        if (type === MessageType.BroadcastStateless) {
+          throw new Error(
+            `inbound BroadcastStateless on ${SYSTEM_DOC_NAME} rejected — server-only channel`,
+          );
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(systemDocBroadcastGuard);
 
     const apiExtension = createApiExtension({
       hocuspocus,

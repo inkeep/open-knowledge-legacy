@@ -90,7 +90,15 @@ function base64ToBytes(base64: string): Uint8Array {
 export async function refreshServerInfo(pool: ProviderPool, baseUrl = ''): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}/api/server-info`);
+    // 5s timeout matches sibling AbortController-using fetch sites
+    // (lib/use-collab-url.ts, lib/api-config.ts). Without a timeout, a
+    // hung response (proxy tarpit, network blackhole) leaks the call
+    // indefinitely — a real concern because this fires on every
+    // `__system__` reconnect and holds the branch-mismatch in-flight
+    // gate via setOnBranchMismatch.
+    response = await fetch(`${baseUrl}/api/server-info`, {
+      signal: AbortSignal.timeout(5000),
+    });
   } catch {
     return;
   }

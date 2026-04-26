@@ -4,7 +4,7 @@
  * a token MUST route through `HocuspocusAuthTokenSchema.safeParse` — never
  * call `JSON.parse` + ad-hoc field checks.
  *
- * Design decisions (see /eng:typescript-api-design + /eng:type-safety):
+ * Design decisions:
  *
  * - **All fields optional.** Legacy clients and test harnesses that never
  *   set a token (or set a minimal token) must continue to authenticate
@@ -19,10 +19,9 @@
  *
  * - **String types, not branded.** `principalId`/`tabSessionId`/
  *   `expectedServerInstanceId` are transport-layer identifiers; they are
- *   consumed immediately by the auth hook and don't travel further. The
- *   branding ceremony from `/eng:type-safety` (`.brand()` on Zod) earns
- *   its weight on long-lived domain types, not on here-and-gone auth
- *   payloads.
+ *   consumed immediately by the auth hook and don't travel further. Zod
+ *   branding earns its weight on long-lived domain types, not on
+ *   here-and-gone auth payloads.
  *
  * - **Schema IS the single source of truth.** `HocuspocusAuthToken` is
  *   `z.infer<typeof HocuspocusAuthTokenSchema>` — adding a field to the
@@ -51,6 +50,11 @@ import { z } from 'zod';
 
 export const HocuspocusAuthTokenSchema = z
   .object({
+    // String fields are NOT `.min(1)` — empty fields are treated as
+    // "absent" by individual consumers, but the rest of a partial token
+    // (`{principalId, tabSessionId, expectedServerInstanceId: ''}`) must
+    // still parse so the principal claim flows through. Schema-level
+    // `.min(1)` would discard every field of such tokens.
     principalId: z.string().optional(),
     tabSessionId: z.string().optional(),
     expectedServerInstanceId: z.string().optional(),
@@ -66,16 +70,29 @@ export type HocuspocusAuthToken = z.infer<typeof HocuspocusAuthTokenSchema>;
  * argument of `provider.on('authenticationFailed', ({ reason }) => …)`.
  *
  * Defining the union as a const-string and the carrier as a typed
- * subclass closes the cross-process drift gap noted in the Round 6
- * review: a rename on either side now fails the TypeScript build
- * instead of silently letting the client see `reason: undefined` and
- * skipping its recycle path.
+ * subclass closes the cross-process drift gap: a rename on either side
+ * now fails the TypeScript build instead of silently letting the client
+ * see `reason: undefined` and skipping its recycle path.
  */
 export const HOCUSPOCUS_AUTH_REJECTION_REASONS = [
   'server-instance-mismatch',
   'branch-mismatch',
 ] as const;
 export type HocuspocusAuthRejectionReason = (typeof HOCUSPOCUS_AUTH_REJECTION_REASONS)[number];
+
+/**
+ * Trust-boundary type guard for wire-foreign reason strings. The
+ * Hocuspocus provider emits `reason: string` from
+ * `provider.on('authenticationFailed', ...)` — a future server-side
+ * addition (e.g. `principal-revoked`) would silently fall through an
+ * `as` cast. Callers should narrow before switching so unknown reasons
+ * surface as observable structured warns instead of silent no-ops.
+ */
+export function isHocuspocusAuthRejectionReason(
+  reason: string,
+): reason is HocuspocusAuthRejectionReason {
+  return (HOCUSPOCUS_AUTH_REJECTION_REASONS as readonly string[]).includes(reason);
+}
 
 export class HocuspocusAuthRejection extends Error {
   readonly reason: HocuspocusAuthRejectionReason;

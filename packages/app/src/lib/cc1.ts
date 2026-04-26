@@ -45,9 +45,8 @@ export {
  * the state vector as a base64 string (so JSON serialization is safe);
  * the parser decodes it into a `Uint8Array` so consumers
  * (`pool.observeDiskAck`, `Y.encodeStateAsUpdate`) get the raw bytes
- * directly. Diverges from the wire shape per `/typescript-api-design`
- * "diverge input/output types deliberately" — input is `string`, output
- * is `Uint8Array`, decode happens once at the trust boundary.
+ * directly. Input/output types diverge deliberately — the decode happens
+ * once at the trust boundary, downstream code never re-decodes.
  */
 interface CC1DiskAckParsed {
   readonly docName: string;
@@ -157,8 +156,8 @@ export function dispatchCC1Stateless(payload: string, handlers: CC1StatelessHand
  * Shared safe-parse for stateless CC1 payloads. JSON parse error or Zod
  * schema mismatch yields `null` so the stateless listener can skip the
  * frame without surfacing an exception. Uses `safeParse` (never throws)
- * instead of `parse` per `/eng:type-safety` validation-narrowing
- * guidance.
+ * because the dispatch path must never propagate a wire-format error
+ * up into Hocuspocus's event emitter.
  */
 function safeParseJson<T extends z.ZodType>(payload: string, schema: T): z.infer<T> | null {
   let parsed: unknown;

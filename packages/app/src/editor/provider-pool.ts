@@ -146,8 +146,8 @@ const RECYCLE_DEBOUNCE_MS = 4_000;
  * `ProviderPool` to seed the cross-branch defense's in-memory cache on
  * a fresh tab so the very first auth-token claim is checked against
  * the server's current branch (closes the fresh-tab-with-stale-IDB
- * gap noted in Round 6 review). Single key per origin is fine — a
- * single Hocuspocus server's branch is global to the project.
+ * gap). Single key per origin is fine — a single Hocuspocus server's
+ * branch is global to the project.
  */
 const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
 
@@ -495,6 +495,13 @@ export class ProviderPool {
    * `handleBranchSwitched` invocation) after pool construction so the
    * pool itself stays free of React/UI imports.
    *
+   * Callback MUST return a Promise — the in-flight gate awaits the
+   * returned promise to collapse concurrent dispatches across event-
+   * loop turns. A `void`-fronted callback (e.g., `() => { void
+   * fetch(...) }`) returns `undefined` synchronously; the gate clears
+   * on the next microtask while the actual work is still in flight,
+   * defeating the gate.
+   *
    * In-flight gate: when a branch switch happens server-side that the
    * client missed (offline window, stale IDB), every open provider's
    * auth fails with `branch-mismatch` in quick succession — N parallel
@@ -506,9 +513,13 @@ export class ProviderPool {
    * pool, so re-entry would just churn the active doc's fresh
    * provider).
    */
-  private onBranchMismatch: (() => void | Promise<void>) | null = null;
+  // The wrapped dispatcher returns void synchronously (it just kicks off
+  // the in-flight promise tracked in `branchMismatchInFlight`); the input
+  // callback supplied via `setOnBranchMismatch` MUST return a Promise so
+  // the gate can await it across event-loop turns.
+  private onBranchMismatch: (() => void) | null = null;
   private branchMismatchInFlight: Promise<void> | null = null;
-  setOnBranchMismatch(cb: (() => void | Promise<void>) | null): void {
+  setOnBranchMismatch(cb: (() => Promise<void>) | null): void {
     if (cb === null) {
       this.onBranchMismatch = null;
       return;
@@ -548,7 +559,7 @@ export class ProviderPool {
    * its `Editor` / `EditorView` cache entries that hold refs to
    * `provider.document` — without this, the next mountTiptapEditor /
    * mountCmEditor call for the same docName would return a stale entry
-   * bound to an orphaned Y.Doc (Critical #2 from the 2026-04-21 review).
+   * bound to an orphaned Y.Doc.
    *
    * Replaces the explicit `evictTiptapEditor(docName); evictCmEditor(docName)`
    * calls that lived inline in `destroyEntry` — keeps the pool free of
@@ -768,11 +779,22 @@ export class ProviderPool {
     // authenticationFailed in quick succession. The first call nulls the
     // cached ID; subsequent calls find it already null and short-circuit.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
-      // Reasons enumerated by `HocuspocusAuthRejectionReason` in
-      // packages/server/src/auth-token-schema.ts. Using the type-only
-      // narrow ensures a future rename on either side fails compile —
-      // exhaustive check below catches a string the server emits that
-      // the client doesn't yet handle (drift signal).
+      // Trust-boundary narrow: `reason` is a wire-foreign string from
+      // Hocuspocus. The `satisfies` constraint below pins the local
+      // literal-set to the server-side `HocuspocusAuthRejectionReason`
+      // type, so a future server-side rename / addition fails this
+      // compile site instead of silently dropping into the unknown-
+      // reason branch. Inlined (not imported from the server's runtime
+      // helper) because a runtime import would pull the entire server
+      // bundle into the browser via tree-shake leaks.
+      const KNOWN: readonly HocuspocusAuthRejectionReason[] = [
+        'server-instance-mismatch',
+        'branch-mismatch',
+      ] satisfies readonly HocuspocusAuthRejectionReason[];
+      if (!(KNOWN as readonly string[]).includes(reason)) {
+        console.warn(JSON.stringify({ event: 'ok-auth-failed-unknown-reason', reason }));
+        return;
+      }
       const typed = reason as HocuspocusAuthRejectionReason;
       if (typed === 'server-instance-mismatch') {
         if (this.cachedServerInstanceId === null) return;
@@ -795,10 +817,9 @@ export class ProviderPool {
         this.onBranchMismatch?.();
         return;
       }
-      // Compile-time exhaustiveness check — reaching this with `_never`
-      // typed narrowed to the empty type means the server added a new
-      // reason without updating the client switch. Production: we don't
-      // throw; just no-op so legacy / unknown reasons fall through.
+      // Compile-time exhaustiveness — narrowed to `never` here. A new
+      // member of HOCUSPOCUS_AUTH_REJECTION_REASONS without a
+      // corresponding switch arm fails the build.
       const _never: never = typed;
       void _never;
     };
@@ -821,8 +842,24 @@ export class ProviderPool {
         if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
         const current = this.bufferedUpdates.get(docName);
         if (current === undefined) return;
+        // Drop the buffer reference up-front: a malformed update that
+        // throws would throw again on retry, and the server's sync has
+        // already delivered the canonical state. Catch the throw so it
+        // doesn't escape into Hocuspocus's event emitter as an unhandled
+        // rejection and so the next sync can proceed.
         this.bufferedUpdates.delete(docName);
-        Y.applyUpdate(provider.document, current, TAB_REPLAY_ORIGIN);
+        try {
+          Y.applyUpdate(provider.document, current, TAB_REPLAY_ORIGIN);
+        } catch (err: unknown) {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-buffer-replay-failed',
+              docName,
+              bytes: current.byteLength,
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        }
       };
       provider.on('synced', replayOnce);
     }
@@ -867,38 +904,59 @@ export class ProviderPool {
       }
     }
 
-    const clears: Promise<void>[] = [];
+    // Gate per-doc on clearData success. A `clearData` failure (blocked
+    // by another tab/DevTools, quota exhaustion, transaction-aborted)
+    // means the IDB still holds the pre-restart Y.Doc state — recycling
+    // into the un-cleared DB would hydrate the fresh provider's Y.Doc
+    // from stale data BEFORE Yjs sync runs, re-opening the content-
+    // duplication bug class clearData exists to prevent. Use
+    // `Promise.allSettled` so per-element rejections surface (the prior
+    // `Promise.all + per-element catch` swallowed every failure, then
+    // recycled unconditionally).
+    const clears: { docName: string; promise: Promise<void> }[] = [];
     for (const [docName, poolEntry] of snapshot) {
       // TearingDown entries have null persistence by construction; the
       // discriminator narrowing ensures we never call .clearData() on a
       // null. BridgeFailed entries (Active with bridgeSetupFailed=true)
       // still have persistence attached and SHOULD be cleared.
       if (poolEntry.kind !== 'active') continue;
-      clears.push(
-        poolEntry.persistence.clearData().catch((err: unknown) => {
+      clears.push({ docName, promise: poolEntry.persistence.clearData() });
+    }
+
+    void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
+      const failed: string[] = [];
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          const docName = clears[i]?.docName ?? '<unknown>';
+          failed.push(docName);
           console.warn(
             JSON.stringify({
               event: 'ok-client-persistence-clear-failed',
               docName,
-              reason: err instanceof Error ? err.message : String(err),
+              reason:
+                result.reason instanceof Error ? result.reason.message : String(result.reason),
             }),
           );
-        }),
-      );
-    }
-
-    Promise.all(clears)
-      .then(() => {
-        this.recycleAllEntries();
-      })
-      .catch((err: unknown) => {
+        }
+      });
+      if (failed.length > 0) {
+        // Abort recycle. Leaving the un-cleared IDBs in place + skipping
+        // the recycle is the safe failure mode: the next reconnect will
+        // see the un-nulled cachedServerInstanceId still null, but the
+        // pool entries continue to drive their existing providers
+        // (which are now in the auth-rejected state). User-visible
+        // recovery prompt belongs at the UI layer; here the contract is
+        // "don't corrupt content under failed clears."
         console.warn(
           JSON.stringify({
-            event: 'ok-mismatch-recycle-failed',
-            reason: err instanceof Error ? err.message : String(err),
+            event: 'ok-mismatch-recycle-aborted-clears-failed',
+            failedDocs: failed,
           }),
         );
-      });
+        return;
+      }
+      this.recycleAllEntries();
+    });
   }
 
   /**
@@ -1117,14 +1175,13 @@ export class ProviderPool {
     // teardown. Natural (network-triggered) close events still reject as
     // expected because this path only runs inside pool destroy/recycle/evict.
     invalidateSyncPromise(docName);
-    // Fire the eviction event so the V2 editor cache (and any future
+    // Fire the eviction event so the editor cache (and any future
     // subscriber) can clean up entries bound to `provider.document` via
     // Collaboration.configure / y-codemirror.next BEFORE the provider is
     // destroyed. Without this ordering, cached `Editor`/`EditorView`
-    // instances retain refs to an orphaned Y.Doc (Critical #2 from the
-    // 2026-04-21 review). The pool stays free of editor-cache knowledge;
-    // the cache subscribes via `pool.onEvict(...)` and runs whatever
-    // teardown it owns.
+    // instances retain refs to an orphaned Y.Doc. The pool stays free
+    // of editor-cache knowledge; the cache subscribes via
+    // `pool.onEvict(...)` and runs whatever teardown it owns.
     this.fireEvict(docName);
     // Observer cleanup (observers reference Y.Doc state). Captured pre-flip
     // because the post-flip variant has `observerCleanup: null`.

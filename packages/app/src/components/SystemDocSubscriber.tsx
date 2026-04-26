@@ -21,28 +21,24 @@ export function SystemDocSubscriber() {
 
   // Ref pattern: dispatchers are re-created per-render in DocumentContext's `value`
   // literal. Capturing them by closure inside `onStateless` would tie the main
-  // effect's lifecycle to every render. Refs read the current dispatchers lazily,
-  // keeping the effect's deps stable.
-  const updateServerInstanceIdRef = useRef(updateServerInstanceId);
-  const onBranchSwitchedRef = useRef(onBranchSwitched);
-  const observeBranchRef = useRef(observeBranch);
-  const observeDiskAckRef = useRef(observeDiskAck);
-  const refreshServerInfoRef = useRef(refreshServerInfo);
+  // effect's lifecycle to every render. One ref over an object holds all five
+  // dispatchers; a no-deps effect refreshes the snapshot after every render.
+  const handlersRef = useRef({
+    updateServerInstanceId,
+    onBranchSwitched,
+    observeBranch,
+    observeDiskAck,
+    refreshServerInfo,
+  });
   useEffect(() => {
-    updateServerInstanceIdRef.current = updateServerInstanceId;
-  }, [updateServerInstanceId]);
-  useEffect(() => {
-    onBranchSwitchedRef.current = onBranchSwitched;
-  }, [onBranchSwitched]);
-  useEffect(() => {
-    observeBranchRef.current = observeBranch;
-  }, [observeBranch]);
-  useEffect(() => {
-    observeDiskAckRef.current = observeDiskAck;
-  }, [observeDiskAck]);
-  useEffect(() => {
-    refreshServerInfoRef.current = refreshServerInfo;
-  }, [refreshServerInfo]);
+    handlersRef.current = {
+      updateServerInstanceId,
+      onBranchSwitched,
+      observeBranch,
+      observeDiskAck,
+      refreshServerInfo,
+    };
+  });
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -58,16 +54,16 @@ export function SystemDocSubscriber() {
         // integration harness's `attachSystemDocSubscriber`.
         dispatchCC1Stateless(payload, {
           onServerInfo: (info) => {
-            updateServerInstanceIdRef.current(info.serverInstanceId);
+            handlersRef.current.updateServerInstanceId(info.serverInstanceId);
             if (info.currentBranch !== undefined) {
-              void observeBranchRef.current(info.currentBranch);
+              void handlersRef.current.observeBranch(info.currentBranch);
             }
           },
           onBranchSwitched: (p) => {
-            void onBranchSwitchedRef.current(p.branch);
+            void handlersRef.current.onBranchSwitched(p.branch);
           },
           onDiskAck: (p) => {
-            observeDiskAckRef.current(p.docName, p.sv);
+            handlersRef.current.observeDiskAck(p.docName, p.sv);
           },
           onDerivedView: (p) => {
             emitDocumentsChanged([p.ch]);
@@ -106,7 +102,7 @@ export function SystemDocSubscriber() {
     // /api/server-info to recover any disk-ack / server-info /
     // branch-switched frames missed during the WS drop.
     const onReconnectSynced = createSyncedReconnectGate(() => {
-      void refreshServerInfoRef.current();
+      void handlersRef.current.refreshServerInfo();
     });
     provider.on('synced', () => {
       emitDocumentsChanged(['files', 'backlinks', 'graph']);

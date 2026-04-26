@@ -1,5 +1,5 @@
 diff --git a/src/y-indexeddb.js b/src/y-indexeddb.js
-index 07f4fbb6da0b0b0621b5696370aabf230f7293a8..db3aab4c88b62efafdc7299e8e4789ade1e778ae 100644
+index 07f4fbb6da0b0b0621b5696370aabf230f7293a8..1100d7720756275e7f5a2305644b94524668be09 100644
 --- a/src/y-indexeddb.js
 +++ b/src/y-indexeddb.js
 @@ -84,7 +84,10 @@ export class IndexeddbPersistence extends Observable {
@@ -14,13 +14,20 @@ index 07f4fbb6da0b0b0621b5696370aabf230f7293a8..db3aab4c88b62efafdc7299e8e4789ad
        const afterApplyUpdatesCallback = () => {
          if (this._destroyed) return this
          this.synced = true
-@@ -107,7 +110,9 @@ export class IndexeddbPersistence extends Observable {
+@@ -107,7 +110,16 @@ export class IndexeddbPersistence extends Observable {
      this._storeUpdate = (update, origin) => {
        if (this.db && origin !== this) {
          const [updatesStore] = idb.transact(/** @type {IDBDatabase} */ (this.db), [updatesStoreName])
 -        idb.addAutoKey(updatesStore, update)
 +        idb.addAutoKey(updatesStore, update).catch(err => {
-+          console.warn(JSON.stringify({ event: 'ok-ydb-write-failed', err: err?.message ?? String(err) }))
++          // Persistence write failures (quota, transaction-aborted, DB-closed)
++          // are not fatal — the Y.Doc remains the source of truth in memory and
++          // sync continues via WebSocket. Warn once per session so a sustained
++          // failure (e.g. quota exhaustion) doesn't flood the console at every
++          // keystroke debounce.
++          if (globalThis.__okYdbWriteWarned) return
++          globalThis.__okYdbWriteWarned = true
++          console.warn(JSON.stringify({ event: 'ok-ydb-write-failed', cause: err?.name ?? 'unknown', message: err?.message ?? String(err) }))
 +        })
          if (++this._dbsize >= PREFERRED_TRIM_SIZE) {
            // debounce store call

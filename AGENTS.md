@@ -137,9 +137,7 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 
 **Agent presence** lives on `__system__` Y.Doc awareness as a map-valued `agentPresence: Record<agentId, AgentPresenceEntry>` (see `packages/server/src/agent-presence.ts`). Per-doc awareness would stomp across concurrent agents — each Hocuspocus `Document` has one shared `Awareness` with a single `clientID`. Cleanup is deterministic via the MCP keepalive WS (`/collab/keepalive` handler in `boot.ts`). Metrics at `GET /api/metrics/agent-presence` (diagnostic-only; clients don't poll).
 
-**CC1 push-over-awareness** — pure-signal push primitive for derived views. Contract v1: `{v:1, ch:string, seq:number}`. 100 ms trailing-edge debounce per channel. Emitter: `packages/server/src/cc1-broadcast.ts`. Subsystems keyed off `documentName` MUST short-circuit via `isSystemDoc()` (STOP rule below). Channels: `server-info` (instanceId), `files`/`backlinks`/`graph` (derived-view invalidation), `branch-switched` (clients clear IDB + recycle).
-
-**Client-side Yjs persistence.** `ProviderPool` wraps each `HocuspocusProvider` with `ClientPersistenceProvider` over patched `y-indexeddb@9.0.12`. On `server-instance-mismatch`: buffer → `clearData()` → `recycleAllEntries()` → replay. `handleBranchSwitched` clears + recycles without buffering.
+**CC1 push-over-awareness** — pure-signal push primitive for derived views. Contract v1: `{v:1, ch:string, seq:number}`. 100 ms trailing-edge debounce per channel. Emitter: `packages/server/src/cc1-broadcast.ts`. Subsystems keyed off `documentName` MUST short-circuit via `isSystemDoc()` (STOP rule below). Channels: `server-info` (instanceId+branch), `branch-switched` (clients clear IDB + recycle), `disk-ack` (per-doc SV watermark for mismatch-recycle baseline-selection), `files`/`backlinks`/`graph` (derived-view invalidation). Client-side persistence + restart-recovery topology: see [`packages/server/README.md`](packages/server/README.md) §"CRDT server-restart recovery".
 
 ## Testing
 

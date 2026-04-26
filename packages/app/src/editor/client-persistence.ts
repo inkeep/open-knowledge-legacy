@@ -124,15 +124,21 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
     // pending delete. Await the deletion explicitly so callers can rely on
     // "after `await clearData()`, the DB is gone."
     await this._idb.destroy();
+    const dbName = this._dbName;
     await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.deleteDatabase(this._dbName);
+      const req = indexedDB.deleteDatabase(dbName);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
       // Deletion is blocked on another connection still holding the DB
-      // open. Returning here preserves the non-blocking behavior of
-      // upstream `clearData`; a subsequent open will surface any real
-      // problem loudly rather than silently.
-      req.onblocked = () => resolve();
+      // open (other tab, DevTools IDB pane, in-flight transaction).
+      // Reject so the caller's recycle gate aborts — a subsequent
+      // `IndexeddbPersistence` over the same name would hydrate the
+      // doc from the un-deleted DB BEFORE Yjs sync runs, re-opening
+      // the content-duplication bug class clearData exists to prevent.
+      req.onblocked = () => {
+        console.warn(JSON.stringify({ event: 'ok-client-persistence-clear-blocked', dbName }));
+        reject(new Error(`idb-clear-blocked: ${dbName}`));
+      };
     });
   }
 }

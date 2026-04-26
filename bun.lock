@@ -147,6 +147,7 @@
         "diff": "^8.0.4",
         "fake-indexeddb": "^6.0.0",
         "fast-check": "^4.6.0",
+        "lib0": "^0.2.117",
         "remark-mdx": "^3.1.1",
         "remark-parse": "^11.0.0",
         "sirv": "^3.0.2",

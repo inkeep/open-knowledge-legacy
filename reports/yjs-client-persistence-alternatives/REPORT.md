@@ -210,5 +210,5 @@ It loses unsynced edits on recycle. This is the trap the prior report identified
 | Reject Shape 3 (IDB only, no instance-ID) | CRDT additive merge forbids; duplicates content | D4 |
 | Buffer-and-replay preserves unsynced edits via state-vector delta | Yjs primitives (`encodeStateAsUpdate(doc, SV)` + `applyUpdate`) handle this natively | D4 |
 | Apply `patchedDependencies` patch to y-indexeddb | Fixes issue #31 (3 LOC) + adds error callback for observability. Low risk; prior art in OK | D6, D7 |
-| Branch-switch via CC1 broadcast + client clearData | Matches PR #311's existing CC1 pattern for `server-info`. Lower friction than per-branch IDB namespacing | D4, D7 |
+| Branch-switch via CC1 broadcast + client clearData | Matches PR #311's existing CC1 pattern for `server-info`. Lower friction than per-branch IDB namespacing | D4, D7 |<br>_[Corrected post-ship 2026-04-26: per-branch IDB namespacing (`ok-ydoc:${branch}:${docName}`) was actually adopted alongside the CC1 broadcast — the prefix isolates per-branch state so a checkout doesn't surface stale-branch IDB into the post-switch session. Authoritative description: `packages/server/README.md` §"CRDT server-restart recovery"._]
 | TDD + type-safety + qa-plan skill chain for execution | Per user directive; matches greenfield-engineer rigor | D8 |
