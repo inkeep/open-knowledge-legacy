@@ -19,10 +19,10 @@
 import { ChevronsUpDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRoot,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -97,7 +97,7 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
   const switchable = recents.filter((r) => r.path !== currentPath);
 
   return (
-    <DropdownMenuRoot open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <SidebarMenuButton
           className="justify-between text-sidebar-foreground/70"
@@ -146,6 +146,6 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
           {SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }

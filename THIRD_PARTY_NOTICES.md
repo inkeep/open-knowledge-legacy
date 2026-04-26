@@ -714,6 +714,50 @@ Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-
 
 _(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
+### `@pierre/trees@1.0.0-beta.3`
+
+Copyright 2025 Pierre Computer Company
+
+NOTICE:
+
+```
+This project includes some code derived from
+[@headless-tree/core](https://github.com/lukasbach/headless-tree).
+
+The initial version of this project used `headless-tree` as the underlying tree
+implementation. We have since written our own core at `packages/path-store`, but
+many of the best ideas from `headless-tree` made their way to `path-store` and
+`trees`. It's hard to identify exactly which code this is at this point, but
+definitely things like the drag and drop implementation and the general list
+approach to rendering and I'm sure more. The work that `@lukasbach` has
+contributed to this space is greatly appreciated. `<3`
+
+Original license for `headless-tree/core`:
+
+```
+MIT License
+
+Copyright (c) 2023 Lukas Bach
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+```
+
 ### `baseline-browser-mapping@2.10.17`
 Homepage: https://github.com/web-platform-dx/baseline-browser-mapping
 
@@ -835,11 +879,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-### `@alloc/quick-lru@5.2.0`
-Homepage: https://github.com/sindresorhus/quick-lru
-
-Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
 
 ### `@babel/code-frame@7.29.0`
 Homepage: https://babel.dev/docs/en/next/babel-code-frame
@@ -1070,21 +1109,6 @@ Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 Homepage: https://github.com/codemirror/view
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
-
-### `@dnd-kit/accessibility@3.1.1`
-Homepage: https://github.com/clauderic/dnd-kit
-
-Copyright (c) 2021, Claudéric Demers
-
-### `@dnd-kit/core@6.3.1`
-Homepage: https://github.com/clauderic/dnd-kit
-
-Copyright (c) 2021, Claudéric Demers
-
-### `@dnd-kit/utilities@3.2.2`
-Homepage: https://github.com/clauderic/dnd-kit
-
-Copyright (c) 2021, Claudéric Demers
 
 ### `@ecies/ciphers@0.2.6`
 Homepage: https://github.com/ecies/js-ciphers
@@ -1785,21 +1809,6 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 Homepage: https://github.com/sindresorhus/merge-streams
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
-
-### `@tailwindcss/node@4.2.2`
-Homepage: https://tailwindcss.com
-
-Copyright (c) Tailwind Labs, Inc.
-
-### `@tailwindcss/oxide@4.2.2`
-Homepage: https://github.com/tailwindlabs/tailwindcss
-
-Copyright (c) Tailwind Labs, Inc.
-
-### `@tailwindcss/postcss@4.2.2`
-Homepage: https://tailwindcss.com
-
-Copyright (c) Tailwind Labs, Inc.
 
 ### `@tanstack/query-core@5.99.0`
 Homepage: https://tanstack.com/query
@@ -2602,11 +2611,6 @@ Homepage: https://github.com/mafintosh/end-of-stream
 
 Copyright (c) 2014 Mathias Buus
 
-### `enhanced-resolve@5.20.1`
-Homepage: http://github.com/webpack/enhanced-resolve
-
-Copyright JS Foundation and other contributors
-
 ### `env-paths@2.2.1`
 Homepage: https://github.com/sindresorhus/env-paths
 
@@ -3188,11 +3192,6 @@ Homepage: https://github.com/vasturiano/jerrypick
 
 Copyright (c) 2019 Vasco Asturiano
 
-### `jiti@2.6.1`
-Homepage: https://github.com/unjs/jiti
-
-Copyright (c) Pooya Parsa <pooya@pi0.io>
-
 ### `jose@6.2.2`
 Homepage: https://github.com/panva/jose
 
@@ -3317,11 +3316,6 @@ Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 Homepage: https://github.com/zertosh/loose-envify
 
 Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
-
-### `magic-string@0.30.21`
-Homepage: https://github.com/Rich-Harris/magic-string
-
-Copyright 2018 Rich Harris
 
 ### `markdown-it@14.1.1`
 Homepage: https://github.com/markdown-it/markdown-it
@@ -3934,10 +3928,20 @@ Homepage: https://github.com/sindresorhus/powershell-utils
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
+### `preact@11.0.0-beta.0`
+Homepage: https://preactjs.com
+
+Copyright (c) 2015-present Jason Miller
+
 ### `preact@10.29.1`
 Homepage: https://preactjs.com
 
 Copyright (c) 2015-present Jason Miller
+
+### `preact-render-to-string@6.6.5`
+Homepage: https://github.com/preactjs/preact-render-to-string
+
+Copyright (c) 2015 Jason Miller
 
 ### `prebuild-install@7.1.3`
 Homepage: https://github.com/prebuild/prebuild-install
@@ -4541,11 +4545,6 @@ Copyright (c) Graham Still <gstill92@gmail.com>
 Homepage: https://tailwindcss.com
 
 Copyright (c) Tailwind Labs, Inc.
-
-### `tapable@2.3.2`
-Homepage: https://github.com/webpack/tapable
-
-Copyright JS Foundation and other contributors
 
 ### `tar-fs@2.1.4`
 Homepage: https://github.com/mafintosh/tar-fs
@@ -5373,17 +5372,6 @@ Copyright (c) 2011 Dominic Tarr
 Homepage: https://github.com/yeoman/stringify-object
 
 Copyright (c) 2015, Yeoman team
-
----
-
-## Mozilla Public License 2.0
-
-Used at build time only — not bundled into shipped artifacts. Listed for traceability.
-
-### `lightningcss@1.32.0`
-Homepage: https://github.com/parcel-bundler/lightningcss
-
-_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
 
 ---
 

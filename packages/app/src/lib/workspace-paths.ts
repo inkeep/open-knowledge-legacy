@@ -26,7 +26,7 @@ export interface Workspace {
 /**
  * Join `contentDir` with a workspace-relative path using the advertised
  * separator. `relative` is accepted in POSIX form (forward slashes) — the
- * shape used by `DocEntry.docName`, `TreeNode.path`, and CRDT document
+ * shape used by `DocEntry.docName`, sidebar tree paths, and CRDT document
  * identifiers — and rewritten to backslashes only on Windows.
  *
  * Mirrors how paths appear in git diffs, VS Code "Copy Relative Path", and

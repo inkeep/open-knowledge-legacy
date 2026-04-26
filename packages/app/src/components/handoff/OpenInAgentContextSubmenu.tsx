@@ -31,11 +31,11 @@ import type {
 import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-} from '@/components/ui/context-menu';
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { computeRowState, TargetIcon } from './OpenInAgentMenuItem';
 import type { HandoffDispatchInput } from './useHandoffDispatch';
@@ -81,12 +81,12 @@ interface OpenInAgentContextSubmenuProps {
 export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps): ReactNode {
   const { input, installStates, isElectronHost, dispatch } = props;
   return (
-    <ContextMenuSub>
-      <ContextMenuSubTrigger>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
         <Sparkles aria-hidden="true" />
         Open in…
-      </ContextMenuSubTrigger>
-      <ContextMenuSubContent>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
         {KNOWN_TARGETS.map((target) => {
           const installState = installStates[target.id];
           const rowState = computeRowState({ target, installState, isElectronHost });
@@ -103,7 +103,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
             ? `Open in ${target.displayName}, ${hint}`
             : `Open in ${target.displayName}`;
           return (
-            <ContextMenuItem
+            <DropdownMenuItem
               key={target.id}
               disabled={!enabled}
               onSelect={() => {
@@ -120,10 +120,10 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
                   {hint}
                 </span>
               ) : null}
-            </ContextMenuItem>
+            </DropdownMenuItem>
           );
         })}
-      </ContextMenuSubContent>
-    </ContextMenuSub>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
