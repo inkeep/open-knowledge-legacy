@@ -27,9 +27,11 @@ import { join } from 'node:path';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   agentWriteMd,
+  attachSystemDocSubscriber,
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
+  seedPoolServerInstanceId,
   wait,
 } from './test-harness';
 
@@ -58,6 +60,26 @@ describe('T11: Mid-drain server restart', () => {
 
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
+
+    // Mirror production's boot sequence:
+    // 1. Fetch `/api/server-info` and seed the pool's
+    //    `cachedServerInstanceId` BEFORE any provider opens. The provider's
+    //    auth token snapshots this at construction; without it, the
+    //    post-restart reconnect carries no claim and the server accepts
+    //    legacy-style — no mismatch fires, no recycle, marker duplicates.
+    // 2. Attach the CC1 system-doc subscriber so the pool receives
+    //    `disk-ack` frames on every L1 flush. Without this the
+    //    `lastDiskAckedSV` watermark stays null and the mismatch-recycle
+    //    baseline falls back to `lastServerSyncedSV` — which is past the
+    //    marker, so the recycle buffer replays the marker on top of the
+    //    post-restart server's rebuilt-from-disk Y.Doc, producing
+    //    2-3x marker duplication. With disk-ack wired, baseline =
+    //    lastDiskAckedSV (also past the marker, but disk-ack means the
+    //    server's markdown rebuild ALREADY includes it on restart) →
+    //    recycle buffer is empty → marker appears exactly once.
+    await seedPoolServerInstanceId(server, pool);
+    const systemSub = attachSystemDocSubscriber(pool, server.port);
+    cleanups.push(() => systemSub.dispose());
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -107,33 +129,30 @@ describe('T11: Mid-drain server restart', () => {
     const postRestartDisk = readFileSync(join(contentDir, 'test-doc.md'), 'utf-8');
     expect(postRestartDisk.includes(DURABILITY_MARKER)).toBe(true);
 
-    // T11's contract is durability, not deduplication. The basic restart
-    // case (T1) asserts `===1` — buffer-and-replay + clearData ordering keep
-    // markers from doubling. Mid-drain restart is a different path: the
-    // server crashes between L1 disk flush and L2 git-commit, so the
-    // post-restart server's markdown rebuild includes the freshly-written
-    // line, the client's IDB hydrate replays its own copy, and the union
-    // produces 2-3 marker occurrences. That residual duplication is out of
-    // scope for this PR — the user-visible content IS preserved (which is
-    // the durability contract this test codifies). A future fix would need
-    // to coordinate L2 drain checkpointing with the recycle flow.
+    // T11's contract is durability AND deduplication. With the
+    // server-instance-ID auth defense (PR #311) + the disk-ack baseline
+    // selection (this PR), mid-drain restart converges to exactly one
+    // marker copy on both client and disk:
     //
-    // Bounded upper assertion keeps regressions visible: if the count grows
-    // beyond the empirically-observed ceiling we want to know.
+    //   1. Server's auth-token claim mismatch on reconnect (the client's
+    //      cached id seeded from `/api/server-info` is the OLD instance)
+    //      triggers `authenticationFailed: server-instance-mismatch`.
+    //   2. The mismatch handler buffers the unsynced delta from
+    //      `lastDiskAckedSV` (the disk-flush watermark, more conservative
+    //      than `lastServerSyncedSV`) — content the server has durably
+    //      persisted is NOT in the buffer.
+    //   3. `clearData()` wipes IDB; recycle creates a fresh provider.
+    //   4. Fresh provider syncs against the post-restart server, whose
+    //      Y.Doc was just rebuilt from disk (already includes the marker).
+    //   5. The (empty or near-empty) buffer is replayed onto the fresh
+    //      Y.Doc — no duplication because the durably-persisted content
+    //      is already in the post-restart server state.
     const clientText = firstProvider.document.getText('source').toString();
     const markerCountClient = (clientText.match(new RegExp(DURABILITY_MARKER, 'g')) ?? []).length;
     const markerCountDisk = (postRestartDisk.match(new RegExp(DURABILITY_MARKER, 'g')) ?? [])
       .length;
 
-    console.log('[T11] durability counts', {
-      client: markerCountClient,
-      disk: markerCountDisk,
-      diskBytes: postRestartDisk.length,
-    });
-
-    expect(markerCountClient).toBeGreaterThanOrEqual(1);
-    expect(markerCountClient).toBeLessThanOrEqual(3);
-    expect(markerCountDisk).toBeGreaterThanOrEqual(1);
-    expect(markerCountDisk).toBeLessThanOrEqual(3);
+    expect(markerCountClient).toBe(1);
+    expect(markerCountDisk).toBe(1);
   }, 30_000);
 });

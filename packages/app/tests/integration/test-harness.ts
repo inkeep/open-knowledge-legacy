@@ -43,12 +43,19 @@ import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
-
 import {
   ORIGIN_TEXT_TO_TREE,
   ORIGIN_TREE_TO_TEXT,
   setupObservers,
 } from '../../src/editor/observers';
+import type { ProviderPool } from '../../src/editor/provider-pool';
+import {
+  decodeStateVector,
+  parseCC1BranchSwitched,
+  parseCC1DiskAck,
+  parseCC1ServerInfo,
+  SYSTEM_DOC_NAME,
+} from '../../src/lib/cc1';
 import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
@@ -1484,6 +1491,77 @@ export async function createRestartableServer(
   };
 
   return handle;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CC1 system-doc subscriber for integration tests
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Production wiring lives in `packages/app/src/components/SystemDocSubscriber.tsx`
+// and routes CC1 stateless frames into `DocumentContext` dispatchers. That
+// component depends on React + the `DocumentContext` provider, so tests that
+// run in bare `bun test` (no jsdom) can't mount it.
+//
+// This helper opens a `__system__` HocuspocusProvider against the test
+// server and dispatches the four CC1 channels that affect pool state
+// (`server-info`, `branch-switched`, `disk-ack`) directly into the supplied
+// pool. Tests that assert post-disk-ack behavior (T11 mid-drain) or
+// branch-mismatch invalidation (T5 cross-branch) opt in by calling this once
+// and pushing `dispose` onto their cleanup stack.
+//
+// `derived-view` payloads (files / backlinks / graph) are deliberately
+// IGNORED — they invalidate TanStack Query caches in production, which has
+// no analog in the harness. Tests that need to assert derived-view emit
+// shape should hit the channel directly via `cc1-broadcast.test.ts` style
+// in-process assertions, not this helper.
+
+interface SystemDocSubscriberHandle {
+  dispose: () => Promise<void>;
+}
+
+export function attachSystemDocSubscriber(
+  pool: ProviderPool,
+  port: number,
+): SystemDocSubscriberHandle {
+  const url = `ws://localhost:${port}/collab`;
+  const doc = new Y.Doc();
+  const provider = new HocuspocusProvider({
+    url,
+    name: SYSTEM_DOC_NAME,
+    document: doc,
+    onStateless: ({ payload }: { payload: string }) => {
+      const serverInfo = parseCC1ServerInfo(payload);
+      if (serverInfo) {
+        pool.setExpectedServerInstanceId(serverInfo.serverInstanceId);
+        if (serverInfo.currentBranch !== undefined) {
+          pool.setObservedBranch(serverInfo.currentBranch);
+        }
+        return;
+      }
+      const branchSwitched = parseCC1BranchSwitched(payload);
+      if (branchSwitched) {
+        pool.setObservedBranch(branchSwitched.branch);
+        // Don't fire handleBranchSwitched here — tests that exercise the
+        // branch-switch path own that wiring explicitly (cf
+        // branch-switch-live-client.test.ts). This helper only mirrors the
+        // production CC1 dispatcher's pool-state side-effects.
+        return;
+      }
+      const diskAck = parseCC1DiskAck(payload);
+      if (diskAck) {
+        pool.observeDiskAck(diskAck.docName, decodeStateVector(diskAck.sv));
+        return;
+      }
+      // derived-view payloads ignored — see header comment.
+    },
+  });
+
+  return {
+    dispose: async () => {
+      provider.destroy();
+      doc.destroy();
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
