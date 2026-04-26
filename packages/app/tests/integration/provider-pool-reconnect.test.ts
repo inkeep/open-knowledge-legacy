@@ -131,7 +131,14 @@ describe('ProviderPool reconnects', () => {
     expect((afterRestart.match(/\[\[test-doc\]\]/g) ?? []).length).toBe(1);
     expect((afterRestart.match(/# Test Document/g) ?? []).length).toBe(2);
     expect((afterRestart.match(/\[\[asdf\]\]/g) ?? []).length).toBe(1);
-  }, 30_000);
+    // Test budget rationale: 5s downtime + up to 10s pool-recycle wait +
+    // up to 10s sync wait + up to 8s disk-stabilize wait = 33s worst-case.
+    // The previous 30s timeout sat at the edge — local typical runtime is
+    // ~7s, but CI runners under load consistently crossed 30s, producing
+    // false-positive timeout failures. 45s gives proper headroom for CI
+    // variance without masking real regressions (a stuck recycle would
+    // still fail the inner polls' 10s budgets first).
+  }, 45_000);
 
   // T1 — Fast restart <4s: the bug-class repro.
   //
