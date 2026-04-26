@@ -219,7 +219,7 @@ test.describe('timeline-docpanel — diff lifecycle through DocPanel timeline ta
     await expect(timelinePanel).toBeVisible();
     await expect(page.locator('.diff-view')).toBeVisible();
     await expect(historicalRow).toBeVisible();
-    await expect(historicalRow).toHaveClass('bg-muted');
+    await expect(historicalRow).toHaveClass(/bg-muted/);
   });
 
   test('clicking the in-tab "Current version" row exits diff mode', async ({ page }) => {
