@@ -45,7 +45,11 @@ export default {
     // and co-located test files become unreachable. Each workspace below
     // explicitly adds them to `entry` to restore pre-#320 reachability.
     'packages/app': {
-      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts'],
+      entry: [
+        'src/**/*.test.{ts,tsx}',
+        'tests/**/*.{test,e2e}.ts',
+        'tests/integration/idb-preload.ts', // bunfig.toml `[test] preload`
+      ],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
