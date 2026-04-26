@@ -218,13 +218,38 @@ export class ProviderPool {
    */
   private readonly bufferedUpdates = new Map<string, Uint8Array>();
 
-  constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
+  /**
+   * Storage handle the pool reads/writes `lastObservedBranch` through.
+   * Defaults to `globalThis.localStorage` in browser bundles; tests pass
+   * a `Map`-backed stub. `null` disables persistence entirely (the
+   * in-memory cache still works). Mirrors the DI pattern used by
+   * `use-editor-mode.ts` so the Bun test runner — which has no DOM
+   * globals — can exercise the persistence code path directly.
+   */
+  private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+
+  constructor(
+    maxSize: number,
+    wsUrl: string,
+    options?: {
+      recycleDebounceMs?: number;
+      storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+    },
+  ) {
     this.maxSize = maxSize;
     // wsUrl is REQUIRED post-lifecycle-split (US-014 / FR-1.13) — resolved
     // asynchronously by `useCollabUrl()` from the `ok ui` /api/config endpoint
     // before the pool is instantiated. Callers must not pass an empty string.
     this.wsUrl = wsUrl;
-    this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+    this.recycleDebounceMs = options?.recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+    if (options?.storage !== undefined) {
+      this.storage = options.storage;
+    } else {
+      // `globalThis.localStorage` is undefined under SSR + the Bun test
+      // runner; fall back to null so the pool gracefully no-ops.
+      this.storage =
+        typeof globalThis.localStorage !== 'undefined' ? globalThis.localStorage : null;
+    }
   }
 
   /**
@@ -272,25 +297,36 @@ export class ProviderPool {
    * `getOrInitObservedBranch` below) — `localStorage` access at module
    * load would break SSR / Node test environments where `localStorage`
    * is undefined.
+   *
+   * **Co-eviction assumption.** This defense relies on `localStorage` and
+   * IDB staying in sync as a unit. Modern browsers evict both together
+   * (same "best-effort" eviction bucket), but a manual mismatch — e.g.
+   * DevTools → Application → "Clear storage" with IDB unchecked,
+   * profile import/export, custom storage tooling — re-opens the
+   * cross-branch ghost-item scenario: localStorage cleared → empty
+   * claim → server accepts → stale IDB hydrates → sync union-merge.
+   * Recovery requires `provider.clearData()` or a full storage clear.
+   * A future structural fix (branch-prefixed IDB names) would remove
+   * the assumption; tracked in the spec's deferred-scope list.
    */
   private lastObservedBranch: string | null = null;
   private lastObservedBranchInitialized = false;
 
   /**
-   * Lazy-init the in-memory cache from `localStorage`. Idempotent.
-   * Tolerant of missing `localStorage` (Node tests, SSR) — falls back
-   * to the initial null value.
+   * Lazy-init the in-memory cache from `this.storage`. Idempotent.
+   * Tolerant of missing storage (Node tests, SSR) — falls back to the
+   * initial null value.
    */
   private getOrInitObservedBranch(): string | null {
     if (this.lastObservedBranchInitialized) return this.lastObservedBranch;
     this.lastObservedBranchInitialized = true;
     try {
-      const stored = globalThis.localStorage?.getItem(LAST_OBSERVED_BRANCH_KEY) ?? null;
+      const stored = this.storage?.getItem(LAST_OBSERVED_BRANCH_KEY) ?? null;
       if (stored !== null && stored.length > 0) {
         this.lastObservedBranch = stored;
       }
     } catch {
-      // localStorage access can throw in private-mode browsers / sandboxed
+      // Storage access can throw in private-mode browsers / sandboxed
       // iframes — fall back to in-memory only.
     }
     return this.lastObservedBranch;
@@ -298,7 +334,7 @@ export class ProviderPool {
 
   /**
    * Persist the observed branch alongside the in-memory cache. Tolerant
-   * of localStorage failures (private browsing, quota exceeded) — the
+   * of storage failures (private browsing, quota exceeded) — the
    * in-memory cache always succeeds.
    */
   private persistObservedBranch(branch: string | null): void {
@@ -306,12 +342,12 @@ export class ProviderPool {
     this.lastObservedBranchInitialized = true;
     try {
       if (branch === null || branch.length === 0) {
-        globalThis.localStorage?.removeItem(LAST_OBSERVED_BRANCH_KEY);
+        this.storage?.removeItem(LAST_OBSERVED_BRANCH_KEY);
       } else {
-        globalThis.localStorage?.setItem(LAST_OBSERVED_BRANCH_KEY, branch);
+        this.storage?.setItem(LAST_OBSERVED_BRANCH_KEY, branch);
       }
     } catch {
-      // localStorage write failures are non-fatal — see read-side comment.
+      // Storage write failures are non-fatal — see read-side comment.
     }
   }
 
@@ -364,11 +400,20 @@ export class ProviderPool {
     }
     this.onBranchMismatch = () => {
       if (this.branchMismatchInFlight !== null) return;
-      const inflight = Promise.resolve(cb()).finally(() => {
-        if (this.branchMismatchInFlight === inflight) {
-          this.branchMismatchInFlight = null;
-        }
-      });
+      // Wrap `cb()` in `Promise.resolve().then(cb)` rather than
+      // `Promise.resolve(cb())` so a synchronous throw from `cb`
+      // settles the wrapper as a rejection instead of escaping the
+      // gate. Without this, a sync throw bypasses the
+      // `branchMismatchInFlight = inflight` assignment entirely; the
+      // next dispatch sees a null gate and re-fires the (still
+      // throwing) callback.
+      const inflight = Promise.resolve()
+        .then(cb)
+        .finally(() => {
+          if (this.branchMismatchInFlight === inflight) {
+            this.branchMismatchInFlight = null;
+          }
+        });
       this.branchMismatchInFlight = inflight;
     };
   }

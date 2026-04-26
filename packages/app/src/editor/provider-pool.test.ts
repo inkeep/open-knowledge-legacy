@@ -206,7 +206,7 @@ describe('ProviderPool disconnect recycling', () => {
 
   test('recycles the active provider after disconnect when no unsynced changes remain', async () => {
     // Use recycleDebounceMs: 50 for fast test execution
-    pool = new ProviderPool(3, DUMMY_WS, 50);
+    pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
@@ -372,7 +372,7 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
 
   test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
     // Use recycleDebounceMs: 50 for fast test execution
-    pool = new ProviderPool(3, DUMMY_WS, 50);
+    pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
     let onChangeCalls = 0;
     pool.setOnChange(() => onChangeCalls++);
 
@@ -431,7 +431,7 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   // load-bearing for the same-server network-blip UX — a green state here
   // is necessary-but-not-sufficient for T1.
   test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
-    pool = new ProviderPool(3, DUMMY_WS, 200);
+    pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 200 });
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
@@ -698,7 +698,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     expect(parsed.expectedBranch).toBe('feature');
   });
 
-  test('branch-mismatch authenticationFailed invokes onBranchMismatch', () => {
+  test('branch-mismatch authenticationFailed invokes onBranchMismatch', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     let called = 0;
     pool.setOnBranchMismatch(() => {
@@ -714,6 +714,10 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       'authenticationFailed',
       { reason: 'branch-mismatch' },
     );
+    // The in-flight gate dispatches via `Promise.resolve().then(cb)`
+    // (sync-throw-safe form) so the callback runs on the next
+    // microtask. Yield once so the assertion sees the post-dispatch state.
+    await Promise.resolve();
     expect(called).toBe(1);
   });
 
@@ -753,6 +757,8 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     };
     emit(e1);
     emit(e2); // second dispatch while first is still in-flight
+    // Yield so the first dispatch's microtask-deferred callback runs.
+    await Promise.resolve();
 
     // Both providers fired authenticationFailed but only one callback
     // ran; the second was gated.
@@ -763,7 +769,94 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     if (pending !== null) (pending as () => void)();
     await new Promise<void>((r) => setTimeout(r, 0));
     emit(e1);
+    await Promise.resolve();
     expect(called).toBe(2);
+  });
+
+  // localStorage-persistence path — load-bearing for the fresh-tab-with-
+  // stale-IDB defense. Bun's `bun:test` env has no DOM globals, so the
+  // pool's storage handle is parameterized via the constructor and we
+  // pass a Map-backed stub here. Mirrors the DI pattern used by
+  // `use-editor-mode.ts`.
+  describe('observed-branch localStorage persistence', () => {
+    function makeStubStorage(): {
+      stub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+      store: Map<string, string>;
+    } {
+      const store = new Map<string, string>();
+      const stub = {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, v);
+        },
+        removeItem: (k: string) => {
+          store.delete(k);
+        },
+      };
+      return { stub, store };
+    }
+
+    test('setObservedBranch writes the value to storage', () => {
+      const { stub, store } = makeStubStorage();
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setObservedBranch('feature');
+      expect(store.get('ok-last-observed-branch')).toBe('feature');
+    });
+
+    test('cold pool with pre-seeded storage value claims that branch on first open()', () => {
+      // The exact fresh-tab-with-stale-IDB regression guard — a session-1
+      // tab persisted `main`, the user closes it, branch switches to
+      // `feature`, the user opens a new tab. The first auth token must
+      // carry `expectedBranch=main` so the server's onAuthenticate
+      // rejects on mismatch and triggers the IDB-clearing recycle.
+      const { stub, store } = makeStubStorage();
+      store.set('ok-last-observed-branch', 'main');
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedBranch).toBe('main');
+    });
+
+    test('setObservedBranch with empty string clears the storage key', () => {
+      const { stub, store } = makeStubStorage();
+      store.set('ok-last-observed-branch', 'feature');
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setObservedBranch('');
+      expect(store.has('ok-last-observed-branch')).toBe(false);
+    });
+
+    test('storage.setItem throw is non-fatal — in-memory cache still updates', () => {
+      const throwingStub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error('synthetic quota error');
+        },
+        removeItem: () => {},
+      };
+      pool = new ProviderPool(3, DUMMY_WS, { storage: throwingStub });
+      // Should not throw; observedBranch is still honored from the in-
+      // memory cache even though localStorage failed.
+      pool.setObservedBranch('feature');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedBranch).toBe('feature');
+    });
+
+    test('null storage (default in Node tests) — pool runs without persistence', () => {
+      pool = new ProviderPool(3, DUMMY_WS, { storage: null });
+      pool.setObservedBranch('feature');
+      // Without storage there's no persistence, but the in-memory cache
+      // still drives the auth-token claim for THIS pool instance.
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedBranch).toBe('feature');
+    });
   });
 
   test('setExpectedServerInstanceId affects future opens, not existing providers', () => {
@@ -939,7 +1032,7 @@ describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
   });
 
   test('recycle after disconnect invalidates the cached syncPromise', async () => {
-    pool = new ProviderPool(3, DUMMY_WS, 50);
+    pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
@@ -1268,7 +1361,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
   });
 
   test('recycleDisconnectedEntry destroys the persistence before the provider', async () => {
-    pool = new ProviderPool(3, DUMMY_WS, 50);
+    pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
     const docName = uniqueDocName('pp-recycle');
     const entry = pool.open(docName);
     if (!entry?.persistence) throw new Error('expected persistence');

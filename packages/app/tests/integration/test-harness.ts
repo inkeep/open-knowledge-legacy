@@ -1614,7 +1614,7 @@ export async function createMultiClientContext(opts: {
   const wsUrl = `ws://localhost:${opts.server.port}/collab`;
   const pools: InstanceType<ProviderPoolCtor>[] = [];
   for (let i = 0; i < opts.clientCount; i++) {
-    const pool = new ProviderPool(3, wsUrl, opts.recycleDebounceMs);
+    const pool = new ProviderPool(3, wsUrl, { recycleDebounceMs: opts.recycleDebounceMs });
     // Seed the per-pool instance-ID cache the same way DocumentContext does
     // in production (US-001 / Commit 3). Without this, the server's
     // onAuthenticate (US-002 / Commit 4) treats the pool as legacy and
