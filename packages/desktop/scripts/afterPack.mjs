@@ -6,12 +6,17 @@ import { targetFuses } from './target-fuses.mjs';
 
 /**
  * electron-builder `afterPack` hook — runs on the packed `.app` bundle before
- * code-signing. We flip the Electron fuses (D17 LOCKED, spec §8.9) to harden
- * the runtime: disable RunAsNode, disable NODE_OPTIONS env ingestion, require
- * asar integrity validation, and only load from asar. EnableNodeCliInspect is
- * left ON because Playwright's `_electron.launch` requires the inspect CLI
- * arguments to attach (M4+ testing). Cookie encryption is ON as a
- * defense-in-depth hygiene fuse.
+ * code-signing. We flip the Electron fuses (D17 LOCKED, spec §8.9, M6a
+ * amendment 2026-04-23) to harden the runtime: disable NODE_OPTIONS env
+ * ingestion, require asar integrity validation, and only load app code from
+ * asar. Cookie encryption is ON as a defense-in-depth hygiene fuse.
+ * EnableNodeCliInspect is left ON because Playwright's `_electron.launch`
+ * requires the inspect CLI arguments to attach (M4+ testing).
+ *
+ * RunAsNode is ENABLED — amended from §8.9's original `false` for M6a. The
+ * bundled `ok.sh` wrapper needs `ELECTRON_RUN_AS_NODE=1` to work in packaged
+ * builds; VS Code + Atom precedent. Full rationale + defense-in-depth
+ * argument at `./target-fuses.mjs`.
  *
  * Fuses are flipped BEFORE the Developer ID signature is applied — electron
  * ships with an ad-hoc Darwin signature that flipFuses would invalidate, so

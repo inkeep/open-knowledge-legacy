@@ -1,18 +1,14 @@
 /**
- * Outbound URL scheme allowlist for `shell.openExternal` (D47).
+ * Outbound URL scheme allowlist for `shell.openExternal`.
  *
  * Defense-in-depth against the "1-click RCE via OS-native URL schemes" class
- * (Shabarkin 2022 — `ms-msdt:`, `search-ms:`, `ms-officecmd:`, etc.). Allowed:
- * `https://`, `http://`, `mailto:`, `openknowledge://` (our own deep-link
- * scheme — registered in M4), plus `claude://`, `codex://`, `cursor://` added
- * by specs/2026-04-21-open-in-agent-desktop/ for the "Open in Agent Desktop"
- * handoff dropdown. Each new scheme's outbound payload is constructed by a
- * per-target URL-builder in `packages/core/src/handoff/` — never by
- * user-supplied raw URL. The exact-set allowlist continues to exclude the
- * Shabarkin class by construction.
+ * (Shabarkin 2022 — `ms-msdt:`, `search-ms:`, `ms-officecmd:`, etc.). The
+ * exact-set allowlist excludes that class by construction. Outbound payloads
+ * are only constructed by per-target URL-builders in
+ * `packages/core/src/handoff/` — never by user-supplied raw URL.
  *
- * Pure module — no Electron import — so unit tests can exercise it without
- * standing up an Electron BrowserWindow.
+ * Pure module — no Electron import — so unit tests exercise it without an
+ * Electron BrowserWindow.
  */
 
 export const ALLOWED_SCHEMES: ReadonlySet<string> = new Set([
@@ -71,13 +67,10 @@ export function checkOutboundUrl(url: string): AllowlistResult {
 }
 
 /**
- * Pure shell.openExternal bridge-handler factory. Separated from `index.ts`'s
- * IPC wiring so the check-and-delegate contract can be unit-tested without an
- * Electron runtime (D47).
- *
- * Returns an async handler that throws on disallowed schemes and calls
- * `openExternal` on allowed ones. `index.ts` wraps this in the `ok:shell:
- * open-external` IPC handler.
+ * Pure shell.openExternal bridge-handler factory. Returns an async handler
+ * that throws on disallowed schemes and calls `openExternal` on allowed ones.
+ * Separated from `index.ts`'s IPC wiring so the check-and-delegate contract
+ * can be unit-tested without an Electron runtime.
  */
 export function handleShellOpenExternal(deps: {
   openExternal: (url: string) => Promise<void>;

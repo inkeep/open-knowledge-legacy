@@ -53,6 +53,27 @@ export interface ReconciliationMetrics {
   shadowMigrationLegacyRefsDeleted: number;
   /** Count of captureEffect failures (US-022, D37). Prod swallows; dev/test throws. */
   effectDiffCaptureFailures: number;
+  /** Count of awareness-mutation failures in `AgentPresenceBroadcaster`
+   *  (setPresence / clearPresence / touchMode catching a throw from
+   *  `awareness.setLocalState`). Each failure logs at ERROR but the call
+   *  sites (HTTP handlers, keepalive close) swallow the return and move
+   *  on, so the counter is the operator-visible signal that presence is
+   *  silently dropping. A non-zero value means the badge state on clients
+   *  may disagree with what the server thinks it published — investigate
+   *  the correlated `[agent-presence] awareness mutation failed` log line. */
+  agentPresenceMutationErrors: number;
+  /** Successful agent-write API calls that reached recordContributor —
+   *  denominator for the M1 summary-adoption metric in spec §7. Incremented
+   *  by the five agent-write handlers only AFTER a successful recordContributor
+   *  (D22: UI-driven rollback/rename without agentId does NOT increment). */
+  agentWriteCalls: number;
+  /** Agent-write calls that carried a non-empty summary through
+   *  normalizeSummary — numerator for M1. Adoption rate = summariesProvided /
+   *  agentWriteCalls. */
+  summariesProvided: number;
+  /** Agent-write calls whose input summary exceeded the API cap and was
+   *  truncated to 79 visible chars + `…`. Spec M2 steady-state target <10 %. */
+  summariesTruncated: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -80,6 +101,10 @@ const counters: ReconciliationMetrics = {
   collabSocketEconnresetCount: 0,
   shadowMigrationLegacyRefsDeleted: 0,
   effectDiffCaptureFailures: 0,
+  agentPresenceMutationErrors: 0,
+  agentWriteCalls: 0,
+  summariesProvided: 0,
+  summariesTruncated: 0,
 };
 
 export function incrementReconcile(): void {
@@ -148,6 +173,18 @@ export function incrementBridgeMergeContentLoss(): void {
   counters.bridgeMergeContentLoss++;
 }
 
+export function incrementAgentWriteCalls(): void {
+  counters.agentWriteCalls++;
+}
+
+export function incrementSummariesProvided(): void {
+  counters.summariesProvided++;
+}
+
+export function incrementSummariesTruncated(): void {
+  counters.summariesTruncated++;
+}
+
 export function incrementBridgeMergeCheckpointCreated(): void {
   counters.bridgeMergeCheckpointCreated++;
 }
@@ -199,6 +236,10 @@ export function incrementEffectDiffCaptureFailures(): void {
   counters.effectDiffCaptureFailures++;
 }
 
+export function incrementAgentPresenceMutationError(): void {
+  counters.agentPresenceMutationErrors++;
+}
+
 export function handleCollabSocketError(err: NodeJS.ErrnoException): boolean {
   if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
     incrementCollabSocketFilteredError(err.code);
@@ -240,4 +281,8 @@ export function resetMetrics(): void {
   counters.collabSocketEconnresetCount = 0;
   counters.shadowMigrationLegacyRefsDeleted = 0;
   counters.effectDiffCaptureFailures = 0;
+  counters.agentPresenceMutationErrors = 0;
+  counters.agentWriteCalls = 0;
+  counters.summariesProvided = 0;
+  counters.summariesTruncated = 0;
 }

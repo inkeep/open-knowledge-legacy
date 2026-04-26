@@ -1,16 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import {
-  Columns2,
-  FolderOpen,
-  GitFork,
-  History,
-  Pin,
-  PinOff,
-  RotateCcw,
-  Rows2,
-  Save,
-  X,
-} from 'lucide-react';
+import { Columns2, FolderOpen, GitFork, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -26,6 +15,7 @@ import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import type { EditorModeValue } from '@/editor/use-editor-mode';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { useWorkspace } from '@/lib/use-workspace';
@@ -38,7 +28,6 @@ import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
 import { buildHandoffInput } from './handoff/useHandoffDispatch';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
-import { ProjectSwitcher } from './ProjectSwitcher';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge } from './ui/badge';
@@ -78,15 +67,10 @@ function isRenameResponse(v: unknown): v is RenameResponse {
 
 interface EditorHeaderProps {
   editorMode: EditorMode;
-  onModeChange: (mode: 'wysiwyg' | 'source') => void;
-  onTimelineToggle: () => void;
+  onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
   previewEntry: TimelineEntry | null;
-  restoring: boolean;
-  restoreError: string | null;
-  onExitPreview: () => void;
-  onRestore: () => void;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
@@ -98,14 +82,9 @@ interface EditorHeaderProps {
 export function EditorHeader({
   editorMode,
   onModeChange,
-  onTimelineToggle,
   onSaveVersion,
   saving,
   previewEntry,
-  restoring,
-  restoreError,
-  onExitPreview,
-  onRestore,
   diffLayout,
   onDiffLayoutChange,
   onSignIn,
@@ -148,7 +127,6 @@ export function EditorHeader({
     else pin(activeDocName);
   }
   const isDiffMode = editorMode === 'diff';
-  const [confirmingRestore, setConfirmingRestore] = useState(false);
 
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
@@ -340,16 +318,6 @@ export function EditorHeader({
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: previewEntry is a prop; re-run on identity change is intentional
-  useEffect(() => {
-    setConfirmingRestore(false);
-  }, [previewEntry]);
-
-  function handleConfirmRestore() {
-    setConfirmingRestore(false);
-    onRestore();
-  }
-
   return (
     <header className="flex h-12 shrink-0 items-center border-b">
       <div className="flex flex-1 items-center gap-1 px-3 min-w-0">
@@ -361,15 +329,6 @@ export function EditorHeader({
             {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
           </TooltipContent>
         </Tooltip>
-        {typeof window !== 'undefined' && window.okDesktop ? (
-          <>
-            <Separator
-              orientation="vertical"
-              className="mx-1 h-4 shrink-0 data-vertical:self-center"
-            />
-            <ProjectSwitcher bridge={window.okDesktop} />
-          </>
-        ) : null}
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         {isFolderTarget ? (
           <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
@@ -533,10 +492,9 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Diff mode: layout toggle + controls (viewing banner is a separate row in EditorPane) */}
-      {isDiffMode && previewEntry && !confirmingRestore && (
+      {/* Diff mode: layout toggle (Restore/Close moved to timeline panel footer) */}
+      {isDiffMode && previewEntry && (
         <div className="flex items-center gap-2 shrink-0">
-          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
           <ToggleGroup
             type="single"
             value={diffLayout}
@@ -580,44 +538,6 @@ export function EditorHeader({
               <TooltipContent className="md:hidden">Split</TooltipContent>
             </Tooltip>
           </ToggleGroup>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
-                <RotateCcw className="size-3.5 md:hidden" />
-                <span className="hidden md:inline">Restore</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="md:hidden">Restore</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="xs" onClick={onExitPreview}>
-                <X className="size-3.5 md:hidden" />
-                <span className="hidden md:inline">Exit preview</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="md:hidden">Exit preview</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-
-      {/* Restore confirmation */}
-      {isDiffMode && previewEntry && confirmingRestore && (
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-muted-foreground">
-            Replace current content with this version?
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => setConfirmingRestore(false)}
-            disabled={restoring}
-          >
-            Cancel
-          </Button>
-          <Button variant="default" size="xs" onClick={handleConfirmRestore} disabled={restoring}>
-            {restoring ? 'Restoring…' : 'Restore'}
-          </Button>
         </div>
       )}
 
@@ -653,21 +573,6 @@ export function EditorHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
-          </Tooltip>
-        )}
-        {activeDocName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Document timeline"
-                onClick={onTimelineToggle}
-              >
-                <History className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
         {!isDiffMode && activeDocName && <OpenInAgentMenu input={handoffInput} />}

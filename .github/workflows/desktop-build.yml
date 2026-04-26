@@ -62,11 +62,14 @@ concurrency:
 
 jobs:
   build-macos-dmg:
-    # macos-14 is Apple Silicon. Required for Universal DMG lipo merging
-    # (arm64 + x64 → universal) per D29. A universal DMG built on an
-    # Intel-only runner has historically produced broken arm64 slices —
-    # see electron-builder #6891 for the reference case.
-    runs-on: macos-14
+    # macos-26 is Apple Silicon (Tahoe) with Xcode 26.x preinstalled. Apple
+    # Silicon is required for Universal DMG lipo merging (arm64 + x64 →
+    # universal) per D29 — a universal DMG built on an Intel-only runner has
+    # historically produced broken arm64 slices (electron-builder #6891).
+    # Xcode 26+ is required because electron-builder compiles
+    # `build/okglass.icon` into `Assets.car` via Apple's `actool`, which only
+    # ships with Xcode 26+.
+    runs-on: macos-26
     # 45 min budget. Local `bun run build:mac:unsigned` baseline on M3 Max
     # is ~3-4 min wall-clock; CI runners are ~2× slower; signing +
     # notarization adds 2-5 min of Apple round-trip on top. 45 min leaves
@@ -84,7 +87,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.3.11"
+          bun-version-file: ".bun-version"
 
       # Turbo cache keeps `build` fast across runs. Keying on bun.lock
       # warm-caches across commits that don't change dependencies — cold
@@ -110,14 +113,26 @@ jobs:
       # via `cp -r ../app/dist dist/public`. The CLI does not declare the
       # app as a workspace dep (app is private, and the CLI ships the
       # compiled bundle — not a package reference), so turbo's `^build`
-      # runs them in parallel. Without explicit sequencing, cli's
+      # runs them in parallel by default. Without explicit sequencing, cli's
       # `build:assets` races app's vite build and can fail (no `app/dist`
-      # yet) or copy stale content. Match the explicit ordering the README
-      # documents: app → cli.
+      # yet) or copy stale content. Use turbo's `--filter=@inkeep/...`
+      # which DOES respect the `^build` graph (so server + core build
+      # before app), and run the two filters in sequence to enforce
+      # app → cli ordering.
+      #
+      # `bun run --filter=...` was the previous approach; it does not
+      # honor turbo's dep graph (only runs the named package's `build`
+      # script in isolation). After the workspace started shipping
+      # `.mjs` builds for `@inkeep/open-knowledge-server` and
+      # `@inkeep/open-knowledge-core` (specs/2026-04-24-desktop-packaging-
+      # first-boot/), Vite's config loader in app-build resolves those
+      # workspace deps via `exports.default → ./dist/index.mjs`. Without
+      # an upstream `^build`, the `dist/` doesn't exist yet → "Failed to
+      # resolve entry for package @inkeep/open-knowledge-server".
       - name: Build workspace (produces packages/cli/dist/public for extraResources)
         run: |
-          bun run --filter=@inkeep/open-knowledge-app build
-          bun run --filter=@inkeep/open-knowledge build
+          bunx turbo run build --filter=@inkeep/open-knowledge-app
+          bunx turbo run build --filter=@inkeep/open-knowledge
 
       # Decide signed-vs-unsigned path BEFORE invoking electron-builder so
       # the artifact can be named to match. We key off CSC_LINK alone: it's
@@ -132,40 +147,49 @@ jobs:
         run: |
           if [[ -n "${CSC_LINK}" ]]; then
             echo "mode=signed" >> "$GITHUB_OUTPUT"
-            echo "script=build:mac" >> "$GITHUB_OUTPUT"
-            echo "::notice::Signing creds present — running build:mac (signed + notarized + stapled + fuse-verified)."
+            echo "::notice::Signing creds present — building signed + notarized + stapled + fuse-verified DMG."
           else
             echo "mode=unsigned" >> "$GITHUB_OUTPUT"
-            echo "script=build:mac:unsigned" >> "$GITHUB_OUTPUT"
-            echo "::notice::CSC_LINK absent — running build:mac:unsigned. Artifact will be labeled 'unsigned'."
+            echo "::notice::CSC_LINK absent — building unsigned DMG. Artifact will be labeled 'unsigned'."
           fi
 
-      - name: Build + package DMG (${{ steps.signmode.outputs.mode }})
-        # electron-builder picks up CSC_LINK / CSC_KEY_PASSWORD from env and
-        # signs automatically when `build:mac` is invoked. The afterSign
-        # hook (scripts/afterSign.mjs) picks up APPLE_* and runs notarize +
-        # staple + fuse-verify. Partial APPLE_* credentials now FAIL LOUD
-        # via the afterSign partial-credential guard — silent skip happens
-        # only when zero credentials are present, which is the unsigned
-        # path handled above by invoking `build:mac:unsigned` explicitly.
-        #
-        # Every credential env var is gated on `signmode.outputs.mode ==
-        # 'signed'`. In unsigned mode electron-builder and afterSign see
-        # empty strings and take the zero-cred paths naturally — so an
-        # operator who sets APPLE_* but forgets CSC_LINK gets a clean
-        # unsigned build, not a confusing "notarization failed: ad-hoc
-        # signed app" from Apple's notary service. GHA's `A && B || C`
-        # ternary on expressions returns B when A is truthy, else C.
+      # Step A: vite/main/preload bundles via electron-vite. Always identical
+      # for signed and unsigned modes.
+      - name: Build electron-vite bundles
+        working-directory: packages/desktop
+        run: bun run build:desktop
+
+      # Step B: package via electron-builder. Split from step A across
+      # separate runner steps (rather than chained via && in a single shell)
+      # because empirically — verified across runs 24920389870 (combined,
+      # broken) and 24923907843 (split, correct) — chaining `bun run build:desktop
+      # && electron-builder ...` in one shell produces an asar containing a
+      # stale workspace-dep `package.json` (the pre-`exports.development` /
+      # pre-`files: ["dist", "src"]` snapshot) and omits `dist/`. Same
+      # commands as separate workflow steps produce a correct asar with the
+      # current `package.json` + the built `dist/`. Root cause not fully
+      # characterized — most likely bun.run's workspace-state caching across
+      # the `&&` boundary, or electron-builder's bun-mode walker reading from
+      # a snapshot taken when bun's wrapper opened the script. Specs/2026-04-24-
+      # desktop-packaging-first-boot/ §10 OQ4 captures the open question;
+      # the empirical fix (separate steps) is sufficient for shipping.
+      - name: Package DMG (${{ steps.signmode.outputs.mode }})
         env:
           CSC_LINK: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ steps.signmode.outputs.mode == 'signed' && secrets.APPLE_TEAM_ID || '' }}
-          # GH_TOKEN is not passed — we don't auto-publish from this
-          # workflow yet. Release automation is M7.
+          # In unsigned mode, force electron-builder to skip its keychain
+          # auto-discovery (mirrors `-c.mac.identity=null` in the script).
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.signmode.outputs.mode == 'unsigned' && 'false' || '' }}
         working-directory: packages/desktop
-        run: bun run ${{ steps.signmode.outputs.script }}
+        run: |
+          if [[ "${{ steps.signmode.outputs.mode }}" == "unsigned" ]]; then
+            bunx electron-builder --mac --publish never -c.mac.identity=null
+          else
+            bunx electron-builder --mac --publish never
+          fi
 
       # Gate on success() — on build failure, there is no DMG, so running
       # the upload step would stack a second "no files found" error on top

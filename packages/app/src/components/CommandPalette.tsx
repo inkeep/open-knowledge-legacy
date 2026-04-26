@@ -3,10 +3,20 @@
  *
  * The palette is available on both web and Electron hosts. Workspace
  * navigation (files, folders, create commands, graph, open-in-agent) is
- * shared across hosts; project-switching commands remain Electron-only.
+ * shared across hosts; desktop project commands appear when the Electron
+ * bridge is available.
  */
 
-import { FilePlus2, FileText, FolderOpen, FolderPlus, Network, Sparkles } from 'lucide-react';
+import {
+  Download,
+  FilePlus2,
+  FileText,
+  FolderOpen,
+  FolderPlus,
+  LayoutGrid,
+  Network,
+  Sparkles,
+} from 'lucide-react';
 import { useDeferredValue, useEffect, useState } from 'react';
 import {
   filterOmnibarRecents,
@@ -37,6 +47,7 @@ import {
 } from '@/components/ui/command';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
@@ -179,9 +190,16 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   ]);
   const showProjectOpenFolder =
     bridge !== null && matchesCommandQuery('Open folder on disk', deferredQuery, ['project']);
-  const showProjectCreateFolder =
+  const showProjectSwitch =
     bridge !== null &&
-    matchesCommandQuery('Start fresh in a new folder', deferredQuery, ['project new']);
+    matchesCommandQuery(SWITCH_PROJECT_LABEL_WITH_ELLIPSIS, deferredQuery, [
+      'switch project navigator projects',
+    ]);
+  const showInstallClaudeDesktop = matchesCommandQuery(
+    'Install for Claude Chat & Cowork (Desktop App)',
+    deferredQuery,
+    ['claude desktop install cowork'],
+  );
   const showProjectRecents =
     bridge !== null &&
     switchableProjects.length > 0 &&
@@ -204,7 +222,8 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     showCreateFolder ||
     showGraphCommand ||
     showProjectOpenFolder ||
-    showProjectCreateFolder ||
+    showProjectSwitch ||
+    showInstallClaudeDesktop ||
     showProjectRecents ||
     showAgentGroup;
 
@@ -222,7 +241,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
           onValueChange={setQuery}
           placeholder="Search files, folders, or commands…"
         />
-        <CommandList>
+        <CommandList className="subtle-scrollbar">
           {!hasAnyResults ? <CommandEmpty>No matching commands.</CommandEmpty> : null}
 
           {showRecentNavigation ? (
@@ -348,9 +367,12 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
             </CommandGroup>
           ) : null}
 
-          {bridge && (showProjectOpenFolder || showProjectCreateFolder || showProjectRecents) ? (
+          {showProjectOpenFolder ||
+          showProjectSwitch ||
+          showInstallClaudeDesktop ||
+          showProjectRecents ? (
             <CommandGroup heading="Project">
-              {showProjectOpenFolder ? (
+              {showProjectOpenFolder && bridge ? (
                 <CommandItem
                   value="open folder on disk project"
                   onSelect={() =>
@@ -367,24 +389,33 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
                   <CommandShortcut>⌘O</CommandShortcut>
                 </CommandItem>
               ) : null}
-              {showProjectCreateFolder ? (
+              {showProjectSwitch && bridge ? (
                 <CommandItem
-                  value="start fresh new folder project"
+                  value="switch-project navigator projects"
                   onSelect={() =>
-                    runAction(async () => {
-                      const path = await bridge.dialog.createFolder();
-                      if (!path) return;
-                      await bridge.project.open({ path, target: 'new-window' });
-                    })
+                    runAction(() => bridge.navigator.open(), 'Failed to open Project Navigator.')
                   }
-                  data-testid="command-palette-start-fresh"
+                  data-testid="command-palette-switch-project"
                 >
-                  <FolderPlus />
-                  <span>Start fresh in a new folder…</span>
+                  <LayoutGrid />
+                  <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
                   <CommandShortcut>⌘⇧N</CommandShortcut>
                 </CommandItem>
               ) : null}
-              {showProjectRecents
+              {showInstallClaudeDesktop ? (
+                <CommandItem
+                  value="install claude desktop cowork app"
+                  onSelect={() => {
+                    setOpen(false);
+                    window.location.hash = '#install-claude-desktop';
+                  }}
+                  data-testid="command-palette-install-claude-desktop"
+                >
+                  <Download />
+                  <span>Install for Claude Chat & Cowork (Desktop App)…</span>
+                </CommandItem>
+              ) : null}
+              {showProjectRecents && bridge
                 ? switchableProjects
                     .filter((row) =>
                       matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, [

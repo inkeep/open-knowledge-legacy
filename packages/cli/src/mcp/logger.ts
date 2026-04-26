@@ -6,10 +6,13 @@
  *   corrId     — rotated per logical operation (tool call, startup phase)
  *   component  — 'mcp' by default; callers can narrow
  *
- * All output goes to stderr (stdout is the MCP JSON-RPC wire).
+ * stderr:      always JSON lines (for Claude Desktop / MCP clients)
+ * OK_LOG_FILE: same single-line JSON format, appended one entry per line.
+ *
  * Debug-level output is gated behind MCP_DEBUG=1 or DEBUG containing 'mcp'.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 
@@ -22,6 +25,8 @@ interface McpLogEntry {
   msg: string;
   [key: string]: unknown;
 }
+
+const loggerContext = new AsyncLocalStorage<McpLogger>();
 
 export class McpLogger {
   readonly sessionId: string;
@@ -106,4 +111,14 @@ export class McpLogger {
 /** Convenience factory. */
 export function createMcpLogger(component = 'mcp'): McpLogger {
   return new McpLogger(component);
+}
+
+/** Run an async/sync block with the provided logger bound as the active MCP logger. */
+export function runWithMcpLogger<T>(logger: McpLogger, fn: () => T): T {
+  return loggerContext.run(logger, fn);
+}
+
+/** Return the active per-call logger when one is bound, otherwise `undefined`. */
+export function getCurrentMcpLogger(): McpLogger | undefined {
+  return loggerContext.getStore();
 }

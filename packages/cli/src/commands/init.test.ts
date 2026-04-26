@@ -7,6 +7,7 @@ import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import {
   ALL_EDITOR_IDS,
+  EDITOR_TARGETS,
   resolveClaudeCodeConfigPath,
   resolveClaudeDesktopConfigPath,
   resolveCodexConfigPath,
@@ -14,7 +15,20 @@ import {
   resolveVsCodeConfigPath,
   resolveWindsurfConfigPath,
 } from './editors.ts';
-import { detectInstalledEditors, formatInitResult, parseEditorFlag, runInit } from './init.ts';
+// `parseEditorFlag` removed by main PR #282 (#295) along with the `--editors`
+// CLI flag — `ok init` now installs for a canonical default set instead of
+// user-specified subsets. US-006's `writeUserMcpConfigs` exports are M6b-only
+// additions that survive on top of main's refactor.
+import {
+  detectInstalledEditors,
+  type EditorMcpResult,
+  formatInitResult,
+  readExistingMcpEntry,
+  runInit,
+  type UserMcpConfigsOptions,
+  writeEditorMcpConfig,
+  writeUserMcpConfigs,
+} from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -43,8 +57,19 @@ describe('runInit', () => {
     runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
     port: 3000,
   });
+  /**
+   * Stubbed installUserSkill used by every test unless overridden. Prevents
+   * the real `npx skills` subprocess from firing in the test suite, keeping
+   * runs hermetic + fast.
+   */
+  const defaultInstallUserSkill = async () => 'installed' as const;
   const runInitForTest = async (options: Parameters<typeof runInit>[0] = {}) =>
-    runInit({ cwd: testDir, home: fakeHome, ...options });
+    runInit({
+      cwd: testDir,
+      home: fakeHome,
+      installUserSkill: defaultInstallUserSkill,
+      ...options,
+    });
 
   beforeEach(() => {
     testDir = resolve(
@@ -54,6 +79,7 @@ describe('runInit', () => {
     mkdirSync(testDir, { recursive: true });
     fakeHome = join(testDir, 'fakehome');
     mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(join(fakeHome, '.claude'), { recursive: true });
     process.env.HOME = fakeHome;
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   });
@@ -79,13 +105,16 @@ describe('runInit', () => {
     const result = await runInitForTest();
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
-    // Post-V0-24.2 scaffold: config-only, no content subdirs
+    // Post-V0-24.2 scaffold: config-only, no content subdirs.
+    // Per SPEC 2026-04-22 (FR2): the internal .open-knowledge/AGENTS.md
+    // README is no longer scaffolded.
     expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'articles'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'external-sources'))).toBe(false);
     expect(existsSync(join(testDir, OK_DIR, 'research'))).toBe(false);
+    expect(existsSync(join(fakeHome, '.codeium'))).toBe(false);
 
     // Backward-compat fields
     expect(result.mcpAction).toBe('written');
@@ -142,7 +171,7 @@ describe('runInit', () => {
     expect(config.mcpServers[result.editors[0].serverName]).toEqual(expectedDevMcpEntry());
   });
 
-  it('flags a differing open-knowledge entry by default and leaves it untouched', async () => {
+  it('overwrites a differing open-knowledge entry by default', async () => {
     writeFileSync(
       claudeConfigPath(),
       JSON.stringify(
@@ -160,18 +189,17 @@ describe('runInit', () => {
     );
 
     const result = await runInitForTest();
-    expect(result.mcpAction).toBe('skipped-conflict');
-    expect(result.editors[0].action).toBe('skipped-conflict');
+    expect(result.mcpAction).toBe('overwritten');
+    expect(result.editors[0].action).toBe('overwritten');
 
     const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
-    expect(config.mcpServers['open-knowledge'].command).toBe('node');
-    expect(config.mcpServers['open-knowledge'].args).toEqual([
-      './packages/cli/dist/cli.mjs',
-      'mcp',
-    ]);
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
   });
 
-  it('skips an identical open-knowledge entry by default', async () => {
+  it('replaces user-added fields instead of merging them', async () => {
     writeFileSync(
       claudeConfigPath(),
       JSON.stringify(
@@ -191,50 +219,17 @@ describe('runInit', () => {
     );
 
     const result = await runInitForTest();
-    expect(result.mcpAction).toBe('skipped-existing');
-    expect(result.editors[0].action).toBe('skipped-existing');
-
-    const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
-    expect(config.mcpServers['open-knowledge']).toEqual({
-      command: 'npx',
-      args: ['@inkeep/open-knowledge', 'mcp'],
-      cwd: testDir,
-      env: { OK_MODE: 'local' },
-    });
-  });
-
-  it('overwrites existing open-knowledge entry with --force', async () => {
-    writeFileSync(
-      claudeConfigPath(),
-      JSON.stringify(
-        {
-          mcpServers: {
-            'open-knowledge': {
-              command: 'node',
-              args: ['./old/path.js'],
-              cwd: testDir,
-              env: { OK_MODE: 'local' },
-            },
-          },
-        },
-        null,
-        2,
-      ),
-    );
-
-    const result = await runInitForTest({ force: true });
     expect(result.mcpAction).toBe('overwritten');
+    expect(result.editors[0].action).toBe('overwritten');
 
     const config = JSON.parse(readFileSync(claudeConfigPath(), 'utf-8'));
     expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
-      cwd: testDir,
-      env: { OK_MODE: 'local' },
     });
   });
 
-  it('overwrites a published MCP entry in dev mode without --force', async () => {
+  it('overwrites a published MCP entry in dev mode', async () => {
     writeFileSync(
       claudeConfigPath(),
       JSON.stringify(
@@ -266,7 +261,6 @@ describe('runInit', () => {
     expect(existsSync(claudeConfigPath())).toBe(false);
 
     // But the .open-knowledge/ config scaffold IS created
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
@@ -278,7 +272,7 @@ describe('runInit', () => {
     const firstConfig = readFileSync(claudeConfigPath(), 'utf-8');
 
     const secondResult = await runInitForTest();
-    expect(secondResult.mcpAction).toBe('skipped-existing');
+    expect(secondResult.mcpAction).toBe('overwritten');
     expect(secondResult.contentCreated.length).toBe(0);
     expect(secondResult.contentSkipped.length).toBeGreaterThan(0);
 
@@ -294,7 +288,7 @@ describe('runInit', () => {
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
     // Config scaffold should still have been created
-    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -303,6 +297,7 @@ describe('runInit', () => {
 
   describe('Cursor', () => {
     it('writes ~/.cursor/mcp.json with mcpServers key', async () => {
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       const result = await runInitForTest({ editors: ['cursor'] });
 
       expect(result.editors).toHaveLength(1);
@@ -337,6 +332,7 @@ describe('runInit', () => {
 
   describe('VS Code', () => {
     it('writes the user VS Code mcp.json with servers key and type: stdio', async () => {
+      mkdirSync(dirname(vsCodeConfigPath()), { recursive: true });
       const result = await runInitForTest({ editors: ['vscode'] });
 
       expect(result.editors).toHaveLength(1);
@@ -360,6 +356,7 @@ describe('runInit', () => {
 
   describe('Codex', () => {
     it('writes ~/.codex/config.toml with mcp_servers key', async () => {
+      mkdirSync(dirname(codexConfigPath()), { recursive: true });
       const result = await runInitForTest({ editors: ['codex'] });
 
       expect(result.editors).toHaveLength(1);
@@ -378,6 +375,7 @@ describe('runInit', () => {
     });
 
     it('writes the dev MCP env block to Codex TOML configs', async () => {
+      mkdirSync(dirname(codexConfigPath()), { recursive: true });
       const result = await runInitForTest({
         editors: ['codex'],
         devMcp: true,
@@ -414,6 +412,7 @@ describe('runInit', () => {
     it('writes the same simple global open-knowledge entry as the local editors', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
 
       const result = await runInitForTest({ editors: ['claude-desktop'] });
 
@@ -434,42 +433,45 @@ describe('runInit', () => {
       });
     });
 
-    it('flags existing claude-desktop drift by default and leaves it untouched', async () => {
+    it('overwrites existing claude-desktop drift by default', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
 
       const configPath = resolveClaudeDesktopConfigPath({ home: fakeHome });
       const configDir = dirname(configPath);
       mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            mcpServers: {
+              'open-knowledge': {
+                command: 'npx',
+                args: ['some-old-package', 'mcp'],
+              },
+            },
+          },
+          null,
+          2,
+        ),
+      );
 
-      // First run to create the entry with the correct serverName
-      const firstResult = await runInitForTest({ editors: ['claude-desktop'] });
-      const serverName = firstResult.editors[0].serverName;
-      if (!serverName) throw new Error('Expected serverName');
+      const result = await runInitForTest({ editors: ['claude-desktop'] });
 
-      // Now corrupt it with old data to test upsert
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      config.mcpServers[serverName] = {
-        command: 'npx',
-        args: ['some-old-package', 'mcp'],
-      };
-      writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-      const secondResult = await runInitForTest({ editors: ['claude-desktop'] });
-
-      expect(secondResult.editors[0].action).toBe('skipped-conflict');
+      expect(result.editors[0].action).toBe('overwritten');
 
       const updatedConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
-      const entry = updatedConfig.mcpServers[secondResult.editors[0].serverName];
+      const entry = updatedConfig.mcpServers[result.editors[0].serverName];
       expect(entry).toEqual({
         command: 'npx',
-        args: ['some-old-package', 'mcp'],
+        args: ['@inkeep/open-knowledge', 'mcp'],
       });
     });
 
     it('renders a restart hint after writing the Claude Desktop config', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
 
       const result = await runInitForTest({ editors: ['claude-desktop'] });
       const output = formatInitResult(result, testDir);
@@ -488,12 +490,67 @@ describe('runInit', () => {
         /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
       );
     });
+
+    // Cowork install hint — SPEC 2026-04-24-skill-dual-track-install FR5 / D12.
+    // When Claude Desktop's config dir exists, `ok init` appends a one-line
+    // hint pointing at the docs + the pinned-version .skill release asset.
+    it('flags claudeDesktopDetected=true when Claude config dir exists', async () => {
+      // Create the config-dir parent that detectClaudeDesktopPresence probes.
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(true);
+    });
+
+    it('flags claudeDesktopDetected=false when Claude config dir is absent', async () => {
+      // No Claude config dir created — fakeHome/.claude exists (from beforeEach)
+      // but not the Application Support/Claude dir.
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(false);
+    });
+
+    it('renders the Cowork install hint when Claude Desktop is detected', async () => {
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      // Hint names the Desktop App + Chat & Cowork (distinguishes from
+      // Claude Code) and points at the `ok install-skill` command —
+      // users install the skill locally, no GitHub download in the loop.
+      expect(output).toContain('Claude Desktop App detected.');
+      expect(output).toContain('Claude Chat & Cowork');
+      expect(output).toContain('ok install-skill');
+    });
+
+    it('omits the Cowork install hint when Claude Desktop is absent', async () => {
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      expect(output).not.toContain('Claude Desktop detected. For Cowork:');
+      expect(output).not.toContain('openknowledge.skill');
+    });
   });
 
   describe('Windsurf', () => {
-    it('writes to global path using home override', async () => {
+    it('skips Windsurf when ~/.codeium/windsurf is absent', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
+
+      const result = await runInitForTest({ editors: ['windsurf'] });
+
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('windsurf');
+      expect(result.editors[0].action).toBe('skipped-missing');
+      expect(existsSync(join(fakeHome, '.codeium'))).toBe(false);
+    });
+
+    it('writes to global path using home override when the config root exists', async () => {
+      const fakeHome = join(testDir, 'fakehome');
+      mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(dirname(windsurfConfigPath()), { recursive: true });
 
       const result = await runInitForTest({ editors: ['windsurf'] });
 
@@ -514,6 +571,7 @@ describe('runInit', () => {
 
   describe('multi-editor', () => {
     it('writes Claude + Cursor configs in a single run', async () => {
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       const result = await runInitForTest({ editors: ['claude', 'cursor'] });
 
       expect(result.editors).toHaveLength(2);
@@ -529,6 +587,11 @@ describe('runInit', () => {
     it('writes all supported editors with editors: all', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
+      mkdirSync(dirname(vsCodeConfigPath()), { recursive: true });
+      mkdirSync(dirname(codexConfigPath()), { recursive: true });
+      mkdirSync(dirname(windsurfConfigPath()), { recursive: true });
 
       const result = await runInitForTest({ editors: [...ALL_EDITOR_IDS] });
 
@@ -545,7 +608,7 @@ describe('runInit', () => {
       expect(existsSync(windsurfConfigPath())).toBe(true);
     });
 
-    it('--force overwrites across all targeted editors', async () => {
+    it('overwrites across all targeted editors', async () => {
       // Pre-populate Claude and Cursor with old entries
       writeFileSync(
         claudeConfigPath(),
@@ -563,7 +626,6 @@ describe('runInit', () => {
 
       const result = await runInitForTest({
         editors: ['claude', 'cursor'],
-        force: true,
       });
 
       expect(result.editors[0].action).toBe('overwritten');
@@ -591,11 +653,12 @@ describe('runInit', () => {
     });
 
     it('idempotent per-editor across two runs', async () => {
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       const first = await runInitForTest({ editors: ['claude', 'cursor'] });
       expect(first.editors.every((e) => e.action === 'written')).toBe(true);
 
       const second = await runInitForTest({ editors: ['claude', 'cursor'] });
-      expect(second.editors.every((e) => e.action === 'skipped-existing')).toBe(true);
+      expect(second.editors.every((e) => e.action === 'overwritten')).toBe(true);
     });
 
     it('--no-mcp skips all editors', async () => {
@@ -615,6 +678,7 @@ describe('runInit', () => {
     });
 
     it('surfaces legacy project-local MCP configs after writing global ones', async () => {
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
       mkdirSync(join(testDir, '.cursor'), { recursive: true });
       writeFileSync(join(testDir, '.mcp.json'), JSON.stringify({ mcpServers: {} }, null, 2));
       writeFileSync(
@@ -635,6 +699,28 @@ describe('runInit', () => {
       expect(output).toContain('Legacy project MCP configs detected:');
       expect(output).toContain('.mcp.json');
       expect(output).toContain('.cursor/mcp.json');
+    });
+
+    it('renders launch.json beside the Claude MCP entry, not in the legacy warning block', async () => {
+      mkdirSync(dirname(cursorConfigPath()), { recursive: true });
+      mkdirSync(join(testDir, '.cursor'), { recursive: true });
+      writeFileSync(join(testDir, '.mcp.json'), JSON.stringify({ mcpServers: {} }, null, 2));
+      writeFileSync(
+        join(testDir, '.cursor', 'mcp.json'),
+        JSON.stringify({ mcpServers: {} }, null, 2),
+      );
+
+      const result = await runInitForTest({ editors: ['claude', 'cursor'] });
+      const output = formatInitResult(result, testDir);
+
+      const claudeIndex = output.indexOf('Claude Code');
+      const launchJsonIndex = output.indexOf('launch.json');
+      const legacyIndex = output.indexOf('Legacy project MCP configs detected:');
+
+      expect(output).toContain('app preview server');
+      expect(claudeIndex).toBeGreaterThanOrEqual(0);
+      expect(launchJsonIndex).toBeGreaterThan(claudeIndex);
+      expect(legacyIndex).toBeGreaterThan(launchJsonIndex);
     });
   });
 
@@ -662,7 +748,7 @@ describe('runInit', () => {
       expect(entry.autoPort).toBeUndefined();
     });
 
-    it('flags a stale open-knowledge-ui entry without --force', async () => {
+    it('overwrites a stale open-knowledge-ui entry by default', async () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -685,12 +771,10 @@ describe('runInit', () => {
       );
 
       const result = await runInitForTest();
-      expect(result.launchJson?.action).toBe('skipped-stale');
-      expect(result.launchJson?.staleFields).toEqual(expect.arrayContaining(['runtimeArgs']));
+      expect(result.launchJson?.action).toBe('merged');
 
-      // Unchanged — still the old shape (user must re-run with --force)
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
+      expect(parsed.configurations[0].runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
     });
 
     it('writes a local dev launch target when --dev-mcp is enabled', async () => {
@@ -703,7 +787,7 @@ describe('runInit', () => {
       expect(parsed.configurations[0]).toEqual(expectedDevLaunchEntry());
     });
 
-    it('skips an up-to-date open-knowledge-ui entry without --force', async () => {
+    it('rewrites an up-to-date open-knowledge-ui entry', async () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -726,11 +810,10 @@ describe('runInit', () => {
       );
 
       const result = await runInitForTest();
-      expect(result.launchJson?.action).toBe('skipped-existing');
-      expect(result.launchJson?.staleFields).toBeUndefined();
+      expect(result.launchJson?.action).toBe('merged');
     });
 
-    it('overwrites the published launch target in dev mode without --force', async () => {
+    it('overwrites the published launch target in dev mode', async () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -757,39 +840,6 @@ describe('runInit', () => {
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations[0]).toEqual(expectedDevLaunchEntry());
-    });
-
-    it('migrates an existing open-knowledge-ui entry on --force', async () => {
-      const configPath = join(testDir, '.claude', 'launch.json');
-      mkdirSync(join(testDir, '.claude'), { recursive: true });
-      writeFileSync(
-        configPath,
-        JSON.stringify(
-          {
-            version: '0.0.1',
-            configurations: [
-              {
-                name: 'open-knowledge-ui',
-                runtimeExecutable: 'npx',
-                runtimeArgs: ['open-knowledge', 'start'],
-                port: 3000,
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-      );
-
-      const result = await runInitForTest({ force: true });
-      expect(result.launchJson?.action).toBe('merged');
-
-      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(parsed.configurations).toHaveLength(1);
-      const entry = parsed.configurations[0];
-      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
-      expect(entry.port).toBe(3000);
-      expect(entry.autoPort).toBeUndefined();
     });
 
     it('merges the new entry into an existing launch.json with other configurations', async () => {
@@ -814,7 +864,7 @@ describe('runInit', () => {
       );
 
       const result = await runInitForTest();
-      expect(result.launchJson?.action).toBe('merged');
+      expect(result.launchJson?.action).toBe('created');
 
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations).toHaveLength(2);
@@ -833,72 +883,151 @@ describe('runInit', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Per-editor instruction file injection (from main)
+  // Zero project-root file writes (SPEC 2026-04-22 G1 / D2 / FR1)
   // -----------------------------------------------------------------------
 
-  describe('per-editor instruction file injection', () => {
-    it('writes CLAUDE.md when claude editor is selected', async () => {
-      const result = await runInitForTest({ editors: ['claude'] });
+  describe('zero project-root file writes', () => {
+    it('does not create root AGENTS.md when claude editor is selected', async () => {
+      await runInitForTest({ editors: ['claude'] });
 
-      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
-      expect(readFileSync(join(testDir, 'CLAUDE.md'), 'utf-8')).toContain(
-        '<!-- open-knowledge:begin -->',
-      );
-      const agentsEntry = result.rootInstructions.find((r) => r.file === 'AGENTS.md');
-      const claudeEntry = result.rootInstructions.find((r) => r.file === 'CLAUDE.md');
-      expect(agentsEntry?.action).toBe('created');
-      expect(claudeEntry?.action).toBe('created');
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(false);
     });
 
-    it('writes only AGENTS.md for cursor (no rule-file scaffolding)', async () => {
-      const result = await runInitForTest({ mcp: false, editors: ['cursor'] });
+    it('does not create AGENTS.md for cursor', async () => {
+      await runInitForTest({ mcp: false, editors: ['cursor'] });
 
-      // AGENTS.md is the tool-agnostic instruction surface; Cursor picks it up natively.
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes only AGENTS.md for windsurf (no rule-file scaffolding)', async () => {
+    it('does not create AGENTS.md for windsurf', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
-      const result = await runInitForTest({ mcp: false, editors: ['windsurf'] });
+      await runInitForTest({ mcp: false, editors: ['windsurf'] });
 
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
     });
 
-    it('writes no extra instruction files for vscode (no instructionsPath)', async () => {
-      const result = await runInitForTest({ mcp: false, editors: ['vscode'] });
+    it('does not create AGENTS.md for vscode', async () => {
+      await runInitForTest({ mcp: false, editors: ['vscode'] });
 
-      // Only AGENTS.md — vscode has no instructionsPath
-      expect(result.rootInstructions).toHaveLength(1);
-      expect(result.rootInstructions[0].file).toBe('AGENTS.md');
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
       expect(existsSync(join(testDir, '.vscoderules'))).toBe(false);
     });
 
-    it('writes AGENTS.md + CLAUDE.md for claude + cursor + windsurf combined', async () => {
+    it('does not create any root-level agent files for claude + cursor + windsurf combined', async () => {
       const fakeHome = join(testDir, 'fakehome');
       mkdirSync(fakeHome, { recursive: true });
-      const result = await runInitForTest({
+      await runInitForTest({
         mcp: false,
         editors: ['claude', 'cursor', 'windsurf'],
       });
 
-      // Only Claude has an instructionsPath (CLAUDE.md). Cursor + Windsurf read
-      // the root AGENTS.md natively, so no extra files are scaffolded for them.
-      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
-      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
+      expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(false);
+      expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'rules', 'open-knowledge.mdc'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurf', 'rules', 'open-knowledge.md'))).toBe(false);
       expect(existsSync(join(testDir, '.cursorrules'))).toBe(false);
       expect(existsSync(join(testDir, '.windsurfrules'))).toBe(false);
-      expect(result.rootInstructions).toHaveLength(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Legacy-injection non-interference (SPEC 2026-04-22 FR8 / D3 / US-011 / QA-007)
+  // -----------------------------------------------------------------------
+
+  describe('legacy-injection non-interference', () => {
+    it('leaves pre-existing open-knowledge marker blocks byte-identical in CLAUDE.md and AGENTS.md', async () => {
+      const legacyClaudeBody = [
+        '# My Project',
+        '',
+        'Some pre-existing content the user wrote themselves.',
+        '',
+        '<!-- open-knowledge:begin -->',
+        '## Legacy Open Knowledge section',
+        'Pretend this was injected by an older ok init version.',
+        '<!-- open-knowledge:end -->',
+        '',
+        'Post-section notes.',
+        '',
+      ].join('\n');
+      const legacyAgentsBody = [
+        '<!-- open-knowledge:begin -->',
+        '## Legacy section in AGENTS.md',
+        '<!-- open-knowledge:end -->',
+        '',
+        '# Project agents notes',
+        '',
+      ].join('\n');
+
+      const claudePath = join(testDir, 'CLAUDE.md');
+      const agentsPath = join(testDir, 'AGENTS.md');
+      writeFileSync(claudePath, legacyClaudeBody, 'utf-8');
+      writeFileSync(agentsPath, legacyAgentsBody, 'utf-8');
+
+      const beforeClaude = readFileSync(claudePath, 'utf-8');
+      const beforeAgents = readFileSync(agentsPath, 'utf-8');
+
+      // Run init with a no-op skill install so we don't shell out to `npx skills`.
+      await runInitForTest({ installUserSkill: async () => 'skip-current' });
+
+      // Byte-identical pre/post — the new init code does NOT touch legacy injections.
+      expect(readFileSync(claudePath, 'utf-8')).toBe(beforeClaude);
+      expect(readFileSync(agentsPath, 'utf-8')).toBe(beforeAgents);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // installUserSkill wiring (SPEC 2026-04-22 FR6 / US-008 / QA-002 / QA-004)
+  // -----------------------------------------------------------------------
+
+  describe('installUserSkill wiring', () => {
+    it('returns skillInstall = "installed" when the install succeeds', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'installed',
+      });
+      expect(result.skillInstall).toBe('installed');
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('User-global skill:');
+      expect(output).toContain('installed to detected agent hosts');
+    });
+
+    it('returns skillInstall = "skip-current" when the sidecar is current', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'skip-current',
+      });
+      expect(result.skillInstall).toBe('skip-current');
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('User-global skill:');
+      expect(output).toContain('already installed at current version');
+    });
+
+    it('returns skillInstall = "failed" without throwing — init still exits 0 (QA-004)', async () => {
+      const result = await runInitForTest({
+        installUserSkill: async () => 'failed',
+      });
+      expect(result.skillInstall).toBe('failed');
+      // MCP config still written successfully
+      expect(result.mcpAction).toBe('written');
+      // Manual-install hint surfaces in the summary
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('install failed');
+      expect(output).toContain('npx skills');
+    });
+
+    it('passes opts.home through to installUserSkill (D15)', async () => {
+      let capturedHome: string | undefined;
+      await runInitForTest({
+        installUserSkill: async (opts) => {
+          capturedHome = opts?.home;
+          return 'installed';
+        },
+      });
+      expect(capturedHome).toBe(fakeHome);
     });
   });
 
@@ -955,7 +1084,7 @@ describe('runInit', () => {
       expect(output).not.toContain('Sample:');
     });
 
-    it('renders rerun-with-force guidance when an MCP entry differs from defaults', async () => {
+    it('renders an update summary when an MCP entry is replaced', async () => {
       writeFileSync(
         claudeConfigPath(),
         JSON.stringify(
@@ -974,9 +1103,9 @@ describe('runInit', () => {
 
       const result = await runInitForTest();
       const output = formatInitResult(result, testDir);
-      expect(result.editors[0].action).toBe('skipped-conflict');
-      expect(output).toContain('managed MCP fields differ from current defaults');
-      expect(output).toContain('re-run with --force to update');
+      expect(result.editors[0].action).toBe('overwritten');
+      expect(output).toContain('updated');
+      expect(output).not.toContain('re-run with --force');
     });
 
     it('loadConfig + previewContent integration: preview picks up scaffolded config', async () => {
@@ -1011,7 +1140,7 @@ describe('runInit', () => {
 
   describe('ensureProjectGit wiring (US-005)', () => {
     it('fresh tmpdir (no .git/) → runInit creates .git/ and reports didGitInit=true', async () => {
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(true);
       expect(existsSync(join(testDir, '.git/HEAD'))).toBe(true);
@@ -1026,7 +1155,7 @@ describe('runInit', () => {
     it('pre-existing .git/ → runInit does not re-init and reports didGitInit=false', async () => {
       mkdirSync(join(testDir, '.git'));
 
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(false);
       // formatInitResult omits the disclosure line
@@ -1041,9 +1170,9 @@ describe('runInit', () => {
         // Import the server error type lazily to keep the import surface minimal
         // for other tests in this file.
         const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
-        await expect(
-          runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] }),
-        ).rejects.toBeInstanceOf(ProjectGitInitError);
+        await expect(runInitForTest({ editors: ['claude'] })).rejects.toBeInstanceOf(
+          ProjectGitInitError,
+        );
       } finally {
         process.env.PATH = originalPath;
       }
@@ -1174,9 +1303,9 @@ describe('detectInstalledEditors', () => {
     expect(detected).toEqual(['claude', 'claude-desktop', 'cursor', 'vscode', 'codex']);
   });
 
-  it('returns empty list when the cwd itself does not exist (zero-detected edge case)', async () => {
-    // Synthesizes the "zero detected" non-TTY fallback path that exit 1s when
-    // neither the project nor any user-global editor footprints exist.
+  it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
+    // Synthesizes the "zero detected" path where init should skip MCP wiring
+    // rather than inventing new editor config roots.
     const missingCwd = join(testDir, 'does-not-exist');
     const missingHome = join(testDir, 'also-not-here');
     const detected = detectInstalledEditors(missingCwd, missingHome);
@@ -1184,30 +1313,478 @@ describe('detectInstalledEditors', () => {
   });
 });
 
-describe('parseEditorFlag', () => {
-  it('accepts the canonical claude-desktop id', async () => {
-    expect(parseEditorFlag('claude-desktop')).toEqual(['claude-desktop']);
+describe('writeUserMcpConfigs', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  const CLI_PATH = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `write-user-mcp-configs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   });
 
-  it('accepts the "claude_desktop" alias (underscore form)', async () => {
-    expect(parseEditorFlag('claude_desktop')).toEqual(['claude-desktop']);
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('rejects the bare "desktop" token', async () => {
-    expect(() => parseEditorFlag('desktop')).toThrow(/Unknown editor/);
+  it('writes the cliPath shape for every selected editor', async () => {
+    const opts: UserMcpConfigsOptions = {
+      editors: ['claude', 'cursor'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    };
+    const results: EditorMcpResult[] = await writeUserMcpConfigs(opts);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((r) => r.action === 'written')).toBe(true);
+
+    const claudeConfig = JSON.parse(
+      readFileSync(resolveClaudeCodeConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+
+    const cursorConfig = JSON.parse(
+      readFileSync(resolveCursorConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(cursorConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
   });
 
-  it('"all" includes codex and claude-desktop', async () => {
-    const all = parseEditorFlag('all');
-    expect(all).toContain('claude-desktop');
-    expect(all).toContain('codex');
+  it('falls back to the npx shape when cliPath is not provided', async () => {
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('written');
+
+    const claudeConfig = JSON.parse(
+      readFileSync(resolveClaudeCodeConfigPath({ home: fakeHome }), 'utf-8'),
+    );
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
   });
 
-  it('comma-separated mix resolves aliases and canonical ids', async () => {
-    expect(parseEditorFlag('claude,claude_desktop,cursor')).toEqual([
-      'claude',
-      'claude-desktop',
-      'cursor',
-    ]);
+  it('preserves type:stdio on the VS Code entry with cliPath', async () => {
+    await writeUserMcpConfigs({
+      editors: ['vscode'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    const vsConfig = JSON.parse(readFileSync(resolveVsCodeConfigPath({ home: fakeHome }), 'utf-8'));
+    expect(vsConfig.servers['open-knowledge']).toEqual({
+      type: 'stdio',
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('does NOT create .git, AGENTS.md, .open-knowledge, or launch.json under the fake HOME', async () => {
+    await writeUserMcpConfigs({
+      editors: ['claude', 'cursor', 'vscode'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    // None of runInit's project-scoped side effects should fire
+    expect(existsSync(join(fakeHome, '.git'))).toBe(false);
+    expect(existsSync(join(fakeHome, 'AGENTS.md'))).toBe(false);
+    expect(existsSync(join(fakeHome, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(fakeHome, '.claude', 'launch.json'))).toBe(false);
+    expect(existsSync(join(fakeHome, OK_DIR))).toBe(false);
+    // Also verify no legacy project .mcp.json was scanned into existence
+    expect(existsSync(join(fakeHome, '.mcp.json'))).toBe(false);
+  });
+
+  it('unconditionally overwrites a differing existing entry (M6b always-write semantic)', async () => {
+    // Post-main-PR-#282 semantic (reconciled 2026-04-23): writeEditorMcpConfig
+    // dropped its `force` parameter and now always overwrites. `writeUserMcpConfigs`
+    // inherits that — the caller (mcp-wiring.ts confirmHandler) filters foreign
+    // customizations via `computeForce` + `readExistingMcpEntry` BEFORE this call,
+    // so every editor that reaches this function is one the caller decided to
+    // overwrite.
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['old'] } } },
+        null,
+        2,
+      ),
+    );
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('overwritten');
+
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('caller controls which editors get overwritten by omitting them from the editors array', async () => {
+    // Regression gate for the reconciliation with main PR #282: the
+    // mcp-wiring.ts confirmHandler classifies existing entries via
+    // `readExistingMcpEntry` + `computeForce` and only passes MANAGED-SHAPE
+    // editors to writeUserMcpConfigs. This test proves the contract: if a
+    // foreign editor is not in `editors[]`, its config is left untouched.
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    const cursorPath = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    mkdirSync(dirname(cursorPath), { recursive: true });
+
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['claude-old'] } } },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      cursorPath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: 'custom', args: ['cursor-old'] } } },
+        null,
+        2,
+      ),
+    );
+
+    // Only claude is in `editors` — caller has decided cursor's custom entry
+    // should be preserved (via classification it didn't include here).
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.editorId).toBe('claude');
+    expect(results[0]?.action).toBe('overwritten');
+
+    const claudeConfig = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(claudeConfig.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+    // Cursor untouched — wasn't in the editors array.
+    const cursorConfig = JSON.parse(readFileSync(cursorPath, 'utf-8'));
+    expect(cursorConfig.mcpServers['open-knowledge']).toEqual({
+      command: 'custom',
+      args: ['cursor-old'],
+    });
+  });
+
+  it('preserves unrelated mcpServers entries when writing the managed entry', async () => {
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'other-server': { command: 'node', args: ['x.js'] } } },
+        null,
+        2,
+      ),
+    );
+
+    await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['other-server']).toEqual({
+      command: 'node',
+      args: ['x.js'],
+    });
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+
+  it('reports "overwritten" even when the entry already matches cliPath shape (main PR #282 always-overwrite)', async () => {
+    // Post-rebase semantic (2026-04-23): `writeEditorMcpConfig` always
+    // overwrites existing entries — "skipped-existing" and "skipped-conflict"
+    // are gone. Re-running with the same cliPath is safe (byte-identical
+    // result), but the action value reflects "there was an existing entry
+    // that got re-written" not "the entry was idempotent."
+    const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(claudePath), { recursive: true });
+    writeFileSync(
+      claudePath,
+      JSON.stringify(
+        { mcpServers: { 'open-knowledge': { command: CLI_PATH, args: ['mcp'] } } },
+        null,
+        2,
+      ),
+    );
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('overwritten');
+    // Idempotency check: the written entry is byte-identical to the prior.
+    const config = JSON.parse(readFileSync(claudePath, 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({ command: CLI_PATH, args: ['mcp'] });
+  });
+
+  it('reports action:failed for unsupported editors without throwing', async () => {
+    // Claude Desktop is unsupported on Linux — but resolveClaudeDesktopConfigPath
+    // throws synchronously. writeEditorMcpConfig catches that path-resolution
+    // throw and returns action:'failed' instead of bubbling.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+
+    const results = await writeUserMcpConfigs({
+      editors: ['claude-desktop'],
+      cliPath: CLI_PATH,
+      home: fakeHome,
+    });
+
+    expect(results[0].action).toBe('failed');
+    expect(results[0].error).toMatch(/Claude Desktop is not available on linux/);
+  });
+});
+
+describe('writeEditorMcpConfig (exported for Electron main)', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  const CLI_PATH = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `write-editor-mcp-config-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('is callable as a standalone export with a single target', () => {
+    // Post-rebase signature (2026-04-23): `writeEditorMcpConfig(target, cwd,
+    // installOptions, home?)` — the `force` 3rd arg was dropped when main
+    // refactored to always-overwrite semantics. The M6b call-site
+    // (writeUserMcpConfigs) passes `skipAvailabilityCheck: true` so the
+    // user-toggled editor isn't silently rejected by the new
+    // `isEditorTargetAvailable` guard.
+    const result: EditorMcpResult = writeEditorMcpConfig(
+      EDITOR_TARGETS.cursor,
+      '',
+      { cliPath: CLI_PATH, skipAvailabilityCheck: true },
+      fakeHome,
+    );
+    expect(result.action).toBe('written');
+    expect(result.editorId).toBe('cursor');
+    const config = JSON.parse(readFileSync(resolveCursorConfigPath({ home: fakeHome }), 'utf-8'));
+    expect(config.mcpServers['open-knowledge']).toEqual({
+      command: CLI_PATH,
+      args: ['mcp'],
+    });
+  });
+});
+
+/**
+ * Pass 0 Major #13 — direct unit coverage for `readExistingMcpEntry`.
+ *
+ * The function is the M6b consent-flow tolerance boundary: every reachable
+ * fail mode (config absent, config unparseable, top-level not an object,
+ * server entry not an object, configPath throws on platform mismatch) MUST
+ * return `null`, never throw. A regression that makes any branch throw
+ * crashes `confirmHandler`, leaves the marker absent, and creates an infinite
+ * dialog re-fire loop on user machines with corrupted editor configs.
+ *
+ * The orchestration tests in `mcp-wiring.test.ts` stub this function, so
+ * direct coverage here is the only guard against tolerance regressions.
+ */
+describe('readExistingMcpEntry (Pass 0 Major #13)', () => {
+  let fakeHome: string;
+  let testDir: string;
+  const originalPlatform = process.platform;
+  const originalHome = process.env.HOME;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `read-existing-mcp-entry-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+    process.env.HOME = fakeHome;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('returns null when the editor config file is absent', () => {
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when configPath throws (platform-mismatched target)', () => {
+    // Claude Desktop's configPath only resolves on macOS / Windows. Switch to
+    // linux so the configPath helper throws — readExistingMcpEntry MUST
+    // catch + return null rather than propagate the throw.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    expect(readExistingMcpEntry(EDITOR_TARGETS['claude-desktop'], '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid JSON (corrupt config)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{ this is not valid JSON', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null on invalid TOML (corrupt Codex config)', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'not = valid = toml = at = all', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when top-level mcpServers key is not an object (e.g. array)', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ mcpServers: ['not', 'an', 'object'] }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the server entry exists but is not an object', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'open-knowledge': 'not-an-object' } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns the parsed entry when JSON config is well-formed', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ mcpServers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toEqual(entry);
+  });
+
+  it('returns the parsed entry when TOML config (Codex) is well-formed', () => {
+    const path = resolveCodexConfigPath({ home: fakeHome, env: {} });
+    mkdirSync(dirname(path), { recursive: true });
+    // Codex's `mcp_servers."open-knowledge"` table — quoted key form so the
+    // TOML parser keeps the dash-bearing name as one identifier (per
+    // smol-toml grammar). Same shape Codex itself writes via `ok init`.
+    writeFileSync(
+      path,
+      '[mcp_servers."open-knowledge"]\ncommand = "npx"\nargs = ["@inkeep/open-knowledge", "mcp"]\n',
+      'utf-8',
+    );
+    const result = readExistingMcpEntry(EDITOR_TARGETS.codex, '', fakeHome);
+    expect(result).toEqual({
+      command: 'npx',
+      args: ['@inkeep/open-knowledge', 'mcp'],
+    });
+  });
+
+  it('returns null when config has the top-level key but no entry for our serverName', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { 'some-other-server': { command: 'foo' } } }),
+      'utf-8',
+    );
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns null when the file exists but is empty', () => {
+    const path = resolveCursorConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '', 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.cursor, '', fakeHome)).toBeNull();
+  });
+
+  it('returns the parsed entry when VS Code config uses servers key (not mcpServers)', () => {
+    // Regression gate for the `topLevelKey` abstraction: VS Code is the
+    // only EDITOR_TARGETS entry that uses 'servers' (editors.ts:EDITOR_TARGETS.vscode)
+    // instead of 'mcpServers' / 'mcp_servers'. Without this test, a future
+    // refactor that hard-codes 'mcpServers' (easy to do since 5/6 editors use
+    // it) would silently break M6b's VS Code detection — the dialog would
+    // classify the entry as absent, write a duplicate, and the consent flow
+    // would never surface the existing entry to the user for replacement.
+    // Reviewer-requested coverage (PR #289 inline thread).
+    const path = resolveVsCodeConfigPath({ home: fakeHome });
+    mkdirSync(dirname(path), { recursive: true });
+    const entry = { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] };
+    writeFileSync(path, JSON.stringify({ servers: { 'open-knowledge': entry } }), 'utf-8');
+    expect(readExistingMcpEntry(EDITOR_TARGETS.vscode, '', fakeHome)).toEqual(entry);
   });
 });

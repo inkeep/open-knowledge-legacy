@@ -6,6 +6,7 @@ import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core'
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
+import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -64,6 +65,7 @@ import {
   shadowGit,
 } from './shadow-repo.ts';
 import { SyncEngine } from './sync-engine.ts';
+import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -119,6 +121,7 @@ export interface ServerInstance {
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
   agentFocusBroadcaster: AgentFocusBroadcaster;
+  agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -150,7 +153,7 @@ export interface ServerInstance {
  * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
  * concurrent observer somehow fires, it short-circuits symmetrically (D39).
  */
-export const PARK_SNAPSHOT_ORIGIN = (() => {
+const PARK_SNAPSHOT_ORIGIN = (() => {
   const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
   return Object.freeze({
     source: 'local' as const,
@@ -180,6 +183,12 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const log = getLogger('server');
 
+  // Initialize OpenTelemetry before any spans could be emitted. No-op when
+  // OTEL_SDK_DISABLED != 'false' (default — zero overhead). Idempotent; safe
+  // to call multiple times (bootServer also calls it, but dev-plugin path
+  // bypasses bootServer and enters createServer directly).
+  initTelemetry();
+
   // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
   // HTTP listen, etc.). Collides fast with another running server in the same
   // contentDir. Port may be 0 here — the CLI rewrites it post-listen via
@@ -199,6 +208,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
+  let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
   // Mutable principal holder — populated in initAsync (D50, US-024)
   let loadedPrincipal: Principal | null = null;
 
@@ -227,6 +237,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       getPrincipal: () => loadedPrincipal,
+      // Emit CC1 ch:'session-activity' after any agent writer commits so
+      // Activity Panel clients get live invalidations (FR-P25, D-P11).
+      // cc1Broadcaster is initialized after persistence but captured by
+      // closure reference — the callback always sees the latest value.
+      onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -239,6 +254,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
     agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
+    agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -320,6 +336,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
+      agentPresenceBroadcaster,
       onAgentWrite: options.onAgentWrite,
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
@@ -818,9 +835,15 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
           }
 
-          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          // Phase 1b: tear down CC1 broadcaster + agent-presence broadcaster +
+          // __system__ direct connection. Both broadcasters share the same
+          // `__system__` Y.Doc — their destroys clear internal state (debounce
+          // timers for CC1; idempotent no-op for agent-presence today but
+          // symmetric with the broadcaster-lifecycle contract). The single
+          // systemDocConnection handle is torn down last.
           try {
             cc1Broadcaster?.destroy();
+            agentPresenceBroadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
@@ -948,6 +971,17 @@ export function createServer(options: ServerOptions): ServerInstance {
             error: err instanceof Error ? err.message : String(err),
           });
           log.error({ err }, '[server] shutdown phase-6 releaseServerLock failed');
+        }
+        // Telemetry shutdown runs outside the lock-release try so a telemetry
+        // flush failure can never prevent the lock from being released. 5s
+        // internal timeout prevents a hung OTLP exporter from stalling teardown.
+        try {
+          await shutdownTelemetry();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'telemetry-shutdown',
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     })();
@@ -1428,6 +1462,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     cc1Broadcaster,
     agentFocusBroadcaster,
+    agentPresenceBroadcaster,
     contentFilter,
     destroy,
     ready,

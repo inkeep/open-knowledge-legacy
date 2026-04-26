@@ -3,7 +3,7 @@
  *
  * Covers the SPEC §8.2 File / Edit / View / Window scope at the minimum
  * useful level for M1:
- *   - File: New Project (open Navigator), Open Folder (native picker),
+ *   - File: Switch Project (open Navigator), Open Folder (native picker),
  *     Open Recent submenu, Close Window
  *   - Edit: macOS defaults (Undo/Redo/Cut/Copy/Paste/Select All)
  *   - View: Reload / Toggle DevTools / zoom / fullscreen (Electron built-in roles)
@@ -33,6 +33,8 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
+import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
 export interface MenuDeps {
@@ -42,7 +44,7 @@ export interface MenuDeps {
    *  can call `promptForFolder(dialog)` without importing `dialog` at module
    *  scope (breaks Bun-test module load; see file header). */
   dialog: Dialog;
-  /** Open the Project Navigator window (File → New Project…). */
+  /** Open the Project Navigator window (File → Switch Project…). */
   openNavigator(): void;
   /** Open a specific project folder (File → Open Folder… or File → Open Recent ▸ <row>). */
   openProject(projectPath: string): Promise<void>;
@@ -52,6 +54,42 @@ export interface MenuDeps {
   clearRecentProjects(): void;
   /** Open an external URL (Help menu). Injected so the `shell` runtime value doesn't cross the module boundary. */
   openExternalUrl(url: string): void;
+  /**
+   * Current CLI-on-PATH install status (M6a, D52). Returning `null` hides
+   * the File → Install/Uninstall Command-Line Tools menu item entirely —
+   * used for non-darwin platforms (NG4 defers Windows/Linux) and for unit
+   * tests that don't exercise the M6a feature.
+   *
+   * A function (not a value) so re-calling `installApplicationMenu` after a
+   * toggle re-reads `getInstallStatus(app.getPath('exe'))` afresh without
+   * needing to thread a state snapshot through the click handler — same
+   * shape as `getRecentProjects`.
+   */
+  cliInstallStatus?(): CliInstallStatus | null;
+  /**
+   * Run the install-or-uninstall flow for the Command-Line Tools menu item.
+   * Wired in `index.ts` to dispatch `installCli` / `uninstallCli` based on
+   * the current status, then call `refreshApplicationMenu()` — same
+   * side-effect pattern as `clearRecentProjects`. Rejection semantics live
+   * in the CLI-install layer (translocation warning, admin-cancel fallback).
+   */
+  toggleCliInstall?(): Promise<void> | void;
+  /**
+   * Pass 2 Major #5: re-trigger M6b consent from the File menu. Invoked
+   * by "Configure AI Tool Integrations…" — a user who Skip'd first-launch
+   * (or added a new editor afterwards) can re-open the dialog without
+   * hand-deleting `~/.open-knowledge/mcp-status.json`. Gated on darwin
+   * + `app.isPackaged`; `index.ts` short-circuits in dev + non-darwin so
+   * the menu item is hidden there.
+   */
+  reconfigureMcpWiring?(): Promise<void> | void;
+  /**
+   * Ship 1g — Help → Install in Claude Desktop… click handler. Navigates
+   * the focused window's URL hash to `#install-claude-desktop` so App.tsx's
+   * `InstallInClaudeDesktopTrigger` opens the dialog. Optional because the
+   * menu renders even in contexts that don't wire it (unit tests).
+   */
+  openInstallSkillDialog?(): void;
 }
 
 /**
@@ -69,6 +107,13 @@ export async function installApplicationMenu(deps: MenuDeps): Promise<void> {
 export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] {
   const isMac = process.platform === 'darwin';
   const recents = deps.getRecentProjects();
+  // D52 / M6a menu item — shown only on darwin and only when the runtime
+  // provides a status probe. `'installed'` flips the label to "Uninstall…";
+  // `'not-installed'` and `'broken'` both render "Install…" (broken is
+  // primarily surfaced by the launch-time repair dialog in `index.ts`, but
+  // clicking the menu item while broken re-runs the install flow which
+  // overwrites the dangling symlink — same end state).
+  const cliStatus = isMac ? (deps.cliInstallStatus?.() ?? null) : null;
 
   const recentSubmenu: MenuItemConstructorOptions[] =
     recents.length === 0
@@ -113,7 +158,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       label: 'File',
       submenu: [
         {
-          label: 'New Project\u2026',
+          label: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS,
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => deps.openNavigator(),
         },
@@ -135,6 +180,35 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
           submenu: recentSubmenu,
         },
         { type: 'separator' },
+        ...(cliStatus
+          ? ([
+              {
+                label:
+                  cliStatus === 'installed'
+                    ? 'Uninstall Command-Line Tools'
+                    : 'Install Command-Line Tools…',
+                click: () => {
+                  void deps.toggleCliInstall?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
+        // Pass 2 Major #5 — re-trigger M6b consent. The dep is optional
+        // so non-macOS / non-packaged contexts (where MCP wiring no-ops
+        // anyway) hide the row. Gating matches cliStatus above — `deps`
+        // plumbs `undefined` when the runtime has nothing to offer.
+        ...(deps.reconfigureMcpWiring
+          ? ([
+              {
+                label: 'Configure AI Tool Integrations…',
+                click: () => {
+                  void deps.reconfigureMcpWiring?.();
+                },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },
@@ -184,6 +258,20 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     {
       label: 'Help',
       submenu: [
+        {
+          // SPEC 2026-04-24 Ship 1g — primary install entry point. Standard
+          // macOS/Windows convention for setup actions. The click sets the
+          // renderer's URL hash so App.tsx's InstallInClaudeDesktopTrigger
+          // opens the dialog — one source of truth for dialog visibility.
+          //
+          // Label explicitly names both modes (Claude Chat + Claude Cowork)
+          // and the Desktop App context. Distinguishes from Claude Code,
+          // which is already covered by `ok init` via `npx skills add` and
+          // would be a different install.
+          label: 'Install for Claude Chat & Cowork (Desktop App)…',
+          click: () => deps.openInstallSkillDialog?.(),
+        },
+        { type: 'separator' },
         {
           label: 'Open Knowledge on GitHub',
           click: () => deps.openExternalUrl('https://github.com/inkeep/open-knowledge'),

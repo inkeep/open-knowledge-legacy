@@ -1,13 +1,38 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  buildGraphLinkSignature,
+  type GraphDocDisplayState,
   getGraphNodeCanvasRadius,
   getGraphNodePointerRadius,
   getGraphNodeTooltipLabel,
   getGraphNodeVisualState,
   getHashForGraphDocSelection,
+  reconcileGraphData,
   resolveGraphNodeClickAction,
 } from './graph-view-utils';
+
+type GraphPhysicsFixture = {
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+  __indexColor?: string;
+};
+
+type GraphNodeFixture = {
+  id: string;
+  label: string;
+  cluster?: string | null;
+} & GraphPhysicsFixture;
+
+type GraphLinkFixture = {
+  source: string | { id: string };
+  target: string | { id: string };
+  __indexColor?: string;
+};
 
 describe('getGraphNodeTooltipLabel', () => {
   test('returns plain label for doc nodes without metadata', () => {
@@ -134,6 +159,39 @@ describe('getGraphNodeTooltipLabel', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('a&lt;b');
     expect(html).toContain('x&amp;y');
+  });
+
+  test.each([
+    {
+      displayState: 'missing' as GraphDocDisplayState,
+      heading: 'Broken / uncreated link',
+      detail: 'This page does not exist yet. Open it to create it.',
+    },
+    {
+      displayState: 'folder' as GraphDocDisplayState,
+      heading: 'Folder target',
+      detail: 'This link resolves to a folder view rather than a standalone page.',
+    },
+  ])('returns status-rich HTML for $displayState doc targets', ({
+    displayState,
+    heading,
+    detail,
+  }) => {
+    const html = getGraphNodeTooltipLabel(
+      {
+        kind: 'doc',
+        id: 'notes/alpha',
+        label: 'Alpha',
+        docName: 'notes/alpha',
+        anchor: null,
+      },
+      { displayState },
+    );
+
+    expect(html).toContain('<div');
+    expect(html).toContain(heading);
+    expect(html).toContain(detail);
+    expect(html).toContain('Alpha');
   });
 });
 
@@ -338,5 +396,159 @@ describe('getHashForGraphDocSelection', () => {
         anchor: null,
       }),
     ).toBe('#/notes/alpha');
+  });
+});
+
+describe('reconcileGraphData', () => {
+  test('preserves settled node physics for unchanged ids while refreshing metadata', () => {
+    const previous: {
+      nodes: Array<
+        {
+          kind: 'doc';
+          docName: string;
+          anchor: null;
+        } & GraphNodeFixture
+      >;
+      links: GraphLinkFixture[];
+    } = {
+      nodes: [
+        {
+          kind: 'doc',
+          id: 'notes/alpha',
+          label: 'Alpha (old)',
+          docName: 'notes/alpha',
+          anchor: null,
+          x: 120,
+          y: -40,
+          vx: 0.25,
+          vy: -0.5,
+          fx: null,
+          fy: null,
+          __indexColor: '#123456',
+        },
+      ],
+      links: [
+        {
+          source: { id: 'notes/alpha' },
+          target: { id: 'notes/beta' },
+          __indexColor: '#abcdef',
+        },
+      ],
+    };
+
+    const next = {
+      nodes: [
+        {
+          kind: 'doc' as const,
+          id: 'notes/alpha',
+          label: 'Alpha (new)',
+          docName: 'notes/alpha',
+          anchor: null,
+          cluster: 'planning',
+        },
+        {
+          kind: 'doc' as const,
+          id: 'notes/beta',
+          label: 'Beta',
+          docName: 'notes/beta',
+          anchor: null,
+        },
+      ],
+      links: [{ source: 'notes/alpha', target: 'notes/beta' }],
+    };
+
+    const reconciled = reconcileGraphData(
+      previous as unknown as Parameters<typeof reconcileGraphData>[0],
+      next,
+    );
+    const alpha = reconciled.nodes[0] as GraphNodeFixture;
+    const beta = reconciled.nodes[1] as GraphNodeFixture;
+    const link = reconciled.links[0] as unknown as GraphLinkFixture;
+
+    expect(alpha.label).toBe('Alpha (new)');
+    expect(alpha.cluster).toBe('planning');
+    expect(alpha.x).toBe(120);
+    expect(alpha.y).toBe(-40);
+    expect(alpha.vx).toBe(0.25);
+    expect(alpha.vy).toBe(-0.5);
+    expect(alpha.__indexColor).toBe('#123456');
+    expect(beta.x).toBeUndefined();
+    expect(beta.y).toBeUndefined();
+    expect(link.__indexColor).toBe('#abcdef');
+  });
+
+  test('does not carry physics state forward for nodes absent from next', () => {
+    const previous = {
+      nodes: [
+        {
+          kind: 'doc' as const,
+          id: 'notes/alpha',
+          label: 'Alpha',
+          docName: 'notes/alpha',
+          anchor: null,
+          x: 10,
+          y: 20,
+        },
+        {
+          kind: 'doc' as const,
+          id: 'notes/removed',
+          label: 'Removed',
+          docName: 'notes/removed',
+          anchor: null,
+          x: 99,
+          y: 99,
+        },
+      ],
+      links: [],
+    };
+
+    const next = {
+      nodes: [
+        {
+          kind: 'doc' as const,
+          id: 'notes/alpha',
+          label: 'Alpha',
+          docName: 'notes/alpha',
+          anchor: null,
+        },
+        {
+          kind: 'doc' as const,
+          id: 'notes/new',
+          label: 'New',
+          docName: 'notes/new',
+          anchor: null,
+        },
+      ],
+      links: [],
+    };
+
+    const reconciled = reconcileGraphData(
+      previous as unknown as Parameters<typeof reconcileGraphData>[0],
+      next,
+    );
+
+    expect(reconciled.nodes).toHaveLength(2);
+    const ids = reconciled.nodes.map((n) => n.id);
+    expect(ids).not.toContain('notes/removed');
+    const alpha = reconciled.nodes.find((n) => n.id === 'notes/alpha') as GraphNodeFixture;
+    expect(alpha.x).toBe(10);
+    expect(alpha.y).toBe(20);
+    const newNode = reconciled.nodes.find((n) => n.id === 'notes/new') as GraphNodeFixture;
+    expect(newNode.x).toBeUndefined();
+    expect(newNode.y).toBeUndefined();
+  });
+});
+
+describe('buildGraphLinkSignature', () => {
+  test('normalizes force-graph object endpoints back to stable id signatures', () => {
+    expect(
+      buildGraphLinkSignature([
+        { source: 'notes/alpha', target: 'notes/beta' },
+        {
+          source: { id: 'notes/beta' },
+          target: { id: 'notes/gamma' },
+        },
+      ] as unknown as Parameters<typeof buildGraphLinkSignature>[0]),
+    ).toBe('notes/alpha>notes/beta,notes/beta>notes/gamma');
   });
 });

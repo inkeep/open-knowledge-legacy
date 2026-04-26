@@ -68,6 +68,13 @@ export interface WorkerServer {
   contentDir: string;
 }
 
+export interface AgentIdentity {
+  agentId: string;
+  agentName: string;
+  clientName?: string;
+  colorSeed?: string;
+}
+
 export interface ApiHelpers {
   /**
    * Create an empty document at `path` (e.g. `"doc-a.md"` or `"nested/x.md"`).
@@ -80,6 +87,14 @@ export interface ApiHelpers {
    * contract — do NOT pass `mode: 'replace'` (silent fallback to append).
    */
   replaceDoc(docName: string, markdown: string): Promise<void>;
+  /**
+   * Replace a document's entire contents, authenticating as a specific agent
+   * identity (distinct from the default 'claude-1'). Each call publishes a
+   * presence entry on `__system__` awareness keyed by `agent-${agentId}`
+   * (multi-agent-presence SPEC FR-2). Use for E2E tests that drive multiple
+   * concurrent agents.
+   */
+  writeAsAgent(docName: string, markdown: string, identity: AgentIdentity): Promise<void>;
   /**
    * Reset a specific document (or all documents if `docName` omitted) via
    * `/api/test-reset`. Isolates per-test CRDT + persistence state without
@@ -257,6 +272,26 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         });
         if (!res.ok) {
           throw new Error(`agent-write-md failed for ${docName}: ${res.status}`);
+        }
+      },
+      async writeAsAgent(docName: string, markdown: string, identity): Promise<void> {
+        const res = await fetch(`${baseURL}/api/agent-write-md`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            docName,
+            markdown,
+            position: 'replace',
+            agentId: identity.agentId,
+            agentName: identity.agentName,
+            clientName: identity.clientName,
+            colorSeed: identity.colorSeed,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(
+            `writeAsAgent failed for ${docName} / ${identity.agentId}: ${res.status}`,
+          );
         }
       },
       async testReset(docName?: string): Promise<void> {

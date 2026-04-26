@@ -93,6 +93,14 @@ bun run --filter=@inkeep/open-knowledge-desktop dev
 
 On first run, the app opens the Navigator window. Click "Open folder on disk" to pick a content directory — every project pick spawns a new editor window (D3 revised — there is no switch-in-place UX). Closing every editor window keeps the app and the Navigator running; click the Dock icon to bring the Navigator back.
 
+From inside an editor window, three affordances re-summon the Navigator without closing the current project:
+
+- **File → Switch Project…** (`Cmd+Shift+N`) — menu accelerator.
+- **Sidebar ProjectSwitcher pill → Switch Project…** — bottom item below the recents list.
+- **Command Palette (`Cmd+K`) → Switch Project…** — searchable by `switch`, `projects`, or `navigator`.
+
+The two renderer surfaces (sidebar pill and Command Palette) call `bridge.navigator.open()` (IPC channel `ok:navigator:open`), which delegates to the focus-or-create `openNavigator()` helper. The File menu accelerator calls `openNavigator()` directly inside the main process — same destination, no IPC hop.
+
 To skip the native-module rebuild during `bun install` (faster on machines that don't need the desktop build):
 
 ```bash
@@ -243,7 +251,7 @@ bunx electron-builder --mac --arm64 -c.mac.identity=null   # arm64-only smoke, s
 bunx --bun electron-fuses read --app "dist-desktop/mac-arm64/Open Knowledge.app"
 ```
 
-Expected output matches `targetFuses` in `scripts/target-fuses.mjs` (shared source of truth imported by both `afterPack.mjs` and `afterSign.mjs`): RunAsNode=Disabled, EnableCookieEncryption=Enabled, EnableNodeOptionsEnvironmentVariable=Disabled, EnableNodeCliInspectArguments=Enabled, EnableEmbeddedAsarIntegrityValidation=Enabled, OnlyLoadAppFromAsar=Enabled.
+Expected output matches `targetFuses` in `scripts/target-fuses.mjs` (shared source of truth imported by both `afterPack.mjs` and `afterSign.mjs`): RunAsNode=**Enabled** (M6a amendment — enables `ELECTRON_RUN_AS_NODE=1` in the bundled `ok.sh` wrapper; defense-in-depth rationale in `scripts/target-fuses.mjs`), EnableCookieEncryption=Enabled, EnableNodeOptionsEnvironmentVariable=Disabled, EnableNodeCliInspectArguments=Enabled, EnableEmbeddedAsarIntegrityValidation=Enabled, OnlyLoadAppFromAsar=Enabled.
 
 Install smoke: `open dist-desktop/*.dmg`, drag to Applications, `xattr -cr "/Applications/Open Knowledge.app"` to clear the quarantine bit, launch. The app is ad-hoc signed (`codesign -dv` reports `Signature=adhoc`) — Gatekeeper-runnable locally, unusable by anyone else (the proper Developer-ID sign comes from `CSC_LINK`).
 
@@ -472,6 +480,143 @@ The driver sets `OK_DEBUG_KEYRING_SMOKE=1 + OK_DEBUG_KEYRING_SMOKE_EXIT=1 + OK_D
 
 See [`tests/smoke/keyring-e2e.md`](./tests/smoke/keyring-e2e.md) for the 11-step procedure covering the four AC4–AC7 proof points: CFBundleDisplayName prompt UX, relaunch persistence, v0.1.0→v0.1.1 upgrade persistence, `log show` caller-attribution evidence. Runnable once Apple Developer credentials (`CSC_LINK`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) are available on the test machine.
 
+## M6a — Command-Line Tools
+
+**Status:** Shipped. `Install Command-Line Tools…` File menu item (macOS-only per D51) creates user-local symlinks at `/usr/local/bin/ok` + `/usr/local/bin/open-knowledge`, both pointing at the bundled wrapper at `Contents/Resources/cli/bin/ok.sh`. The wrapper invokes the bundled CLI via `ELECTRON_RUN_AS_NODE=1` — no Node install required on the user's machine. Full spec: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../../specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md). Phase 2 (M6b — first-launch MCP consent) is in progress; this section covers Phase 1 only.
+
+### Install / uninstall
+
+Click **File → Install Command-Line Tools…** on macOS. An admin prompt fires via `osascript`; after authentication, both symlinks land and the menu label flips to **Uninstall Command-Line Tools**. Click again to remove (same admin flow; only removes symlinks whose `readlink` target is inside the currently-running bundle — foreign files untouched per G6).
+
+The wrapper runs the Electron binary as a Node process under the hood. It re-exports any `NODE_OPTIONS` set by the user's shell as `OK_NODE_OPTIONS` and `unset`s `NODE_OPTIONS` before exec, avoiding the VS Code "`--require of ESM`" crash class when a user's project-level Node options conflict with Electron's embedded Node.
+
+### Diagnostic — `which -a ok`
+
+Both `ok` and `open-knowledge` resolve to the same binary (`open-knowledge` is the backward-compat alias retained per D52). To see every `ok` on your `$PATH`:
+
+```bash
+which -a ok
+```
+
+Expected output after M6a install:
+
+```
+/usr/local/bin/ok
+```
+
+If a second path shows up (e.g. `/opt/homebrew/bin/ok`), an npm-global install coexists — see the coexistence matrix below.
+
+### Coexistence with `npm install -g @inkeep/open-knowledge`
+
+Two origins of `ok` can live on the same machine — the DMG's wrapper (M6a) and a published npm global install. macOS resolution depends on the chip:
+
+| Architecture  | Homebrew prefix      | Typical `$PATH` order                           | Effect                                                                                                                                                                                                                                                                 |
+| ------------- | -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apple Silicon | `/opt/homebrew/bin`  | `/opt/homebrew/bin` precedes `/usr/local/bin`   | Terminal-typed `ok` resolves to the npm install; M6b writes MCP configs that point at the DMG wrapper (distinct binaries). Same codebase today, but versions can drift if you upgrade one without the other.                                                          |
+| Intel         | `/usr/local/bin`     | `/usr/local/bin` IS Homebrew's default prefix   | M6a and `npm -g` compete for the same path. G4's collision guard prompts before overwriting. If `npm install -g` later stomps the M6a symlink, re-run **File → Install Command-Line Tools…** to restore.                                                              |
+
+The diagnostic posture is the same on both chips: `which -a ok` shows every copy. Note that M6b resolves `cliPath` for MCP configs via a hybrid path per D-M6-R9 — the symlink at `/usr/local/bin/ok` is preferred when present AND ownership-checked (`readlink` target lives inside the current bundle), with a bundle-absolute fallback (`.../Contents/Resources/cli/bin/ok.sh`) otherwise. Foreign symlinks are never trusted.
+
+### Translocation gotcha
+
+macOS App Translocation runs unsigned apps launched directly from a DMG mount or a random Downloads-adjacent path out of a randomized `/private/var/folders/.../AppTranslocation/` copy. The translocated copy vanishes when the app quits, so symlinks pointing at it would break immediately.
+
+The menu item refuses to install when `app.getPath('exe')` lives under a translocation path. A dialog points the user at the fix:
+
+> Drag **Open Knowledge.app** to `/Applications/`, relaunch from there, then click **Install Command-Line Tools…** again.
+
+Signed+notarized DMGs also trigger translocation on the first launch from the mount. The same recipe applies.
+
+### Drag-to-Trash recovery
+
+If you uninstall the app (drag to Trash) without clicking **Uninstall Command-Line Tools…** first, the symlinks at `/usr/local/bin/ok` + `/usr/local/bin/open-knowledge` dangle — their targets vanish with the bundle. On your next app launch (e.g. after reinstalling the DMG), a **"Command-Line Tools are broken — repair?"** dialog offers to re-point the symlinks at the new install via the same admin flow as the initial install (G5). Decline to leave them; accept to repair in place.
+
+This check fires once per app session on packaged builds only — dev-mode launches (`electron-vite dev`) never classify a prior user's symlinks as "broken" relative to the dev binary, which would otherwise be a contamination vector.
+
+## M6b — MCP wiring (first-launch consent)
+
+First-launch MCP consent dialog on packaged-app first-open — user-scoped (not per-project per D-M6-R1) — that writes MCP server entries to detected AI-tool user-level configs and records a marker so it never re-fires. Spec: [`specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md`](../../specs/2026-04-21-m6-cli-and-mcp-wiring/SPEC.md).
+
+### What fires and when
+
+On every packaged-app launch (`app.isPackaged === true`, macOS-only in v0), `runMcpWiringOnFirstLaunch` (`src/main/mcp-wiring.ts`) checks for `~/.open-knowledge/mcp-status.json`. Marker absent → install IPC handlers, wait for the first renderer's `ok:mcp-wiring:renderer-ready` ack, send `ok:mcp-wiring:show` back with the detected-editors payload. `<McpConsentDialog>` is subscribed from BOTH `NavigatorApp` and `App.tsx` (host-agnostic per D-M6-R10), so whichever window opens first — Navigator (common case), editor via `lastOpenedProject`, or editor via `openknowledge://` cold-start deep-link — renders the dialog.
+
+Marker present (either shape below) → skip immediately; dialog never re-fires on that boot.
+
+### Marker shape and location
+
+`~/.open-knowledge/mcp-status.json` — user-scoped, sits next to `~/.open-knowledge/config.yml`.
+
+Confirmed:
+
+```json
+{
+  "configured": true,
+  "configuredAt": "2026-04-23T15:30:00Z",
+  "editors": ["claude", "cursor"],
+  "cliPath": "/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh"
+}
+```
+
+Skipped:
+
+```json
+{
+  "configured": false,
+  "skippedAt": "2026-04-23T15:30:00Z"
+}
+```
+
+**Re-triggering the dialog:** delete the marker file. Next app launch surfaces the consent flow again.
+
+### Hybrid `cliPath` resolution (D-M6-R9)
+
+At confirm time, `resolveCliPath(app.getPath('exe'))` prefers a bundle-owned symlink over the bundle-absolute path:
+
+1. Probe `/usr/local/bin/ok`. If it exists AND is a symlink AND `readlinkSync` resolves into the current `.app/` bundle (ownership check), return `/usr/local/bin/ok` — stable across Squirrel.Mac atomic-swap auto-updates and user drag-to-new-location moves.
+2. Otherwise return `${bundleRoot}/Contents/Resources/cli/bin/ok.sh` — self-contained, works without the M6a CLI-on-PATH install.
+
+MCP entries are written as `{"command": <cliPath>, "args": ["mcp"]}` — never `npx` for Electron-origin writes. CLI-origin `ok init` continues to produce `{"command": "npx", "args": ["@inkeep/open-knowledge", "mcp"]}` since CLI users have Node by definition.
+
+### Dev-mode contamination guard
+
+The consent flow is gated on `app.isPackaged === true`. In `electron-vite dev`, `app.getPath('exe')` points at the dev Electron binary (not a bundle) and `extraResources` aren't mounted — writing `cliPath` against that path would contaminate the developer's real `~/.claude.json` irrecoverably. Dev-mode invocations are a no-op.
+
+Developer opt-in for testing the flow requires BOTH the env bypass AND an isolated `HOME`:
+
+```bash
+OK_M6B_FORCE=1 HOME=/tmp/ok-m6b-home \
+  bun run --filter=@inkeep/open-knowledge-desktop dev
+```
+
+### Merge semantics
+
+`computeForce(existing, target)` classifies each editor's existing OK entry in three tiers:
+
+1. `target.isCompatible(existing, '', {mode: 'published'})` — canonical `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}` (including user-added `env` augmentation).
+2. Historical `-y npx` variant (`{command: 'npx', args: ['-y', '@inkeep/open-knowledge', 'mcp']}`).
+3. Prior `cliPath` shape from an earlier M6b run (`{command: <path-ending-in-ok.sh-or-ok>, args: ['mcp']}`).
+
+Any match → overwrite with the current cliPath shape (preserving `env` / other managed fields). Foreign customization (`{command: 'custom-wrapper', ...}`) is preserved; `mcp-wiring-skip-customized` JSON event emitted for observability.
+
+### Partial-failure recovery (OQ-19)
+
+If any per-editor write returns `action: 'failed'` (read-only target dir, platform not supported, etc.), the marker is NOT written so the dialog re-fires on next launch. Successful writes still land. One `mcp-wiring-write-failed` structured JSON event emits per failed editor.
+
+### Testing
+
+- **Unit tests:** `packages/desktop/src/main/mcp-wiring.test.ts` (49 tests — pure helpers + runtime orchestration).
+- **Playwright smoke:** `packages/desktop/tests/smoke/mcp-wiring.e2e.ts`. Invoke:
+
+```bash
+bun run build:desktop
+OK_DESKTOP_E2E_SMOKE=1 bunx playwright test \
+  --config packages/desktop/playwright.config.ts \
+  packages/desktop/tests/smoke/mcp-wiring.e2e.ts
+```
+
+5 active scenarios (happy-path, skip, idempotency, partial-failure, F1 `lastOpenedProject`) + 2 documented-skip (F2 cold-start deep-link and AC2.6 P1 E2E — both gated on signed DMG delivery via `openknowledge://` through Launch Services).
+
 ## Scope boundary
 
-This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification. Work that belongs to M6–M7 is explicitly out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers. Do not implement the CLI-on-PATH menu item (M6) and do not populate the MCP first-launch consent dialog (M6) until the spec for the relevant milestone is open.
+This package is M1 + M2-scaffolding + M3 (auto-update scaffolding) + M4 (URL scheme) + M5-verification + M6a (CLI-on-PATH install) + M6b (first-launch MCP wiring). M7 (Windows + Linux parity) is out of scope — see [`specs/2026-04-11-electron-desktop-app/SPEC.md §14`](../../specs/2026-04-11-electron-desktop-app/SPEC.md) for the milestone definitions and promote triggers.

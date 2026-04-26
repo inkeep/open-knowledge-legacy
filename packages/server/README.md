@@ -129,6 +129,19 @@ Classified writer IDs for non-attributable writes: `file-system` (disk reconcili
 
 The counters are the load-bearing signal for SS-1 (single-CRDT collapse) urgency calibration over the post-launch observation window.
 
+### OpenTelemetry instrumentation
+
+Optional OTel traces + metrics via `src/telemetry.ts` — off by default (`OTEL_SDK_DISABLED=true`). When enabled, every HTTP request, Hocuspocus hook, agent write, persistence debounce, shadow-repo commit, and fs write emits a span; pino log records carry `trace_id` / `span_id` / `trace_flags` for trace↔log correlation in Grafana.
+
+Canonical call sites:
+- `src/telemetry.ts` — `initTelemetry` / `shutdownTelemetry` / `withSpan` / `withSpanSync` / `setActiveSpanAttributes` / `getTracer` / `getMeter`. SDK 2.x (`BasicTracerProvider` + `AsyncLocalStorageContextManager`) — Bun-compatible.
+- `src/fs-traced.ts` — ONLY sanctioned path for instrumenting `writeFile` / `rename` / `mkdir` / `unlink` (async + `*Sync` variants). `@opentelemetry/instrumentation-fs` does NOT work under Bun (oven-sh/bun#6546) — use these wrappers.
+- `src/logger.ts` — pino `otelMixin` injects trace context into every log record. No manual plumbing needed.
+
+**To turn it on + see traces in Grafana:** full recipe is in [`docker/otel-dev/README.md`](../../docker/otel-dev/README.md) (Grafana + Tempo + Loki + Prometheus + OTel Collector via docker-compose). Three commands, zero third-party subscriptions.
+
+Full PRD: [`specs/2026-04-09-otel-instrumentation/SPEC.md`](../../specs/2026-04-09-otel-instrumentation/SPEC.md).
+
 ---
 
 ## CC1 push-over-awareness — contract v1
@@ -160,11 +173,12 @@ No event kind, no path, no docName. Every signal says only "channel `ch` changed
 
 Each channel's semantics are owned by its emitter. Adding a new `ch` value counts as a contract change (D2 signoff).
 
-| Channel     | Emitted from                                                | Triggers                                                                                        | Canonical refetch             |
-| ----------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------- |
-| `files`     | `standalone.ts` DiskEvent dispatch (V0-2, shipped)          | `create \| delete \| rename` DiskEvents only. `update` / `conflict` do not change the file list | `GET /api/documents`          |
-| `backlinks` | `persistence.ts` backlink-index update path (V0-3, pending) | Content changes that invalidate the backlink index                                              | `GET /api/backlinks/:docName` |
-| `graph`     | TBD (V0-11, pending)                                        | Graph-derived data changes                                                                      | TBD                           |
+| Channel            | Emitted from                                                                                              | Triggers                                                                                        | Canonical refetch                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `files`            | `standalone.ts` DiskEvent dispatch (V0-2, shipped)                                                        | `create \| delete \| rename` DiskEvents only. `update` / `conflict` do not change the file list | `GET /api/documents`                                                                                           |
+| `backlinks`        | `persistence.ts` backlink-index update path (V0-3, pending)                                               | Content changes that invalidate the backlink index                                              | `GET /api/backlinks/:docName`                                                                                  |
+| `graph`            | TBD (V0-11, pending)                                                                                      | Graph-derived data changes                                                                      | TBD                                                                                                            |
+| `session-activity` | `persistence.ts` L2 drain, after any successful `commitWipFromTree` whose `writerId.startsWith('agent-')` | Any agent-origin write that produced a shadow-repo commit                                       | `GET /api/agent-activity?agentId=<connId>` — open Activity Panels re-fetch with a 500 ms hook-level debounce   |
 
 ### Coalescing
 

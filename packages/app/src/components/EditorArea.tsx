@@ -1,24 +1,30 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel } from '@/components/DocPanel';
-import { subscribeToDocPanelTabRequests } from '@/components/doc-panel-events';
+import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
+import {
+  consumePendingDocPanelTabRequest,
+  subscribeToDocPanelTabRequests,
+} from '@/components/doc-panel-events';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
+import { SeedDialog } from '@/components/SeedDialog';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
+import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
+import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
@@ -26,6 +32,8 @@ interface EditorAreaProps {
   previewEntry: TimelineEntry | null;
   diffLayout: DiffLayout;
   onNoDiff?: () => void;
+  onEntrySelect?: (entry: TimelineEntry) => void;
+  selectedSha?: string;
 }
 
 export function EditorArea(props: EditorAreaProps) {
@@ -36,9 +44,24 @@ export function EditorArea(props: EditorAreaProps) {
   );
 }
 
-function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
+function EditorAreaInner({
+  editorMode,
+  previewEntry,
+  diffLayout,
+  onNoDiff,
+  onEntrySelect,
+  selectedSha,
+}: EditorAreaProps) {
+  const {
+    activeDocName,
+    activeProvider,
+    activeTarget,
+    recycleDocument,
+    docPanelMode,
+    docPanelExpandSignal,
+  } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  const stats = useDocumentStats(activeProvider, activeDocName);
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
   // value via `useDocumentContext`). The editor subtree, however, pays a
@@ -54,6 +77,7 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   // at 250ms shell-snap.
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
+  const showFooter = !!activeDocName && activeTarget?.kind !== 'folder' && editorMode !== 'diff';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -66,6 +90,10 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
+
+  const [activeTab, setActiveTab] = useState<PanelTab>(
+    () => consumePendingDocPanelTabRequest() ?? TABS[0].id,
+  );
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -80,13 +108,33 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
 
   useEffect(
     () =>
-      subscribeToDocPanelTabRequests(() => {
+      subscribeToDocPanelTabRequests((tab) => {
+        consumePendingDocPanelTabRequest();
+        setActiveTab(tab);
         if (isSheetMode) {
           setSheetOpen(true);
+        } else {
+          userCollapsedRef.current = false;
+          panelRef.current?.expand();
         }
       }),
-    [isSheetMode],
+    [isSheetMode, panelRef],
   );
+
+  // `docPanelExpandSignal` is a monotonic counter incremented by
+  // `DocumentContext.openActivityPanel`. When it increments, expand/open the
+  // panel in whichever layout mode is active.
+  useEffect(() => {
+    if (docPanelExpandSignal === 0) return;
+    if (isSheetMode) {
+      setSheetOpen(true);
+    } else {
+      // Panel mode — clear the user-collapsed sticky flag so the
+      // expand call isn't immediately fought by a later layout effect.
+      userCollapsedRef.current = false;
+      panelRef.current?.expand();
+    }
+  }, [docPanelExpandSignal, isSheetMode, panelRef]);
 
   // Track the previously-active docName for DocumentErrorBoundary's
   // "Back to previous document" affordance. Updated AFTER render (effect) so
@@ -189,12 +237,7 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
     if (hashDoc !== null) {
       return <EditorSkeleton />;
     }
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
-        <OkBlob size={80} />
-        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
-      </div>
-    );
+    return <EmptyEditorState />;
   }
 
   const isDiffMode = editorMode === 'diff';
@@ -236,8 +279,9 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
   );
 
   const editorContent = (
-    <div className="relative h-full">
-      {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+    <div className="relative flex h-full flex-col">
+      <div className="relative min-h-0 flex-1">
+        {/* No outer scroller. Scrolling is owned by (a) DiffView's own
           internal scroller in diff mode and (b) the per-Activity scroller
           inside EditorActivityPool in editor mode. Hoisting the scroller
           to this level would let the Activity subtree's content contract
@@ -245,21 +289,21 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           losing the user's position across warm navigation (QA-002 /
           SPEC US-007/F1). */}
 
-      {/* Diff view — shown when editorMode === 'diff' */}
-      {isDiffMode && previewLoading && (
-        <div
-          className="flex items-center justify-center py-16"
-          role="status"
-          aria-label="Loading version"
-        >
-          <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-        </div>
-      )}
-      {isDiffMode && !previewLoading && diffContent !== null && (
-        <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
-      )}
+        {/* Diff view — shown when editorMode === 'diff' */}
+        {isDiffMode && previewLoading && (
+          <div
+            className="flex items-center justify-center py-16"
+            role="status"
+            aria-label="Loading version"
+          >
+            <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+          </div>
+        )}
+        {isDiffMode && !previewLoading && diffContent !== null && (
+          <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
+        )}
 
-      {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+        {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
           Outer display:none keeps the editor DOM alive when in diff mode.
           EditorActivityPool keeps Tiptap eager and lazy-loads SourceEditor on
           the first source-mode visit for each doc, then preserves the per-doc
@@ -272,34 +316,34 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           hidden doc's cached rejected syncPromise cannot re-throw into
           the visible UI (QA-023/024). See EditorActivityPool.tsx file
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-      <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-        <EditorActivityPool
-          // Fall back to the urgent `activeDocName` when the deferred
-          // value is still null (initial load, before the first
-          // deferred-commit pass populates it). The outer guard at
-          // line 173 already short-circuits with skeleton/empty-state
-          // when `activeDocName` itself is null, so we can assert
-          // non-null here.
-          activeDocName={deferredActiveDocName ?? activeDocName}
-          isSourceMode={isSourceMode}
-          editorPlaceholder={editorPlaceholder}
-          previousDocName={previousDocName ?? undefined}
-          onNavigateBack={(prev) => {
-            // Navigate via hash so the URL stays in sync with app state —
-            // NavigationHandler's hashchange listener will call
-            // openDocumentTransition(prev). If the hash is already at
-            // prev (rare — happens when back-nav is used after agent
-            // nav without URL update), fall back to direct transition.
-            const nextHash = hashFromDocName(prev);
-            if (window.location.hash === nextHash) {
-              openDocumentTransition(prev);
-            } else {
-              window.location.hash = nextHash;
-            }
-          }}
-          onRecycle={recycleDocument}
-        />
-        {/* Nav-pending skeleton overlay. Rendered when the urgent
+        <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+          <EditorActivityPool
+            // Fall back to the urgent `activeDocName` when the deferred
+            // value is still null (initial load, before the first
+            // deferred-commit pass populates it). The outer guard at
+            // line 173 already short-circuits with skeleton/empty-state
+            // when `activeDocName` itself is null, so we can assert
+            // non-null here.
+            activeDocName={deferredActiveDocName ?? activeDocName}
+            isSourceMode={isSourceMode}
+            editorPlaceholder={editorPlaceholder}
+            previousDocName={previousDocName ?? undefined}
+            onNavigateBack={(prev) => {
+              // Navigate via hash so the URL stays in sync with app state —
+              // NavigationHandler's hashchange listener will call
+              // openDocumentTransition(prev). If the hash is already at
+              // prev (rare — happens when back-nav is used after agent
+              // nav without URL update), fall back to direct transition.
+              const nextHash = hashFromDocName(prev);
+              if (window.location.hash === nextHash) {
+                openDocumentTransition(prev);
+              } else {
+                window.location.hash = nextHash;
+              }
+            }}
+            onRecycle={recycleDocument}
+          />
+          {/* Nav-pending skeleton overlay. Rendered when the urgent
             `activeDocName` (shell state — driving sidebar highlight +
             header title) has moved past `deferredActiveDocName` (editor
             subtree prop). That delta window is exactly the interval
@@ -313,13 +357,15 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
             without unmounting it — Activity state (scroll, selection,
             editor instances) survives underneath. Regression test:
             docs-open.e2e.ts F0b. */}
-        {activeDocName && activeDocName !== deferredActiveDocName ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <EditorSkeleton />
-          </div>
-        ) : null}
+          {activeDocName && activeDocName !== deferredActiveDocName ? (
+            <div className="absolute inset-0 z-10 bg-background">
+              <EditorSkeleton />
+            </div>
+          ) : null}
+        </div>
+        {toggleButton}
       </div>
-      {toggleButton}
+      {showFooter && <EditorFooter stats={stats} />}
     </div>
   );
 
@@ -332,7 +378,15 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
             <SheetHeader className="sr-only">
               <SheetTitle>Document panel</SheetTitle>
             </SheetHeader>
-            <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+            <DocPanel
+              docName={activeDocName}
+              isSourceMode={isSourceMode}
+              activeTab={activeTab}
+              onActiveTabChange={setActiveTab}
+              onEntrySelect={onEntrySelect}
+              selectedSha={selectedSha}
+              mode={docPanelMode}
+            />
           </SheetContent>
         </Sheet>
       </div>
@@ -360,9 +414,45 @@ function EditorAreaInner({ editorMode, previewEntry, diffLayout, onNoDiff }: Edi
           onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
           className="flex flex-col bg-muted/20"
         >
-          <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
+          <DocPanel
+            docName={activeDocName}
+            isSourceMode={isSourceMode}
+            activeTab={activeTab}
+            onActiveTabChange={setActiveTab}
+            onEntrySelect={onEntrySelect}
+            selectedSha={selectedSha}
+            mode={docPanelMode}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
+    </div>
+  );
+}
+
+/**
+ * Landing state when no document is selected. Shows the OkBlob plus an
+ * optional CTA to initialize the Karpathy three-layer knowledge-base
+ * structure (`external-sources/`, `research/`, `articles/` + log.md + matching
+ * `config.yml` `folders:` entries). Works in both the Electron desktop app
+ * and the web editor — the SeedDialog internally routes to IPC when
+ * `window.okDesktop` is present, otherwise to the `/api/seed/*` HTTP
+ * endpoints.
+ */
+function EmptyEditorState() {
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6">
+      <OkBlob size={80} />
+      <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
+      <div className="flex flex-col items-center gap-2">
+        <Button variant="outline" onClick={() => setSeedDialogOpen(true)}>
+          <BrainCircuit aria-hidden="true" className="h-4 w-4" />
+          Initialize LLM brain
+        </Button>
+        <span className="text-xs text-muted-foreground">Optional starter structure</span>
+      </div>
+      <SeedDialog open={seedDialogOpen} onOpenChange={setSeedDialogOpen} />
     </div>
   );
 }

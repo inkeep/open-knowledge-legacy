@@ -2,23 +2,16 @@
  * Cursor's deep-link API has no single-call folder-open semantic. To open a
  * workspace AND pre-fill a prompt, two calls are required:
  *
- *   1. Spawn `cursor <projectDir>` via the Electron main-process IPC
- *      `ok:shell:spawn-cursor` (US-004).
+ *   1. Spawn `cursor <projectDir>` via the Electron `ok:shell:spawn-cursor`
+ *      IPC.
  *   2. Wait for the workspace window to materialize, then fire
  *      `cursor://anysphere.cursor-deeplink/prompt?text=&workspace=&mode=agent`.
- *      The `workspace=<basename>` safety-net pins the URL to the just-opened
+ *      The `workspace=<basename>` parameter pins the URL to the just-opened
  *      window even if the OS routes it before Cursor is fully ready.
  *
- * Governing spec: `specs/2026-04-21-open-in-agent-desktop/SPEC.md` §6.5 (TQ4b
- * LOCKED), plus the canonical recipe in
- * `reports/deep-linking-ai-desktop-apps-2026/evidence/cursor-encoding-empirics.md`
- * §Test protocol.
- *
- * Web host: per E4 DIRECTED (2026-04-21), Cursor is **always disabled** on web.
- * `dispatchCursor` on web returns `{ ok: false, reason:
- * 'web-host-cursor-unsupported' }` without touching any server endpoint. The
- * UI filters the row before reaching dispatch, so this branch is
- * defense-in-depth.
+ * Web host: Cursor is always disabled. `dispatchCursor` returns
+ * `web-host-cursor-unsupported` as defense-in-depth; the UI filters the row
+ * before reaching dispatch.
  */
 
 import {
@@ -29,10 +22,9 @@ import {
 import { type OpenExternalDeps, openExternal } from './open-external.ts';
 
 /**
- * Settle delay between step 1 (spawn) and step 2 (prompt URL). The canonical
- * recipe (see module comment) uses `sleep 1`; we extend to 1500 ms on cold
- * start since Launch Services adds 500-1500 ms on macOS before the window
- * materializes.
+ * Settle delay between step 1 (spawn) and step 2 (prompt URL). Cold start
+ * extends to 1500 ms because macOS Launch Services adds 500-1500 ms before
+ * the window materializes.
  */
 export const CURSOR_SETTLE_MS_WARM = 1000;
 export const CURSOR_SETTLE_MS_COLD = 1500;
@@ -49,10 +41,8 @@ export interface DispatchCursorDeps {
     | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
   >;
   /**
-   * Cold-start probe — returns `true` if Cursor is already running on this
-   * host. Optional: when absent, the cold-start settle delay is used
-   * (conservative default — extra 500 ms is preferable to firing the prompt
-   * URL before the window exists).
+   * Returns `true` if Cursor is already running. Absent = use the cold-start
+   * settle delay (extra 500 ms beats firing the prompt URL too early).
    */
   readonly isCursorRunning?: () => Promise<boolean>;
   /** Delay primitive. Injected so tests don't wait real wall-clock time. */

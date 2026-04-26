@@ -1,0 +1,36 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Required for Loki 3.x native OTLP ingestion. Structured metadata carries
+  # OTel resource attributes (service.name etc.) as non-indexed fields.
+  allow_structured_metadata: true
+  volume_enabled: true
+  retention_period: 168h
+  reject_old_samples: false
+
+pattern_ingester:
+  enabled: true

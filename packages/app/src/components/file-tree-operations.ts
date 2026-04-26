@@ -1,13 +1,17 @@
-import type { DocEntry, TreeNode } from '@/components/file-tree-utils';
+import type { DocEntry } from '@/components/file-tree-utils';
 
 export interface RenamedDocMapping {
   fromDocName: string;
   toDocName: string;
 }
 
-export type FileTreeTarget = Pick<TreeNode, 'kind' | 'path' | 'name'>;
+export interface FileTreeTarget {
+  kind: 'folder' | 'file';
+  path: string;
+  name: string;
+}
 
-export function normalizeRenameValue(kind: TreeNode['kind'], value: string): string {
+export function normalizeRenameValue(kind: FileTreeTarget['kind'], value: string): string {
   const trimmed = value.trim();
   if (kind === 'file') {
     return trimmed.replace(/\.md$/i, '');

@@ -84,14 +84,14 @@
 | Must | FR1 | Human cursors in WYSIWYG | Remote user's caret + name label visible at their cursor position. Selection shown as colored highlight. Updates within 100ms of remote movement. | CollaborationCursor extension (`@tiptap/extension-collaboration-cursor`) |
 | Must | FR2 | Human cursors in Source | Remote user's caret + name label visible in CodeMirror. Selection shown as colored highlight. | yCollab already handles via awareness |
 | Must | FR3 | Awareness state on connect | On editor mount, call `awareness.setLocalStateField('user', { name, color, type: 'human' })` and `awareness.setLocalStateField('mode', 'wysiwyg')`. Identity from `?coeditor=` param + localStorage. | Generate random name+color if not set. Mode is a top-level awareness field, not nested in user. |
-| Must | FR4 | Agent awareness via DirectConnection | Agent writes set `document.awareness.setLocalState({ user: { name, color, type: 'agent' } })` before transacting. Clear on disconnect. | Auto-renews every 15s per awareness protocol |
+| Must | FR4 | Agent awareness via DirectConnection | Agent writes set `document.awareness.setLocalState({ user: { name, color, type: 'agent' } })` before transacting. Clear on disconnect. | Auto-renews every 15s per awareness protocol |<br>_[Corrected 2026-04-21 post-ship: per-doc agent awareness stomps across N concurrent agents (every Hocuspocus `Document` has one shared `clientID`). Agents now publish a map-valued `agentPresence` field on the `__system__` Y.Doc's awareness keyed by `agentId`; `AwarenessUser.type` is narrowed to `'human'`. Authoritative fix in [[specs/2026-04-21-multi-agent-presence/SPEC]] (FR-2, FR-3, FR-10).]_
 | Must | FR5 | Agent writes use origin 'agent-write' | All agent write endpoints use `doc.transact(fn, 'agent-write')` instead of `conn.transact()` | Enables per-origin undo |
 | Must | FR6 | Y.Map('activity') side-channel | Agent writes append `{ agentId, timestamp, type: 'insert'\|'replace'\|'delete', description? }` to `Y.Map('activity')` INSIDE the same transaction as the content write. No `affectedRange` — flash plugin resolves position via XmlFragment observeDeep (D10). | Decoupled from observer chain. Key = agentId (D11). |
 | Must | FR7 | Region flash in WYSIWYG | When Y.Map('activity') updates, highlight affected paragraph nodes with a CSS @keyframes animation (agent-colored tint, 2s fade-out). Use direct DOM approach (A6: decorations don't survive re-renders). | ProseMirror plugin + direct DOM manipulation |
 | Must | FR8 | Region flash in Source | When Y.Map('activity') updates, highlight affected line range with a CodeMirror Decoration.line + fade animation | StateEffect + StateField pattern |
 | ~~Must~~ | ~~FR9~~ | ~~Activity toast~~ | **Cut.** Flash + presence bar status ("editing"/"idle") are sufficient real-time signals. A toast on top of a flash is redundant. The proper product surface for "what did the agent do" is an activity feed (Future Work — see §15). | — |
 | Must | FR10 | Per-origin undo (agent only) | **Server-side** UndoManager tracking 'agent-write' origin on the same Y.Doc where DirectConnection writes occur. Exposed via `POST /api/agent-undo` and `POST /api/agent-redo` HTTP endpoints. Browser "Undo Agent Edit" button calls these. (F5: browser-side UndoManager cannot capture remote origins — HocuspocusProvider overwrites origin to provider instance.) | Wired to UI button only (Q2: no keyboard shortcut for v0) |
-| Must | FR11 | Presence bar | Horizontal bar showing all connected participants as colored badges. Human: name + mode indicator. Agent: name + "🤖" + status. | Watches `awareness.on('change')` |
+| Must | FR11 | Presence bar | Horizontal bar showing all connected participants as colored badges. Human: name + mode indicator. Agent: name + "🤖" + status. | Watches `awareness.on('change')` |<br>_[Corrected 2026-04-21 post-ship: the PresenceBar is now a sectioned layout (current-doc | vertical divider | cross-doc dimmed + grayscale). Humans are read from `activeProvider.awareness`; agents are read from `systemProvider.awareness` via `pickAgentsForDoc`. Authoritative fix in [[specs/2026-04-21-multi-agent-presence/SPEC]] (FR-7, FR-11, D12).]_
 | Should | FR12 | `?coeditor=` query param | `?coeditor=cursor\|claude-cowork\|standalone` sets identity context. Tab UUID for dedup. | localStorage persistence for name/color |
 | Must | FR15 | Flash on tab refocus | When tab regains visibility (`document.visibilitychange` → `visible`), check Y.Map('activity') for entries newer than `lastSeenTimestamp`. Flash those regions. Handles "I switched tabs while agent was writing." | Store `lastSeenTimestamp` in flash plugin, update on each flash or visibility change |
 | Should | FR13 | Mode indicator in awareness | Each client's awareness state includes `mode: 'wysiwyg' \| 'source'`. Visible in presence bar. | Helps know who's where |
@@ -221,6 +221,8 @@ Already wired via `yCollab(ytext, provider.awareness)`. Need to:
 3. Update `awareness.setLocalStateField('mode', 'source')` on toggle (audit M6 — mode must update, not just be set once)
 
 #### 3.4 Agent awareness via DirectConnection
+
+_[Corrected 2026-04-21 post-ship: same correction as the breadcrumb at FR4 above. Agents no longer publish per-doc awareness; the entire §3.4 code sample below is superseded. Authoritative fix in [[specs/2026-04-21-multi-agent-presence/SPEC]].]_
 
 **Persistent session model** — DirectConnection stays open for the agent's session lifetime (no timeout, verified from source). Awareness persists between transactions.
 
@@ -374,6 +376,8 @@ Does NOT conflict with TipTap's browser-side UndoManager (tracks `ySyncPluginKey
 **Audit fix (C2/I6):** Agent UndoManager tracks only `[ytext]`, not `[xmlFragment, ytext]`. All agent write endpoints must enter through Y.Text. The raw `/api/agent-write` endpoint must be migrated from XmlFragment direct writes to Y.Text writes (Observer B handles XmlFragment update).
 
 #### 3.9 Presence bar (React component)
+
+_[Corrected 2026-04-21 post-ship: same correction as the breadcrumb at FR11 above. The single-source `usePresence(provider)` sketch below is superseded by a two-source `usePresence(activeProvider, systemProvider, activeDocName)` returning `{current, crossDoc}`. Authoritative fix in [[specs/2026-04-21-multi-agent-presence/SPEC]] §9.6.]_
 
 ```tsx
 function PresenceBar({ provider }: { provider: HocuspocusProvider }) {

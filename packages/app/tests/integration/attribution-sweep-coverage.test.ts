@@ -53,6 +53,7 @@ const EXEMPT_HANDLERS = new Set([
   'handleDiff',
   'handleMetricsReconciliation',
   'handleMetricsParseHealth',
+  'handleMetricsAgentPresence',
   'handleWorkspace',
   'handleRescueList',
   'handleRescueGet',
@@ -75,6 +76,13 @@ const EXEMPT_HANDLERS = new Set([
   'handleTestReset',
   'handlePrincipal',
   'handleInstalledAgentsRoute',
+  // `ok seed` scaffolder endpoints (SPEC 2026-04-23-ok-seed-scaffold). Both
+  // operate on project-level folder structure + config.yml on behalf of the
+  // local user, not agent content — same rationale as sync/local-op handlers.
+  'handleSeedPlan',
+  'handleSeedApply',
+  'handleAgentActivity',
+  'handleAgentBurstDiff',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {

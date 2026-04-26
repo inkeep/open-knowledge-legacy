@@ -25,7 +25,14 @@ import {
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
+import {
+  ALL_EDITOR_IDS,
+  detectInstalledEditors,
+  EDITOR_TARGETS,
+  readExistingMcpEntry,
+  writeUserMcpConfigs,
+} from '@inkeep/open-knowledge';
+import { installUserSkill, isProcessAlive, readServerLock } from '@inkeep/open-knowledge-server';
 import {
   app,
   BrowserWindow,
@@ -41,6 +48,12 @@ import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
+import {
+  createBrokenSymlinkRepairHandler,
+  getInstallStatus,
+  installCli,
+  uninstallCli,
+} from './cli-install.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 import {
@@ -48,11 +61,18 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
+import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
+import {
+  type McpWiringCliSurface,
+  type RunMcpWiringHandle,
+  runMcpWiringOnFirstLaunch,
+} from './mcp-wiring.ts';
 import { installApplicationMenu } from './menu.ts';
 import { createNavigatorWindow } from './navigator-window.ts';
 import { handleShellOpenExternal } from './shell-allowlist.ts';
@@ -161,6 +181,13 @@ let wm: WindowManager;
  */
 let autoUpdaterHandle: StartAutoUpdaterHandle | null = null;
 let debugIpc: DebugIpcHandle | null = null;
+/**
+ * M6b first-launch MCP consent handle. Armed by `runMcpWiringOnFirstLaunch`
+ * inside `app.whenReady()` when the user-scoped marker is absent; torn down
+ * on `app.on('will-quit')` so IPC handlers don't outlive the app. Null
+ * when the wiring no-ops (marker present, dev mode, non-macOS, etc.).
+ */
+let mcpWiringHandle: RunMcpWiringHandle | null = null;
 
 /**
  * electron-vite dev-server URL. Set by `electron-vite dev` at launch time.
@@ -384,9 +411,153 @@ function refreshApplicationMenu() {
     openExternalUrl: (url: string) => {
       void shell.openExternal(url);
     },
+    // M6a (D52) CLI-on-PATH menu item. Probe returns `null` on non-darwin so
+    // the menu item is hidden; otherwise returns 'installed' / 'not-installed'
+    // / 'broken' per `getInstallStatus`. The exe path probed is `app.getPath('exe')`
+    // which in dev mode is the electron binary, not a packaged bundle — `wrapperPathInBundle`
+    // returns a path that doesn't exist, so `getInstallStatus` reports 'not-installed'
+    // and clicking the menu item fires the "wrapper-missing" dialog (AC1.3 self-protective).
+    cliInstallStatus: () =>
+      process.platform === 'darwin' ? getInstallStatus(app.getPath('exe')) : null,
+    // Toggle dispatches the install / uninstall flow then rebuilds the menu
+    // so the label flip takes effect. Mirrors the `clearRecentProjects`
+    // pattern at line 376: the deps function owns its own follow-up refresh.
+    toggleCliInstall: async () => {
+      const executablePath = app.getPath('exe');
+      const status = getInstallStatus(executablePath);
+      const deps = { executablePath, dialog };
+      try {
+        if (status === 'installed') {
+          await uninstallCli(deps);
+        } else {
+          await installCli(deps);
+        }
+      } catch (err) {
+        // installCli/uninstallCli handle their own admin-cancel + failure
+        // dialogs internally (see cli-install.ts) — `AdminFailureError`
+        // paths show their own modal. Uncaught throws reaching here mean
+        // something pre-`runAsAdmin` (EACCES from existsSync, malformed
+        // executablePath, a future edge case). Surface those to the user
+        // so they see a signal instead of "menu does nothing" (Pass 0
+        // Minor #20). `showErrorBox` is sync and self-contained; operators
+        // still get the console trace for debugging.
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[main] toggleCliInstall failed', { err: message });
+        dialog.showErrorBox(
+          'Install Command-Line Tools failed',
+          `Open Knowledge couldn't complete the Command-Line Tools ${status === 'installed' ? 'uninstall' : 'install'}:\n\n${message}`,
+        );
+      }
+      refreshApplicationMenu();
+    },
+    // Pass 2 Major #5 — File → "Configure AI Tool Integrations…" re-trigger
+    // for M6b consent. Only plumb the dep on darwin + packaged builds;
+    // non-macOS has no MCP wiring, and dev-mode explicitly contaminates
+    // the developer's real configs (D-M6-R7) — both should hide the row.
+    // The handler tears down any prior mcpWiringHandle then arms a fresh
+    // one with `forceShow: true` so the marker-present gate is bypassed.
+    reconfigureMcpWiring:
+      process.platform === 'darwin' && app.isPackaged
+        ? async () => {
+            mcpWiringHandle?.destroy();
+            mcpWiringHandle = null;
+            try {
+              mcpWiringHandle = armMcpWiring({ forceShow: true });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('[main] reconfigureMcpWiring failed', { err: message });
+              dialog.showErrorBox(
+                'Configure AI Tool Integrations failed',
+                `Open Knowledge couldn't re-arm the MCP consent dialog:\n\n${message}`,
+              );
+            }
+          }
+        : undefined,
+    // Ship 1g — Help → Install in Claude Desktop… opens the skill install
+    // dialog in the focused window via the same URL-hash trigger the command
+    // palette + docs link use. Falls back to iterating all BrowserWindows
+    // when no window is focused (e.g. menu clicked from the Dock).
+    openInstallSkillDialog: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      target.webContents.executeJavaScript(
+        "window.location.hash = '#install-claude-desktop'; undefined",
+      );
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
+}
+
+/**
+ * Launch-time broken-symlink repair prompt (G5 / AC1.6).
+ *
+ * Full handler logic + guards live in
+ * `createBrokenSymlinkRepairHandler` (`cli-install.ts`) — extracted per
+ * Pass 1 Major #4 to unlock unit coverage for this privilege-adjacent
+ * path. This function just binds Electron globals to the factory.
+ *
+ * Fires on every app launch while `getInstallStatus` reports 'broken' — the
+ * drag-to-Trash-then-reinstall case. The per-boot (not per-bundle) firing
+ * matches spec AC1.6 ("one-time-per-session"); recovery is the user's
+ * Repair action OR moving the `.app` back into place, not a persistent
+ * dismiss token. Dev mode is gated out because `app.getPath('exe')` in dev
+ * resolves to the electron binary (not a packaged bundle); a prior DMG's
+ * symlinks would always classify 'broken' relative to the dev exe, and the
+ * Repair branch would install dev-path symlinks into the user's system
+ * (STOP_IF (e) analogue for M6a).
+ */
+/**
+ * Arm M6b first-launch MCP consent. Extracted as a helper so both the
+ * `app.whenReady()` path (once-per-boot marker-respecting) AND the
+ * "Configure AI Tool Integrations…" File menu path (forceShow, ignores
+ * prior marker) share one wiring definition. The cli surface is
+ * imported via the published-package name `@inkeep/open-knowledge` so
+ * turbo's `^build` topology correctly invalidates desktop's cache when
+ * CLI internals change.
+ */
+function armMcpWiring(opts: { forceShow?: boolean } = {}): RunMcpWiringHandle {
+  const mcpWiringCli: McpWiringCliSurface = {
+    detectInstalledEditors: (cwd, home) => detectInstalledEditors(cwd, home),
+    writeUserMcpConfigs: (writeOpts) => writeUserMcpConfigs(writeOpts),
+    readExistingMcpEntry: (editorId, home) =>
+      readExistingMcpEntry(EDITOR_TARGETS[editorId], '', home),
+    allEditorIds: ALL_EDITOR_IDS,
+    editorTargets: EDITOR_TARGETS,
+  };
+  return runMcpWiringOnFirstLaunch({
+    isPackaged: app.isPackaged,
+    executablePath: app.getPath('exe'),
+    home: osHomedir(),
+    platform: process.platform,
+    ipcMain,
+    cli: mcpWiringCli,
+    forceEnv: process.env.OK_M6B_FORCE ?? null,
+    forceShow: opts.forceShow ?? false,
+  });
+}
+
+function maybeOfferBrokenSymlinkRepair(): Promise<void> {
+  const handler = createBrokenSymlinkRepairHandler({
+    executablePath: app.getPath('exe'),
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    dialog,
+    install: installCli,
+    refreshMenu: refreshApplicationMenu,
+    // Per-bundle dismissal token (Pass 2 Major #3). `app.getVersion()`
+    // advances on auto-update; `app.getPath('exe')` shifts on app-move;
+    // either case rebuilds the token so the modal re-fires exactly once
+    // against the new bundle. The in-memory `appState` is the authoritative
+    // read + write surface; `saveAppState` persists atomically.
+    appVersion: app.getVersion(),
+    getDismissedToken: () => appState.dismissedRepairForBundle,
+    setDismissedToken: (token) => {
+      appState = { ...appState, dismissedRepairForBundle: token };
+      saveAppState(appState);
+    },
+  });
+  return handler();
 }
 
 function registerIpcHandlers() {
@@ -516,19 +687,51 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:navigator:open', async () => {
+    openNavigator();
+    return undefined;
+  });
+
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
+  });
+
+  // `ok seed` — project-level scaffolder. Pure plan/apply handlers scoped to
+  // the invoking window's ProjectContext (same pattern as `ok:shell:spawn-cursor`).
+  // See packages/desktop/src/main/ipc/seed.ts + SPEC 2026-04-23-ok-seed-scaffold.
+  const resolveSeedProjectRoot = (event: Electron.IpcMainInvokeEvent): string | undefined => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    return callerWin && wm
+      ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+      : undefined;
+  };
+  handle('ok:seed:plan', async (event) => {
+    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) });
+  });
+  handle('ok:seed:apply', async (event, plan) => {
+    return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
+  });
+
+  // Chat & Cowork skill install-dialog IPC — SPEC 2026-04-24 Ship 1e/1j.
+  // Two channels: (1) detect Claude Desktop's presence, (2) build .skill
+  // locally + invoke OS file association. No network, no GitHub Releases.
+  // See packages/desktop/src/main/ipc/install-skill.ts.
+  handle('ok:skill:detect-claude-desktop', async () => {
+    return handleDetectClaudeDesktop();
+  });
+  handle('ok:skill:build-and-open', async () => {
+    return handleBuildAndOpen({ app, shell });
   });
 }
 
 /**
- * Path to the Dock/app icon PNG. Rasterized from packages/app/public/favicon.svg
- * by `scripts/rasterize-icon.mjs` at postinstall time. In packaged builds,
- * electron-builder copies this file into the app bundle and generates .icns
- * from it (electron-builder.yml `icon:` key) — `app.dock.setIcon()` is a no-op
- * for the packaged case because Gatekeeper already knows the bundle's icon.
- * In dev mode, we set it at runtime so the Dock shows the real icon instead
- * of the generic Electron diamond.
+ * Path to the Dock/app icon PNG. Hand-authored 1024² file committed to the
+ * repo at build/icon.png. In packaged builds, electron-builder copies this
+ * into the app bundle and generates .icns from it (electron-builder.yml
+ * `icon:` key) — `app.dock.setIcon()` is a no-op for the packaged case
+ * because Gatekeeper already knows the bundle's icon. In dev mode, we set
+ * it at runtime so the Dock shows the real icon instead of the generic
+ * Electron diamond.
  */
 const ICON_PNG_PATH = join(__dirname, '..', '..', 'build', 'icon.png');
 
@@ -536,9 +739,7 @@ function installDockIcon() {
   if (process.platform !== 'darwin') return;
   if (app.isPackaged) return; // packaged build uses the bundle's .icns
   if (!existsSync(ICON_PNG_PATH)) {
-    console.warn(
-      '[main] skipping dock icon — build/icon.png missing (run `node scripts/rasterize-icon.mjs`)',
-    );
+    console.warn('[main] skipping dock icon — build/icon.png missing');
     return;
   }
   try {
@@ -700,6 +901,31 @@ function bootPrimaryInstance(): void {
     refreshApplicationMenu();
     installDockIcon();
 
+    // M6a launch-time repair hook (G5 / AC1.6). Fires once per boot; dev-
+    // mode + non-darwin short-circuit inside `maybeOfferBrokenSymlinkRepair`.
+    // Dispatched fire-and-forget so a pending dialog doesn't hold up window
+    // open — the dialog is parentless and can stack over the Navigator or
+    // editor window that opens a few lines below.
+    void maybeOfferBrokenSymlinkRepair().catch((err) => {
+      console.error('[main] broken-symlink repair prompt failed', {
+        err: (err as Error).message,
+      });
+    });
+
+    // M6b first-launch MCP consent (D-M6-R1 / D-M6-R7 / D-M6-R8 / D-M6-R10).
+    // Armed before the window-open branch so the `ok:mcp-wiring:renderer-ready`
+    // listener is installed BEFORE any renderer could possibly fire it —
+    // otherwise a fast `did-finish-load` → React-mount would race and the
+    // ack event lands on a dead channel. `runMcpWiringOnFirstLaunch` no-ops
+    // (returns an inert handle) when the platform is non-darwin, the app is
+    // in dev mode without `OK_M6B_FORCE=1`, the user-scoped marker is present,
+    // or `app.getPath('exe')` doesn't match the bundle shape. The cli surface
+    // is imported via the published-package name `@inkeep/open-knowledge` so
+    // turbo's `^build` topology correctly invalidates desktop's cache when CLI
+    // internals change (Pass 0 Major #2). Rollup tree-shakes unused CLI code
+    // at electron-vite build time, keeping the DMG bundle size bounded.
+    mcpWiringHandle = armMcpWiring();
+
     // D3 revised: every project open spawns a NEW editor window. App boot
     // restores the last-opened project (if any) into a fresh editor window OR
     // opens the Navigator if the user holds Option at launch (or no last project).
@@ -709,6 +935,23 @@ function bootPrimaryInstance(): void {
     } else {
       openNavigator();
     }
+
+    // Fire-and-forget user-global Agent Skill install per SPEC 2026-04-22
+    // (FR13 / D21). Runs on every launch — idempotent via the sidecar at
+    // `~/.open-knowledge/skill-installed-version`, so the no-op path is
+    // ~50 ms when current. Never awaited so window rendering + menu are
+    // unblocked. Failures log to main-process console and never surface to
+    // the user.
+    void installUserSkill({
+      logger: {
+        warn: (data, message) => console.warn(message, data),
+        info: (data, message) => console.info(message, data),
+      },
+    }).catch(() => {
+      /* installUserSkill is documented as never-throws; this is defense
+         against a future regression that would otherwise crash the main
+         process during the floating microtask. */
+    });
 
     // M3 auto-updater — wired as the LAST step in whenReady, after the window-
     // open branch (either openProjectOrFallbackToNavigator OR openNavigator).
@@ -824,6 +1067,8 @@ function bootPrimaryInstance(): void {
   app.on('will-quit', () => {
     autoUpdaterHandle?.destroy();
     autoUpdaterHandle = null;
+    mcpWiringHandle?.destroy();
+    mcpWiringHandle = null;
   });
 
   app.on('window-all-closed', () => {

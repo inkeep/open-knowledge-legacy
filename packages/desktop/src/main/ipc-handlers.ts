@@ -1,34 +1,21 @@
 /**
- * Pure, injectable IPC handler implementations.
+ * Pure, injectable IPC handler implementations for Open-in-Agent scheme
+ * detection and Cursor two-step folder-spawn.
  *
- * Shape: each exported function takes an explicit `deps` object + the
- * channel args, and returns the channel result. Registration (binding to
- * `ipcMain.handle` via `createHandler`) happens in `main/index.ts`, the
- * ONLY main-process file allowed to touch raw electron IPC primitives
- * per D19 (enforced by `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`).
- *
- * This split keeps business logic test-friendly (no real Electron app
- * needed — deps are injected as plain functions) while the thin
- * registration layer in `main/index.ts` stays the allowlist member.
- *
- * Added 2026-04-21 for SPEC `2026-04-21-open-in-agent-desktop/SPEC.md`
- * §5.1 and §6.5 — the Cursor two-step Electron folder-spawn channel plus
- * the cross-OS detect-protocol probe (macOS + Windows via Electron's
- * `app.getApplicationInfoForProtocol`, Linux via `xdg-mime`).
+ * Each exported function takes an explicit `deps` object + channel args and
+ * returns the channel result. Registration (binding to `ipcMain.handle` via
+ * `createHandler`) happens in `main/index.ts` — the ONLY main-process file
+ * allowed to touch raw electron IPC primitives (enforced by the
+ * `no-loosely-typed-webcontents-ipc` biome rule).
  */
 
 import { execFile } from 'node:child_process';
 import { join, posix as pathPosix, win32 as pathWin32 } from 'node:path';
 import type { HandoffStatsLine, SpawnOutcome } from '../shared/ipc-channels.ts';
 
-/** Two seconds is the product-tier budget for "detect one scheme" — SPEC §6.4. */
-export const DEFAULT_PROBE_TIMEOUT_MS = 2000;
-
-/** Independent budget for `which cursor` — SPEC §6.5. */
-export const WHICH_TIMEOUT_MS = 500;
-
-/** Spawn budget for `cursor <path>` — SPEC §6.5 (argv, shell:false). */
-export const SPAWN_TIMEOUT_MS = 2000;
+const DEFAULT_PROBE_TIMEOUT_MS = 2000;
+const WHICH_TIMEOUT_MS = 500;
+const SPAWN_TIMEOUT_MS = 2000;
 
 /** Shape of the Electron `app.getApplicationInfoForProtocol` return. */
 interface AppInfo {
@@ -39,7 +26,7 @@ interface AppInfo {
 }
 
 /** Injected by main/index.ts; replaceable in tests with stubbed Promise returns. */
-export interface DetectProtocolDeps {
+interface DetectProtocolDeps {
   /** `process.platform` at call time. Drives the macOS+Windows vs Linux branch. */
   platform: NodeJS.Platform;
   /**
@@ -114,8 +101,7 @@ export async function detectProtocol(
   }
 
   // Linux path — Electron's `getApplicationInfoForProtocol` is mac+Windows
-  // only (SPEC §6.4 audit M6). Fall back to `xdg-mime`, which is the same
-  // probe used by the web-host server endpoint.
+  // only. Fall back to `xdg-mime`, the same probe the web-host endpoint uses.
   const runner = deps.runXdgMime ?? xdgMimeReal;
   try {
     const { stdout } = await runner(scheme, timeoutMs);
@@ -130,10 +116,11 @@ export async function detectProtocol(
   }
 }
 
-export interface SpawnCursorDeps {
+interface SpawnCursorDeps {
   /**
-   * Same Electron wrapper as DetectProtocolDeps — used first to resolve the
-   * Cursor binary path (per DC7.1 security note: never trust `$PATH` alone).
+   * Used first to resolve the Cursor binary path — never trust `$PATH` alone
+   * because an attacker-controlled cwd could shadow `cursor` via a malicious
+   * binary.
    */
   getApplicationInfoForProtocol: (url: string) => Promise<AppInfo>;
   /**
@@ -149,13 +136,11 @@ export interface SpawnCursorDeps {
   spawn: (exec: string, args: ReadonlyArray<string>, timeoutMs: number) => Promise<SpawnOutcome>;
   platform: NodeJS.Platform;
   /**
-   * Project root of the caller window, supplied by `main/index.ts` via
-   * `WindowManager.getContextForBrowserWindow(win).projectPath`. When
-   * present, `spawnCursor` refuses any user-supplied path that doesn't
-   * resolve at or under this root — prevents a compromised renderer from
-   * routing Cursor to arbitrary filesystem locations (Review M5). When
-   * absent (e.g., Navigator window has no project context), the check is
-   * skipped — there is no meaningful scope to compare against.
+   * Project root of the caller window. When present, `spawnCursor` refuses
+   * any user-supplied path that doesn't resolve at or under this root — a
+   * renderer compromise can't steer Cursor at arbitrary filesystem locations
+   * (`~/.ssh`, `/etc`, ...). When absent (Navigator window has no project
+   * context), the check is skipped.
    */
   projectPath?: string;
   /** Resolve-phase timeout. Defaults to `WHICH_TIMEOUT_MS`. */
@@ -165,25 +150,15 @@ export interface SpawnCursorDeps {
 }
 
 /**
- * Compute the `(exec, args)` pair that `child_process.spawn` should receive
- * to launch `resolvedPath` with `userPath` as the first positional argument.
+ * On macOS, `app.getApplicationInfoForProtocol('cursor://').path` returns the
+ * `.app` BUNDLE PATH (a directory). `spawn` with `shell:false` can't exec a
+ * directory — Unix `exec()` requires a real binary. Route through
+ * `/usr/bin/open -a <bundle>` so Launch Services resolves the bundle to its
+ * main binary while preserving `shell:false` + argv-array.
  *
- * On macOS, `app.getApplicationInfoForProtocol('cursor://').path` returns
- * the `.app` BUNDLE PATH (a directory), not an executable. `spawn` with
- * `shell:false` cannot exec a directory — Unix `exec()` requires a real
- * binary. The canonical fix is to route the invocation through the system
- * `/usr/bin/open` command with the `-a <bundle>` flag, which asks Launch
- * Services to open `userPath` using the named application. This preserves
- * the no-shell-interpolation guarantee (argv array, `shell:false`) while
- * correctly resolving bundles to their registered main binary.
- *
- * On Windows and Linux, `getApplicationInfoForProtocol` returns an
- * executable path directly (or the `which cursor` fallback does). Direct
- * spawn works — no normalization needed.
- *
- * Pure function for test coverage of the macOS bundle-routing branch.
+ * Windows and Linux return an executable path directly — spawn it as-is.
  */
-export function resolveSpawnInvocation(
+function resolveSpawnInvocation(
   resolvedPath: string,
   userPath: string,
   platform: NodeJS.Platform,
@@ -210,23 +185,13 @@ export function validateSpawnPath(path: string, platform: NodeJS.Platform): bool
 }
 
 /**
- * Confined-path check: resolve both `path` and `projectPath` to their
- * canonical forms and verify `path` lies at or under `projectPath`. Returns
- * false if either path is invalid OR if `path` escapes the project boundary.
+ * Resolve both paths canonically and verify `path` lies at or under
+ * `projectPath`. Returns false on invalid inputs or boundary escape.
  *
- * Threat model: `spawnCursor` hands `path` to Launch Services (`open -a`) or
- * directly to the Cursor binary. Without scope confinement, a compromised
- * renderer could invoke the IPC with any absolute path and spawn a Cursor
- * "agent mode" workspace rooted at `/etc/`, `~/.ssh`, etc. — widening the
- * confused-deputy blast radius beyond the openknowledge:// allowlist entry
- * that previously bounded outbound schemes. Review M5 flagged this gap.
- *
- * Uses `path/posix` or `path/win32` explicitly — not the host's default —
- * so a POSIX dev runner correctly resolves Windows inputs under test, and
- * (more importantly) production behavior follows the caller's OS regardless
- * of what Node's runtime `path` module decides from `process.platform`.
- *
- * Pure function — exported for test coverage of the boundary logic.
+ * Uses `path/posix` or `path/win32` explicitly instead of the host default so
+ * Windows inputs resolve correctly on a POSIX dev runner under test, and
+ * production behavior follows the caller's platform regardless of Node's
+ * runtime `path` module.
  */
 export function isPathWithinProject(
   userPath: string,
@@ -275,13 +240,9 @@ function whichCursorReal(timeoutMs: number): Promise<string | null> {
  * Step 1 of the Cursor two-step handoff — spawn `cursor <projectDir>` so the
  * workspace is already open before the cursor:// prompt URL fires (step 2).
  *
- * If `deps.projectPath` is supplied (the main-process wiring passes the
- * caller window's `ProjectContext.projectPath`), the user-supplied `path`
- * must resolve at or under it — otherwise the spawn is refused with
- * `invalid-path`. This bounds the confused-deputy blast radius per Review M5:
- * a renderer compromise can no longer steer Cursor at arbitrary filesystem
- * locations (e.g., `~/.ssh`) even though the scheme allowlist would let the
- * subsequent `cursor://` URL through.
+ * If `deps.projectPath` is supplied, `path` must resolve at or under it;
+ * otherwise the spawn is refused with `invalid-path`. Bounds a renderer
+ * compromise from steering Cursor at arbitrary filesystem locations.
  */
 export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<SpawnOutcome> {
   if (!validateSpawnPath(path, deps.platform)) {
@@ -291,17 +252,12 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
     deps.projectPath !== undefined &&
     !isPathWithinProject(path, deps.projectPath, deps.platform)
   ) {
-    // Defense-in-depth — the happy path is that the renderer only ever passes
-    // its own workspace content-dir (threaded via useWorkspace()), so a real
-    // out-of-scope path is either a bug in the renderer or an attacker taking
-    // advantage of a renderer compromise. Either way, refuse.
     return { ok: false, reason: 'invalid-path' };
   }
 
   // Prefer Electron's resolved handler path (installer-registered); fall back
-  // to `which` only if Electron returns an empty string. Never trust `$PATH`
-  // alone — attacker-controlled cwd could leak in via a shadowed `cursor`
-  // binary. See SPEC §6.5 DC7.1 security note.
+  // to `which` only if Electron returns empty. Never trust `$PATH` alone —
+  // attacker-controlled cwd could shadow `cursor` with a malicious binary.
   let binaryPath: string | null = null;
   try {
     const info = await deps.getApplicationInfoForProtocol('cursor://');
@@ -328,11 +284,11 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
 }
 
 /**
- * Local-only telemetry sink (SPEC 2026-04-21 §5.1 / E5b). Append-only writer
- * to `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent
- * dispatch. Zero phone-home (XQ3 LOCKED).
+ * Local-only telemetry sink. Append-only writer to
+ * `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent dispatch.
+ * Zero phone-home.
  */
-export interface RecordHandoffDeps {
+interface RecordHandoffDeps {
   /** `os.homedir()` — overridable in tests so a tmpdir stands in for `~`. */
   readonly homedir: () => string;
   /**

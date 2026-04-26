@@ -28,15 +28,16 @@ import type {
   InstallState,
   TargetData,
 } from '@inkeep/open-knowledge-core';
+import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-} from '@/components/ui/context-menu';
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
-import { computeRowState } from './OpenInAgentMenuItem';
+import { computeRowState, TargetIcon } from './OpenInAgentMenuItem';
 import type { HandoffDispatchInput } from './useHandoffDispatch';
 
 /**
@@ -57,7 +58,7 @@ export function contextRowHint(
   return null;
 }
 
-export interface OpenInAgentContextSubmenuProps {
+interface OpenInAgentContextSubmenuProps {
   /** Handoff input for the right-clicked node. `null` means the row's dispatch
    *  is not actionable (no workspace metadata yet). Every row still renders
    *  disabled with a "No workspace" hint so the UX doesn't flicker. */
@@ -80,9 +81,12 @@ export interface OpenInAgentContextSubmenuProps {
 export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps): ReactNode {
   const { input, installStates, isElectronHost, dispatch } = props;
   return (
-    <ContextMenuSub>
-      <ContextMenuSubTrigger>Open in…</ContextMenuSubTrigger>
-      <ContextMenuSubContent>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <Sparkles aria-hidden="true" />
+        Open in…
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
         {KNOWN_TARGETS.map((target) => {
           const installState = installStates[target.id];
           const rowState = computeRowState({ target, installState, isElectronHost });
@@ -99,7 +103,7 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
             ? `Open in ${target.displayName}, ${hint}`
             : `Open in ${target.displayName}`;
           return (
-            <ContextMenuItem
+            <DropdownMenuItem
               key={target.id}
               disabled={!enabled}
               onSelect={() => {
@@ -109,16 +113,17 @@ export function OpenInAgentContextSubmenu(props: OpenInAgentContextSubmenuProps)
               data-testid={`file-tree-open-in-${target.id}`}
               aria-label={accessibleLabel}
             >
-              <span className="flex-1">Open in {target.displayName}</span>
+              <TargetIcon id={target.id} aria-hidden="true" />
+              <span className="flex-1">{target.displayName}</span>
               {hint ? (
                 <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
                   {hint}
                 </span>
               ) : null}
-            </ContextMenuItem>
+            </DropdownMenuItem>
           );
         })}
-      </ContextMenuSubContent>
-    </ContextMenuSub>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }

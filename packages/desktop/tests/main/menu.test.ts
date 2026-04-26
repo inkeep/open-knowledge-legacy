@@ -122,14 +122,27 @@ describe('buildMenuTemplate', () => {
     expect(clearRecentProjects).toHaveBeenCalledTimes(1);
   });
 
-  test('New Project click dispatches deps.openNavigator()', () => {
+  test('Switch Project click dispatches deps.openNavigator()', () => {
     const openNavigator = mock(() => {});
     const deps = makeDeps({ openNavigator });
     const template = buildMenuTemplate(deps);
-    const newProject = findByLabel(template, 'New Project…');
-    expect(newProject).toBeDefined();
-    (newProject?.click as (() => void) | undefined)?.();
+    const switchProject = findByLabel(template, 'Switch Project…');
+    expect(switchProject).toBeDefined();
+    (switchProject?.click as (() => void) | undefined)?.();
     expect(openNavigator).toHaveBeenCalledTimes(1);
+  });
+
+  test('Switch Project preserves Cmd+Shift+N accelerator (muscle-memory contract)', () => {
+    const template = buildMenuTemplate(makeDeps());
+    const switchProject = findByLabel(template, 'Switch Project…');
+    expect(switchProject?.accelerator).toBe('CmdOrCtrl+Shift+N');
+  });
+
+  test('"New Project…" label no longer appears in any submenu', () => {
+    // Regression guard against partial rename — the old verb was misleading
+    // because the underlying action covers create AND open AND list.
+    const template = buildMenuTemplate(makeDeps());
+    expect(findByLabel(template, 'New Project…')).toBeUndefined();
   });
 
   test('top-level menus include File / Edit / View / Window / Help', () => {
@@ -140,6 +153,109 @@ describe('buildMenuTemplate', () => {
     expect(topLabels).toContain('View');
     expect(topLabels).toContain('Window');
     expect(topLabels).toContain('Help');
+  });
+
+  describe('CLI-on-PATH menu item (M6a / D52)', () => {
+    const macOnly = process.platform === 'darwin';
+    const macOnlyTest = macOnly ? test : test.skip;
+
+    macOnlyTest(
+      'cliInstallStatus returning "not-installed" inserts "Install Command-Line Tools…"',
+      () => {
+        const deps = makeDeps({
+          cliInstallStatus: () => 'not-installed',
+          toggleCliInstall: mock(() => {}),
+        });
+        const template = buildMenuTemplate(deps);
+        const install = findByLabel(template, 'Install Command-Line Tools…');
+        expect(install).toBeDefined();
+        const uninstall = findByLabel(template, 'Uninstall Command-Line Tools');
+        expect(uninstall).toBeUndefined();
+      },
+    );
+
+    macOnlyTest(
+      'cliInstallStatus returning "installed" flips label to "Uninstall Command-Line Tools"',
+      () => {
+        const deps = makeDeps({
+          cliInstallStatus: () => 'installed',
+          toggleCliInstall: mock(() => {}),
+        });
+        const template = buildMenuTemplate(deps);
+        const uninstall = findByLabel(template, 'Uninstall Command-Line Tools');
+        expect(uninstall).toBeDefined();
+        const install = findByLabel(template, 'Install Command-Line Tools…');
+        expect(install).toBeUndefined();
+      },
+    );
+
+    macOnlyTest(
+      'cliInstallStatus returning "broken" renders the Install label (same as not-installed)',
+      () => {
+        // 'broken' is primarily a launch-time-repair signal, but the menu
+        // item must stay clickable so users with a broken symlink have an
+        // alternate recovery affordance to the repair dialog.
+        const deps = makeDeps({
+          cliInstallStatus: () => 'broken',
+          toggleCliInstall: mock(() => {}),
+        });
+        const template = buildMenuTemplate(deps);
+        expect(findByLabel(template, 'Install Command-Line Tools…')).toBeDefined();
+      },
+    );
+
+    test('cliInstallStatus returning null hides the menu item on every platform', () => {
+      const deps = makeDeps({
+        cliInstallStatus: () => null,
+        toggleCliInstall: mock(() => {}),
+      });
+      const template = buildMenuTemplate(deps);
+      expect(findByLabel(template, 'Install Command-Line Tools…')).toBeUndefined();
+      expect(findByLabel(template, 'Uninstall Command-Line Tools')).toBeUndefined();
+    });
+
+    test('omitting cliInstallStatus hides the menu item (backward-compat default)', () => {
+      // Existing callers that don't opt in get the pre-M6a behavior — the
+      // menu renders without any CLI-install item, matching the current
+      // shape asserted by the top-level-menus test above.
+      const deps = makeDeps();
+      const template = buildMenuTemplate(deps);
+      expect(findByLabel(template, 'Install Command-Line Tools…')).toBeUndefined();
+      expect(findByLabel(template, 'Uninstall Command-Line Tools')).toBeUndefined();
+    });
+
+    macOnlyTest('menu item click dispatches deps.toggleCliInstall()', () => {
+      const toggleCliInstall = mock(() => {});
+      const deps = makeDeps({
+        cliInstallStatus: () => 'not-installed',
+        toggleCliInstall,
+      });
+      const template = buildMenuTemplate(deps);
+      const install = findByLabel(template, 'Install Command-Line Tools…');
+      expect(install).toBeDefined();
+      (install?.click as (() => void) | undefined)?.();
+      expect(toggleCliInstall).toHaveBeenCalledTimes(1);
+    });
+
+    macOnlyTest('menu item sits between Open Recent and the close/quit row', () => {
+      // Regression guard on placement — spec calls for the item between
+      // "Open Recent" and the trailing close/quit role. A future edit that
+      // inserts it elsewhere (e.g. above Open Recent) would pass the
+      // "item exists" tests above but break the File-submenu ordering.
+      const deps = makeDeps({
+        cliInstallStatus: () => 'not-installed',
+        toggleCliInstall: mock(() => {}),
+      });
+      const template = buildMenuTemplate(deps);
+      const file = findByLabel(template, 'File');
+      const sub = file?.submenu as MenuItemConstructorOptions[] | undefined;
+      if (!sub) throw new Error('File submenu missing');
+      const installIdx = sub.findIndex((i) => i.label === 'Install Command-Line Tools…');
+      const openRecentIdx = sub.findIndex((i) => i.label === 'Open Recent');
+      const trailingRoleIdx = sub.findIndex((i) => i.role === 'close' || i.role === 'quit');
+      expect(installIdx).toBeGreaterThan(openRecentIdx);
+      expect(installIdx).toBeLessThan(trailingRoleIdx);
+    });
   });
 
   test('macOS-branch behavior for the current test host', () => {

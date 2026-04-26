@@ -33,7 +33,11 @@ tmp/
 .claude/pr-diff/
 .claude/skills/pr-context/
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 .worktrees/
+
+# Vercel CLI link state — per-machine; auto-created by `vercel` / `vercel link`
+.vercel/
 
 # Runtime content file — accumulates test artifacts from dev/agent-sim runs
 init_spike/content/test-doc.md

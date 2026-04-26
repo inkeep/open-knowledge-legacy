@@ -1,7 +1,7 @@
 /**
- * ProjectSwitcher — Electron-only UI affordance in the top bar for switching
- * between projects. Renders as a compact pill showing the current project
- * name; clicking opens a dropdown with:
+ * ProjectSwitcher — Electron-only UI affordance in the sidebar footer for
+ * switching between projects. Renders as a compact pill showing the current
+ * project name; clicking opens a dropdown (upward, into the sidebar) with:
  *   - Recents (from `bridge.project.listRecent()`), opens each in a new window
  *   - "Open folder…" — native picker → open in a new window
  *
@@ -16,18 +16,19 @@
  * is a discoverable surface for the same set of actions.
  */
 
-import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react';
+import { ChevronsUpDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRoot,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { SidebarMenuButton } from '@/components/ui/sidebar';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 
 /**
@@ -83,6 +84,11 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
     }, 'Failed to open folder.');
   };
 
+  const onSwitchProject = () => {
+    setOpen(false);
+    void runWithToast(() => bridge.navigator.open(), 'Failed to open Project Navigator.');
+  };
+
   // Filter out the current project from recents — no value in "switch to the
   // one you're already in" since it would hit the D44 case (a) focus-existing
   // dialog and do nothing useful. The current project name is already in the
@@ -91,27 +97,26 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
   const switchable = recents.filter((r) => r.path !== currentPath);
 
   return (
-    <DropdownMenuRoot open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+        <SidebarMenuButton
+          className="justify-between text-sidebar-foreground/70"
           data-testid="project-switcher-trigger"
-          title="Switch project"
+          title="Open project menu"
         >
-          <FolderOpen className="size-4 shrink-0" />
-          <span className="max-w-[160px] truncate">{bridge.config.projectName}</span>
-          <ChevronDown className="size-3 shrink-0 opacity-60" />
-        </Button>
+          <span className="truncate">{bridge.config.projectName}</span>
+          <ChevronsUpDown aria-hidden="true" className="opacity-60" />
+        </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
+        side="top"
         className="min-w-[260px]"
         data-testid="project-switcher-menu"
       >
-        <DropdownMenuLabel>Switch project</DropdownMenuLabel>
-        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
+          Recent projects
+        </DropdownMenuLabel>
         {switchable.length === 0 ? (
           <DropdownMenuLabel className="font-normal text-muted-foreground text-xs">
             No other recent projects.
@@ -135,10 +140,12 @@ export function ProjectSwitcher({ bridge }: ProjectSwitcherProps) {
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onOpenFolder} data-testid="project-switcher-open-folder">
-          <FolderPlus className="mr-2 size-4" />
           Open folder…
         </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onSwitchProject} data-testid="project-switcher-switch-project">
+          {SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}
+        </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }

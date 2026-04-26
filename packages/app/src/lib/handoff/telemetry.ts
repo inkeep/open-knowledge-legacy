@@ -1,24 +1,15 @@
 /**
- * Local-only telemetry counter for the Open-in-Agent dispatch path.
+ * Local-only telemetry counter for Open-in-Agent dispatch. Append-only JSONL
+ * to `~/.open-knowledge/stats.jsonl` via the Electron main process. Zero
+ * phone-home.
  *
- * Append-only one-line-per-dispatch JSONL writes to `~/.open-knowledge/stats.jsonl`
- * via the Electron main process. Zero phone-home (XQ3 LOCKED, SPEC §15);
- * extends OK's broader local-only-counter Future Work pattern.
+ * Electron host forwards to the `ok:shell:record-handoff` IPC. Web host is a
+ * no-op — the web fallback path deliberately ships without a server-side
+ * append endpoint that would only matter for a non-target use case.
  *
- * Host behavior (SPEC 2026-04-21 §13.1):
- *   - **Electron host** (`window.okDesktop` present): forwards `line` to the
- *     `ok:shell:record-handoff` IPC channel. The main-process handler does an
- *     append-only `fs.promises.appendFile(~/.open-knowledge/stats.jsonl, ...)`
- *     and resolves even on EACCES / ENOSPC (warning logged, no throw).
- *   - **Web host** (no `window.okDesktop`): no-op in v0. Diagnostic counters
- *     matter most on the dogfood Electron build; the web fallback path
- *     deliberately ships without telemetry rather than building a server-side
- *     append endpoint that would only be exercised in a non-target use case.
- *
- * Failure semantics: `recordHandoff` NEVER throws. An unwritable HOME, an IPC
- * rejection, or a missing bridge surface all collapse to a logged warning and
- * a resolved void promise. The dispatch path (success / failure toast,
- * dropdown closure, retry action) is therefore decoupled from telemetry.
+ * `recordHandoff` NEVER throws. IPC rejection, unwritable HOME, or missing
+ * bridge all collapse to a logged warning + resolved void — the dispatch
+ * path (toast, dropdown, retry) is decoupled from telemetry.
  */
 
 import type { HandoffFailureReason, HandoffTarget } from '@inkeep/open-knowledge-core';
@@ -31,8 +22,7 @@ export type HandoffOutcomeStatus = 'ok' | 'error';
 
 /**
  * One JSONL line in `~/.open-knowledge/stats.jsonl`. Schema is intentionally
- * narrow — adding fields requires a SPEC amendment so the dogfood signal
- * stays comparable across versions.
+ * narrow to keep the signal comparable across versions.
  */
 export interface HandoffStatsLine {
   readonly target: HandoffTarget;
@@ -49,7 +39,7 @@ export interface HandoffStatsLine {
  * `window.okDesktop` by default; tests inject a fake to avoid touching the
  * real Electron preload.
  */
-export interface RecordHandoffDeps {
+interface RecordHandoffDeps {
   readonly okDesktop?: { shell: { recordHandoff(line: HandoffStatsLine): Promise<void> } };
   /** Diagnostic sink — defaults to `console.warn`. */
   readonly warn?: (message: string) => void;
@@ -68,8 +58,7 @@ export async function recordHandoff(
   const okDesktop =
     deps.okDesktop ?? (typeof window !== 'undefined' ? window.okDesktop : undefined);
   if (!okDesktop?.shell?.recordHandoff) {
-    // Web host — telemetry is a no-op in v0 per SPEC §13.1. The "no warn"
-    // choice is deliberate: every web dispatch would otherwise log noise.
+    // Web host — no-op without warning; every web dispatch would log noise.
     return;
   }
   try {

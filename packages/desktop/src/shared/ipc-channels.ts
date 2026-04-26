@@ -10,9 +10,13 @@
  * a debugger.
  *
  * Scale-match trigger (FU-3): at >20 channels, migrate baseline to
- * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently ~8 channels.
+ * `@electron-toolkit/typed-ipc` or `@egoist/tipc`. Currently 21 — past
+ * the trigger; migrate before adding more.
  */
 
+import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
+import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
+import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 import type { OkDesktopConfig } from './bridge-contract.ts';
 
@@ -69,6 +73,52 @@ export interface HandoffStatsLine {
     | 'dispatch-error'
     | 'web-host-cursor-unsupported';
 }
+
+/** Editor IDs known to the first-launch MCP consent flow (M6b). Mirrors
+ *  `EditorId` in `packages/cli/src/commands/editors.ts`. Desktop `main/` DOES
+ *  dep `@inkeep/open-knowledge` (M6b added the workspace dep for the
+ *  `writeUserMcpConfigs` / `EDITOR_TARGETS` surface), but `shared/` modules
+ *  stay zero-dep — any cross-package value import from the IPC surface
+ *  forces every preload / renderer consumer to pull CLI internals into its
+ *  bundle. Keeping the literal-union local preserves that split; drift with
+ *  the CLI's `EditorId` is caught at typecheck via the `McpWiringCliSurface`
+ *  interface in `main/mcp-wiring.ts` (which references BOTH types). */
+export type McpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Single entry in the consent dialog — one per editor in `ALL_EDITOR_IDS`.
+ *  `detected: true` preselects the checkbox (OQ-14 DIRECTED).
+ *  `willReplace: true` signals that this editor has an existing OK-managed
+ *  entry (canonical npx, historical `-y` variant, or prior cliPath shape)
+ *  that clicking Add would overwrite — surfaced per-row in the dialog so
+ *  long-time CLI users who ran `ok init` months ago aren't surprised to
+ *  find their entry silently stomped by a bundle-absolute cliPath. Pass 1
+ *  Major #8. */
+export interface McpWiringEditorDetection {
+  readonly id: McpWiringEditorId;
+  readonly label: string;
+  readonly detected: boolean;
+  readonly willReplace: boolean;
+}
+
+/** Confirm payload from renderer → main. Editors the user checked when they
+ *  clicked "Add". Subset of `McpWiringEditorId`. */
+export interface McpWiringConfirmRequest {
+  readonly editorIds: readonly McpWiringEditorId[];
+}
+
+/** Confirm / skip response shape. `ok:false` surfaces when (a)
+ *  `writeUserMcpConfigs` throws, (b) any per-editor write returns
+ *  `action:'failed'` (deferred-marker per OQ-19 — caller fires a sonner
+ *  toast since the dialog itself unmounts on result), or (c) the
+ *  skip-marker write fails. The `error` string is user-facing copy. */
+export type McpWiringConfirmResult = { ok: true } | { ok: false; error: string };
+export type McpWiringSkipResult = { ok: true } | { ok: false; error: string };
 
 export interface RequestChannels {
   /** Open native folder-picker (`showOpenDialog({ properties: ['openDirectory'] })`). */
@@ -127,6 +177,14 @@ export interface RequestChannels {
   /** Request main to close the current project's window. */
   'ok:project:close': { args: []; result: undefined };
   /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Calls main's `openNavigator()` (focus existing or create new) — same
+   * function the File menu's "Switch Project…" item invokes. Lifecycle is
+   * focus-or-create only (no toggle). Renderer surfaces: `ProjectSwitcher`
+   * dropdown, `CommandPalette`. No payload, no return — IPC-ack only.
+   */
+  'ok:navigator:open': { args: []; result: undefined };
+  /**
    * M3 Toast A "Relaunch now" action: renderer invokes this after the user
    * clicks the sonner action button. Main handler calls
    * `autoUpdater.quitAndInstall()` which triggers Squirrel.Mac's ZIP swap
@@ -141,4 +199,72 @@ export interface RequestChannels {
    * surface is populated only when the same gate allows (D-M5-8).
    */
   'ok:debug:keyring-smoke': { args: []; result: KeyringSmokeResult };
+  /**
+   * Compute a scaffold plan for the current window's project — read-only.
+   * See `packages/desktop/src/main/ipc/seed.ts` and SPEC
+   * 2026-04-23-ok-seed-scaffold. Renderer branches on `result.ok` then
+   * renders the plan (unseeded) or "already seeded" (empty plan).
+   */
+  'ok:seed:plan': { args: []; result: SeedPlanResult };
+  /**
+   * Apply a previously-computed ScaffoldPlan to disk. Writes folders, the
+   * optional log.md, and `config.yml` `folders:` entries. Returns an
+   * ApplyResult on success.
+   */
+  'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };
+  /**
+   * M6b first-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
+   * Main resolves the hybrid `cliPath` per D-M6-R9, classifies each editor's
+   * existing entry via `computeForce`, calls `writeUserMcpConfigs`, and writes
+   * the user-scoped marker at `<home>/.open-knowledge/mcp-status.json` IFF
+   * every per-editor write succeeds (deferred-marker per OQ-19). Per-editor
+   * failures emit `mcp-wiring-write-failed` structured logs and leave the
+   * marker absent so the dialog re-fires next launch. Foreign (user-customized)
+   * entries are preserved and logged as `mcp-wiring-skip-customized`.
+   */
+  'ok:mcp-wiring:confirm': {
+    args: [request: McpWiringConfirmRequest];
+    result: McpWiringConfirmResult;
+  };
+  /**
+   * M6b first-launch MCP consent — user clicked "Skip" (or ESC). Main writes
+   * `{configured: false, skippedAt}` to the user-scoped marker so the dialog
+   * never re-fires. Re-triggering the consent flow requires manually deleting
+   * the marker file (OQ-5).
+   */
+  'ok:mcp-wiring:skip': { args: []; result: McpWiringSkipResult };
+  /**
+   * M6b mount-ack handshake (D-M6-R10). Every renderer (Navigator + editor)
+   * invokes this once on React-app first mount. The FIRST invoke per boot
+   * tells main a renderer is subscribed to `ok:mcp-wiring:show`; main
+   * responds by dispatching the show event back to the invoking webContents
+   * and removes the handler so subsequent mounts don't re-fire the dialog.
+   * Modeled as invoke/result (not a one-way event) so it composes through
+   * the typed `createHandler` / `createInvoker` wrappers (D19 enforcement).
+   * Result is `undefined` — the renderer discards it.
+   */
+  'ok:mcp-wiring:renderer-ready': { args: []; result: undefined };
+
+  /**
+   * Returns true when Claude Desktop's config directory exists on this
+   * machine (macOS ~/Library/Application Support/Claude/ or Windows
+   * %APPDATA%/Claude/). Reuses the shared `detectClaudeDesktopPresence`
+   * helper so the init hint (CLI) and the install dialog (Electron) gate
+   * on the same signal. False on Linux (unsupported upstream).
+   * SPEC 2026-04-24 Ship 1e / D12.
+   */
+  'ok:skill:detect-claude-desktop': { args: []; result: boolean };
+
+  /**
+   * Build `openknowledge.skill` locally from the bundled SKILL.md source,
+   * write it to the user's Downloads folder, then invoke `shell.openPath`
+   * to route it to Claude Desktop via the `.skill` CFBundleDocumentType
+   * association. Renderer treats any `ok: true` response as "Claude Desktop
+   * has taken over — show 'Follow prompts in Claude' copy and wait."
+   *
+   * Local build (no network, no GitHub Releases dep) — version matches
+   * whatever the user's installed Electron app bundles.
+   * SPEC 2026-04-24 Ship 1e / 1j (local-build simplification).
+   */
+  'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
 }

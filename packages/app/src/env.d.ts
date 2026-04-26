@@ -60,10 +60,8 @@ declare namespace globalThis {
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
   /**
-   * Test-only hook: inject a fake agent-focus awareness state into the
-   * `__system__` provider, simulating a remote agent peer focusing on
-   * `docName`. Fires the awareness 'change' event which triggers
-   * SystemDocSubscriber's debounced nav check → hash change.
+   * Test-only hook: set the pinned doc via the DocumentContext API without
+   * reaching into `localStorage` internals. Pass `null` to unpin.
    */
-  var __test_injectAgentFocus: ((docName: string) => boolean) | undefined;
+  var __test_setPin: ((docName: string | null) => void) | undefined;
 }

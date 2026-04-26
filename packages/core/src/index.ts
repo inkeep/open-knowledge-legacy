@@ -121,6 +121,7 @@ export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
   AgentFocusEntry,
+  AgentPresenceEntry,
   AwarenessState,
   AwarenessUser,
 } from './types/awareness.ts';
@@ -141,12 +142,14 @@ export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,
+  AGENT_ICON_COLORS_DARK,
   colorFromSeed,
   deriveIconColor,
   generateRandomColor,
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
+  iconFromClientName,
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,

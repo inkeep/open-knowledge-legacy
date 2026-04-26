@@ -19,9 +19,26 @@
  * issue while preserving a single logical contract.
  */
 
+import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 
 export type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
+
+/** Renderer-facing result of `okDesktop.seed.plan()`. Mirrors `SeedPlanResult` in main. */
+export type OkSeedPlanResult =
+  | { ok: true; plan: ScaffoldPlan }
+  | {
+      ok: false;
+      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+    };
+
+/** Renderer-facing result of `okDesktop.seed.apply(plan)`. Mirrors `SeedApplyResult` in main. */
+export type OkSeedApplyResult =
+  | { ok: true; result: ApplyResult }
+  | {
+      ok: false;
+      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+    };
 
 /** Render mode picked by the main process when creating a BrowserWindow. */
 export type OkDesktopMode = 'editor' | 'navigator';
@@ -73,6 +90,35 @@ export interface OkWhatsNewInfo {
 export interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
+
+/**
+ * Editor IDs surfaced through the M6b first-launch MCP consent bridge.
+ * Mirrors `McpWiringEditorId` in `./ipc-channels.ts` and the canonical
+ * `EditorId` in `packages/cli/src/commands/editors.ts`. Drift across the
+ * three bridge-contract copies is caught by the M1 invariant test.
+ */
+export type OkMcpWiringEditorId =
+  | 'claude'
+  | 'claude-desktop'
+  | 'cursor'
+  | 'vscode'
+  | 'windsurf'
+  | 'codex';
+
+/** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
+ *  `willReplace: true` signals the editor has an existing OK-managed entry
+ *  that Add would overwrite (Pass 1 Major #8 — per-editor disclosure). */
+export interface OkMcpWiringShowPayload {
+  readonly detectedEditors: readonly {
+    readonly id: OkMcpWiringEditorId;
+    readonly label: string;
+    readonly detected: boolean;
+    readonly willReplace: boolean;
+  }[];
+}
+
+/** Result shape for `mcpWiring.confirm` / `skip`. */
+export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
@@ -160,9 +206,77 @@ export interface OkDesktopBridge {
     close(): Promise<void>;
   };
 
+  /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Lifecycle is focus-existing-or-create (idempotent on already-focused).
+   * Renderer surfaces: `ProjectSwitcher` dropdown "Switch Project…",
+   * CommandPalette "Switch Project", and File → Switch Project… (which
+   * calls main's `openNavigator()` directly via the menu binding).
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
+
+  seed: {
+    /** Compute a scaffold plan for the current window's project (read-only). */
+    plan(): Promise<OkSeedPlanResult>;
+    /** Apply a ScaffoldPlan — writes folders, log.md, and config.yml entries. */
+    apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
+
+  /**
+   * Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship 1e). The renderer
+   * shows a React dialog explaining the 2-click install; these IPC channels
+   * implement the "concierge" actions the dialog takes.
+   */
+  skill: {
+    /**
+     * Returns true when Claude Desktop's config directory exists on this
+     * machine (macOS ~/Library/Application Support/Claude/ or Windows
+     * %APPDATA%/Claude/). False on Linux (unsupported upstream) and absent.
+     * Reuses `detectClaudeDesktopPresence` from the server package.
+     */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Build `openknowledge.skill` from the bundled SKILL.md source, save to
+     * the user's Downloads folder, then invoke the OS file association so
+     * the Claude Desktop App opens it (via its registered `.skill`
+     * CFBundleDocumentType on macOS / registry entry on Windows). Resolves
+     * with `{ok: true, path}` on success. Fire-and-forget from the
+     * renderer's perspective — Claude's own install dialog becomes the
+     * user's next surface. Local build: no network, no GitHub Releases.
+     */
+    buildAndOpen(): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
+  };
+
   update: {
     /** Invokes `autoUpdater.quitAndInstall()` in main. Triggered by Toast A's "Relaunch now" action. */
     relaunchNow(): Promise<void>;
+  };
+
+  /**
+   * M6b first-launch MCP consent surface. Renderer mounts `<McpConsentDialog>`
+   * when `onShow` fires; calls `confirm` / `skip` on user action; calls
+   * `signalReady()` once on app mount so main knows a renderer is subscribed
+   * (D-M6-R10 mount-ack handshake). Available in every Electron host window
+   * (Navigator + editor) — first-ack wins per D-M6-R10.
+   */
+  mcpWiring: {
+    /** Subscribe to the consent-dialog-show event. Returns unsubscribe. */
+    onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;
+    /** Fire a one-way mount-ack event — main's whenRendererReady gate. */
+    signalReady(): void;
+    /** User clicked Add. `editorIds` is the subset the user checked. */
+    confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
+    /** User clicked Skip (or pressed ESC). */
+    skip(): Promise<OkMcpWiringResult>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

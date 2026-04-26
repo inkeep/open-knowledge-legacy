@@ -15,13 +15,12 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
+  summaryArgSchema,
   textPlusStructured,
   textResult,
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
-  '',
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
@@ -31,6 +30,7 @@ export const DESCRIPTION = [
   '- `docName` — Document name, typically without extension (e.g., "my-doc" or "notes/meeting"). A trailing `.md` or `.mdx` is stripped automatically. New documents are created as `.md` by default; to create a `.mdx` file, first place it on disk, then use this tool for edits.',
   '- `markdown` — Markdown content to write',
   '- `position` — Where to insert: "append", "prepend", or "replace"',
+  '- `summary` — Optional one-line user-outcome description of this edit (≤80 chars). Appears as a bullet in the document timeline so readers can scan intent without opening every diff. Prefer outcome phrasing ("Fixed token-refresh race") over structural ("Added 3 lines"). Avoid including secrets or PII — summaries are persisted to git history.',
 ].join('\n');
 
 interface WriteDocumentDeps {
@@ -48,9 +48,16 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       docName: z.string().describe('Document name to write to'),
       markdown: z.string().describe('Markdown content to write'),
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
+      summary: summaryArgSchema,
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
-    async (args: { docName: string; markdown: string; position: string; cwd?: string }) => {
+    async (args: {
+      docName: string;
+      markdown: string;
+      position: string;
+      summary?: string;
+      cwd?: string;
+    }) => {
       const context = await resolveProjectServerContext(
         deps.resolveCwd,
         deps.config,
@@ -67,6 +74,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
+        ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
               agentId: identity.connectionId,
@@ -82,19 +90,33 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      const noPreviewAttached = subscriberCount === 0;
+      // Once-per-session attach hint: fires only when no editor is attached
+      // to `__system__` at all — not when the current doc happens to have
+      // zero subscribers (which is normal for an agent's second+ doc before
+      // server-push carries the open tab there).
+      const systemSubscriberCount =
+        typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
+      const noPreviewAnywhere = systemSubscriberCount === 0;
+      const noPreviewOnThisDoc = subscriberCount === 0;
 
       const hints = Array.isArray(result.hints) ? result.hints : undefined;
 
+      const summaryResult =
+        result.summary && typeof result.summary === 'object'
+          ? (result.summary as { value: string; truncatedFrom?: number; hint?: string })
+          : undefined;
+      const summaryHint = typeof summaryResult?.hint === 'string' ? summaryResult.hint : undefined;
+
       const lines: string[] = [`Written successfully (${args.position}).`];
       if (preview) lines.push(`Preview: ${preview.url}`);
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         lines.push(
           preview
-            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
-            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+            ? `Open ${preview.url} in your preview browser.`
+            : `No preview attached. Start the UI.`,
         );
       }
+      if (summaryHint) lines.push(summaryHint);
       if (hints) {
         for (const hint of hints) {
           if (hint.message) lines.push(hint.message);
@@ -102,7 +124,7 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       }
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached && !hints) {
+      if (!preview && !noPreviewAnywhere && !noPreviewOnThisDoc && !hints && !summaryResult) {
         return textResult(text);
       }
 
@@ -111,14 +133,18 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         structured.previewUrl = preview.url;
         structured.previewUrlSource = preview.source;
       }
-      if (noPreviewAttached) {
+      if (noPreviewAnywhere) {
         structured.warning = {
-          message: `No preview attached to ${normalized.docName}.`,
+          message: `Open the previewUrl in your preview browser.`,
+          action: 'attach-preview-once' as const,
           previewUrl: preview?.url ?? null,
         };
       }
       if (hints) {
         structured.hints = hints;
+      }
+      if (summaryResult) {
+        structured.summary = summaryResult;
       }
       return textPlusStructured(text, structured);
     },

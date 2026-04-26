@@ -18,13 +18,7 @@
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import {
-  AGENT_ICON_COLORS,
-  applyFastDiff,
-  colorFromSeed,
-  prependFrontmatter,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
+import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
@@ -34,6 +28,7 @@ import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
+import { setActiveSpanAttributes, withSpanSync } from './telemetry.ts';
 
 const log = getLogger('agent-sessions');
 
@@ -72,20 +67,12 @@ export const AGENT_WRITE_ORIGIN = {
   context: { origin: 'agent-write', paired: true },
 } as const satisfies PairedWriteOrigin;
 
-/** Map known MCP clientInfo.name values to icon identifiers. */
-export function iconFromClientName(name?: string): string {
-  const ICON_MAP: Record<string, string> = {
-    'claude-code': 'claude',
-    'claude-ai': 'claude',
-    cursor: 'cursor',
-    'cursor-vscode': 'cursor',
-    cascade: 'windsurf',
-    codex: 'openai',
-    copilot: 'github',
-    cline: 'cline',
-  };
-  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
-}
+// `iconFromClientName` lives in `@inkeep/open-knowledge-core` so both the
+// server (presence bar, api-extension) and the app (TimelinePanel dot-color
+// derivation) share the identical mapping — drift between the two is how
+// brand colors become inconsistent between surfaces. Re-exported here for
+// backwards compat with existing server-side import sites.
+export { iconFromClientName } from '@inkeep/open-knowledge-core';
 
 /**
  * XmlFragment-authoritative agent write composition (FR-1, precedent #10).
@@ -103,6 +90,24 @@ export function iconFromClientName(name?: string): string {
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative, Y.Text mirrors)
  */
 export function applyAgentMarkdownWrite(
+  document: Document,
+  markdown: string,
+  position: 'append' | 'prepend' | 'replace',
+): void {
+  withSpanSync(
+    'agent.applyAgentMarkdownWrite',
+    {
+      attributes: {
+        'doc.name': document.name,
+        'agent.write_position': position,
+        'agent.markdown.bytes': markdown.length,
+      },
+    },
+    () => applyAgentMarkdownWriteInner(document, markdown, position),
+  );
+}
+
+function applyAgentMarkdownWriteInner(
   document: Document,
   markdown: string,
   position: 'append' | 'prepend' | 'replace',
@@ -198,6 +203,23 @@ export function applyAgentMarkdownWrite(
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
  */
 export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): boolean {
+  return withSpanSync(
+    'agent.applyAgentUndo',
+    {
+      attributes: {
+        'doc.name': session.dc.document.name,
+        'agent.undo_scope': scope,
+      },
+    },
+    () => {
+      const undone = applyAgentUndoInner(session, scope);
+      setActiveSpanAttributes({ 'agent.undo_effective': undone });
+      return undone;
+    },
+  );
+}
+
+function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
@@ -263,7 +285,7 @@ export interface AgentSessionIdentity {
  * `um` tracks [Y.Text, metaMap, flashMap] under `session.origin`; writes under
  * `session.undoOrigin` (V0-14 undo path) are excluded via captureTransaction.
  */
-export interface SessionRecord {
+interface SessionRecord {
   dc: AgentDirectConnection;
   /** Per-session frozen PairedWriteOrigin — unique per session (D2, D23). */
   origin: PairedWriteOrigin;
@@ -286,6 +308,8 @@ function createSessionOrigin(
   sessionId: string,
   agentType?: string,
   principalId?: string,
+  displayName?: string,
+  colorSeed?: string,
 ): PairedWriteOrigin {
   // precedent #1: typed transaction origin object (not string).
   // D23: deep-freeze both context and outer object so accidental mutation throws.
@@ -301,6 +325,10 @@ function createSessionOrigin(
   };
   if (agentType !== undefined) context.agent_type = agentType;
   if (principalId !== undefined) context.principal = principalId;
+  // display_name + color_seed are read by agent-activity's listAgentActivity
+  // so the Activity Panel shows the same name/color the presence bar does.
+  if (displayName !== undefined) context.display_name = displayName;
+  if (colorSeed !== undefined) context.color_seed = colorSeed;
   Object.freeze(context);
   const origin: PairedWriteOrigin = {
     source: 'local',
@@ -351,6 +379,37 @@ export class AgentSessionManager {
   }
 
   /**
+   * Read-only iterator over live `SessionRecord`s whose session key ends with
+   * the `\0${connectionId}` suffix. Returns sessions in insertion order.
+   *
+   * This is the typed public surface for the Agent Activity Panel's
+   * `listAgentActivity` (SPEC 2026-04-23-agent-activity-panel §6). Reaching
+   * into `this.sessions` directly via `(as any)` is discouraged — callers
+   * should use this accessor so future refactors (e.g. splitting the
+   * (docName, agentId)-keyed map into separate per-agent and per-doc
+   * indices) can evolve without silent breakage at consumer call sites.
+   */
+  public *sessionsForConnection(connectionId: string): IterableIterator<SessionRecord> {
+    const suffix = `\0${connectionId}`;
+    for (const [key, session] of this.sessions) {
+      if (key.endsWith(suffix)) yield session;
+    }
+  }
+
+  /**
+   * Lookup a single session by its (docName, agentId) composite key. Returns
+   * `undefined` when no session is live — callers must guard (e.g. the
+   * Activity Panel's `GET /api/agent-burst-diff` returns 404 in that case).
+   *
+   * Equivalent to `hasSession(docName, agentId) ? sessions.get(key) : null`
+   * but returns the record directly instead of forcing a separate get after
+   * the existence check.
+   */
+  public getLiveSession(docName: string, agentId: string): SessionRecord | undefined {
+    return this.sessions.get(this.sessionKey(docName, agentId));
+  }
+
+  /**
    * Get or create a per-agent SessionRecord (DirectConnection + per-session origin).
    *
    * F1 (D2): each new session creates a frozen LocalTransactionOrigin via
@@ -358,6 +417,11 @@ export class AgentSessionManager {
    *
    * D30: concurrent first-calls for the same (docName, agentId) share one
    * pending openDirectConnection promise — exactly one DirectConnection created.
+   *
+   * No per-doc awareness publishing: every Hocuspocus `Document` has a single
+   * shared `Awareness` clientID, so per-doc writes stomp across N concurrent
+   * agents. Presence is published on the `__system__` Y.Doc via
+   * `AgentPresenceBroadcaster` instead (precedent #3 + spec §3.3 FR-3).
    */
   async getSession(
     docName: string,
@@ -403,7 +467,13 @@ export class AgentSessionManager {
     // commit under that mismatched writerId.
     const rawSessionId = agentId.startsWith('agent-') ? agentId.slice('agent-'.length) : agentId;
     // F1 (D2): per-session frozen origin — object-identity-unique
-    const origin = createSessionOrigin(rawSessionId, agentType, identity?.principalId);
+    const origin = createSessionOrigin(
+      rawSessionId,
+      agentType,
+      identity?.principalId,
+      identity?.displayName,
+      identity?.colorSeed,
+    );
     // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
     const undoOrigin = createUndoOrigin(rawSessionId, agentType);
 
@@ -421,18 +491,11 @@ export class AgentSessionManager {
       sessionContext,
     )) as AgentDirectConnection;
 
-    const icon = iconFromClientName(identity?.clientName);
-    const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
-    dc.document.awareness.setLocalState({
-      user: {
-        name: identity?.displayName ?? 'Claude',
-        color,
-        type: 'agent',
-        icon,
-        tabId: `agent-${agentId}`,
-      },
-      mode: 'idle',
-    });
+    // FR-3: NO per-doc awareness writes here. Every Hocuspocus `Document` has a
+    // single shared `Awareness` clientID borrowed from `doc.clientID`, so a per-
+    // doc `setLocalState` stomps across N concurrent agents that all share the
+    // same Document. Presence is published on the `__system__` Y.Doc via
+    // `AgentPresenceBroadcaster` (map-valued, keyed by agentId) instead.
 
     // US-008 (D25, D24, D21): per-session UndoManager across Y.Text + metaMap + flashMap.
     // trackedOrigins uses object identity — only transactions under session.origin are stacked.
@@ -460,6 +523,20 @@ export class AgentSessionManager {
       },
     );
 
+    // Stamp wall-clock capture time on each StackItem's meta so the Activity
+    // Panel can order bursts chronologically (SPEC FR-P10). Y.UndoManager
+    // does not auto-populate meta.time — the `stackItemAdded` event is the
+    // documented hook (see `node_modules/yjs/src/utils/UndoManager.js`). We
+    // also handle `stackItemUpdated` (fired when writes within captureTimeout
+    // merge into an existing StackItem) so the latest merged write's ts
+    // becomes the burst's `lastTs` signal.
+    // Y.StackItem is not exported from yjs public API — use structural type.
+    const stampTime = ({ stackItem }: { stackItem: { meta: Map<unknown, unknown> } }): void => {
+      stackItem.meta.set('time', Date.now());
+    };
+    um.on('stack-item-added', stampTime);
+    um.on('stack-item-updated', stampTime);
+
     log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
 
     return { dc, origin, undoOrigin, um, agentId, docName };
@@ -472,15 +549,19 @@ export class AgentSessionManager {
 
   /**
    * Disconnect and remove a specific agent session.
-   * Clears awareness + destroys UM before disconnect (D26: dc.disconnect() is the teardown
-   * primitive; explicit um.destroy() releases UM observers eagerly before Hocuspocus unloads
-   * the Y.Doc — UM also auto-destroys on doc.on('destroy') per Q47/Q48).
+   *
+   * Destroys UM before disconnect (D26: dc.disconnect() is the teardown
+   * primitive; explicit um.destroy() releases UM observers eagerly before
+   * Hocuspocus unloads the Y.Doc — UM also auto-destroys on doc.on('destroy')
+   * per Q47/Q48).
+   *
+   * FR-3: does NOT touch per-doc awareness — presence cleanup is the
+   * AgentPresenceBroadcaster's responsibility (keyed by agentId on __system__).
    */
   async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
     const session = this.sessions.get(key);
     if (session) {
-      session.dc.document.awareness.setLocalState(null);
       session.um.destroy();
       await session.dc.disconnect();
       this.sessions.delete(key);
@@ -507,12 +588,13 @@ export class AgentSessionManager {
       await Promise.allSettled(pendingKeys.map((k) => this.pendingSessions.get(k)));
     }
 
+    // Collect matching keys first — the async disconnect + delete below mutates
+    // `this.sessions`, so iterating directly would hit concurrent-modification.
     const keys = [...this.sessions.keys()].filter((k) => k.endsWith(suffix));
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);
@@ -525,12 +607,13 @@ export class AgentSessionManager {
   /** Close all sessions for a given document (all agents). */
   async closeAllForDoc(docName: string): Promise<void> {
     const prefix = `${docName}\0`;
+    // Collect matching keys first — the async disconnect + delete below mutates
+    // `this.sessions`, so iterating directly would hit concurrent-modification.
     const keys = [...this.sessions.keys()].filter((k) => k.startsWith(prefix));
     for (const key of keys) {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);
@@ -551,7 +634,6 @@ export class AgentSessionManager {
       const session = this.sessions.get(key);
       if (!session) continue;
       try {
-        session.dc.document.awareness.setLocalState(null);
         session.um.destroy();
         await session.dc.disconnect();
         this.sessions.delete(key);

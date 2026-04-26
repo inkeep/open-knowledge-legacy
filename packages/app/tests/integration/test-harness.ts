@@ -95,6 +95,13 @@ export interface CreateTestServerOptions {
    * Integration tests pass a small value (e.g. 150) for fast teardown.
    */
   keepaliveGraceMs?: number;
+  /**
+   * Enable shadow-repo git commits. Default false (avoids git overhead in most tests).
+   * Pass true to test paths gated on gitEnabled (e.g. CC1 session-activity signal).
+   */
+  gitEnabled?: boolean;
+  /** Git commit debounce in ms. Only relevant when gitEnabled: true. Default 200 for tests. */
+  commitDebounceMs?: number;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -124,7 +131,14 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     quiet: true,
     debounce: options.debounce ?? 200,
     maxDebounce: options.maxDebounce ?? 1000,
-    gitEnabled: false,
+    gitEnabled: options.gitEnabled ?? false,
+    commitDebounceMs: options.commitDebounceMs ?? 200,
+    // When gitEnabled: true, the test-harness contentDir IS the tmpdir root (no
+    // `content/` subdir). Persistence defaults contentRoot to 'content' when
+    // `relative(projectDir, contentDir)` is empty — which breaks the
+    // `git add content` call in buildWipTree. Override to '.' so the shadow-repo
+    // pathspec matches the single-directory layout tests use.
+    contentRoot: options.gitEnabled === true ? '.' : undefined,
     enableTestRoutes: true,
   });
 
@@ -474,11 +488,18 @@ export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
   }
 }
 
-/** POST to agent-write-md endpoint */
+/** POST to agent-write-md endpoint. Identity fields are optional — omit to use server defaults. */
 export async function agentWriteMd(
   port: number,
   markdown: string,
-  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace'; agentId?: string },
+  opts?: {
+    docName?: string;
+    position?: 'append' | 'prepend' | 'replace';
+    agentId?: string;
+    agentName?: string;
+    clientName?: string;
+    colorSeed?: string;
+  },
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
@@ -488,6 +509,9 @@ export async function agentWriteMd(
       position: opts?.position ?? 'append',
       docName: opts?.docName,
       agentId: opts?.agentId,
+      agentName: opts?.agentName,
+      clientName: opts?.clientName,
+      colorSeed: opts?.colorSeed,
     }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);

@@ -16,9 +16,44 @@ import { FuseState, FuseV1Options } from '@electron/fuses';
  * a boolean collapse maps REMOVED/INHERIT to `false` and silently accepts
  * fuses that should have been explicitly DISABLE.
  */
+// RunAsNode is ENABLED (amended 2026-04-23 for M6a).
+//
+// The bundled `ok.sh` wrapper's `ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$CLI" …`
+// invocation requires this fuse to be enabled in packaged builds — with the
+// fuse disabled, Electron silently ignores the env var and launches the GUI
+// instead of executing the CLI. That would break the entire M6 CLI-on-PATH
+// + first-launch MCP wiring path in the packaged `.app`. VS Code, Atom, and
+// the Electron-as-Node-host pattern documented at
+// `reports/electron-bundled-cli-install-patterns/` all depend on RunAsNode
+// being enabled for the same reason.
+//
+// Defense-in-depth retained:
+//   - `OnlyLoadAppFromAsar` + `EnableEmbeddedAsarIntegrityValidation` keep
+//     the asar-loaded renderer + main scripts integrity-checked.
+//   - `EnableNodeOptionsEnvironmentVariable` stays DISABLED so a hostile
+//     `NODE_OPTIONS` in the user's shell can't inject `--require` into the
+//     Electron-as-Node invocation. The wrapper also re-exports user-supplied
+//     `NODE_OPTIONS` as `OK_NODE_OPTIONS` then unsets it, double-guarding.
+//   - Post-sign `@electron/fuses read` verification (afterSign.mjs) still
+//     diffs actual vs expected against this map — drift fails the release
+//     pipeline. The D17 verification posture from parent §8.9 is intact.
+//   - Bundle-modification attacks require admin write access to /Applications
+//     (already a full-compromise scenario). Gatekeeper notarization ticket
+//     validates on download (quarantine bit path); local tampering is out of
+//     scope for the code-signing threat model.
+// EnableCookieEncryption is DISABLED. Audit (specs/2026-04-24-desktop-
+// packaging-first-boot/SPEC.md §6 D5) found exactly one cookie in the
+// packaged Cookies SQLite store — shadcn's `sidebar_state=true|false`
+// open/closed flag set from a file:// page. file:// cookies have
+// `is_secure: 0` so Chromium's cookie-encryption path never engages on
+// them (it gates on is_secure: 1). The fuse-on path was a no-op for our
+// actual cookie traffic while triggering a Keychain prompt at every
+// first launch — defense-in-depth that defended nothing. Re-enable when
+// a feature actually stores a secret in a cookie (would coincide with
+// adding a webview to a third-party service).
 export const targetFuses = {
-  [FuseV1Options.RunAsNode]: false,
-  [FuseV1Options.EnableCookieEncryption]: true,
+  [FuseV1Options.RunAsNode]: true,
+  [FuseV1Options.EnableCookieEncryption]: false,
   [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
   [FuseV1Options.EnableNodeCliInspectArguments]: true,
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,

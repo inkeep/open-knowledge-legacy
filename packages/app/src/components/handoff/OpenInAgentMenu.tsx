@@ -24,16 +24,18 @@
  */
 
 import { composePrompt, type TargetData } from '@inkeep/open-knowledge-core';
-import { MoreHorizontal } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuRoot,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { OpenInAgentMenuItem, successToastForWebFallback } from './OpenInAgentMenuItem';
 import { type HandoffDispatchInput, useHandoffDispatch } from './useHandoffDispatch';
@@ -41,7 +43,7 @@ import { useInstalledAgents } from './useInstalledAgents';
 
 export { successToastForWebFallback };
 
-export interface OpenInAgentMenuProps {
+interface OpenInAgentMenuProps {
   /** Active doc context. When `null`, the trigger renders disabled (nothing
    *  to dispatch). Surfaces own the docContext + projectDir + docPath. */
   readonly input: HandoffDispatchInput | null;
@@ -96,20 +98,28 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
   // `packages/app/src/main.tsx` already covers the whole tree, and the
   // disabled-row submenu pattern doesn't rely on tooltips for affordances.
   return (
-    <DropdownMenuRoot open={open} onOpenChange={handleOpenChange}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Open in…"
-          disabled={triggerDisabled}
-          className="text-muted-foreground"
-          data-testid="open-in-agent-trigger"
-        >
-          <MoreHorizontal className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit with AI"
+              disabled={triggerDisabled}
+              className="text-muted-foreground"
+              data-testid="open-in-agent-trigger"
+            >
+              <Sparkles className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Edit with AI</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end" className="min-w-[220px]" data-testid="open-in-agent-menu">
+        <DropdownMenuLabel className="font-mono font-normal tracking-wide uppercase text-muted-foreground text-xs">
+          Open in…
+        </DropdownMenuLabel>
         {KNOWN_TARGETS.map((target) => {
           const installState = states[target.id];
           return (
@@ -126,6 +136,6 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
           );
         })}
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }

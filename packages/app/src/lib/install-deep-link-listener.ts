@@ -17,7 +17,7 @@
 
 import type { OkDesktopBridge } from '@/lib/desktop-bridge-types';
 
-export interface InstallDeepLinkListenerOptions {
+interface InstallDeepLinkListenerOptions {
   /** Bridge resolved from `window.okDesktop`. Absent in web/CLI. */
   bridge: OkDesktopBridge | undefined;
   /**

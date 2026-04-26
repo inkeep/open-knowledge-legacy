@@ -1,12 +1,13 @@
 import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
 import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
+import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -55,7 +56,7 @@ function FileSidebarInner() {
                  * focus between items, and is the shadcn-standard pattern
                  * for toolbar menus.
                  */}
-                <DropdownMenuRoot>
+                <DropdownMenu>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <DropdownMenuTrigger asChild>
@@ -76,7 +77,7 @@ function FileSidebarInner() {
                       Collapse All
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                </DropdownMenuRoot>
+                </DropdownMenu>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -111,7 +112,14 @@ function FileSidebarInner() {
       <SidebarContent>
         <FileTree ref={fileTreeRef} />
       </SidebarContent>
-      <SidebarFooter>
+      <SidebarFooter className="px-0">
+        {typeof window !== 'undefined' && window.okDesktop ? (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <ProjectSwitcher bridge={window.okDesktop} />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        ) : null}
         <UpdateNotices />
       </SidebarFooter>
     </Sidebar>
