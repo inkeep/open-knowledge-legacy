@@ -189,6 +189,90 @@ describe('ProviderPool onChange', () => {
   });
 });
 
+describe('ProviderPool onEvict subscription', () => {
+  // Replaces the explicit cross-module call to evictTiptapEditor /
+  // evictCmEditor that lived in destroyEntry pre-Phase-2. Verifies that
+  // the eviction event fires per docName for every entry-destroy path
+  // (close, LRU evict, recycle, dispose) and that multiple subscribers
+  // all run.
+  test('fires evict listener on close', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc1');
+    const evicted: string[] = [];
+    pool.onEvict((name) => evicted.push(name));
+    pool.close('doc1');
+    expect(evicted).toEqual(['doc1']);
+  });
+
+  test('fires evict listener on LRU eviction', () => {
+    pool = new ProviderPool(2, DUMMY_WS);
+    pool.open('doc1');
+    pool.open('doc2');
+    pool.setActive('doc2'); // doc1 becomes LRU
+    const evicted: string[] = [];
+    pool.onEvict((name) => evicted.push(name));
+    pool.open('doc3'); // triggers LRU eviction of doc1
+    expect(evicted).toEqual(['doc1']);
+  });
+
+  test('fires evict listener on dispose for every entry', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc1');
+    pool.open('doc2');
+    pool.open('doc3');
+    const evicted: string[] = [];
+    pool.onEvict((name) => evicted.push(name));
+    pool.dispose();
+    expect(new Set(evicted)).toEqual(new Set(['doc1', 'doc2', 'doc3']));
+  });
+
+  test('multiple subscribers all fire', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc1');
+    let count1 = 0;
+    let count2 = 0;
+    pool.onEvict(() => count1++);
+    pool.onEvict(() => count2++);
+    pool.close('doc1');
+    expect(count1).toBe(1);
+    expect(count2).toBe(1);
+  });
+
+  test('unsubscribe stops the listener', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc1');
+    pool.open('doc2');
+    let count = 0;
+    const unsubscribe = pool.onEvict(() => count++);
+    pool.close('doc1');
+    expect(count).toBe(1);
+    unsubscribe();
+    pool.close('doc2');
+    expect(count).toBe(1); // didn't increment after unsubscribe
+  });
+
+  test('a throwing listener does not prevent others from firing', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.open('doc1');
+    let secondFired = false;
+    pool.onEvict(() => {
+      throw new Error('synthetic listener failure');
+    });
+    pool.onEvict(() => {
+      secondFired = true;
+    });
+    // Suppress the warn so the test output stays clean.
+    const originalWarn = console.warn;
+    console.warn = mock(() => {});
+    try {
+      pool.close('doc1');
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(secondFired).toBe(true);
+  });
+});
+
 describe('ProviderPool disconnect recycling', () => {
   test('does not recycle a provider that disconnects before first sync', () => {
     pool = new ProviderPool(3, DUMMY_WS);
@@ -1184,9 +1268,12 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     expect(cacheModule.__peekTiptap('doc-eviction-regression')).toBeDefined();
     expect(cacheModule.__peekCm('doc-eviction-regression')).toBeDefined();
 
-    // Now open + close through the pool. close() → destroyEntry() →
-    // evictTiptapEditor + evictCmEditor should fire.
+    // Now open + close through the pool. The cache subscribes to the
+    // pool's eviction event (DocumentContext wires this in production
+    // via subscribePoolEviction; tests must wire it explicitly to
+    // exercise the same end-to-end behavior).
     pool = new ProviderPool(3, DUMMY_WS);
+    cacheModule.subscribePoolEviction(pool);
     pool.open('doc-eviction-regression');
     pool.close('doc-eviction-regression');
 
@@ -1235,6 +1322,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     });
 
     pool = new ProviderPool(3, DUMMY_WS);
+    cacheModule.subscribePoolEviction(pool);
     pool.open('doc-recycle-regression');
     pool.recycle('doc-recycle-regression');
 
@@ -1283,6 +1371,7 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
     });
 
     pool = new ProviderPool(3, DUMMY_WS);
+    cacheModule.subscribePoolEviction(pool);
     pool.open('dispose-a');
     pool.open('dispose-b');
     pool.dispose();

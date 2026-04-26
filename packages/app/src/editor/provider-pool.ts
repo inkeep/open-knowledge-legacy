@@ -14,7 +14,6 @@ import {
   createClientPersistence,
 } from './client-persistence';
 import { appendTraceContextToCollabUrl } from './collab-otel';
-import { evictCmEditor, evictTiptapEditor } from './editor-cache';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
@@ -482,6 +481,48 @@ export class ProviderPool {
 
   private notify(): void {
     this.onChange?.();
+  }
+
+  /**
+   * Subscribers fired when the pool evicts an entry (whether via LRU,
+   * close, recycle, or dispose). The cache module subscribes to clear
+   * its `Editor` / `EditorView` cache entries that hold refs to
+   * `provider.document` — without this, the next mountTiptapEditor /
+   * mountCmEditor call for the same docName would return a stale entry
+   * bound to an orphaned Y.Doc (Critical #2 from the 2026-04-21 review).
+   *
+   * Replaces the explicit `evictTiptapEditor(docName); evictCmEditor(docName)`
+   * calls that lived inline in `destroyEntry` — keeps the pool free of
+   * cross-module cache knowledge.
+   *
+   * Subscribers fire AFTER the kind flip to 'tearing-down' but BEFORE
+   * `provider.destroy()`, preserving the ordering invariant: cache
+   * eviction must run before provider teardown so cached editor
+   * destroy() calls operate on a still-live Y.Doc.
+   */
+  private evictListeners = new Set<(docName: string) => void>();
+
+  /**
+   * Subscribe to entry-eviction events. Returns an unsubscribe function.
+   * Multiple subscribers all fire in registration order; throws inside
+   * a subscriber are caught + logged so one bad subscriber doesn't
+   * prevent the others from running.
+   */
+  onEvict(cb: (docName: string) => void): () => void {
+    this.evictListeners.add(cb);
+    return () => {
+      this.evictListeners.delete(cb);
+    };
+  }
+
+  private fireEvict(docName: string): void {
+    for (const listener of this.evictListeners) {
+      try {
+        listener(docName);
+      } catch (err) {
+        console.warn(`[ProviderPool] evict listener threw for ${docName}:`, err);
+      }
+    }
   }
 
   /** Touch a doc in the LRU order (move to end = most recently used). */
@@ -1004,19 +1045,15 @@ export class ProviderPool {
     // teardown. Natural (network-triggered) close events still reject as
     // expected because this path only runs inside pool destroy/recycle/evict.
     invalidateSyncPromise(docName);
-    // Evict V2 editor cache entries BEFORE destroying the provider: the cache
-    // holds Editor/EditorView instances bound to `provider.document` via
-    // Collaboration.configure / y-codemirror.next. If the cache survived the
-    // pool's destroy, the next `mountTiptapEditor/mountCmEditor(docName)`
-    // would return a stale entry bound to an orphaned Y.Doc (Critical #2 from
-    // 2026-04-21 review). Coupling eviction here — the single point that
-    // destroys the provider — keeps the invariant at one site. Eviction is
-    // safe when the cache has no entry (no-op returns false). It also runs
-    // editor.destroy() itself, so the React subtree receives a destroyed
-    // editor on next mount and falls through to factory-construct a fresh
-    // one.
-    evictTiptapEditor(docName);
-    evictCmEditor(docName);
+    // Fire the eviction event so the V2 editor cache (and any future
+    // subscriber) can clean up entries bound to `provider.document` via
+    // Collaboration.configure / y-codemirror.next BEFORE the provider is
+    // destroyed. Without this ordering, cached `Editor`/`EditorView`
+    // instances retain refs to an orphaned Y.Doc (Critical #2 from the
+    // 2026-04-21 review). The pool stays free of editor-cache knowledge;
+    // the cache subscribes via `pool.onEvict(...)` and runs whatever
+    // teardown it owns.
+    this.fireEvict(docName);
     // Observer cleanup (observers reference Y.Doc state). Captured pre-flip
     // because the post-flip variant has `observerCleanup: null`.
     observerCleanup?.();

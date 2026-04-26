@@ -838,6 +838,36 @@ function findProvider(docName: string): HocuspocusProvider | null {
   return null;
 }
 
+/**
+ * Subscribe the editor cache to a pool's eviction events. Returns an
+ * unsubscribe function (call on pool teardown to drop the listener).
+ *
+ * The subscription is the load-bearing mechanism that keeps cached
+ * `Editor` / `EditorView` instances from outliving the Y.Doc they're
+ * bound to (Critical #2 from the 2026-04-21 review). Pre-this-refactor,
+ * `provider-pool.ts:destroyEntry` explicitly called
+ * `evictTiptapEditor` / `evictCmEditor` — coupling the pool to the cache
+ * module. Now the pool fires an event; the cache subscribes once at
+ * construction time. The pool stays free of editor-cache imports.
+ *
+ * The cache must be subscribed BEFORE the pool can fire any eviction
+ * event. The intended call site is right after `new ProviderPool(...)`
+ * in `DocumentContext.tsx`, on the `getPool(collabUrl)` path.
+ *
+ * Safe to call multiple times (idempotent on the underlying Set). The
+ * unsubscribe closure captures the specific listener identity, so
+ * calling unsubscribe doesn't tear down listeners registered by other
+ * callers.
+ */
+export function subscribePoolEviction(pool: {
+  onEvict: (cb: (docName: string) => void) => () => void;
+}): () => void {
+  return pool.onEvict((docName) => {
+    evictTiptapEditor(docName);
+    evictCmEditor(docName);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers (not part of production API)
 // ---------------------------------------------------------------------------

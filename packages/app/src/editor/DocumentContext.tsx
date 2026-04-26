@@ -7,6 +7,7 @@ import { mark } from '@/lib/perf';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
 import { handleBranchSwitched } from './branch-invalidation';
+import { subscribePoolEviction } from './editor-cache';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 import { tabSessionId } from './tab-identity';
@@ -250,6 +251,14 @@ let pool: ProviderPool | null = null;
 function getPool(collabUrl: string): ProviderPool {
   if (!pool) {
     pool = new ProviderPool(MAX_POOL, collabUrl);
+    // Wire the editor cache to the pool's eviction events. Without this
+    // subscription, cached `Editor` / `EditorView` instances would
+    // outlive the Y.Doc they're bound to (Critical #2 from the
+    // 2026-04-21 review). Single subscription per pool lifetime; the
+    // unsubscribe handle is intentionally dropped — the pool is a
+    // module-level singleton and only torn down on HMR/dispose, at
+    // which point its listener Set is GC'd along with the pool.
+    subscribePoolEviction(pool);
   }
   return pool;
 }
