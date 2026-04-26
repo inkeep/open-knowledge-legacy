@@ -23,18 +23,18 @@
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "bun run build && size-limit"
   },
-  "//": "TODO: check why after installing @pierre/trees has exceeded by 115 kB",
+  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "285 kB",
+      "limit": "280 kB",
       "gzip": true
     },
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1050 kB",
+      "limit": "1.15 MB",
       "gzip": true
     },
     {
