@@ -1618,7 +1618,15 @@ describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
     }).not.toThrow();
   });
 
-  test('no-op on tearing-down entries (kind !== active)', async () => {
+  test('no-op when entry has been removed from the pool', async () => {
+    // After `pool.close(docName)` runs synchronously
+    // (`destroyEntry` + `entries.delete`), `observeDiskAck`'s
+    // `this.entries.get(docName)` returns undefined and hits the
+    // `!entry` early-return. The `kind !== 'active'` branch is
+    // defensive code for closure-stale calls inside `destroyEntry`'s
+    // synchronous critical section — unreachable from any external
+    // caller in normal operation, since the pool's external API
+    // transitions an entry from `active` to `(gone)` atomically.
     pool = new ProviderPool(3, DUMMY_WS);
     const docName = uniqueDocName('pp-dack');
     const entry = pool.open(docName);
@@ -1627,8 +1635,8 @@ describe('ProviderPool observeDiskAck (disk-ack watermark)', () => {
     pool.observeDiskAck(docName, initialSV);
 
     pool.close(docName);
-    // After close, the entry is destroyed (or in tearing-down). A
-    // subsequent observeDiskAck must NOT mutate any field.
+    // After close, the entry is gone from `this.entries`. A subsequent
+    // observeDiskAck must NOT mutate any future entry's state.
     pool.observeDiskAck(docName, new Uint8Array([0xcd]));
     // Re-opening yields a fresh entry with null watermark — proves
     // the post-close call did not leak into a future entry.
@@ -1675,9 +1683,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
     await new Promise((r) => setTimeout(r, 100));
 
-    const buffered = (
-      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
-    ).bufferedUpdates.get(docName);
+    const buffered = pool.__test_getBufferedUpdate(docName);
     if (!buffered) throw new Error('expected buffered update for active doc');
 
     // The buffered update MUST equal the unsynced-from-disk-ack delta
@@ -1716,9 +1722,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
     await new Promise((r) => setTimeout(r, 100));
 
-    const buffered = (
-      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
-    ).bufferedUpdates.get(docName);
+    const buffered = pool.__test_getBufferedUpdate(docName);
     if (!buffered) throw new Error('expected buffered update');
 
     const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
@@ -1743,9 +1747,6 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     // No baseline → drop unsynced state. The 50–500 ms cold-connect-then-
     // immediate-mismatch window can lose keystrokes; accepted trade-off
     // (SPEC §6).
-    const buffered = (
-      pool as unknown as { bufferedUpdates: Map<string, Uint8Array> }
-    ).bufferedUpdates.get(docName);
-    expect(buffered).toBeUndefined();
+    expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
   });
 });

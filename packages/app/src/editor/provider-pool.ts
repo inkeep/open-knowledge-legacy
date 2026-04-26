@@ -970,6 +970,9 @@ export class ProviderPool {
   __test_hasBufferedUpdate(docName: string): boolean {
     return this.bufferedUpdates.has(docName);
   }
+  __test_getBufferedUpdate(docName: string): Uint8Array | undefined {
+    return this.bufferedUpdates.get(docName);
+  }
 
   /** Set the active document. Must already be open. */
   setActive(docName: string): void {

@@ -101,6 +101,59 @@ function decodeStateVector(svBase64: string): Uint8Array {
 }
 
 /**
+ * Per-channel handler set for the CC1 stateless multiplex. All
+ * handlers are optional — consumers wire only the channels they
+ * care about. `onUnknown` fires when no parser matches (dropped
+ * frame, observability hook).
+ */
+export interface CC1StatelessHandlers {
+  onServerInfo?: (payload: CC1ServerInfoPayload) => void;
+  onBranchSwitched?: (payload: CC1BranchSwitchedPayload) => void;
+  onDiskAck?: (parsed: CC1DiskAckParsed) => void;
+  onDerivedView?: (payload: CC1DerivedViewPayload) => void;
+  onUnknown?: (rawPayload: string) => void;
+}
+
+/**
+ * Parse a CC1 stateless payload and dispatch to the matching handler.
+ * Single source of truth for the parser-cascade ordering — both
+ * `SystemDocSubscriber` (production) and `attachSystemDocSubscriber`
+ * (integration harness) call through here, so adding a fifth CC1
+ * channel is a one-place edit instead of two parallel updates that
+ * could silently drift.
+ *
+ * Schemas pin `ch` to a specific literal so the four parsers are
+ * mutually exclusive; the cascade short-circuits on the first match.
+ * Order is fixed (server-info → branch-switched → disk-ack →
+ * derived-view) and matches the `__system__` traffic profile (most
+ * frequent first), but functionally any order yields the same dispatch
+ * because the parsers are mutually exclusive on `ch`.
+ */
+export function dispatchCC1Stateless(payload: string, handlers: CC1StatelessHandlers): void {
+  const serverInfo = parseCC1ServerInfo(payload);
+  if (serverInfo) {
+    handlers.onServerInfo?.(serverInfo);
+    return;
+  }
+  const branchSwitched = parseCC1BranchSwitched(payload);
+  if (branchSwitched) {
+    handlers.onBranchSwitched?.(branchSwitched);
+    return;
+  }
+  const diskAck = parseCC1DiskAck(payload);
+  if (diskAck) {
+    handlers.onDiskAck?.(diskAck);
+    return;
+  }
+  const derivedView = parseCC1DerivedView(payload);
+  if (derivedView) {
+    handlers.onDerivedView?.(derivedView);
+    return;
+  }
+  handlers.onUnknown?.(payload);
+}
+
+/**
  * Shared safe-parse for stateless CC1 payloads. JSON parse error or Zod
  * schema mismatch yields `null` so the stateless listener can skip the
  * frame without surfacing an exception. Uses `safeParse` (never throws)

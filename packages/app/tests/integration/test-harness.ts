@@ -49,12 +49,7 @@ import {
   setupObservers,
 } from '../../src/editor/observers';
 import type { ProviderPool } from '../../src/editor/provider-pool';
-import {
-  parseCC1BranchSwitched,
-  parseCC1DiskAck,
-  parseCC1ServerInfo,
-  SYSTEM_DOC_NAME,
-} from '../../src/lib/cc1';
+import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '../../src/lib/cc1';
 import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
@@ -1529,29 +1524,28 @@ export function attachSystemDocSubscriber(
     name: SYSTEM_DOC_NAME,
     document: doc,
     onStateless: ({ payload }: { payload: string }) => {
-      const serverInfo = parseCC1ServerInfo(payload);
-      if (serverInfo) {
-        pool.setExpectedServerInstanceId(serverInfo.serverInstanceId);
-        if (serverInfo.currentBranch !== undefined) {
-          pool.setObservedBranch(serverInfo.currentBranch);
-        }
-        return;
-      }
-      const branchSwitched = parseCC1BranchSwitched(payload);
-      if (branchSwitched) {
-        pool.setObservedBranch(branchSwitched.branch);
-        // Don't fire handleBranchSwitched here — tests that exercise the
-        // branch-switch path own that wiring explicitly (cf
-        // branch-switch-live-client.test.ts). This helper only mirrors the
-        // production CC1 dispatcher's pool-state side-effects.
-        return;
-      }
-      const diskAck = parseCC1DiskAck(payload);
-      if (diskAck) {
-        pool.observeDiskAck(diskAck.docName, diskAck.sv);
-        return;
-      }
-      // derived-view payloads ignored — see header comment.
+      // Production dispatch lives in `SystemDocSubscriber.tsx`; this
+      // helper mirrors only the pool-state side-effects via the shared
+      // `dispatchCC1Stateless` cascade. `onBranchSwitched` deliberately
+      // updates only `observedBranch` — tests that exercise the
+      // invalidation flow own `handleBranchSwitched` wiring explicitly
+      // (cf `branch-switch-live-client.test.ts`). `onDerivedView` is
+      // not handled — the harness has no analog for the production
+      // TanStack Query cache invalidation it drives.
+      dispatchCC1Stateless(payload, {
+        onServerInfo: (info) => {
+          pool.setExpectedServerInstanceId(info.serverInstanceId);
+          if (info.currentBranch !== undefined) {
+            pool.setObservedBranch(info.currentBranch);
+          }
+        },
+        onBranchSwitched: (p) => {
+          pool.setObservedBranch(p.branch);
+        },
+        onDiskAck: (p) => {
+          pool.observeDiskAck(p.docName, p.sv);
+        },
+      });
     },
   });
 

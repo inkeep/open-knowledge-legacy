@@ -14,9 +14,10 @@ import { tabSessionId } from './tab-identity';
 
 /**
  * Read-only projection of a `PoolEntry` — exposes the fields downstream React
- * components need without leaking the mutable pool internals (observerCleanup,
- * pendingRecycleTimer, tearingDown). Sorted by `lastAccessedAt` descending so
- * consumers like `EditorActivityPool` can apply LRU bounding without re-sorting.
+ * components need without leaking the mutable pool internals (`kind`
+ * discriminator, `persistence`, `observerCleanup`, `pendingRecycleTimer`).
+ * Sorted by `lastAccessedAt` descending so consumers like `EditorActivityPool`
+ * can apply LRU bounding without re-sorting.
  */
 export interface PoolEntrySnapshot {
   docName: string;

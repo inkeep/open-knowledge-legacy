@@ -3,13 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import {
-  parseCC1BranchSwitched,
-  parseCC1DerivedView,
-  parseCC1DiskAck,
-  parseCC1ServerInfo,
-  SYSTEM_DOC_NAME,
-} from '@/lib/cc1';
+import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function SystemDocSubscriber() {
@@ -52,38 +46,30 @@ export function SystemDocSubscriber() {
       name: SYSTEM_DOC_NAME,
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
-        // CC1 stateless channel multiplexes four payload shapes:
-        //   server-info → updates pool's cachedServerInstanceId; piggybacks
-        //                 currentBranch as the `branch-switched` late-join
-        //                 backstop, dispatched via observeBranch.
-        //   branch-switched → triggers handleBranchSwitched (clearData + recycle)
-        //   disk-ack → advances the per-doc lastDiskAckedSV watermark
-        //   derived-view (files/backlinks/graph/sync-status/session-activity) → invalidates queries
-        // Schemas are mutually exclusive by `ch`; check in order, short-circuit on match.
-        const serverInfo = parseCC1ServerInfo(payload);
-        if (serverInfo) {
-          updateServerInstanceIdRef.current(serverInfo.serverInstanceId);
-          if (serverInfo.currentBranch !== undefined) {
-            void observeBranchRef.current(serverInfo.currentBranch);
-          }
-          return;
-        }
-        const branchSwitched = parseCC1BranchSwitched(payload);
-        if (branchSwitched) {
-          void onBranchSwitchedRef.current(branchSwitched.branch);
-          return;
-        }
-        const diskAck = parseCC1DiskAck(payload);
-        if (diskAck) {
-          observeDiskAckRef.current(diskAck.docName, diskAck.sv);
-          return;
-        }
-        const signal = parseCC1DerivedView(payload);
-        if (!signal) {
-          console.warn('[CC1] Unparseable stateless payload, skipping:', payload.slice(0, 100));
-          return;
-        }
-        emitDocumentsChanged([signal.ch]);
+        // CC1 stateless channel multiplexes four payload shapes via the
+        // shared dispatcher in `@/lib/cc1` — adding a fifth channel is
+        // a one-place edit there, not parallel updates here + the
+        // integration harness's `attachSystemDocSubscriber`.
+        dispatchCC1Stateless(payload, {
+          onServerInfo: (info) => {
+            updateServerInstanceIdRef.current(info.serverInstanceId);
+            if (info.currentBranch !== undefined) {
+              void observeBranchRef.current(info.currentBranch);
+            }
+          },
+          onBranchSwitched: (p) => {
+            void onBranchSwitchedRef.current(p.branch);
+          },
+          onDiskAck: (p) => {
+            observeDiskAckRef.current(p.docName, p.sv);
+          },
+          onDerivedView: (p) => {
+            emitDocumentsChanged([p.ch]);
+          },
+          onUnknown: (raw) => {
+            console.warn('[CC1] Unparseable stateless payload, skipping:', raw.slice(0, 100));
+          },
+        });
       },
       onClose: ({ event }) => {
         console.warn('[CC1] __system__ connection closed:', event.code, event.reason);
