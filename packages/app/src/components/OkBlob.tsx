@@ -22,6 +22,14 @@ interface OkBlobProps {
    * instead of greeting the user.
    */
   variant?: 'default' | 'sleeping';
+  /**
+   * Monotonic counter that, when incremented, fires a level-3 happy bounce +
+   * firework burst — the same payload as a rage-click, but triggered
+   * imperatively by the parent. Used for "earned" celebration moments
+   * (e.g. completing onboarding) where the joy isn't user-driven on the
+   * blob itself. Initial 0 → 0 transition (mount) is a no-op.
+   */
+  celebrateSignal?: number;
 }
 
 /** Maximum eye offset from resting position, in SVG viewBox units (viewBox 0 0 30 30). */
@@ -113,6 +121,7 @@ export function OkBlob({
   className,
   trackMouse = true,
   variant = 'default',
+  celebrateSignal = 0,
 }: OkBlobProps) {
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -148,6 +157,21 @@ export function OkBlob({
   }
 
   useEffect(() => () => clearTimeout(decayTimerRef.current), []);
+
+  // Imperative celebration trigger. Initial 0 → 0 mount transition is a no-op.
+  // Sleeping blob stays asleep regardless — the parent shouldn't ask a napping
+  // mascot to throw a party.
+  useEffect(() => {
+    if (celebrateSignal === 0 || isSleeping) return;
+    setClickLevel(3);
+    setClickSeq((prev) => prev + 1);
+    setParticles(generateFireworkParticles(3));
+    clearTimeout(decayTimerRef.current);
+    decayTimerRef.current = setTimeout(() => {
+      setClickLevel(0);
+      setParticles([]);
+    }, IDLE_RESET_MS);
+  }, [celebrateSignal, isSleeping]);
 
   useEffect(() => {
     if (!trackMouse || isSleeping) return;

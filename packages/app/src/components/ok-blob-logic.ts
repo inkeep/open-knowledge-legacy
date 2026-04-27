@@ -2,7 +2,10 @@ export type ClickLevel = 0 | 1 | 2 | 3;
 export type ActiveClickLevel = Exclude<ClickLevel, 0>;
 
 export const RAGE_WINDOW_MS = 600;
-export const IDLE_RESET_MS = 1000;
+// Time before a click level decays + particles clear from the DOM. Must outlast
+// the worst-case particle visual — `maxDelay + durationMax` for the chosen
+// level — or late-spawning particles get cut off mid-flight.
+export const IDLE_RESET_MS = 1700;
 const MAX_LEVEL: ActiveClickLevel = 3;
 
 export function nextClickLevel(
@@ -95,9 +98,9 @@ export const FIREWORK_LEVEL_CONFIG: Record<ClickLevel, FireworkLevelConfig> = {
     distanceVariance: 3,
     sizeMin: 0.45,
     sizeMax: 1.2,
-    maxDelay: 130,
+    maxDelay: 250,
     durationMin: 620,
-    durationMax: 920,
+    durationMax: 1400,
   },
 };
 
