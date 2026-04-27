@@ -334,8 +334,16 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
   });
 });
 
-describe('POST /api/agent-patch (edit_document) — frontmatter handling', () => {
-  test('can find and replace text inside frontmatter', async () => {
+describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () => {
+  // agent-patch refuses to splice into the frontmatter region — agents
+  // editing FM properties are routed to the `frontmatter_patch` MCP tool,
+  // whose typed Merge Patch semantics map onto per-key Y.Map storage.
+  // The rejection signal combines a string-shape heuristic (catches
+  // yaml-style finds and explicit `---` fences) with a position-based
+  // check inside the transact (catches non-yaml finds that happen to
+  // first-match in the FM region).
+
+  test('rejects yaml-shape find (e.g. "cluster: misc") with 400 + migration hint', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
@@ -343,65 +351,130 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
 
       const existingFm = '---\ntitle: Old Title\ncluster: misc\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nThe body stays.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nThe body stays.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
-      // Agent wants to change cluster: misc → cluster: research.
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
         find: 'cluster: misc',
         replace: 'cluster: research',
       });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toContain('FM patches forbidden');
+      expect(parsed.error).toContain('frontmatter_patch');
 
-      const fm = metaMap.get('frontmatter');
-      expect(fm).toBe('---\ntitle: Old Title\ncluster: research\n---\n');
-
-      // Body must remain untouched.
+      // Doc must be untouched — FM unchanged and body unchanged.
+      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(getFrontmatterMap(session.dc.document)).toEqual({
+        title: 'Old Title',
+        cluster: 'misc',
+      });
       const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('cluster: misc');
+      expect(ytext).not.toContain('cluster: research');
       expect(ytext).toContain('The body stays.');
-      expect(ytext).not.toContain('cluster: misc');
     } finally {
       await cleanup();
     }
   });
 
-  test('returns 404 not-found (not a success) when find is absent from BOTH frontmatter and body', async () => {
+  test('rejects find containing "---" fence with 400 + doc unchanged', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
       const metaMap = session.dc.document.getMap('metadata');
 
+      const existingFm = '---\ntitle: ToRemove\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Stable\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nReal content.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nKeep me.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
-        find: 'nonexistent text that is nowhere',
-        replace: 'whatever',
+        find: '---\ntitle: ToRemove\n---\n',
+        replace: '',
       });
 
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toContain('FM patches forbidden');
+
+      // FM still present — heuristic rejected before any state mutation.
+      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ title: 'ToRemove' });
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('title: ToRemove');
+      expect(ytext).toContain('Keep me.');
     } finally {
       await cleanup();
     }
   });
 
-  test('patch in body still works (regression — frontmatter fix must not break body patching)', async () => {
+  test('rejects body-shape find ("draft") that first-matches inside FM via position-based check', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
       const metaMap = session.dc.document.getMap('metadata');
 
+      const existingFm = '---\nstatus: draft\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Doc\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nalpha appears here.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nNot a draft.\n`,
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+
+      // `draft` doesn't match the heuristic — no `---`, no key-value
+      // shape — but its first occurrence in the composed full-doc lands
+      // inside the FM region. The position-based check catches it.
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: 'draft',
+        replace: 'published',
+      });
+
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.error).toContain('FM patches forbidden');
+
+      // FM and body both unchanged — rollback is automatic since the
+      // transact returned early without splicing.
+      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ status: 'draft' });
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('status: draft');
+      expect(ytext).toContain('Not a draft.');
+      expect(ytext).not.toContain('published');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('body-only patch with non-yaml find still applies (regression — body path unaffected)', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+      const metaMap = session.dc.document.getMap('metadata');
+
+      const existingFm = '---\ntitle: Doc\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Body\n\nalpha appears here.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
@@ -412,9 +485,9 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
 
       expect(response.status).toBe(200);
 
-      // Frontmatter unchanged.
-      expect(metaMap.get('frontmatter')).toBe('---\ntitle: Doc\n---\n');
-
+      // FM unchanged; body got the substitution.
+      expect(metaMap.get('frontmatter')).toBe(existingFm);
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ title: 'Doc' });
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('beta appears here.');
       expect(ytext).not.toContain('alpha appears here.');
@@ -423,71 +496,70 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
     }
   });
 
-  test('patch that prefers frontmatter match over later body match (first-match semantics across full doc)', async () => {
+  test('returns 404 (not 400) when non-yaml find is absent from both FM and body', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
-      // Both frontmatter and body contain the word "draft".
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\nstatus: draft\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nNot a draft.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Stable\n---\n# Body\n\nReal content.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
-      // With no offset, agent-patch uses first-match — that's in the frontmatter.
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
-        find: 'draft',
-        replace: 'published',
+        find: 'nonexistent text that is nowhere',
+        replace: 'whatever',
       });
 
-      expect(response.status).toBe(200);
-
-      expect(metaMap.get('frontmatter')).toBe('---\nstatus: published\n---\n');
-
-      // Body's "draft" must survive since only the first occurrence is replaced.
-      const ytext = session.dc.document.getText('source').toString();
-      expect(ytext).toContain('Not a draft.');
+      // Heuristic doesn't match (no `---`, no key:value), and the find
+      // isn't anywhere in the doc, so the position check never runs.
+      // 404 is the expected signal — agents distinguish "not found" from
+      // "FM forbidden" by status code.
+      expect(response.status).toBe(404);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).not.toContain('FM patches forbidden');
     } finally {
       await cleanup();
     }
   });
 
-  test('patch that deletes the entire frontmatter region clears metaMap', async () => {
-    // The patch handler composes `prependFrontmatter(currentFm, currentBody)` before
-    // running find/replace, then re-splits the result. When the replace is '', the
-    // FM region disappears from the composed full-doc, stripFrontmatter on the result
-    // returns an empty FM string, and metaMap must be cleared accordingly. Without
-    // this, stale frontmatter would persist in Y.Map('metadata') even though the
-    // on-disk canonical form has none.
+  test('rejects yaml-shape find even when no FM exists in the doc (heuristic precheck is doc-stateless)', async () => {
+    // Heuristic precheck runs before any doc state is read. An agent
+    // calling agent-patch with a yaml-style find on a body-only doc still
+    // gets the migration hint — the right tool for `key: value` writes
+    // is frontmatter_patch, regardless of the target's current FM state.
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
-      const existingFm = '---\ntitle: ToRemove\n---\n';
+      // Body-only seed (no FM at all).
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nKeep me.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '# Body\n\nfoo: bar appears here.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
         docName: 'test-doc',
-        find: '---\ntitle: ToRemove\n---\n',
-        replace: '',
+        find: 'foo: bar',
+        replace: 'baz: qux',
       });
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.error).toContain('FM patches forbidden');
 
-      // metaMap must reflect "no frontmatter" — stale 'title: ToRemove' gone.
-      expect(metaMap.get('frontmatter')).toBe('');
-
+      // Body untouched.
       const ytext = session.dc.document.getText('source').toString();
-      expect(ytext).not.toContain('title: ToRemove');
-      expect(ytext).not.toContain('---');
-      // Body survives the patch.
-      expect(ytext).toContain('Keep me.');
+      expect(ytext).toContain('foo: bar appears here.');
+      expect(ytext).not.toContain('baz: qux');
     } finally {
       await cleanup();
     }

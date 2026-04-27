@@ -199,6 +199,46 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
   return _hintEmittedCounter;
 }
 
+// Counter for `agent-patch` FM-intersecting calls. Bounded label set:
+// `result ∈ {'rejected','pre_deprecation_passthrough'}`. Today the handler
+// always rejects with 400 — the second label is reserved for a possible
+// passthrough mode during the deprecation window.
+let _agentPatchFmTouchCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_agentPatchFmTouchCounter) {
+    _agentPatchFmTouchCounter = getMeter().createCounter(
+      'ok.frontmatter.agent_patch_fm_touch_total',
+      {
+        description:
+          'Count of agent-patch calls whose find string targets the frontmatter region. Measures incidence during the soft-deprecation window before agent-patch FM-intersecting calls are enforced as 400. Bounded label: result ∈ {rejected, pre_deprecation_passthrough}.',
+      },
+    );
+  }
+  return _agentPatchFmTouchCounter;
+}
+
+/**
+ * Heuristic FM-intersection check for `agent-patch` find strings. Pure
+ * function on the find string — runs before any doc state is read.
+ *
+ * Rejection signal:
+ *   - find contains `---` (FM/body separator — opening or closing fence)
+ *   - find matches `/^\s*[\w-]+:/` (yaml-style key-value at start)
+ *
+ * Catches the common case: agents that copy a YAML line verbatim into
+ * `find` to splice an FM property. The position-based check inside the
+ * transact block catches the rarer case where a non-yaml-shape find
+ * happens to land in the FM region (e.g., `find: 'draft'` matching
+ * `status: draft`). Together they cover both "find looks like FM" and
+ * "find lands in FM."
+ */
+function findLooksLikeFrontmatter(find: string): boolean {
+  if (find.includes('---')) return true;
+  if (/^\s*[\w-]+:/.test(find)) return true;
+  return false;
+}
+
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
@@ -2116,6 +2156,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
+      if (findLooksLikeFrontmatter(find)) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error: 'FM patches forbidden; use frontmatter_patch MCP tool instead',
+        });
+        return;
+      }
       const hasOffset = Object.hasOwn(body, 'offset');
       let offset: number | undefined;
       if (hasOffset) {
@@ -2152,6 +2200,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
+      let fmIntersect = false;
       // setPresence lives INSIDE the try so the pairing with touchMode('idle')
       // in `finally` is atomic — any throw between setPresence and transact
       // (even future code added here) flips the badge back to idle rather
@@ -2201,11 +2250,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             return;
           }
 
-          // Splice at the character level. The result is the authoritative
-          // post-patch full document — if the patch deletes the FM region,
-          // metaMap must be cleared accordingly. Route through explicit
-          // split-then-write so empty-FM is distinguishable from
-          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          // Position-based FM-intersection check. The string-shape
+          // heuristic above handles yaml-style find strings; this catches
+          // the residual class where a non-yaml find (e.g. a single word
+          // like `draft`) happens to first-match in the FM region.
+          // `pos < currentFm.length` is the necessary-and-sufficient
+          // signal — FM is contiguous at doc start, so any match starting
+          // before the FM-end byte overlaps the FM region.
+          if (pos < currentFm.length) {
+            fmIntersect = true;
+            return;
+          }
+
+          // Splice at the character level. Only body-region patches
+          // reach here, so this branch never modifies the FM.
+          // Route through explicit split-then-write so empty-FM is
+          // distinguishable from "body-only payload" (which
+          // applyAgentMarkdownWrite preserves).
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
           const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
@@ -2252,6 +2313,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (notFound) {
         json(res, 404, { ok: false, error: 'Text not found in document' });
+        return;
+      }
+      if (fmIntersect) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error: 'FM patches forbidden; use frontmatter_patch MCP tool instead',
+        });
         return;
       }
 
