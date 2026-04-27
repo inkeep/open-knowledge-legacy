@@ -1286,7 +1286,7 @@ describe('runInit', () => {
 
 describe('resolveMcpScope', () => {
   it('returns "user" when --scope user is passed, without calling promptFn', async () => {
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       throw new Error('promptFn should not be called');
     };
     const result = await resolveMcpScope({ scope: 'user', promptFn });
@@ -1294,7 +1294,7 @@ describe('resolveMcpScope', () => {
   });
 
   it('returns "project" when --scope project is passed, without calling promptFn', async () => {
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       throw new Error('promptFn should not be called');
     };
     const result = await resolveMcpScope({ scope: 'project', promptFn });
@@ -1302,7 +1302,7 @@ describe('resolveMcpScope', () => {
   });
 
   it('returns "both" when --scope both is passed, without calling promptFn', async () => {
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       throw new Error('promptFn should not be called');
     };
     const result = await resolveMcpScope({ scope: 'both', promptFn });
@@ -1310,7 +1310,7 @@ describe('resolveMcpScope', () => {
   });
 
   it('returns "both" in non-TTY mode (isTTY=false), without calling promptFn', async () => {
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       throw new Error('promptFn should not be called');
     };
     const result = await resolveMcpScope({ isTTY: false, promptFn });
@@ -1319,7 +1319,7 @@ describe('resolveMcpScope', () => {
 
   it('calls promptFn and returns its result in TTY mode (isTTY=true)', async () => {
     let called = false;
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       called = true;
       return 'project';
     };
@@ -1328,12 +1328,18 @@ describe('resolveMcpScope', () => {
     expect(result).toBe('project');
   });
 
-  it('returns "user" when --no-mcp (mcp=false), without calling promptFn', async () => {
-    const promptFn = async (): Promise<'user' | 'project' | 'both'> => {
+  it('returns null when --no-mcp (mcp=false), without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
       throw new Error('promptFn should not be called');
     };
     const result = await resolveMcpScope({ mcp: false, isTTY: true, promptFn });
-    expect(result).toBe('user');
+    expect(result).toBeNull();
+  });
+
+  it('returns null when promptFn returns null (user cleared both checkboxes — equivalent to --no-mcp)', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => null;
+    const result = await resolveMcpScope({ isTTY: true, promptFn });
+    expect(result).toBeNull();
   });
 });
 

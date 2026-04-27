@@ -115,7 +115,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Scope types + helpers
 // ---------------------------------------------------------------------------
 
-type McpScope = 'user' | 'project' | 'both';
+export type McpScope = 'user' | 'project' | 'both';
 
 const writesUser = (s: McpScope) => s !== 'project';
 const writesProject = (s: McpScope) => s !== 'user';
@@ -123,8 +123,9 @@ const writesProject = (s: McpScope) => s !== 'user';
 /**
  * Prompt the user interactively to select MCP scope via a checkbox multi-select.
  * Both 'user' and 'project' are pre-selected (default answer: 'both').
+ * Returns null when the user clears both checkboxes (equivalent to --no-mcp).
  */
-async function promptMcpScope(): Promise<McpScope> {
+async function promptMcpScope(): Promise<McpScope | null> {
   const choices = await checkbox({
     message: 'Where should the MCP server be configured?',
     choices: [
@@ -143,16 +144,16 @@ async function promptMcpScope(): Promise<McpScope> {
   if (choices.includes('user') && choices.includes('project')) return 'both';
   if (choices.includes('user')) return 'user';
   if (choices.includes('project')) return 'project';
-  return 'both'; // neither selected → default both (same as non-TTY default)
+  return null; // neither selected → skip MCP (equivalent to --no-mcp)
 }
 
 export async function resolveMcpScope(opts: {
   scope?: McpScope;
   mcp?: boolean;
   isTTY?: boolean;
-  promptFn?: () => Promise<McpScope>;
-}): Promise<McpScope> {
-  if (opts.mcp === false) return 'user'; // --no-mcp wins; scope irrelevant
+  promptFn?: () => Promise<McpScope | null>;
+}): Promise<McpScope | null> {
+  if (opts.mcp === false) return null; // sentinel — --no-mcp short-circuits before this scope is read
   if (opts.scope) return opts.scope;
   const tty = opts.isTTY ?? process.stdout.isTTY;
   if (!tty) return 'both';
@@ -171,8 +172,8 @@ export interface EditorMcpResult {
   configPath: string;
   serverName: string;
   error?: string;
-  /** Set when the result came from an explicit project-scope write. */
-  configScope?: 'user' | 'project';
+  /** Set to 'project' when the result came from a project-scope write. */
+  configScope?: 'project';
 }
 
 interface ProjectConfigResult {
@@ -202,7 +203,7 @@ interface InitCommandOptions {
   /** Test hook: override isTTY detection for the interactive scope prompt. */
   isTTY?: boolean;
   /** Test hook: inject a custom promptFn for the interactive scope prompt. */
-  promptFn?: () => Promise<McpScope>;
+  promptFn?: () => Promise<McpScope | null>;
 }
 
 interface InitCommandResult {
@@ -644,8 +645,10 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   // Track project-scope paths we wrote so we can suppress them from the notice.
   const writtenProjectPaths = new Set<string>();
 
+  const skipMcp = options.mcp === false || scope === null;
+
   for (const target of targets) {
-    if (options.mcp === false) {
+    if (skipMcp) {
       let configPath = '';
       try {
         configPath = target.configPath(cwd, options.home);
@@ -676,14 +679,13 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     }
   }
 
-  const legacyProjectConfigs =
-    options.mcp === false
-      ? []
-      : availableTargets
-          .map((target) => collectProjectConfig(target, cwd))
-          .filter((result): result is ProjectConfigResult => result !== undefined)
-          // Suppress paths we just wrote during project-scope install.
-          .filter((result) => !writtenProjectPaths.has(result.path));
+  const legacyProjectConfigs = skipMcp
+    ? []
+    : availableTargets
+        .map((target) => collectProjectConfig(target, cwd))
+        .filter((result): result is ProjectConfigResult => result !== undefined)
+        // Suppress paths we just wrote during project-scope install.
+        .filter((result) => !writtenProjectPaths.has(result.path));
 
   // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
   const hasClaude = availableTargets.some((target) => target.id === 'claude');
@@ -708,8 +710,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const claudeDesktopDetected = detectClaudeDesktopPresence({ home: options.home });
 
   // Derive backward-compat fields from the Claude entry (preferred) or first result
-  const defaultAction: EditorMcpResult['action'] =
-    options.mcp === false ? 'skipped-flag' : 'skipped-missing';
+  const defaultAction: EditorMcpResult['action'] = skipMcp ? 'skipped-flag' : 'skipped-missing';
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
       action: defaultAction,
