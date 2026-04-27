@@ -1,4 +1,11 @@
-import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
+import {
+  FolderPlus,
+  FoldVertical,
+  ListCollapse,
+  Search,
+  SquarePen,
+  UnfoldVertical,
+} from 'lucide-react';
 import { type ComponentProps, type FC, useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
@@ -20,6 +27,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProfilerBoundary } from '@/lib/perf';
+import { isMacOs } from '@/lib/utils.ts';
 
 export function FileSidebar() {
   return (
@@ -70,6 +78,18 @@ function FileSidebarInner() {
            * for toolbar menus.
            */}
           <DropdownMenu>
+            <ToolbarButton
+              icon={Search}
+              label="Search"
+              onClick={() => {
+                const event = new KeyboardEvent('keydown', {
+                  key: 'k',
+                  [isMacOs() ? 'metaKey' : 'ctrlKey']: true,
+                  bubbles: true,
+                });
+                document.dispatchEvent(event);
+              }}
+            />
             <DropdownMenuTrigger asChild>
               <ToolbarButton icon={ListCollapse} label="Tree View Options" />
             </DropdownMenuTrigger>

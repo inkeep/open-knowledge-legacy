@@ -52,6 +52,7 @@ import { hashFromDocName } from '@/lib/doc-hash';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { useWorkspace } from '@/lib/use-workspace';
+import { isMacOs } from '@/lib/utils.ts';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 
@@ -128,12 +129,12 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const initialCreateDir = resolveCreateInitialDir(activeTarget, activeDocName);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const isTrigger = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
+    function onKey(e: KeyboardEvent) {
+      const isTrigger = e.key === 'k' && (isMacOs() ? e.metaKey : e.ctrlKey);
       if (!isTrigger) return;
       e.preventDefault();
       setOpen((prev) => !prev);
-    };
+    }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
