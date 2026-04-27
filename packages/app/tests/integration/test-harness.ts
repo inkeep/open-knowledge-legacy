@@ -144,6 +144,11 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     // pathspec matches the single-directory layout tests use.
     contentRoot: options.gitEnabled === true ? '.' : undefined,
     enableTestRoutes: true,
+    // Skip the durable state-manifest pre-flight gate (specs/2026-04-24-cross-install-version-handshake
+    // §6.2 + D14). Each test allocates a fresh tmpdir, so the gate has nothing
+    // meaningful to assert; the writes would just generate noise across thousands
+    // of throwaway content dirs. Resolves SPEC Q3 under D14.
+    skipStateManifestCheck: true,
   });
 
   // R19: await file watcher readiness before returning so test.concurrent()

@@ -129,6 +129,22 @@ export interface BootServerOptions
    * without launching real child processes.
    */
   parentAliveCheck?: (pid: number) => boolean;
+  /**
+   * Skip the durable state-manifest pre-flight gate
+   * (`assertCompatibleStateManifest`). Default `false`.
+   *
+   * Production code paths (CLI `ok start`, Electron utility, Vite dev plugin)
+   * leave this `false` so an incompatible cold start fails loud before the
+   * server touches any shadow-repo state.
+   *
+   * The integration test harness passes `true` because each test allocates a
+   * fresh tmpdir per test (no pre-existing state) and parallel `createServer`
+   * invocations against thousands of throwaway content dirs would otherwise
+   * spam manifest writes for no benefit. Tests that explicitly exercise the
+   * adoption path or version-mismatch behavior leave it `false`. (Resolves
+   * SPEC Q3 under D14.)
+   */
+  skipStateManifestCheck?: boolean;
 }
 
 export interface BootedServer {
@@ -235,6 +251,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     onAgentWrite: opts.onAgentWrite,
     lockKind,
     parentPid,
+    skipStateManifestCheck: opts.skipStateManifestCheck,
   });
 
   const {

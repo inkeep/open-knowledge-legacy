@@ -1,15 +1,34 @@
 ---
 title: Cross-install version handshake — server.lock + project state
-description: Extend server.lock with version metadata, add .open-knowledge/state.json for cold-start schema compatibility, gate desktop attach on protocol match, and reconcile mismatches via a user-consented kill-and-restart with directional asymmetry. Closes the silent cross-version attach surface surfaced during the 2026-04-23 entry-point architecture review.
-tags: [spec, infrastructure, versioning, server-lock, desktop, cli, mcp, cross-install]
-status: Draft — 2026-04-24
+description: Extend server.lock with minimal version metadata (protocolVersion + runtimeVersion), add .open-knowledge/state.json for cold-start schema compatibility, and gate the npx-spawned MCP child on protocol match. Reduced from the original spec on 2026-04-27 — desktop attach handshake / kill-and-restart / direction-asymmetric refuse are NOT NOW per D14, because Path B (M6/D52) makes the desktop spawn its own bundled server.
+tags: [spec, infrastructure, versioning, server-lock, mcp, cross-install]
+status: Reduced — 2026-04-27 (in flight)
 ---
 
 # Cross-install version handshake — server.lock + project state
 
-**Status:** Draft
+**Status:** Reduced — implementing reduced scope per D14 (2026-04-27)
 **Owner(s):** Andrew Mikofalvy
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-27
+
+> **Reduced scope (2026-04-27).** This spec was originally written assuming Path A — DMG bundles its own independent server runtime, cross-install drift is inherent. Subsequent analysis in [`reports/electron-spawns-cli-security/REPORT.md`](../../reports/electron-spawns-cli-security/REPORT.md) — synthesizing prior research on the bundled-CLI install pattern (`reports/electron-bundled-cli-install-patterns/`), cross-install coordination (`reports/ai-coding-tools-cross-install-coordination/`), and hardened-runtime spawn semantics — established that **OK has already locked Path B via D52/M6**: the desktop bundles the CLI inside `Contents/Resources/cli/` and `/usr/local/bin/ok` symlinks to it. When the desktop "spawns the CLI" it re-invokes its own signed Electron binary in Node mode (`ELECTRON_RUN_AS_NODE=1`); same Developer ID, same notarization ticket, same hardened-runtime entitlements.
+>
+> Under Path B, several spec items become structurally unreachable in normal use. **What this implementation actually ships:**
+>
+> | Original goal | Reduced status |
+> |---|---|
+> | G1 — Lock version metadata | **IN — minimal**. `protocolVersion: number` + `runtimeVersion: string`. `executablePath` dropped (no consumer under reduced scope per NG-A). |
+> | G2 — Durable state schema manifest | **IN — full**. `.open-knowledge/state.json` cold-start gate, fresh-vs-adopt rules. |
+> | G3 — Desktop attach gates on protocol match | **NOT NOW per D14**. Desktop under Path B always spawns its own bundled server. Cross-version desktop↔CLI attach is an edge case that protocol-mismatch on the WS surface today already handles by failing visibly. |
+> | G4 — Kill-and-restart on compatible-direction mismatch | **NOT NOW per D14**. Unreachable: desktop can't mismatch its own bundled server. Re-add only if a real cross-install mismatch case emerges in production. |
+> | G5 — Hard-refuse on incompatible-direction mismatch | **NOT NOW per D14**. Same. |
+> | G6 — MCP refuses on mismatch | **IN — full**. Still useful for `npx`-spawned MCP children that may version-drift relative to a CLI-running lock owner. |
+> | G7 — `ok init --pin` opt-in | **IN — full**. Opt-in mitigation for the npx surface; the only unsigned-spawn boundary in OK's deployment per the security report. |
+> | G8 — `bun run check` green | **IN — full**. |
+>
+> **What that means for §§5–8 below:** sections describing G3/G4/G5 mechanics — desktop `version-mismatch-dialog.ts`, `kill-and-restart.ts`, `describeLockHolder`, the §6.3 attach matrix's mismatch rows, the §6.4 kill flow, AC group C — are preserved as historical record but are NOT being implemented in this reduced scope. The §5 file-change tables for desktop are skipped in the implementation. Re-read those sections only when triggering D14's revisit conditions (see decision log).
+>
+> See **D14** in §8 for the decision log entry closing this scope reduction.
 **Links:**
 
 - Companion report (same PR): [`reports/server-paths/REPORT.md`](../../reports/server-paths/REPORT.md) — map of every collab + UI entry point; this spec closes the cross-install drift surface it exposes.
@@ -336,10 +355,13 @@ All three live as exported constants in `packages/server/src/version-constants.t
 | D11 | State-manifest corruption throws (not "fresh project").                                                                                                           | LOCKED    | No          | Treating corrupt-as-fresh could overwrite real durable state with a new empty manifest. Fail-loud is safer; the user's recovery path is "manually inspect / restore from git".                                                                                                                                                                | §6.2, NG8                                                   |
 | D12 | Kill timeout is 5s (process-death poll); escalation to SIGKILL is out of scope.                                                                                  | LOCKED    | Yes         | 5s gives the server's graceful-shutdown handler (new in this spec, see §5 boot.ts row + A6) time to drain Hocuspocus, flush persistence, and unlink the lock before exit. The kill-flow's poll tracks *process death*, not lock-file removal — `acquireProcessLock` handles a stale-but-present lock via its existing replace path, so the flow is robust to a server that default-exited without running the graceful handler. Force-kill mid-flush could corrupt the shadow repo; better to surface the timeout to the user as a distinct failure mode (*"server is not shutting down; quit it manually"*) than silently SIGKILL. | §5 server package, §6.4, A6 |
 | D13 | `protocolVersion` bump policy: **bump whenever a cross-process contract changes shape in a way an existing installed binary cannot interpret safely.** Additive-only changes (new optional fields, new endpoints, new WS frame types old readers can ignore) do NOT bump. `runtimeVersion` (semver) continues to change every release independently. | LOCKED    | Yes         | Closes the earlier open question about bump granularity. G1 already committed to an "on API break" rule and §6.5 gave examples; deferring the policy-level decision to "first candidate bump" was overcautious and invited ad-hoc bumps. Landed during the 2026-04-24 audit pass as M3-finding resolution. | §3 G1, §6.5 |
+| D14 | **Reduced scope (2026-04-27).** Drop G3/G4/G5 (desktop attach handshake, kill-and-restart, direction-asymmetric refuse) and `executablePath` in the lock + `describeLockHolder`. Implement only G1 (minimal — `protocolVersion` + `runtimeVersion`), G2 (state manifest), G6 (MCP protocol gate), G7 (`ok init --pin`). Strict-equality `protocolVersion` comparison (no `minCompatibleProtocol` range) — keeps schema simple for v1. | LOCKED    | Yes (re-add G3/G4/G5 if a real cross-install desktop↔CLI mismatch case emerges; revisit on first production report) | Path B (M6/D52) makes the desktop spawn its own bundled server — desktop can't mismatch itself. The cross-install drift the original spec addressed is now narrowed to the `npx`-spawned MCP child surface, which G6 + G7 cover end-to-end. The reduced spec ships in two PRs (state-manifest + lock-versioning, MCP-gate + --pin) instead of six, and avoids ~430 LOC of desktop-side code that has no consumer in the Path B world. Full rationale + threat-model evidence in [`reports/electron-spawns-cli-security/REPORT.md`](../../reports/electron-spawns-cli-security/REPORT.md). Closes Q1 (strict-equality decision) and resolves Q3 (test harness uses `skipStateManifestCheck` option on `createServer`). | Reduced-scope preamble; this spec; the security report; the bundled-CLI-install report |
 
 ---
 
 ## 9) Open questions
+
+> **2026-04-27 reduction:** Q1 (strict equality vs `minCompatibleProtocol`) closed by D14 — strict equality only. Q3 (test harness) closed by D14 — `skipStateManifestCheck: true` constructor option on `createServer` for the integration harness. Q4 (telemetry on kill-and-restart) is moot under reduced scope (no kill-and-restart). Q5 (`executablePath` security) is moot — field dropped. The remaining open questions below are unchanged.
 
 - **Q1 — `STATE_SCHEMA_VERSION` migration tooling.** NG5 defers on-the-fly migration; but when the first candidate bump lands, we need to scope a migrator spec. Open question here: does migration run as a CLI subcommand (`ok migrate`), a desktop menu action, or automatically at first launch with user consent? Defer until the first breaking state-shape change is on the roadmap.
 - **Q2 — Windows / Linux policy.** NG7 defers full Windows/Linux desktop UX until the parent D51 (macOS-only v0) reopens. The CLI + server-side lock changes are platform-agnostic and should work identically everywhere. Verify in CI. Note: on Windows, `process.kill(pid, 'SIGTERM')` does NOT send a real SIGTERM — Node maps it to `TerminateProcess`, which is immediate and does not run the graceful-shutdown handler. Mitigated: the kill-and-restart flow (§6.4) is macOS-only in practice because NG7 defers desktop UX, and the Windows kill path is not exercised by any CLI-side surface.
