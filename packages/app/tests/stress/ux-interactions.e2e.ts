@@ -337,19 +337,16 @@ test('concurrent agent write: user + agent content coexist', async ({ page, api,
   expect(sourceContent).toContain('Agent content here');
 });
 
-test('sidebar folder: row click navigates to folder overview; chevron toggles expand/collapse', async ({
+test('sidebar folder: row click navigates to folder overview; treeitem toggles expand/collapse', async ({
   page,
 }) => {
-  // Contract (post-PR #175 folder-aware link handling): the folder row button
-  // navigates to the folder's resolved target (#/<folderPath>) on click, and
-  // the SidebarMenuAction chevron carries the `aria-expanded` affordance +
-  // toggle. Pre-#175 the row itself toggled — that version of this test lived
-  // at this path and was failing post-merge (two main commits red before the
-  // rewrite) until it was updated to the new contract here.
+  // Contract: the folder treeitem navigates to the folder's resolved target
+  // (#/<folderPath>) on click, and exposes the `aria-expanded` disclosure
+  // affordance for keyboard expand/collapse.
   //
-  // Ancestor-priority UX (US-011): while a doc inside sidebar-folder is
-  // active, the folder is unconditionally expanded — clicking the collapse
-  // chevron is a no-op for the derived state because `ancestors` takes
+  // Ancestor-priority UX: while a doc inside sidebar-folder is active, the
+  // folder is unconditionally expanded — collapsing the treeitem is a no-op
+  // for the derived state because `ancestors` takes
   // priority over `userCollapsed`. The test exercises the toggle BEFORE
   // navigating into the folder (where toggle IS honored) and asserts the
   // ancestor-priority behavior after navigation. See reveal-on-activate.e2e.ts
@@ -359,50 +356,42 @@ test('sidebar folder: row click navigates to folder overview; chevron toggles ex
   // fixture (see `_helpers/fixtures.ts`'s per-worker seeding). It does not
   // write content, so no per-test doc is required.
   await page.goto('/');
-  const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
-  const chevron = page.getByRole('button', { name: 'Expand sidebar-folder' });
-  // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
-  // EditorHeader's `${activeDocName}.md` label after navigating into the file,
-  // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
-  // correctly hidden.
-  const sidebar = page.locator('[data-slot="sidebar-container"]');
-  const nestedFile = sidebar.getByText('nested-doc.md');
+  const folderRow = page.getByRole('treeitem', { name: 'sidebar-folder', exact: true });
+  const nestedFile = page.getByRole('treeitem', { name: 'nested-doc.md', exact: true });
 
-  // Starts collapsed — chevron reflects state, nested child not visible
+  // Starts collapsed — treeitem reflects state, nested child not visible.
   await expect(folderRow).toBeVisible();
-  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 
-  // Chevron click toggles expand/collapse when folder is NOT an active-doc
-  // ancestor (pre-nav state). The chevron is intentionally the toggle
-  // affordance (keyboard-reachable, state-bearing); the row itself is the
-  // navigation affordance.
-  await chevron.click();
-  // After expand, the chevron's accessible name flips to "Collapse sidebar-folder"
-  const chevronCollapse = page.getByRole('button', { name: 'Collapse sidebar-folder' });
-  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
+  // Keyboard disclosure toggles expand/collapse when folder is NOT an
+  // active-doc ancestor (pre-nav state).
+  await folderRow.focus();
+  await folderRow.press('ArrowRight');
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
   // Pre-nav toggle: clicking collapse BEFORE navigating into the folder IS
   // honored (not an active-doc ancestor yet).
-  await chevronCollapse.click();
-  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  await folderRow.press('ArrowLeft');
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 
   // Re-expand so we can navigate to the nested doc.
-  await chevron.click();
-  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
+  await folderRow.press('ArrowRight');
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
   // Nested file click navigates to the doc — the folder becomes an ancestor.
   await nestedFile.click();
   await expect(page).toHaveURL(/#\/sidebar-folder\/nested-doc$/);
 
-  // Ancestor priority: clicking the collapse chevron does NOT collapse the
-  // folder because it's an active-doc ancestor. aria-expanded stays true;
-  // nested-doc.md stays visible in the sidebar.
-  await chevronCollapse.click();
-  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
+  // Ancestor priority: collapsing the treeitem does NOT hide the folder
+  // because it's an active-doc ancestor. aria-expanded stays true;
+  // nested-doc.md stays visible.
+  await folderRow.focus();
+  await folderRow.press('ArrowLeft');
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
   // Row click navigates to the folder's resolved target (overview URL shape is
