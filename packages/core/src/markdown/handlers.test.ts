@@ -249,10 +249,23 @@ describe('Tier C: link style', () => {
     const triple = '\\'.repeat(3);
     const json = mdManager.parse(`text ${triple}\n`);
     const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content).toHaveLength(1);
     expect(paragraph?.content?.[0]?.type).toBe('text');
     expect(paragraph?.content?.[0]?.text).toBe(`text ${'\\'.repeat(2)}`);
     const sourceLiteral = findMarkInJson(json, 'sourceLiteral');
     expect(sourceLiteral?.attrs?.sourceRaw).toBe(`text ${triple}`);
+  });
+
+  test('sourceRaw takes priority when escapedChars and trailing backslash coexist', () => {
+    const trailing = '\\';
+    const json = mdManager.parse(`\\[text${trailing}\n`);
+    const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content).toHaveLength(1);
+    expect(paragraph?.content?.[0]?.type).toBe('text');
+    expect(paragraph?.content?.[0]?.text).toBe(`[text${trailing}`);
+    const sourceLiteral = findMarkInJson(json, 'sourceLiteral');
+    expect(sourceLiteral?.attrs?.sourceRaw).toBe(`\\[text${trailing}`);
+    expect(findMarkInJson(json, 'escapeMark')).toBeNull();
   });
 
   test('image with empty alt remains image syntax', () => {

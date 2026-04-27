@@ -219,6 +219,16 @@ describe('position-slice: sourceRaw text preservation', () => {
     expect(trailing).toBeDefined();
     expect(trailing?.data?.sourceRaw).toBe(`text ${triple}`);
   });
+
+  test('escaped character plus trailing backslash records escapedChars and sourceRaw', () => {
+    const trailing = '\\';
+    const tree = parseMdast(`\\[text${trailing}\n`);
+    const textNodes = findNodes(tree, 'text');
+    const node = textNodes.find((n) => n.value === `[text${trailing}`);
+    expect(node).toBeDefined();
+    expect(node?.data?.escapedChars).toEqual([{ offset: 0, char: '[' }]);
+    expect(node?.data?.sourceRaw).toBe(`\\[text${trailing}`);
+  });
 });
 
 describe('position-slice: escapeMark tagging (D20)', () => {

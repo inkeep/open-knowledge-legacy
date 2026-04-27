@@ -114,6 +114,11 @@ describe('to-markdown: text handler (NG5 fidelity)', () => {
     expect(roundTrip(`text ${triple}\n`)).toBe(`text ${triple}\n`);
   });
 
+  test('escaped bracket plus trailing backslash round-trips verbatim', () => {
+    const trailing = '\\';
+    expect(roundTrip(`\\[text${trailing}\n`)).toBe(`\\[text${trailing}\n`);
+  });
+
   test('unfinished link label stays literal text', () => {
     expect(roundTrip('[foo]\n')).toBe('[foo]\n');
   });

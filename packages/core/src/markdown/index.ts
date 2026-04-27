@@ -364,6 +364,8 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       if (!value && !sourceRaw) return null;
       // Preserve verbatim source for text shapes the serializer would otherwise
       // canonicalize to a different byte form (for example trailing `\`).
+      // This intentionally wins over per-character escapeMark attribution when
+      // both are present: sourceRaw is the broader byte-preservation contract.
       if (sourceRaw) {
         const normalized = value.replaceAll('\u00A0', ' ');
         return m.sourceLiteral
