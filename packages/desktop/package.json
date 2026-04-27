@@ -8,7 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "electron-vite dev --watch",
+    "dev": "turbo run dev:electron --filter=@inkeep/open-knowledge-desktop",
+    "dev:electron": "electron-vite dev --watch",
     "build:desktop": "electron-vite build",
     "build:dir": "bun run build:desktop && electron-builder --dir --publish never",
     "build:mac": "bun run build:desktop && electron-builder --mac --publish never",

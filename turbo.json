@@ -9,6 +9,11 @@
       "dependsOn": ["^build", "@inkeep/open-knowledge#build"],
       "outputs": ["out/**"]
     },
+    "dev:electron": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
     "build:desktop:dir": {
       "dependsOn": ["build:desktop"],
       "outputs": ["dist-desktop/**"],
