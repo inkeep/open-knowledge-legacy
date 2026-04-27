@@ -76,6 +76,8 @@ import * as Y from 'yjs';
  */
 export const UNKNOWN_BRANCH_SENTINEL = '_unknown_';
 
+const UPDATES_STORE_NAME = 'updates';
+
 export interface ClientPersistenceProvider {
   readonly whenSynced: Promise<this>;
   readonly synced: boolean;
@@ -97,23 +99,84 @@ interface CreateClientPersistenceArgs {
   readonly doc: Y.Doc;
 }
 
+async function loadPersistedUpdates(dbName: string): Promise<Uint8Array[]> {
+  if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') {
+    return [];
+  }
+
+  const dbs = await indexedDB.databases();
+  if (!dbs.some((d) => d.name === dbName)) return [];
+
+  return await new Promise<Uint8Array[]>((resolve, reject) => {
+    const req = indexedDB.open(dbName);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(UPDATES_STORE_NAME)) {
+        db.close();
+        resolve([]);
+        return;
+      }
+
+      try {
+        const tx = db.transaction(UPDATES_STORE_NAME, 'readonly');
+        const store = tx.objectStore(UPDATES_STORE_NAME);
+        const getAllReq = store.getAll();
+        getAllReq.onsuccess = () => {
+          db.close();
+          resolve((getAllReq.result as Uint8Array[]) ?? []);
+        };
+        getAllReq.onerror = () => {
+          db.close();
+          reject(getAllReq.error);
+        };
+      } catch (err) {
+        db.close();
+        if ((err as Error)?.name === 'NotFoundError') {
+          resolve([]);
+          return;
+        }
+        reject(err);
+      }
+    };
+  });
+}
+
+async function prehydrateDocFromIndexedDb(dbName: string, doc: Y.Doc): Promise<void> {
+  const updates = await loadPersistedUpdates(dbName);
+  if (updates.length === 0) return;
+  Y.transact(doc, () => {
+    for (const update of updates) Y.applyUpdate(doc, update);
+  });
+}
+
 class ClientPersistenceImpl implements ClientPersistenceProvider {
-  private readonly _idb: IndexeddbPersistence;
+  private _idb: IndexeddbPersistence | null = null;
   private readonly _dbName: string;
   readonly whenSynced: Promise<this>;
 
   constructor({ branch, docName, doc }: CreateClientPersistenceArgs) {
-    this._dbName = `ok-ydoc:${branch}:${docName}`;
-    this._idb = new IndexeddbPersistence(this._dbName, doc);
-    this.whenSynced = this._idb.whenSynced.then(() => this);
+    const dbName = `ok-ydoc:${branch}:${docName}`;
+    this._dbName = dbName;
+    this.whenSynced = (async () => {
+      // Pre-hydrate with our local Yjs import before upstream persistence
+      // attaches. This avoids a text-root hydration bug observed under Bun +
+      // fake-indexeddb where replaying stored updates onto a fresh doc can
+      // produce an empty Y.Text even though the persisted bytes are correct.
+      await prehydrateDocFromIndexedDb(dbName, doc);
+      this._idb = new IndexeddbPersistence(dbName, doc);
+      await this._idb.whenSynced;
+      return this;
+    })();
   }
 
   get synced(): boolean {
-    return this._idb.synced;
+    return this._idb?.synced ?? false;
   }
 
   async destroy(): Promise<void> {
-    await this._idb.destroy();
+    await this.whenSynced;
+    await this._idb?.destroy();
   }
 
   async clearData(): Promise<void> {
@@ -123,7 +186,8 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
     // `createClientPersistence(sameDocName, ...)` can race with the
     // pending delete. Await the deletion explicitly so callers can rely on
     // "after `await clearData()`, the DB is gone."
-    await this._idb.destroy();
+    await this.whenSynced;
+    await this._idb?.destroy();
     const dbName = this._dbName;
     await new Promise<void>((resolve, reject) => {
       const req = indexedDB.deleteDatabase(dbName);

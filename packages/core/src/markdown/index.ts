@@ -487,13 +487,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   // Link mark — linkStyle + refLabel attrs (LinkFidelity extension)
   if (m.link) {
     const sourceLiteralMark = m.sourceLiteral;
-    const inlineLinkHandler = toPmMark(m.link, (node: Link) => ({
-      href: node.url ?? '',
-      title: node.title ?? null,
-      linkStyle: node.data?.sourceStyle ?? 'inline',
-      refLabel: null,
-    }));
-    handlers.link = (node: Link, parent: MdastParent, state: MdastToPmState) => {
+    handlers.link = (node: Link, _parent: MdastParent, state: MdastToPmState) => {
       if ((node.children ?? []).length === 0) {
         const raw =
           typeof node.data?.sourceRaw === 'string' ? node.data.sourceRaw : `[](${node.url ?? ''})`;
@@ -503,7 +497,14 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
             : schema.text(raw)
           : null;
       }
-      return inlineLinkHandler(node, parent, state);
+      const children = state.all(node).flat();
+      const mark = m.link.create({
+        href: node.url ?? '',
+        title: node.title ?? null,
+        linkStyle: node.data?.sourceStyle ?? 'inline',
+        refLabel: null,
+      });
+      return children.map((child) => child.mark(mark.addToSet(child.marks)));
     };
 
     // linkReference → same link mark but with reference style info
