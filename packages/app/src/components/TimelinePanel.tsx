@@ -5,6 +5,17 @@
  * Checkpoint entries are always visible; WIP entries between checkpoints
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
+ *
+ * Per-row UX (shape parity with AgentActivityPanel's burst rows):
+ *   - Click anywhere on a row except the Restore icon → toggle inline expand.
+ *     Expanded rows render <ActivityPanelDiffView> below the header showing
+ *     the diff between that commit and the live Y.Text. Multi-expand is
+ *     supported; the displayed diff is a snapshot at expand time.
+ *   - The per-row Restore icon (lucide Undo2, ghost variant) sits in the row
+ *     header and is always visible (collapsed and expanded states alike).
+ *     Click → shadcn Dialog confirmation → POST /api/rollback. On success the
+ *     row collapses and any other expanded rows from this mount also collapse
+ *     — their cached `current` baseline is now stale.
  */
 import {
   AGENT_ICON_COLORS,

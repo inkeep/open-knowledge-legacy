@@ -1,3 +1,30 @@
+/**
+ * `useTimelineEntryDiff` — data layer for the inline diff in the Timeline
+ * tab's expanded entry rows. Mirrors the cache + cancellation shape of
+ * `useActivityPanel`'s `fetchBurstDiff`, but the diff is computed
+ * client-side (no server endpoint synthesizes it) so the live Y.Text WIP is
+ * always part of the comparison.
+ *
+ * Responsibilities:
+ *   1. On `sha` set: fetch `GET /api/history/<sha>?docName=<>`. Cache the
+ *      response.content keyed by sha — sha is git-immutable per content, so
+ *      a cache hit means the historical side is fixed.
+ *   2. Read `current` from `activeProvider.document.getText('source')`,
+ *      strip frontmatter from both sides, and compute the diff via
+ *      `diff.createPatch(docName, historical, current, '', '', { context: 3 })`.
+ *      The diff is recomputed every effect run — never cached, because the
+ *      `current` side is mutable (user types, agents write, the doc gets
+ *      rolled back).
+ *   3. Cancellation: an in-flight fetch that completes after `sha` swapped
+ *      or the host component unmounted must not produce stale state.
+ *
+ * Inert mode: `sha === null` → no fetch, `{ diff: null, status: 'idle' }`.
+ *
+ * Cache scope: `HistoricalContentCache` is owned by the consuming component
+ * (lifted via `useRef` in `TimelineContent`) and passed in. Lifetime matches
+ * the host component's mount; `TimelinePanel` re-mounts on document
+ * navigation, which clears the cache without explicit invalidation.
+ */
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { createPatch } from 'diff';
 import { useEffect, useState } from 'react';
