@@ -18,6 +18,7 @@
  * (`packages/server/src/server-observers.ts`) for cross-CRDT sync.
  */
 import * as Y from 'yjs';
+import { unwrapFrontmatterFences } from '../extensions/frontmatter.ts';
 import type { FrontmatterMap, FrontmatterValue } from '../frontmatter/schema.ts';
 import {
   parseFrontmatterYaml,
@@ -166,4 +167,42 @@ function isEqualValue(a: FrontmatterValue | undefined, b: FrontmatterValue): boo
     return a.every((item, i) => item === b[i]);
   }
   return a === b;
+}
+
+function mapsEqual(a: FrontmatterMap, b: FrontmatterMap): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    const bValue = b[key];
+    if (bValue === undefined) return false;
+    if (!isEqualValue(a[key], bValue)) return false;
+  }
+  return true;
+}
+
+/**
+ * Compose the fenced YAML frontmatter for `onStoreDocument` to write to disk.
+ *
+ * Prefers the legacy single-string slot verbatim when its parsed value matches
+ * the per-key state — this keeps comments, blank lines, and scalar styles
+ * intact for `doc-load → no-op-form-edit → doc-save` round-trips. Falls back
+ * to canonical synthesis from the per-key map when state has diverged or no
+ * legacy mirror exists.
+ *
+ * Returns the fenced FM string (e.g. `---\n…\n---\n`) or `''` for no FM.
+ */
+export function composeFrontmatterForStore(doc: Y.Doc): string {
+  const metaMap = doc.getMap('metadata');
+  const map = getFrontmatterMap(doc);
+  const legacy = metaMap.get(LEGACY_FRONTMATTER_KEY);
+  const legacyFenced = typeof legacy === 'string' ? legacy : '';
+  if (Object.keys(map).length === 0) return legacyFenced;
+  if (legacyFenced) {
+    const yamlBody = unwrapFrontmatterFences(legacyFenced);
+    const parsed = parseFrontmatterYaml(yamlBody);
+    if (parsed.map !== null && mapsEqual(parsed.map, map)) {
+      return legacyFenced;
+    }
+  }
+  return withFences(serializeFrontmatterMap(map));
 }

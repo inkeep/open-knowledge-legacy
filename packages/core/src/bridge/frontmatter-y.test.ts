@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
 import {
+  composeFrontmatterForStore,
   getFrontmatter,
   getFrontmatterMap,
   setFrontmatterFromYaml,
@@ -212,5 +213,60 @@ describe('setFrontmatterFromYaml', () => {
     const yamlBody = fm.replace(/^---\r?\n/, '').replace(/\r?\n---\r?\n?$/, '\n');
     setFrontmatterFromYaml(doc2, yamlBody);
     expect(getFrontmatterMap(doc2)).toEqual(getFrontmatterMap(doc));
+  });
+});
+
+describe('composeFrontmatterForStore', () => {
+  test('returns empty string when neither legacy nor per-key entries exist', () => {
+    expect(composeFrontmatterForStore(makeDoc())).toBe('');
+  });
+
+  test('returns legacy slot verbatim when per-key map is empty', () => {
+    const doc = makeDoc();
+    doc.getMap('metadata').set('frontmatter', '---\ntitle: Legacy\n---\n');
+    expect(composeFrontmatterForStore(doc)).toBe('---\ntitle: Legacy\n---\n');
+  });
+
+  test('returns legacy slot verbatim when per-key matches its parsed value (no-op preserves comments + style)', () => {
+    const doc = makeDoc();
+    const metaMap = doc.getMap('metadata');
+    // Comment-bearing fenced FM as it would land on disk.
+    const fenced = '---\n# spec owner\ntitle: "Quoted Style"\nstatus: draft\n---\n';
+    metaMap.set('frontmatter', fenced);
+    metaMap.set('title', 'Quoted Style');
+    metaMap.set('status', 'draft');
+    expect(composeFrontmatterForStore(doc)).toBe(fenced);
+  });
+
+  test('synthesizes canonical YAML when per-key state has diverged from legacy', () => {
+    const doc = makeDoc();
+    const metaMap = doc.getMap('metadata');
+    metaMap.set('frontmatter', '---\ntitle: Old\n---\n');
+    metaMap.set('title', 'New'); // diverged from legacy parse
+    const composed = composeFrontmatterForStore(doc);
+    expect(composed).toContain('title: New');
+    expect(composed).not.toContain('title: Old');
+    expect(composed.startsWith('---\n')).toBe(true);
+    expect(composed.endsWith('\n---\n')).toBe(true);
+  });
+
+  test('synthesizes from per-key when no legacy mirror exists', () => {
+    const doc = makeDoc();
+    const metaMap = doc.getMap('metadata');
+    metaMap.set('title', 'Fresh');
+    metaMap.set('tags', ['a', 'b']);
+    const composed = composeFrontmatterForStore(doc);
+    expect(composed).toContain('title: Fresh');
+    expect(composed).toContain('- a');
+    expect(composed).toContain('- b');
+  });
+
+  test('synthesizes from per-key when legacy mirror is malformed', () => {
+    const doc = makeDoc();
+    const metaMap = doc.getMap('metadata');
+    metaMap.set('frontmatter', '---\ntitle: [unterminated\n---\n');
+    metaMap.set('title', 'Recovered');
+    const composed = composeFrontmatterForStore(doc);
+    expect(composed).toContain('title: Recovered');
   });
 });

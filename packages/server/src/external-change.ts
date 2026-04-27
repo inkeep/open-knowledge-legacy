@@ -7,7 +7,12 @@
  */
 
 import type { Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  applyFastDiff,
+  setFrontmatterFromYaml,
+  stripFrontmatter,
+  unwrapFrontmatterFences,
+} from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
@@ -70,8 +75,15 @@ export function applyExternalChange(
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-    const metaMap = document.getMap('metadata');
-    metaMap.set('frontmatter', frontmatter);
+
+    // Per-key diff (D13) — `setFrontmatterFromYaml` adds, removes, and updates
+    // entries individually so UndoManager attribution is preserved per
+    // property. Legacy single-string slot is mirrored for backward compat with
+    // readers that haven't migrated yet (`agent-sessions.ts`,
+    // `server-observers.ts`, `api-extension.ts`); both go away once US-003 /
+    // US-004 / US-011 land. Malformed YAML keeps last valid per-key state.
+    setFrontmatterFromYaml(document, unwrapFrontmatterFences(frontmatter));
+    document.getMap('metadata').set('frontmatter', frontmatter);
 
     const ytext = document.getText('source');
     const currentText = ytext.toString();

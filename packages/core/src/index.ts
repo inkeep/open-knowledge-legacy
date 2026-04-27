@@ -104,7 +104,11 @@ export {
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
 export { EscapeMark } from './extensions/escape-mark.ts';
-export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
+export {
+  prependFrontmatter,
+  stripFrontmatter,
+  unwrapFrontmatterFences,
+} from './extensions/frontmatter.ts';
 export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';
 export { HtmlBlockFidelity } from './extensions/html-block-fidelity.ts';
@@ -232,6 +236,7 @@ export {
   type BridgeMergeContentLossLogPayload,
   type BridgeMergeContentLossSide,
   type BridgeMergeContentLossWhich,
+  composeFrontmatterForStore,
   type DiffChange,
   defaultScheduler,
   diffLinesFast,

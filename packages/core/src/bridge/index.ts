@@ -12,6 +12,7 @@
 export { applyFastDiff, applyIncrementalDiff } from './apply-diff.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export {
+  composeFrontmatterForStore,
   getFrontmatter,
   getFrontmatterMap,
   setFrontmatterFromYaml,

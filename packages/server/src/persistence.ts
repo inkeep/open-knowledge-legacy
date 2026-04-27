@@ -13,10 +13,13 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
   type ConfigValidationError,
+  composeFrontmatterForStore,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
+  setFrontmatterFromYaml,
   stripFrontmatter,
+  unwrapFrontmatterFences,
 } from '@inkeep/open-knowledge-core';
 import {
   composeCommitSubject,
@@ -338,13 +341,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     onConfigRejected: options?.onConfigRejected,
   };
 
-  // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
-  // Lives inside the closure so multiple server instances don't share mutable state.
-  const frontmatterCache = new Map<string, string>();
-
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
   // so that standalone.ts and persistence stay in sync.
+  //
+  // Per-instance frontmatter cache was retired (D9): per-key `Y.Map('metadata')`
+  // entries are the single source. `composeFrontmatterForStore` synthesizes
+  // canonical YAML from per-key state and falls back to the legacy single-string
+  // slot verbatim during the transition window when its parsed value matches
+  // the per-key map (preserves comments + scalar styles for no-op round-trips).
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -705,9 +710,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           const { frontmatter, body } = stripFrontmatter(raw);
 
           if (frontmatter) {
-            frontmatterCache.set(documentName, frontmatter);
-            const metaMap = document.getMap('metadata');
-            metaMap.set('frontmatter', frontmatter);
+            // Eager-on-load migration (Q9): parse YAML and write per-key entries
+            // during the load transaction so observers / readers never see a
+            // half-migrated doc. Mirror the fenced FM into the legacy slot too —
+            // `agent-sessions.ts`, `server-observers.ts`, and `api-extension.ts`
+            // still consult `metaMap.get('frontmatter')` directly until their
+            // respective migration stories land. The mirror is a transition
+            // affordance only and goes away once all readers migrate to
+            // `getFrontmatter(doc)`.
+            document.transact(() => {
+              setFrontmatterFromYaml(document, unwrapFrontmatterFences(frontmatter));
+              document.getMap('metadata').set('frontmatter', frontmatter);
+            });
           }
 
           const xmlFragment = document.getXmlFragment('default');
@@ -806,10 +820,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
           const body = mdManager.serialize(json);
-          const metaMap = document.getMap('metadata');
-          const fmFromDoc = metaMap.get('frontmatter');
-          const frontmatter =
-            typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
+          const frontmatter = composeFrontmatterForStore(document);
           const markdown = prependFrontmatter(frontmatter, body);
 
           // Skip the write when the serialized output matches the load-time

@@ -38,7 +38,7 @@ describe('applyExternalChange — throwing helper', () => {
     expect(hp.documents.get('nonexistent-doc')).toBeUndefined();
   });
 
-  test('(b) frontmatter asymmetry — XmlFragment gets body, Y.Text gets full content', async () => {
+  test('(b) frontmatter asymmetry — XmlFragment gets body, Y.Text gets full content, per-key + legacy populated', async () => {
     const docName = 'test-frontmatter-asymmetry';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
@@ -58,11 +58,114 @@ describe('applyExternalChange — throwing helper', () => {
     expect(xmlString).not.toContain('title: Test');
     expect(xmlString).not.toContain('tags: [a, b]');
 
-    // Metadata map should cache the frontmatter (includes delimiters and trailing newline)
+    // Per-key entries are written under D2 / D13: `title` is a primitive string,
+    // `tags` is a flat string array.
     const metaMap = doc.getMap('metadata');
+    expect(metaMap.get('title')).toBe('Test');
+    expect(metaMap.get('tags')).toEqual(['a', 'b']);
+
+    // Legacy mirror is still populated for transition compat — readers in
+    // `agent-sessions.ts` / `server-observers.ts` / `api-extension.ts` still
+    // pull `metaMap.get('frontmatter')` directly until US-003 / US-004 land.
     const storedFm = metaMap.get('frontmatter') as string;
     expect(storedFm).toContain('title: Test');
     expect(storedFm).toContain('---');
+
+    await conn.disconnect();
+  });
+
+  test('(b2) per-key diff — repeated apply with identical content does not mutate per-key entries', async () => {
+    const docName = 'test-perkey-diff';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    const content = '---\ntitle: Stable\nstatus: draft\n---\n# Body\n';
+    applyExternalChange(hp, docName, content);
+
+    // Track per-key mutations via metaMap observer.
+    let perKeyChanges = 0;
+    const metaMap = doc.getMap('metadata');
+    const observer = (event: { keysChanged: Set<string> }) => {
+      for (const key of event.keysChanged) {
+        if (key !== 'frontmatter') perKeyChanges++;
+      }
+    };
+    metaMap.observe(observer);
+
+    applyExternalChange(hp, docName, content);
+
+    metaMap.unobserve(observer);
+
+    // Identical YAML should produce zero per-key change events — the per-key
+    // diff in `setFrontmatterFromYaml` skips equal values to preserve
+    // UndoManager attribution per property.
+    expect(perKeyChanges).toBe(0);
+
+    await conn.disconnect();
+  });
+
+  test('(b3) per-key diff — adding a key writes only the new key', async () => {
+    const docName = 'test-perkey-diff-add';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '---\ntitle: A\n---\n# Body\n');
+
+    const metaMap = doc.getMap('metadata');
+    const seen: string[] = [];
+    const observer = (event: { keysChanged: Set<string> }) => {
+      for (const key of event.keysChanged) {
+        if (key !== 'frontmatter') seen.push(key);
+      }
+    };
+    metaMap.observe(observer);
+
+    applyExternalChange(hp, docName, '---\ntitle: A\nstatus: draft\n---\n# Body\n');
+
+    metaMap.unobserve(observer);
+
+    // Only `status` should be touched — `title` is unchanged.
+    expect(seen.sort()).toEqual(['status']);
+    expect(metaMap.get('title')).toBe('A');
+    expect(metaMap.get('status')).toBe('draft');
+
+    await conn.disconnect();
+  });
+
+  test('(b4) per-key diff — removing a key from YAML deletes only that key', async () => {
+    const docName = 'test-perkey-diff-remove';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '---\ntitle: A\nstatus: draft\n---\n# Body\n');
+
+    applyExternalChange(hp, docName, '---\ntitle: A\n---\n# Body\n');
+
+    const metaMap = doc.getMap('metadata');
+    expect(metaMap.has('status')).toBe(false);
+    expect(metaMap.get('title')).toBe('A');
+
+    await conn.disconnect();
+  });
+
+  test('(b5) malformed YAML keeps last valid per-key state', async () => {
+    const docName = 'test-malformed-yaml';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '---\ntitle: Valid\nstatus: draft\n---\n# Body\n');
+
+    const metaMap = doc.getMap('metadata');
+    const titleBefore = metaMap.get('title');
+    const statusBefore = metaMap.get('status');
+
+    // Malformed YAML — unterminated flow sequence on the title line.
+    applyExternalChange(hp, docName, '---\ntitle: [unterminated\nstatus: published\n---\n# Body\n');
+
+    // Per-key state unchanged; the malformed YAML is reflected only in Y.Text /
+    // the legacy slot for the source-mode user to fix.
+    expect(metaMap.get('title')).toBe(titleBefore);
+    expect(metaMap.get('status')).toBe(statusBefore);
 
     await conn.disconnect();
   });
