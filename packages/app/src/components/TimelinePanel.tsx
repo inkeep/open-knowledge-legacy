@@ -25,11 +25,13 @@ import {
   HardDrive,
   Loader2,
   Sparkles,
+  Undo2,
   User,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import type { SVGProps } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { ActivityPanelDiffView } from '@/components/ActivityPanelDiffView';
 import type { DiffLayout } from '@/components/DiffView';
 import { ClaudeIcon } from '@/components/icons/claude';
@@ -38,7 +40,17 @@ import { CodexIcon } from '@/components/icons/codex';
 import { CopilotIcon } from '@/components/icons/copilot';
 import { CursorIcon } from '@/components/icons/cursor';
 import { WindsurfIcon } from '@/components/icons/windsurf';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HistoricalContentCache, useTimelineEntryDiff } from '@/lib/use-timeline-entry-diff';
 
 // ─── Public props ────────────────────────────────────────────────────────────
@@ -188,6 +200,8 @@ interface WipGroupProps {
   diffLayout: DiffLayout;
   cache: HistoricalContentCache;
   docName: string;
+  collapseAllSignal: number;
+  onRestoreSuccess: () => void;
 }
 
 function WipGroup({
@@ -199,6 +213,8 @@ function WipGroup({
   diffLayout,
   cache,
   docName,
+  collapseAllSignal,
+  onRestoreSuccess,
 }: WipGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
@@ -228,6 +244,8 @@ function WipGroup({
             diffLayout={diffLayout}
             cache={cache}
             docName={docName}
+            collapseAllSignal={collapseAllSignal}
+            onRestoreSuccess={onRestoreSuccess}
           />
         ))}
     </div>
@@ -366,6 +384,8 @@ interface EntryRowProps {
   diffLayout: DiffLayout;
   cache: HistoricalContentCache;
   docName: string;
+  collapseAllSignal: number;
+  onRestoreSuccess: () => void;
 }
 
 function EntryRow({
@@ -377,16 +397,60 @@ function EntryRow({
   diffLayout,
   cache,
   docName,
+  collapseAllSignal,
+  onRestoreSuccess,
 }: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
   const allSummaries = allSummariesFor(entry);
   const [diffExpanded, setDiffExpanded] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { diff, status } = useTimelineEntryDiff(diffExpanded ? entry.sha : null, docName, cache);
 
+  // Collapse this row whenever a restore succeeded elsewhere in the panel
+  useEffect(() => {
+    if (collapseAllSignal > 0) {
+      setDiffExpanded(false);
+    }
+  }, [collapseAllSignal]);
+
+  // Clear error timer on unmount
+  useEffect(() => {
+    return () => {
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    };
+  }, []);
+
   const handleActivate = () => setDiffExpanded((prev) => !prev);
+
+  async function handleRestore() {
+    setRestoring(true);
+    setRestoreError(null);
+    try {
+      const res = await fetch('/api/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName, commitSha: entry.sha }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setDialogOpen(false);
+      setDiffExpanded(false);
+      onRestoreSuccess();
+    } catch {
+      const msg = 'Restore failed — document unchanged';
+      setRestoreError(msg);
+      toast.error(msg, { duration: 4000 });
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
+    } finally {
+      setRestoring(false);
+    }
+  }
 
   // Leading icon: checkpoint variants get special icons, others get contributor icon
   const leadingIcon = prominent ? (
@@ -415,78 +479,137 @@ function EntryRow({
   );
 
   return (
-    <div className="flex flex-col rounded-lg">
-      {/* biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child. */}
-      <div
-        role="button"
-        tabIndex={0}
-        className={[
-          'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          selected || diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
-        ].join(' ')}
-        onClick={handleActivate}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleActivate();
-          }
-        }}
-      >
-        {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
-        <span className="mt-0.5 shrink-0">{leadingIcon}</span>
+    <>
+      <div className="flex flex-col rounded-lg">
+        {/* biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander and a Restore <button>; native nested buttons inside a <button> are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive children. */}
+        <div
+          role="button"
+          tabIndex={0}
+          className={[
+            'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            selected || diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
+          ].join(' ')}
+          onClick={handleActivate}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleActivate();
+            }
+          }}
+        >
+          {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
+          <span className="mt-0.5 shrink-0">{leadingIcon}</span>
 
-        <div className="min-w-0 flex-1 space-y-0.5">
-          {/* Row 1: title + date, vertically centered with the icon */}
-          <div className="flex items-center gap-1.5">
-            {prominent ? (
-              <>
-                <span className="text-xs text-foreground truncate">
-                  {checkpointHeadlineLabel(entry)}
-                </span>
-                <span className="text-xs text-muted-foreground/50">·</span>
-                <span className="truncate text-xs text-muted-foreground">{authorName}</span>
-              </>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            {/* Row 1: title + date + Restore icon, vertically centered with the icon */}
+            <div className="flex items-center gap-1.5">
+              {prominent ? (
+                <>
+                  <span className="text-xs text-foreground truncate">
+                    {checkpointHeadlineLabel(entry)}
+                  </span>
+                  <span className="text-xs text-muted-foreground/50">·</span>
+                  <span className="truncate text-xs text-muted-foreground">{authorName}</span>
+                </>
+              ) : (
+                <span className="truncate text-xs text-foreground">{authorName}</span>
+              )}
+              <time
+                className="ml-auto shrink-0 text-xs text-muted-foreground/80"
+                dateTime={entry.timestamp}
+                title={entry.timestamp}
+              >
+                {relative}
+              </time>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-5 shrink-0"
+                    data-testid="timeline-entry-restore"
+                    aria-label="Restore this version"
+                    disabled={restoring}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDialogOpen(true);
+                    }}
+                  >
+                    {restoring ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <Undo2 className="size-3" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Restore this version</TooltipContent>
+              </Tooltip>
+            </div>
+
+            {/* Row 2: details, aligned with title start */}
+            {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
+            {allDocs.length > 0 ? (
+              <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
+                {allDocs.join(', ')}
+              </p>
             ) : (
-              <span className="truncate text-xs text-foreground">{authorName}</span>
+              <p className="truncate text-xs text-muted-foreground" title={entry.message}>
+                {entry.message}
+              </p>
             )}
-            <time
-              className="ml-auto shrink-0 text-xs text-muted-foreground/80"
-              dateTime={entry.timestamp}
-              title={entry.timestamp}
-            >
-              {relative}
-            </time>
           </div>
-
-          {/* Row 2: details, aligned with title start */}
-          {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
-          {allDocs.length > 0 ? (
-            <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
-              {allDocs.join(', ')}
-            </p>
-          ) : (
-            <p className="truncate text-xs text-muted-foreground" title={entry.message}>
-              {entry.message}
-            </p>
-          )}
         </div>
+
+        {diffExpanded && (
+          <div className="px-3 pb-2">
+            {status === 'loading' && (
+              <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                Loading diff…
+              </div>
+            )}
+            {status === 'error' && (
+              <p className="py-2 text-xs text-destructive">Diff unavailable</p>
+            )}
+            {status === 'ready' && diff !== null && (
+              <ActivityPanelDiffView diff={diff} viewType={diffLayout} />
+            )}
+            {restoreError && <p className="mt-1 text-xs text-destructive">{restoreError}</p>}
+          </div>
+        )}
       </div>
 
-      {diffExpanded && (
-        <div className="px-3 pb-2">
-          {status === 'loading' && (
-            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" />
-              Loading diff…
-            </div>
-          )}
-          {status === 'error' && <p className="py-2 text-xs text-destructive">Diff unavailable</p>}
-          {status === 'ready' && diff !== null && (
-            <ActivityPanelDiffView diff={diff} viewType={diffLayout} />
-          )}
-        </div>
-      )}
-    </div>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Restore this version?</DialogTitle>
+            <DialogDescription>
+              This will replace the current document content with the version from {relative} by{' '}
+              {authorName}. Your current content is already saved in the timeline — you can restore
+              it anytime.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              data-testid="timeline-entry-restore-cancel"
+              onClick={() => setDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              data-testid="timeline-entry-restore-confirm"
+              disabled={restoring}
+              onClick={() => handleRestore()}
+            >
+              {restoring ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Restore
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -505,6 +628,8 @@ export function TimelineContent({
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cacheRef = useRef(new HistoricalContentCache());
+  const [collapseAllSignal, setCollapseAllSignal] = useState(0);
+  const handleRestoreSuccess = () => setCollapseAllSignal((c) => c + 1);
 
   useEffect(() => {
     if (!docName) {
@@ -639,6 +764,8 @@ export function TimelineContent({
                 diffLayout={diffLayout}
                 cache={cacheRef.current}
                 docName={docName}
+                collapseAllSignal={collapseAllSignal}
+                onRestoreSuccess={handleRestoreSuccess}
               />
             ))}
           </div>
@@ -664,6 +791,8 @@ export function TimelineContent({
                     diffLayout={diffLayout}
                     cache={cacheRef.current}
                     docName={docName}
+                    collapseAllSignal={collapseAllSignal}
+                    onRestoreSuccess={handleRestoreSuccess}
                   />
                 );
               }
@@ -678,6 +807,8 @@ export function TimelineContent({
                   diffLayout={diffLayout}
                   cache={cacheRef.current}
                   docName={docName}
+                  collapseAllSignal={collapseAllSignal}
+                  onRestoreSuccess={handleRestoreSuccess}
                 />
               );
             })}
