@@ -33,13 +33,21 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  type FrontmatterPatch,
+  FrontmatterPatchSchema,
+  type FrontmatterType,
+  FrontmatterTypeSchema,
+  getFrontmatterMap,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
   SYSTEM_DOC_NAME,
+  serializeFrontmatterMap,
+  setFrontmatterProperty,
   stripFrontmatter,
+  withFences,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -50,6 +58,7 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import { z } from 'zod';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -2280,6 +2289,233 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  /**
+   * POST /api/frontmatter-patch — typed per-key frontmatter writes via JSON
+   * Merge Patch (RFC 7396) semantics. Single MCP / form surface for FM edits
+   * once `agent-patch` rejects FM-intersecting calls (see US-006).
+   *
+   * Body: {
+   *   docName: string,
+   *   patch: Record<string, FrontmatterValue|null>,
+   *   types?: Record<string, 'text'|'number'|'boolean'|'date'|'list'>,
+   *   summary?: string,
+   *   agentId?, agentName?, ...
+   * }
+   *
+   * Semantics:
+   *   - `key: value` → set or create the key
+   *   - `key: null` → delete the key
+   *   - missing keys → unchanged
+   *   - any value failing Zod validation → reject the WHOLE patch atomically
+   *     with HTTP 400 + a `fieldErrors` map identifying offending keys
+   *
+   * Origin: per-session `formOrigin` from `getSession` — NOT paired (D14, D30).
+   * Single-root writer (touches only metaMap); Observer A fires normally and
+   * recomposes YAML+body for Y.Text via the metaMap deep-observer wired up in
+   * US-004.
+   */
+  const TYPES_MAP_SCHEMA = z.record(z.string(), FrontmatterTypeSchema);
+  const FRONTMATTER_PATCH_FM_KEY = 'frontmatter';
+
+  async function handleFrontmatterPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+
+      const bodyObj = body as Record<string, unknown>;
+
+      const rawDocName = bodyObj.docName;
+      const effectiveDocName =
+        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
+      if (!isSafeDocName(effectiveDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(effectiveDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+
+      const rawPatch = bodyObj.patch;
+      if (!rawPatch || typeof rawPatch !== 'object' || Array.isArray(rawPatch)) {
+        json(res, 400, { ok: false, error: 'patch field required (object)' });
+        return;
+      }
+      // Reject the legacy single-string slot key — its surface is internal
+      // (transition mirror), not part of the per-key contract.
+      if (Object.hasOwn(rawPatch, FRONTMATTER_PATCH_FM_KEY)) {
+        json(res, 400, {
+          ok: false,
+          error: `'${FRONTMATTER_PATCH_FM_KEY}' is a reserved frontmatter key`,
+        });
+        return;
+      }
+      const patchResult = FrontmatterPatchSchema.safeParse(rawPatch);
+      if (!patchResult.success) {
+        const fieldErrors: Record<string, string> = {};
+        for (const issue of patchResult.error.issues) {
+          const key = issue.path[0];
+          if (typeof key === 'string') {
+            fieldErrors[key] = fieldErrors[key]
+              ? `${fieldErrors[key]}; ${issue.message}`
+              : issue.message;
+          }
+        }
+        json(res, 400, { ok: false, error: 'Invalid patch payload', fieldErrors });
+        return;
+      }
+      const validatedPatch: FrontmatterPatch = patchResult.data;
+
+      const rawTypes = bodyObj.types;
+      let _types: Record<string, FrontmatterType> = {};
+      if (rawTypes !== undefined) {
+        const typesResult = TYPES_MAP_SCHEMA.safeParse(rawTypes);
+        if (!typesResult.success) {
+          json(res, 400, { ok: false, error: 'Invalid types map' });
+          return;
+        }
+        _types = typesResult.data;
+      }
+
+      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+        extractAgentIdentity(bodyObj);
+      const normalizedSummary = normalizeSummary(bodyObj.summary);
+      if (normalizedSummary.kind === 'invalid') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+
+      const session = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
+      const timestamp = new Date().toISOString();
+
+      try {
+        const icon = iconFromClientName(clientName);
+        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+        agentPresenceBroadcaster?.setPresence(agentId, {
+          displayName: agentName,
+          icon,
+          color,
+          currentDoc: docName,
+          mode: 'writing',
+          ts: Date.now(),
+        });
+
+        // Apply patch under session.formOrigin — NOT paired. Observer A's
+        // metaMap deep observer (US-004) re-composes YAML+body and propagates
+        // to Y.Text under OBSERVER_SYNC_ORIGIN after the transaction settles.
+        session.dc.document.transact(() => {
+          const document = session.dc.document;
+          const metaMap = document.getMap('metadata');
+
+          // Per-key Merge Patch application. Each setFrontmatterProperty call
+          // writes a single slot — UM tracks per-property granularity.
+          for (const [key, value] of Object.entries(validatedPatch)) {
+            setFrontmatterProperty(document, key, value);
+          }
+
+          // Mirror the legacy single-string slot inside the same transaction
+          // so `attachBridgeInvariantWatcher` (which reads the legacy slot
+          // directly) and any other untouched-yet readers stay consistent
+          // with per-key state. Synthesize from current per-key state — the
+          // form path treats per-key as authoritative, so we don't fall back
+          // to the legacy slot's verbatim contents (which `composeFrontmatterForStore`
+          // would do at the persistence boundary). Same transition pattern as
+          // `applyAgentMarkdownWrite` / `applyExternalChange`.
+          const map = getFrontmatterMap(document);
+          const fenced =
+            Object.keys(map).length === 0 ? '' : withFences(serializeFrontmatterMap(map));
+          if (fenced === '') {
+            metaMap.delete(FRONTMATTER_PATCH_FM_KEY);
+          } else {
+            metaMap.set(FRONTMATTER_PATCH_FM_KEY, fenced);
+          }
+
+          // Activity flash side-channel — same shape as agent-write paths.
+          const activityMap = document.getMap('agent-flash');
+          activityMap.set(agentId, {
+            agentId,
+            timestamp: Date.now(),
+            type: 'insert',
+            description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
+          });
+        }, session.formOrigin);
+
+        const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
+        recordContributor(
+          docName,
+          agentId,
+          agentName,
+          colorSeed,
+          undefined,
+          buildAgentActor({ clientName, clientVersion, label }),
+          storedSummary,
+        );
+        incrementAgentWriteCalls();
+        countNormalizedSummary(normalizedSummary);
+      } finally {
+        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+      }
+
+      flushDocToGit(docName, 'frontmatter-patch');
+
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: docName,
+        writeKind: 'edit',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      const subscriberCount = getSubscriberCount(docName);
+      const systemSubscriberCount = getSystemSubscriberCount();
+
+      if (systemSubscriberCount === 0) {
+        hintEmittedCounter().add(1, {
+          'shadow.writer': 'agent',
+          'agent.type': resolveAgentType(clientName),
+        });
+      }
+
+      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        systemSubscriberCount,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
+    } catch (e) {
+      log.error({ err: e }, '[frontmatter-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -5674,6 +5910,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
+    '/api/frontmatter-patch': handleFrontmatterPatch,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-activity': handleAgentActivity,
     '/api/agent-burst-diff': handleAgentBurstDiff,

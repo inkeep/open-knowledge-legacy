@@ -17,6 +17,7 @@ const REQUIRED_HANDLERS = [
   'handleAgentWrite',
   'handleAgentWriteMd',
   'handleAgentPatch',
+  'handleFrontmatterPatch',
   'handleAgentUndo',
   'handleSaveVersion',
   'handleRollback',

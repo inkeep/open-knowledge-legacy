@@ -35,6 +35,10 @@ import {
 } from './edit-document.ts';
 import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exec.ts';
 import {
+  DESCRIPTION as FRONTMATTER_PATCH_DESCRIPTION,
+  register as registerFrontmatterPatch,
+} from './frontmatter-patch.ts';
+import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
 } from './get-backlinks.ts';
@@ -112,6 +116,7 @@ const _TOOL_DESCRIPTIONS = {
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
+  frontmatter_patch: FRONTMATTER_PATCH_DESCRIPTION,
   get_history: GET_HISTORY_DESCRIPTION,
   save_version: SAVE_VERSION_DESCRIPTION,
   rollback_to_version: ROLLBACK_DESCRIPTION,
@@ -218,6 +223,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('edit_document'),
+    identityRef: opts.identityRef,
+  });
+  registerFrontmatterPatch(registrationServer, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: named('frontmatter_patch'),
     identityRef: opts.identityRef,
   });
   registerRenameDocument(registrationServer, {
