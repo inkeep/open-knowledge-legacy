@@ -26,10 +26,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
+import { getFrontmatterMap } from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   AgentSessionManager,
   applyAgentMarkdownWrite,
+  applyAgentUndo,
 } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 
@@ -102,10 +104,16 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       const session = await sessionManager.getSession('test-doc');
       const metaMap = session.dc.document.getMap('metadata');
 
-      // Seed existing frontmatter in metaMap (simulates a file loaded from disk).
+      // Seed existing frontmatter in metaMap (simulates a file loaded from
+      // disk). Passing FM in the payload routes through the same per-key +
+      // legacy mirror code path that `onLoadDocument` uses, so per-key entries
+      // populate alongside the legacy slot.
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', '---\ntitle: Old Title\n---\n');
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n\nOriginal body.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Old Title\n---\n# Body\n\nOriginal body.\n',
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       // Agent sends a full document — frontmatter AND body — via write_document.
@@ -124,6 +132,13 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       // metaMap must now reflect the agent's new frontmatter.
       const fm = metaMap.get('frontmatter');
       expect(fm).toBe('---\ntitle: New Title\ncluster: research\n---\n');
+
+      // Per-key entries reflect the new payload — Y.Map slots populate one
+      // per property so concurrent writes to different keys merge cleanly.
+      expect(getFrontmatterMap(session.dc.document)).toEqual({
+        title: 'New Title',
+        cluster: 'research',
+      });
 
       // Y.Text must NOT contain the literal --- fences (they're in metaMap, not body).
       // After Observer A debounce, ytext should be frontmatter + body. We assert the
@@ -154,8 +169,7 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       // Seed a document with frontmatter already loaded.
       const existingFm = '---\ntitle: Keep Me\nauthor: Alice\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Old Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Old Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       // Agent replaces the body only — no frontmatter in payload.
@@ -171,6 +185,12 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       // Existing frontmatter must survive unchanged.
       expect(metaMap.get('frontmatter')).toBe(existingFm);
+
+      // Per-key entries are unchanged when the payload has no FM.
+      expect(getFrontmatterMap(session.dc.document)).toEqual({
+        title: 'Keep Me',
+        author: 'Alice',
+      });
 
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext.startsWith(existingFm)).toBe(true);
@@ -190,8 +210,11 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       const existingFm = '---\ntitle: Stable\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Header\n\nFirst paragraph.\n', 'replace');
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          `${existingFm}# Header\n\nFirst paragraph.\n`,
+          'replace',
+        );
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -204,6 +227,9 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       expect(response.status).toBe(200);
       expect(metaMap.get('frontmatter')).toBe(existingFm);
+
+      // Per-key entries are unchanged by an append operation.
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ title: 'Stable' });
 
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('title: Stable');
@@ -224,12 +250,10 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {
       const session = await sessionManager.getSession('test-doc');
-      const metaMap = session.dc.document.getMap('metadata');
 
       const existingFm = '---\ntitle: First\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -245,6 +269,10 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       );
 
       expect(response.status).toBe(200);
+
+      // Per-key entries are unchanged by an append operation, even when the
+      // payload itself contains a stray FM block (defensively stripped).
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ title: 'First' });
 
       const ytext = session.dc.document.getText('source').toString();
       // Must not contain two frontmatter blocks.
@@ -268,8 +296,7 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       const existingFm = '---\ntitle: First\n---\n';
       session.dc.document.transact(() => {
-        metaMap.set('frontmatter', existingFm);
-        applyAgentMarkdownWrite(session.dc.document, '# Original Body\n', 'replace');
+        applyAgentMarkdownWrite(session.dc.document, `${existingFm}# Original Body\n`, 'replace');
       }, AGENT_WRITE_ORIGIN);
 
       const response = await callApi(
@@ -288,6 +315,9 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       // Existing frontmatter must survive; payload FM must be stripped.
       expect(metaMap.get('frontmatter')).toBe(existingFm);
+
+      // Per-key entries are unchanged by a prepend operation.
+      expect(getFrontmatterMap(session.dc.document)).toEqual({ title: 'First' });
 
       const ytext = session.dc.document.getText('source').toString();
       // Must not contain two frontmatter blocks.
@@ -458,6 +488,63 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
       expect(ytext).not.toContain('---');
       // Body survives the patch.
       expect(ytext).toContain('Keep me.');
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('per-key UndoManager attribution under per-key writes', () => {
+  test('applyAgentUndo reverts only the keys touched by the last frame', async () => {
+    const { sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('doc-perkey-undo.md');
+      const document = session.dc.document;
+      const metaMap = document.getMap('metadata');
+
+      // Frame 1: seed FM with two properties under session.origin.
+      document.transact(() => {
+        applyAgentMarkdownWrite(
+          document,
+          '---\ntitle: Original\nstatus: draft\n---\n# Body\n',
+          'replace',
+        );
+      }, session.origin);
+      session.um.stopCapturing();
+
+      // Frame 2: change only `title`. `status` value is identical so its slot
+      // is untouched (per-key diff in setFrontmatterFromYaml skips equal values).
+      document.transact(() => {
+        applyAgentMarkdownWrite(
+          document,
+          '---\ntitle: Updated\nstatus: draft\n---\n# Body\n',
+          'replace',
+        );
+      }, session.origin);
+      session.um.stopCapturing();
+
+      // Frame 3: change only `status`.
+      document.transact(() => {
+        applyAgentMarkdownWrite(
+          document,
+          '---\ntitle: Updated\nstatus: published\n---\n# Body\n',
+          'replace',
+        );
+      }, session.origin);
+
+      expect(metaMap.get('title')).toBe('Updated');
+      expect(metaMap.get('status')).toBe('published');
+
+      // Undo last: only the keys touched by Frame 3 revert. `title` stays.
+      const undone = applyAgentUndo(session, 'last');
+      expect(undone).toBe(true);
+      expect(metaMap.get('title')).toBe('Updated');
+      expect(metaMap.get('status')).toBe('draft');
+
+      // Undo last again: only the keys touched by Frame 2 revert. `status` stays.
+      applyAgentUndo(session, 'last');
+      expect(metaMap.get('title')).toBe('Original');
+      expect(metaMap.get('status')).toBe('draft');
     } finally {
       await cleanup();
     }

@@ -18,7 +18,13 @@
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  applyFastDiff,
+  prependFrontmatter,
+  setFrontmatterFromYaml,
+  stripFrontmatter,
+  unwrapFrontmatterFences,
+} from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
@@ -158,10 +164,15 @@ function applyAgentMarkdownWriteInner(
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // 5. Commit the final frontmatter to metaMap if it changed. This is the
-    //    canonical storage surface read by persistence.onStoreDocument and
-    //    by the Y.Text mirror in step 6.
+    // 5. Commit the final frontmatter to metaMap if it changed. Per-key diff
+    //    populates one slot per property — Y.UndoManager tracks each
+    //    property's history independently, so undoing a single-property
+    //    write reverts only that property. Legacy single-string slot is
+    //    mirrored for cross-package readers that still consult
+    //    `metaMap.get('frontmatter')` directly. Same pattern as
+    //    `external-change.ts` and `persistence.ts:onLoadDocument`.
     if (finalFm !== existingFm) {
+      setFrontmatterFromYaml(document, unwrapFrontmatterFences(finalFm));
       metaMap.set('frontmatter', finalFm);
     }
 
@@ -254,7 +265,14 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
 
     const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
     const finalFm = newFm || existingFm;
+    // Per-key + legacy mirror — same pattern as `applyAgentMarkdownWrite`.
+    // The conditional captures the divergence case where post-undo Y.Text's
+    // FM region differs from the post-undo legacy slot (e.g. when
+    // `um.undo()` reverted Y.Text but a later non-tracked write touched
+    // metaMap). In the common case both are reverted in lockstep and this
+    // is a no-op.
     if (newFm && newFm !== existingFm) {
+      setFrontmatterFromYaml(document, unwrapFrontmatterFences(finalFm));
       metaMap.set('frontmatter', finalFm);
     }
 
