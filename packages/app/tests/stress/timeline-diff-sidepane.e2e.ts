@@ -40,14 +40,14 @@ const AGENT = {
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
 /**
- * Best-effort `/api/save-version` checkpoint. Throws nothing — the worker
- * fixture currently doesn't initialize a shadow repo, so this returns 400
- * in most environments. When the fixture is extended to set one up, these
- * calls become real checkpoints and the suite's `fixme` can be removed.
+ * Best-effort `/api/save-version` checkpoint. Network errors and 400 (no
+ * shadow repo in the test fixture) are silently dropped. Any other unexpected
+ * HTTP status throws so failures don't disappear into void.
  */
 async function saveVersion(baseURL: string): Promise<void> {
+  let res: Response;
   try {
-    await fetch(`${baseURL}/api/save-version`, {
+    res = await fetch(`${baseURL}/api/save-version`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -57,7 +57,10 @@ async function saveVersion(baseURL: string): Promise<void> {
       }),
     });
   } catch {
-    // best-effort
+    return; // network error — best-effort
+  }
+  if (!res.ok && res.status !== 400) {
+    throw new Error(`save-version unexpected HTTP ${res.status}`);
   }
 }
 

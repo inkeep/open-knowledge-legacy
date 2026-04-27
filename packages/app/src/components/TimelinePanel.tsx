@@ -85,8 +85,6 @@ const LazyActivityPanelDiffView = lazy(async () => {
 interface TimelineContentProps {
   docName: string;
   diffLayout: DiffLayout;
-  /** Notify parent when the count of expanded rows changes (drives EditorHeader hint). */
-  onExpandedCountChange?: (count: number) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -310,26 +308,24 @@ function restoreSemantic(entry: TimelineEntry): RestoreSemantic {
   return checkpointVariant(entry) === 'save' ? 'version' : 'auto-save';
 }
 
+const RESTORE_TOOLTIP_TEXT = {
+  version: 'Restore this version',
+  'auto-save': 'Restore this auto-save',
+  wip: 'Restore to this point',
+} as const satisfies Record<RestoreSemantic, string>;
+
+const RESTORE_DIALOG_TITLE = {
+  version: 'Restore this version?',
+  'auto-save': 'Restore this auto-save?',
+  wip: 'Restore to this point?',
+} as const satisfies Record<RestoreSemantic, string>;
+
 function restoreTooltipText(entry: TimelineEntry): string {
-  switch (restoreSemantic(entry)) {
-    case 'version':
-      return 'Restore this version';
-    case 'auto-save':
-      return 'Restore this auto-save';
-    case 'wip':
-      return 'Restore to this intermediate state';
-  }
+  return RESTORE_TOOLTIP_TEXT[restoreSemantic(entry)];
 }
 
 function restoreDialogTitle(entry: TimelineEntry): string {
-  switch (restoreSemantic(entry)) {
-    case 'version':
-      return 'Restore this version?';
-    case 'auto-save':
-      return 'Restore this auto-save?';
-    case 'wip':
-      return 'Restore to this intermediate state?';
-  }
+  return RESTORE_DIALOG_TITLE[restoreSemantic(entry)];
 }
 
 // ─── Summary bullets (spec D16 + D25) ─────────────────────────────────────────
@@ -446,18 +442,20 @@ interface EntryDiffPanelProps {
  * Timeline rows.
  */
 function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffPanelProps) {
-  const { diff, status } = useTimelineEntryDiff(sha, docName, cache);
+  const result = useTimelineEntryDiff(sha, docName, cache);
 
   return (
     <div id={panelId} className="px-3 pb-2" data-testid="timeline-entry-diff">
-      {status === 'loading' && (
+      {result.status === 'loading' && (
         <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
           <Loader2 className="size-3 animate-spin" />
           Loading diff…
         </div>
       )}
-      {status === 'error' && <p className="py-2 text-xs text-destructive">Diff unavailable</p>}
-      {status === 'ready' && diff !== null && (
+      {result.status === 'error' && (
+        <p className="py-2 text-xs text-destructive">Diff unavailable</p>
+      )}
+      {result.status === 'ready' && (
         <Suspense
           fallback={
             <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
@@ -466,7 +464,7 @@ function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffP
             </div>
           }
         >
-          <LazyActivityPanelDiffView diff={diff} viewType={diffLayout} />
+          <LazyActivityPanelDiffView diff={result.diff} viewType={diffLayout} />
         </Suspense>
       )}
     </div>
@@ -543,7 +541,11 @@ function EntryRow({
         signal: controller.signal,
       });
     } catch (err) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      if (
+        !controller.signal.aborted &&
+        !(err instanceof DOMException && err.name === 'AbortError')
+      ) {
+        console.error('[timeline] rollback fetch failed', { docName, sha: entry.sha, err });
         toast.error('Restore failed — document unchanged', { duration: 4000 });
       }
       cleanup();
@@ -558,7 +560,20 @@ function EntryRow({
       setDialogOpen(false);
       onRestoreSuccess();
     } else {
-      toast.error('Restore failed — document unchanged', { duration: 4000 });
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) detail = body.error;
+      } catch {
+        // non-JSON body; keep status detail
+      }
+      console.error('[timeline] rollback failed', {
+        docName,
+        sha: entry.sha,
+        status: res.status,
+        detail,
+      });
+      toast.error('Restore failed', { description: detail, duration: 6000 });
     }
     cleanup();
   }
@@ -596,7 +611,7 @@ function EntryRow({
           role="button"
           tabIndex={0}
           aria-expanded={expanded}
-          aria-controls={diffPanelId}
+          aria-controls={expanded ? diffPanelId : undefined}
           data-testid="timeline-entry-expand"
           className={[
             'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -604,6 +619,7 @@ function EntryRow({
           ].join(' ')}
           onClick={handleActivate}
           onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               handleActivate();
@@ -686,7 +702,13 @@ function EntryRow({
         )}
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={(next) => !restoring && setDialogOpen(next)}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          if (!next) handleCancelDialog();
+          else setDialogOpen(true);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{restoreDialogTitle(entry)}</DialogTitle>
@@ -703,7 +725,6 @@ function EntryRow({
             <Button
               variant="outline"
               data-testid="timeline-entry-restore-cancel"
-              disabled={restoring}
               onClick={handleCancelDialog}
             >
               Cancel
@@ -726,11 +747,7 @@ function EntryRow({
 
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
-export function TimelineContent({
-  docName,
-  diffLayout,
-  onExpandedCountChange,
-}: TimelineContentProps) {
+export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
@@ -739,12 +756,6 @@ export function TimelineContent({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [cache] = useState(() => new LruStringCache(HISTORICAL_CONTENT_CACHE_LIMIT));
   const [expandedShas, setExpandedShas] = useState<Set<string>>(() => new Set());
-
-  // Notify the parent (EditorPane) so EditorHeader can hint when the
-  // split/unified toggle has nothing to act on.
-  useEffect(() => {
-    onExpandedCountChange?.(expandedShas.size);
-  }, [expandedShas, onExpandedCountChange]);
 
   // Reset expansion + cache on doc nav. The parent intentionally does not key
   // <TimelineContent> on docName (it would force a re-mount on every nav and

@@ -24,7 +24,7 @@
 
 ## 2) Goals
 
-- G1: Users can browse version history and view diffs without any open/close cycle — click entries in the DocPanel side pane, diff renders inline below the clicked entry.<br>\_\[Corrected 2026-04-27 post-ship: per-entry diff renders inline in the DocPanel side pane via ActivityPanelDiffView; main editor is no longer hijacked. Authoritative fix in [[specs/2026-04-24-timeline-diff-to-sidepane/SPEC]].]\_
+- G1: Users can browse version history and view diffs without any open/close cycle — click entries in the sidebar, diff updates in the main area.<br>\_\[Corrected 2026-04-27 post-ship: per-entry diff renders inline in the DocPanel side pane via ActivityPanelDiffView; main editor is no longer hijacked. Authoritative fix in [[specs/2026-04-24-timeline-diff-to-sidepane/SPEC]].]\_
 - G2: Version history automatically scopes to the active document and clears on file switch.
 - G3: The change is additive to the existing DocPanel tab pattern — no new layout paradigm.
 

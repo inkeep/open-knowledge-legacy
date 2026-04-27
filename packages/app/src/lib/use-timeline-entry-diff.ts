@@ -41,12 +41,11 @@ import type { LruStringCache } from '@/lib/lru-string-cache';
 
 export const HISTORICAL_CONTENT_CACHE_LIMIT = 32;
 
-type TimelineEntryDiffStatus = 'idle' | 'loading' | 'ready' | 'error';
-
-interface UseTimelineEntryDiffResult {
-  diff: string | null;
-  status: TimelineEntryDiffStatus;
-}
+type UseTimelineEntryDiffResult =
+  | { status: 'idle'; diff: null }
+  | { status: 'loading'; diff: null }
+  | { status: 'error'; diff: null }
+  | { status: 'ready'; diff: string };
 
 /**
  * Composite cache key format for `LruStringCache`. Exported for unit tests
@@ -81,8 +80,7 @@ export function useTimelineEntryDiff(
   cache: LruStringCache,
 ): UseTimelineEntryDiffResult {
   const { activeProvider } = useDocumentContext();
-  const [diff, setDiff] = useState<string | null>(null);
-  const [status, setStatus] = useState<TimelineEntryDiffStatus>('idle');
+  const [result, setResult] = useState<UseTimelineEntryDiffResult>({ status: 'idle', diff: null });
 
   // Provider identity churns on reconnect / instance-mismatch recovery.
   // Snapshotting via a ref keeps the diff stable while the row is expanded.
@@ -93,15 +91,13 @@ export function useTimelineEntryDiff(
 
   useEffect(() => {
     if (!sha) {
-      setDiff(null);
-      setStatus('idle');
+      setResult({ status: 'idle', diff: null });
       return;
     }
 
     const activeSha = sha;
     let cancelled = false;
-    setStatus('loading');
-    setDiff(null);
+    setResult({ status: 'loading', diff: null });
 
     async function run() {
       try {
@@ -113,7 +109,7 @@ export function useTimelineEntryDiff(
           );
           if (cancelled) return;
           if (!res.ok) {
-            setStatus('error');
+            setResult({ status: 'error', diff: null });
             return;
           }
           const body = (await res.json()) as { content?: string };
@@ -128,10 +124,16 @@ export function useTimelineEntryDiff(
         const patchStr = computeTimelineDiff(historicalRaw, currentRaw, docName);
 
         if (cancelled) return;
-        setDiff(patchStr);
-        setStatus('ready');
-      } catch {
-        if (!cancelled) setStatus('error');
+        setResult({ status: 'ready', diff: patchStr });
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[timeline-diff] failed to load entry diff', {
+            sha: activeSha,
+            docName,
+            err,
+          });
+          setResult({ status: 'error', diff: null });
+        }
       }
     }
 
@@ -141,5 +143,5 @@ export function useTimelineEntryDiff(
     };
   }, [sha, docName, cache]);
 
-  return { diff, status };
+  return result;
 }

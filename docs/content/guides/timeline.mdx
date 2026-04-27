@@ -40,9 +40,9 @@ Every Timeline row has a small **Restore** icon (a curved-back arrow) at the rig
 
 Click the icon and a confirmation dialog opens explaining what's about to happen ("This will replace the current document content with the version from … Your current content is already saved in the timeline — you can restore it anytime."). Confirm and Open Knowledge writes the snapshot over the current document as a new CRDT edit; the change itself lands in the Timeline as a new row, so the prior state stays one click away. If the restore fails (network blip, server unreachable), a brief toast surfaces the error and the document is left untouched.
 
-When a restore succeeds, any other rows you had expanded auto-collapse — their diffs were comparing against a baseline that no longer exists. Re-expand them to see fresh diffs against the just-restored content.
+When a restore succeeds, any other rows you had expanded auto-collapse — their diffs were comparing against a baseline that no longer exists. Ordinary edits while a row is expanded don't trigger a collapse because they change only the current side, leaving the snapshot coherent; re-expand when you want a fresh read.
 
-This is the same restore-to-a-prior-snapshot semantic that's lived in Open Knowledge since the panel shipped, just relocated from a sticky bar above the editor to a per-row affordance in the panel itself. The Activity Panel's per-agent **Undo** is a different operation — see [[agent-activity-panel]] — scoped to a single agent's session-undo stack rather than a wholesale snapshot replacement.
+The Activity Panel's per-agent **Undo** is a different operation — see [[agent-activity-panel]] — scoped to a single agent's session-undo stack rather than a wholesale snapshot replacement.
 
 ## Retention
 
