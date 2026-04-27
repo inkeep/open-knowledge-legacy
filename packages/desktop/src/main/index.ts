@@ -703,7 +703,7 @@ function registerIpcHandlers() {
       callerWin && wm
         ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
         : undefined;
-    showItemInFolderImpl(
+    const result = showItemInFolderImpl(
       {
         platform: process.platform,
         projectPath: callerProjectPath,
@@ -711,6 +711,13 @@ function registerIpcHandlers() {
       },
       path,
     );
+    // Channel result is `undefined` (silent-by-design — don't leak validation
+    // signal back to a potentially-compromised renderer), but a refusal is
+    // worth a main-side breadcrumb: a renderer bug constructing a wrong path
+    // otherwise produces a "nothing happened" UX with no debug trail.
+    if (!result.ok) {
+      console.warn('[main] show-item-in-folder refused', { reason: result.reason });
+    }
     return undefined;
   });
 

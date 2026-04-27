@@ -198,8 +198,8 @@ interface PendingCreate {
 /** Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy. */
 function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
   if (platform === 'darwin') return 'Reveal in Finder';
-  if (platform === 'win32') return 'Reveal in Explorer';
-  return 'Show in File Manager';
+  if (platform === 'win32') return 'Reveal in File Explorer';
+  return 'Open Containing Folder';
 }
 
 interface FileTreeMenuProps {
