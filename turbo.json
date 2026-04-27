@@ -27,7 +27,7 @@
       "inputs": ["src/**/*.ts", "src/**/*.tsx"]
     },
     "test:integration": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "src/editor/**/*.ts",
@@ -38,7 +38,7 @@
       ]
     },
     "test:conversion": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "src/editor/**/*.ts",
@@ -50,7 +50,7 @@
       ]
     },
     "test:fidelity": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "tests/fidelity/**/*.ts",

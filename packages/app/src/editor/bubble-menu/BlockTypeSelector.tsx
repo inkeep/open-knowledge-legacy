@@ -14,9 +14,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
@@ -113,7 +113,7 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
   const CurrentIcon = current.icon;
 
   return (
-    <DropdownMenuRoot>
+    <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
@@ -128,8 +128,7 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
       <DropdownMenuContent
         align="start"
         sideOffset={8}
-        portal={false}
-        className="w-44 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto subtle-scrollbar"
+        className="w-44 max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto subtle-scrollbar"
       >
         {blockTypes.map((bt) => {
           const Icon = bt.icon;
@@ -148,6 +147,6 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
           );
         })}
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }

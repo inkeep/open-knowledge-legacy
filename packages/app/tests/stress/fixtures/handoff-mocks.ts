@@ -243,6 +243,10 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
         onProjectSwitched: () => () => {},
         onMenuAction: () => () => {},
         onGitInitNotice: () => () => {},
+        onUpdateDownloaded: () => () => {},
+        onWhatsNew: () => () => {},
+        onUpdateStuckHint: () => () => {},
+        onDeepLink: () => () => {},
         dialog: {
           openFolder: async () => null,
           createFolder: async () => null,
@@ -255,6 +259,26 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
           listRecent: async () => [],
           open: async () => {},
           close: async () => {},
+        },
+        navigator: {
+          open: async () => {},
+        },
+        seed: {
+          plan: async () => ({ ok: false, error: { kind: 'no-project', message: 'test mock' } }),
+          apply: async () => ({ ok: false, error: { kind: 'no-project', message: 'test mock' } }),
+        },
+        skill: {
+          detectClaudeDesktop: async () => false,
+          buildAndOpen: async () => ({ ok: false, reason: 'build-failed', message: 'test mock' }),
+        },
+        update: {
+          relaunchNow: async () => {},
+        },
+        mcpWiring: {
+          onShow: () => () => {},
+          signalReady: () => {},
+          confirm: async () => ({ ok: true }),
+          skip: async () => ({ ok: true }),
         },
         platform: 'darwin' as const,
         appVersion: 'test-0.0.0',

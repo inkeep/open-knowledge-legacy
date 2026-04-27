@@ -35,7 +35,45 @@ The server retains the most-recent **50** auto-saved checkpoints per branch per 
 - Set `OK_TELEMETRY_VERBOSE=1` on the server to include the raw lost-substring content in the `bridge-merge-content-loss` log line (default is a redacted length + FNV-1a digest so verbatim user content never reaches a log aggregator).
 - Set `OK_RETHROW_BRIDGE_LOSS=1` to force the merge error to throw rather than silently recover. Useful for local debugging or CI harnesses that want the loud-fail path. Production deployments should leave this unset — the default keeps users typing.
 
+## Restart and reconnect
+
+Open Knowledge keeps a per-tab copy of each document's CRDT state in your browser's IndexedDB so a server restart, a Cmd-R, or a flaky network never costs you content.
+
+### Instant Cmd-R
+
+When you reload an Open Knowledge tab, the editor renders the prior state from local IndexedDB before the WebSocket reconnect completes. You don't see a loading spinner; you see your document. The reconnect happens in the background — once the server's state arrives, any unsynced edits you had in the buffer replay onto the fresh provider and propagate.
+
+### Where the data lives
+
+Each open document gets one IndexedDB database under your editor's origin, named:
+
+```
+ok-ydoc:<branch>:<doc-name>
+```
+
+The branch prefix scopes the cache per git branch — switching branches doesn't surface stale-branch content into the post-switch session. You can inspect (and clear) these databases via your browser's DevTools → **Application → IndexedDB**.
+
+If a document ever gets stuck in a bad state — content not converging, repeated reconnect loops — clearing the matching `ok-ydoc:<branch>:<doc-name>` database and reloading the tab gets you back to the server's canonical markdown state. Your in-progress edits since the last server ack are forfeit, but disk-persisted content always survives.
+
+### Server restart
+
+When the Open Knowledge server restarts, every tab connected to it sees an authentication mismatch on reconnect — the new server has a different per-process instance ID. The recycle flow is:
+
+1. Buffer each open document's unsynced delta (edits the server hasn't durably persisted yet) in memory.
+2. Wipe the per-document IndexedDB cache.
+3. Drop and rebuild the WebSocket provider.
+4. Replay the buffered delta onto the freshly-rebuilt provider once it finishes its first sync.
+
+The whole sequence usually completes in 50–500 ms. The disk-ack channel narrows the durability boundary further: edits the server has already flushed to disk are recovered from the post-restart markdown rebuild, so the actual loss window is "edits that hadn't yet flushed" — typically sub-second under normal write debouncing.
+
+### Trade-offs
+
+- **Tab-crash mid-restart** (within the 50–500 ms recycle window) loses unsynced edits — the buffer-and-replay is in-memory only.
+- **Two tabs of the same document** can block IndexedDB cleanup if both hold the connection open. The pool will skip the recycle for any document whose IDB couldn't be cleared and emit `ok-mismatch-recycle-partial-clears-failed` to the console; close the other tab (or the DevTools IDB pane) and reload to recover.
+- **Branch switch** (via the CC1 `branch-switched` channel) clears every open document's IDB without buffer-and-replay — branch-A edits aren't semantically valid on branch B and are intentionally discarded.
+
 ## Where to learn more
 
 - Architectural detail: the [[architecture]] internals page covers the settlement-based observer bridge and the content-preservation post-condition.
 - Full spec: `specs/2026-04-16-bridge-correctness/SPEC.md` in the repo.
+- Restart-recovery design: `specs/2026-04-24-client-persistence-replaces-sidecar/SPEC.md` and `packages/server/README.md` § "CRDT server-restart recovery".

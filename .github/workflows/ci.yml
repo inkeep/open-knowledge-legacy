@@ -42,6 +42,11 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install --frozen-lockfile
+      # knip loads packages/app/vite.config.ts, which imports from
+      # @inkeep/open-knowledge-server — its package.json `exports.default`
+      # falls through to ./dist/index.mjs. Build server+core (and their
+      # deps) so the import resolves. Same rationale as bundle-size.yml.
+      - run: bunx turbo run build --filter=@inkeep/open-knowledge-server --filter=@inkeep/open-knowledge-core
       - run: bun run knip
       - run: bun run lint
       - name: THIRD_PARTY_NOTICES.md drift check

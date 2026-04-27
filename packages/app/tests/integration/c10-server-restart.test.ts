@@ -1,6 +1,23 @@
 /**
  * C10: Server restart mid-edit — canonical-state recovery via persistence.
  *
+ * Scope: CANONICAL-LOAD path. This file tests that a fresh client connecting
+ * to a fresh server with pre-populated canonical markdown on disk sees the
+ * content correctly once — no duplication, no bridge-invariant violation.
+ *
+ * **This file does NOT cover the stale-client-survives-restart scenario.**
+ * That scenario (tab stays open, server restarts, client keeps its Y.Doc
+ * and reconnects) is the CRDT clientID-mismatch bug class tested separately
+ * in:
+ *   - `provider-pool-reconnect.test.ts` — single-client fast/slow restart +
+ *     unsynced-changes-during-restart
+ *   - `provider-pool-multi-client-restart.test.ts` — multi-client fast restart
+ *   - `external-edit-stale-client.test.ts` — disk edited during restart downtime
+ *   - `ytext-source-mode-restart.test.ts` — Y.Text-side duplication verification
+ *   - `agent-write-during-restart.test.ts` — agent writes straddling a restart
+ * Search for the bug-class rationale: /Users/edwingomezcuellar/.claude/plans/
+ * ok-makes-sense-can-abstract-boole.md.
+ *
  * Validates SPEC §5 failure-path R6 + NFR Reliability row:
  *   "Integration test: kill + restart server mid-edit burst → state converges
  *    on reconnect."
@@ -14,21 +31,19 @@
  * early-exits (already in sync from persistence) or performs a corrective
  * sync to Y.Text.
  *
- * Why the test models the scenario as "canonical disk state → fresh server"
+ * Why this file models the scenario as "canonical disk state → fresh server"
  * rather than "same server destroyed then re-created on same dir":
  *
- *   The R6 failure mode is a server crash (kill -9, OOM, oom-killer), not a
- *   clean `destroy()`. A real crash doesn't invoke shutdown ordering — the
- *   process simply dies, leaving on disk whatever persistence last flushed.
- *   Therefore the post-restart behavior is equivalent to "a fresh server
- *   starting against a contentDir containing canonical markdown files":
- *   persistence.onLoadDocument reads the file, populates Y.Doc, the server
- *   observer attaches via afterLoadDocument, and fires on the first change
- *   event (either the populate-from-disk or a subsequent client edit).
+ *   The R6 failure mode envisioned here is a server crash (kill -9, OOM,
+ *   oom-killer) followed by the user opening a NEW browser tab — not the
+ *   same browser tab surviving the crash. In that fresh-tab scenario,
+ *   post-restart behavior is equivalent to "a fresh server starting against
+ *   a contentDir containing canonical markdown files": persistence.onLoadDocument
+ *   reads the file, populates Y.Doc, the server observer attaches via
+ *   afterLoadDocument, and fires on the first change event.
  *
- *   This test pre-populates disk with canonical markdown, then starts a
- *   server and connects a client — exercising the exact same code path a
- *   post-crash restart would.
+ *   The ORIGINAL browser tab scenario is a distinct bug class (clientID
+ *   mismatch producing additive merge) — see the test files named above.
  *
  * Per-test docName isolation. Client lifecycle in try/finally per R8a.
  */
