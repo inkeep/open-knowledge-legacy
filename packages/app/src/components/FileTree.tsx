@@ -155,6 +155,7 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
     '--trees-padding-inline-override': '0.5rem',
     '--trees-border-radius-override': '0.375rem',
     '--trees-selected-fg': 'var(--color-primary)',
+    '--truncate-marker-fade-in-duration': '0s', // render ellipsis without delay
   } as CSSProperties;
 }
 
