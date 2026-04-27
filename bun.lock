@@ -127,8 +127,10 @@
         "tw-animate-css": "^1.4.0",
         "ws": "^8.20.0",
         "y-codemirror.next": "^0.3.5",
+        "y-indexeddb": "9.0.12",
         "yaml": "^2.8.3",
         "yjs": "^13.6.30",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@hocuspocus/server": "4.0.0-rc.1",
@@ -143,7 +145,9 @@
         "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
         "commonmark.json": "^0.31.0",
         "diff": "^8.0.4",
+        "fake-indexeddb": "^6.0.0",
         "fast-check": "^4.6.0",
+        "lib0": "^0.2.117",
         "remark-mdx": "^3.1.1",
         "remark-parse": "^11.0.0",
         "sirv": "^3.0.2",
@@ -233,6 +237,7 @@
         "vfile": "^6.0.0",
         "vfile-message": "^4.0.3",
         "yjs": "^13.6.30",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@tiptap/extension-document": "^3.22.3",
@@ -309,6 +314,7 @@
         "yaml": "^2.7.1",
         "yazl": "^3.3.1",
         "yjs": "^13.6.30",
+        "zod": "^4.3.6",
       },
       "devDependencies": {
         "@types/picomatch": "^4.0.3",
@@ -325,6 +331,7 @@
   "patchedDependencies": {
     "@tiptap/y-tiptap@3.0.3": "patches/@tiptap%2Fy-tiptap@3.0.3.patch",
     "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch",
+    "y-indexeddb@9.0.12": "patches/y-indexeddb@9.0.12.patch",
     "y-prosemirror@1.3.7": "patches/y-prosemirror@1.3.7.patch",
   },
   "packages": {
@@ -2132,6 +2139,8 @@
 
     "extsprintf": ["extsprintf@1.4.1", "", {}, "sha512-Wrk35e8ydCKDj/ArClo1VrPVmN8zph5V4AtHwIuHhvMXsKf73UT3BOD+azBIW+3wOJ4FhEH7zyaJCFvChjYvMA=="],
 
+    "fake-indexeddb": ["fake-indexeddb@6.2.5", "", {}, "sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w=="],
+
     "fast-check": ["fast-check@4.6.0", "", { "dependencies": { "pure-rand": "^8.0.0" } }, "sha512-h7H6Dm0Fy+H4ciQYFxFjXnXkzR2kr9Fb22c0UBpHnm59K2zpr2t13aPTHlltFiNT6zuxp6HMPAVVvgur4BLdpA=="],
 
     "fast-content-type-parse": ["fast-content-type-parse@3.0.0", "", {}, "sha512-ZvLdcY8P+N8mGQJahJV5G4U88CSvT1rP8ApL6uETe88MBXrBHAkZlSEySdUlyztF7ccb+Znos3TFqaepHxdhBg=="],
@@ -3539,6 +3548,8 @@
     "xmlbuilder": ["xmlbuilder@15.1.1", "", {}, "sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg=="],
 
     "y-codemirror.next": ["y-codemirror.next@0.3.5", "", { "dependencies": { "lib0": "^0.2.42" }, "peerDependencies": { "@codemirror/state": "^6.0.0", "@codemirror/view": "^6.0.0", "yjs": "^13.5.6" } }, "sha512-VluNu3e5HfEXybnypnsGwKAj+fKLd4iAnR7JuX1Sfyydmn1jCBS5wwEL/uS04Ch2ib0DnMAOF6ZRR/8kK3wyGw=="],
+
+    "y-indexeddb": ["y-indexeddb@9.0.12", "", { "dependencies": { "lib0": "^0.2.74" }, "peerDependencies": { "yjs": "^13.0.0" } }, "sha512-9oCFRSPPzBK7/w5vOkJBaVCQZKHXB/v6SIT+WYhnJxlEC61juqG0hBrAf+y3gmSMLFLwICNH9nQ53uscuse6Hg=="],
 
     "y-prosemirror": ["y-prosemirror@1.3.7", "", { "dependencies": { "lib0": "^0.2.109" }, "peerDependencies": { "prosemirror-model": "^1.7.1", "prosemirror-state": "^1.2.3", "prosemirror-view": "^1.9.10", "y-protocols": "^1.0.1", "yjs": "^13.5.38" } }, "sha512-NpM99WSdD4Fx4if5xOMDpPtU3oAmTSjlzh5U4353ABbRHl1HtAFUx6HlebLZfyFxXN9jzKMDkVbcRjqOZVkYQg=="],
 

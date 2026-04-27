@@ -43,7 +43,8 @@
     "y-protocols": "^1.0.7",
     "yaml": "^2.7.1",
     "yazl": "^3.3.1",
-    "yjs": "^13.6.30"
+    "yjs": "^13.6.30",
+    "zod": "^4.3.6"
   },
   "optionalDependencies": {
     "@parcel/watcher": "^2.5.6"
