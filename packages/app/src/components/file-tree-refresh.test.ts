@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
-const FILE_TREE_SOURCE = readFileSync(join(import.meta.dir, 'FileTree.tsx'), 'utf-8');
-const FILE_SIDEBAR_SOURCE = readFileSync(join(import.meta.dir, 'FileSidebar.tsx'), 'utf-8');
+import FILE_TREE_SOURCE from './FileTree?raw'
+import FILE_SIDEBAR_SOURCE from './FileSidebar?raw'
 
 describe('file tree document-list freshness wiring', () => {
   test('uses the bounded refresh scheduler for document-list refreshes', () => {
