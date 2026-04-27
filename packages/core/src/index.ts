@@ -236,10 +236,35 @@ export {
   defaultScheduler,
   diffLinesFast,
   getFrontmatter,
+  getFrontmatterMap,
   mergeThreeWay,
   normalizeBridge,
   type Scheduler,
+  setFrontmatterFromYaml,
+  setFrontmatterProperty,
 } from './bridge/index.ts';
+export {
+  FRONTMATTER_TYPES,
+  type FrontmatterMap,
+  FrontmatterMapSchema,
+  type FrontmatterPatch,
+  FrontmatterPatchSchema,
+  type FrontmatterType,
+  FrontmatterTypeSchema,
+  type FrontmatterValue,
+  FrontmatterValueSchema,
+  inferType,
+  isIsoDateString,
+} from './frontmatter/schema.ts';
+// Frontmatter — per-key value schema + canonical YAML codec
+export {
+  applyPatchToDocument,
+  getDocumentKeys,
+  type ParsedFrontmatter,
+  parseFrontmatterYaml,
+  serializeFrontmatterMap,
+  withFences,
+} from './frontmatter/yaml-codec.ts';
 // Types
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {

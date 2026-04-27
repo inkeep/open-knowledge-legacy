@@ -1,19 +1,169 @@
 /**
- * Read frontmatter from a Y.Doc's metadata map.
+ * Frontmatter readers + writers over `Y.Map('metadata')`.
  *
- * The bridge convention: Y.Map('metadata')['frontmatter'] holds the
- * frontmatter string for a doc. Observer B writes it on source-mode
- * parses; Observer A reads it on XmlFragment→Y.Text serialization to
- * prepend it to the body.
+ * Storage convention is in transition:
+ *   - Legacy single-string slot: `metaMap.get('frontmatter')` = entire YAML
+ *     as a string. Used by Observer A/B today.
+ *   - Per-key entries: `metaMap.get('title')`, `metaMap.get('tags')`, etc. —
+ *     one slot per frontmatter property. Field-level CRDT merge for
+ *     concurrent multi-writer edits. Editable strings may be wrapped in
+ *     `Y.Text`; lists in `Y.Array<Y.Text>`.
+ *
+ * `getFrontmatter` synthesizes a YAML string from per-key entries when any
+ * exist; otherwise it falls back to the legacy string slot. This keeps the
+ * existing string-shape readers compiling while writers migrate incrementally.
  *
  * Used by both the client observer (`packages/app/src/editor/observers.ts`)
  * for baseline tracking and the server observer
  * (`packages/server/src/server-observers.ts`) for cross-CRDT sync.
  */
-import type * as Y from 'yjs';
+import * as Y from 'yjs';
+import type { FrontmatterMap, FrontmatterValue } from '../frontmatter/schema.ts';
+import {
+  parseFrontmatterYaml,
+  serializeFrontmatterMap,
+  withFences,
+} from '../frontmatter/yaml-codec.ts';
 
+const LEGACY_FRONTMATTER_KEY = 'frontmatter';
+
+/** True if any non-legacy entry exists in `Y.Map('metadata')`. */
+function hasPerKeyEntries(metaMap: Y.Map<unknown>): boolean {
+  for (const key of metaMap.keys()) {
+    if (key !== LEGACY_FRONTMATTER_KEY) return true;
+  }
+  return false;
+}
+
+/**
+ * Coerce a per-key Y-typed slot into its plain runtime value:
+ *   - `Y.Text` → `.toString()`
+ *   - `Y.Array<Y.Text>` → `string[]`
+ *   - primitives (string / number / boolean) → as-is
+ *
+ * Returns `undefined` when the slot value is outside the supported shape set
+ * (defensive — callers treat as "skip this key" rather than a hard error).
+ */
+function unwrapSlot(value: unknown): FrontmatterValue | undefined {
+  if (value instanceof Y.Text) return value.toString();
+  if (value instanceof Y.Array) {
+    const out: string[] = [];
+    for (const item of value as Y.Array<unknown>) {
+      if (item instanceof Y.Text) out.push(item.toString());
+      else if (typeof item === 'string') out.push(item);
+      else return undefined;
+    }
+    return out;
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
+    return value as string[];
+  }
+  return undefined;
+}
+
+/**
+ * Return the frontmatter as a structured map of per-key values. Legacy
+ * single-string slot (`'frontmatter'`) is excluded. Returns an empty object
+ * when no per-key entries exist (the doc is in legacy storage shape).
+ */
+export function getFrontmatterMap(doc: Y.Doc): FrontmatterMap {
+  const metaMap = doc.getMap('metadata');
+  const out: FrontmatterMap = {};
+  for (const [key, raw] of metaMap.entries()) {
+    if (key === LEGACY_FRONTMATTER_KEY) continue;
+    const v = unwrapSlot(raw);
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
+/**
+ * Return the frontmatter as a YAML-fenced string for body composition (e.g.
+ * `prependFrontmatter(getFrontmatter(doc), body)` in the bridge invariant).
+ *
+ * Synthesized from per-key entries when any exist; otherwise falls back to
+ * the legacy single-string slot. Empty when neither is populated.
+ */
 export function getFrontmatter(doc: Y.Doc): string {
   const metaMap = doc.getMap('metadata');
-  const fm = metaMap.get('frontmatter');
-  return typeof fm === 'string' ? fm : '';
+  if (hasPerKeyEntries(metaMap)) {
+    const map = getFrontmatterMap(doc);
+    const yaml = serializeFrontmatterMap(map);
+    return withFences(yaml);
+  }
+  const legacy = metaMap.get(LEGACY_FRONTMATTER_KEY);
+  return typeof legacy === 'string' ? legacy : '';
+}
+
+/**
+ * Replace the per-key entries in `Y.Map('metadata')` from a YAML string. Used
+ * by `onLoadDocument` (eager-on-load migration), `applyExternalChange`, and
+ * Observer B reconciliation. The caller is responsible for running this
+ * inside a `doc.transact(fn, origin)` block — this helper is shape-only.
+ *
+ * Semantics:
+ *   - YAML body without `---` fences (caller pre-strips).
+ *   - Per-key diff: existing keys not in the parsed map are deleted; new
+ *     keys are inserted; values that differ are set. Per-key (not bulk
+ *     `clear()+setAll()`) preserves UndoManager attribution per property,
+ *     so undoing one property reverts only that property.
+ *   - Malformed YAML: no-op + returns `false` so the caller can keep last
+ *     valid per-key state.
+ *
+ * Removes the legacy `'frontmatter'` slot on success (the per-key entries
+ * are now the source).
+ */
+export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): boolean {
+  const { map } = parseFrontmatterYaml(yaml);
+  if (map === null) return false;
+  const metaMap = doc.getMap('metadata');
+  const desired = new Set(Object.keys(map));
+  for (const existing of [...metaMap.keys()]) {
+    if (existing === LEGACY_FRONTMATTER_KEY) {
+      metaMap.delete(existing);
+      continue;
+    }
+    if (!desired.has(existing)) metaMap.delete(existing);
+  }
+  for (const [key, value] of Object.entries(map)) {
+    const current = unwrapSlot(metaMap.get(key));
+    if (!isEqualValue(current, value)) {
+      metaMap.set(key, value);
+    }
+  }
+  return true;
+}
+
+/**
+ * Set or delete a single frontmatter property in `Y.Map('metadata')`. Pass
+ * `null` (or omit `value`) to delete. Caller wraps in `doc.transact(fn, origin)`.
+ *
+ * Note: this helper writes plain JS values to the slot. Y-types (`Y.Text`
+ * for editable strings, `Y.Array<Y.Text>` for lists) are introduced by
+ * higher-level writers (e.g. the form path / `frontmatter_patch` handler)
+ * once those wires are in place.
+ */
+export function setFrontmatterProperty(
+  doc: Y.Doc,
+  key: string,
+  value: FrontmatterValue | null,
+): void {
+  const metaMap = doc.getMap('metadata');
+  if (value === null) {
+    metaMap.delete(key);
+    return;
+  }
+  metaMap.set(key, value);
+}
+
+function isEqualValue(a: FrontmatterValue | undefined, b: FrontmatterValue): boolean {
+  if (a === undefined) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((item, i) => item === b[i]);
+  }
+  return a === b;
 }

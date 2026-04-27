@@ -11,7 +11,12 @@
  */
 export { applyFastDiff, applyIncrementalDiff } from './apply-diff.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
-export { getFrontmatter } from './frontmatter-y.ts';
+export {
+  getFrontmatter,
+  getFrontmatterMap,
+  setFrontmatterFromYaml,
+  setFrontmatterProperty,
+} from './frontmatter-y.ts';
 export {
   assertContentPreservation,
   BridgeMergeContentLossError,
