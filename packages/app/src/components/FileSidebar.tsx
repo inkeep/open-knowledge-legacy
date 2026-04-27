@@ -71,7 +71,7 @@ function FileSidebarInner() {
            */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <ToolbarButton icon={ListCollapse} label="Tree view options" />
+              <ToolbarButton icon={ListCollapse} label="Tree View Options" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => fileTreeRef.current?.expandAll()}>
@@ -86,7 +86,7 @@ function FileSidebarInner() {
           </DropdownMenu>
           <ToolbarButton
             icon={SquarePen}
-            label="New file"
+            label="New File"
             onClick={() => fileTreeRef.current?.startCreating('file', '')}
           />
           <ToolbarButton
