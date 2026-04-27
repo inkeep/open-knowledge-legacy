@@ -346,6 +346,9 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
+    // Codex reads CODEX_HOME (default ~/.codex) for user config; project-local
+    // .codex/config.toml support was added by analogy with the other editors.
+    // Verify against Codex CLI release notes before promoting in docs.
     projectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
   }),
 };

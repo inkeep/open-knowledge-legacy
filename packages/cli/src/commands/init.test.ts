@@ -1277,6 +1277,17 @@ describe('runInit', () => {
       expect(existsSync(claudeConfigPath())).toBe(false);
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
     });
+
+    it('scope=both "Next steps" deduplicates editor labels (no double-count)', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
+      const output = formatInitResult(result, testDir);
+      // "Claude Code" should appear exactly once in the "Open your editor" line,
+      // even though result.editors has two entries (user-scope + project-scope).
+      const nextStepsLine = output.split('\n').find((l) => l.includes('Open your editor'));
+      expect(nextStepsLine).toBeDefined();
+      const matches = nextStepsLine?.match(/Claude Code/g);
+      expect(matches).toHaveLength(1);
+    });
   });
 });
 

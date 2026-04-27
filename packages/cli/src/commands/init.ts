@@ -237,6 +237,13 @@ interface InitCommandResult {
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
+  /**
+   * Labels of editors that were skipped during a project-scope write because
+   * they have no standardized project-local config format (e.g. Windsurf,
+   * Claude Desktop). Only populated when scope=project|both and at least one
+   * editor was skipped for this reason.
+   */
+  projectScopeUnsupportedLabels?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -679,6 +686,12 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     }
   }
 
+  // Editors skipped for project-scope because they have no project-local config format.
+  const projectScopeUnsupportedLabels =
+    !skipMcp && scope !== null && writesProject(scope)
+      ? targets.filter((t) => !t.projectConfigPath).map((t) => t.label)
+      : undefined;
+
   const legacyProjectConfigs = skipMcp
     ? []
     : availableTargets
@@ -687,10 +700,13 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
         // Suppress paths we just wrote during project-scope install.
         .filter((result) => !writtenProjectPaths.has(result.path));
 
-  // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
+  // 3. Scaffold .claude/launch.json when Claude Code is a selected editor.
+  // hasClaude checks availableTargets (existence of ~/.claude/), not the full
+  // targets list, so scope=project writes .mcp.json but skips launch.json when
+  // ~/.claude/ is absent (e.g. CI). This is intentional: launch.json targets a
+  // running editor instance, not a committed project artifact.
   const hasClaude = availableTargets.some((target) => target.id === 'claude');
-  const launchJson =
-    hasClaude && options.mcp !== false ? scaffoldLaunchJson(cwd, installOptions) : undefined;
+  const launchJson = hasClaude && !skipMcp ? scaffoldLaunchJson(cwd, installOptions) : undefined;
 
   // Per SPEC 2026-04-22 (D2 LOCKED / FR1): `ok init` no longer writes
   // to root AGENTS.md / CLAUDE.md. Behavioral guidance ships via (1)
@@ -729,6 +745,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
+    projectScopeUnsupportedLabels,
   };
 }
 
@@ -789,11 +806,17 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push(`Warning: ${result.mcpError}`);
   } else if (result.editors.length === 0) {
     lines.push('MCP server configuration:');
-    lines.push(
-      result.mcpAction === 'skipped-flag'
-        ? '  MCP config not written — use without --no-mcp to configure editors'
-        : '  No supported editor config directories detected; skipped MCP registration',
-    );
+    if (result.mcpAction === 'skipped-flag') {
+      lines.push('  MCP config not written — use without --no-mcp to configure editors');
+    } else if (
+      result.projectScopeUnsupportedLabels &&
+      result.projectScopeUnsupportedLabels.length > 0
+    ) {
+      const names = result.projectScopeUnsupportedLabels.join(', ');
+      lines.push(`  ${names} do not support project-level config; skipped`);
+    } else {
+      lines.push('  No supported editor config directories detected; skipped MCP registration');
+    }
   } else if (allSkippedFlag) {
     lines.push('MCP config not written — use without --no-mcp to configure editors');
   } else if (allSkippedMissing) {
@@ -909,8 +932,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 
   // Next steps (only if something was written)
   if (anyWritten) {
+    // Deduplicate by editorId: scope=both produces two entries per editor
+    // (user-scope + project-scope) with the same label.
+    const seen = new Set<EditorId>();
     const configuredLabels = result.editors
       .filter((e) => e.action === 'written' || e.action === 'overwritten')
+      .filter((e) => !seen.has(e.editorId) && seen.add(e.editorId))
       .map((e) => e.label);
 
     lines.push('');
