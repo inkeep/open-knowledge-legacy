@@ -33,17 +33,21 @@ describe('detectProjectShape', () => {
     }
   });
 
-  test('returns "adopt" when only lockDir exists', () => {
+  test('returns "fresh" when only lockDir exists (lockDir is NOT an adoption signal)', () => {
+    // Regression: `initContent` and `acquireServerLock` both create `.open-knowledge/`
+    // before the manifest check runs. If lockDir-existence triggered "adopt",
+    // every fresh project would misclassify and stamp schema-0. Only the shadow
+    // repo signals adoption.
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(lockDir, { recursive: true });
-      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('fresh');
     } finally {
       cleanup();
     }
   });
 
-  test('returns "adopt" when only shadowRepoDir exists', () => {
+  test('returns "adopt" when shadowRepoDir exists', () => {
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(shadowRepoDir, { recursive: true });
@@ -53,7 +57,7 @@ describe('detectProjectShape', () => {
     }
   });
 
-  test('returns "adopt" when both exist', () => {
+  test('returns "adopt" when both exist (shadow repo wins over lockDir absence)', () => {
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(lockDir, { recursive: true });
@@ -168,7 +172,11 @@ describe('assertCompatibleStateManifest', () => {
     }
   });
 
-  test('writes schema-0 + adoptedAt on adoption (pre-existing .open-knowledge dir, no shadow repo)', () => {
+  test('writes fresh manifest when only .open-knowledge dir exists (no shadow repo)', () => {
+    // Regression for the smoke-test bug: `initContent` / `acquireServerLock`
+    // create `.open-knowledge/` before the manifest check runs. That alone is
+    // NOT adoption — only the shadow repo signals durable pre-version-field
+    // state. This is the user's exact scenario from the smoke test.
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();
     try {
       mkdirSync(lockDir, { recursive: true });
@@ -180,8 +188,8 @@ describe('assertCompatibleStateManifest', () => {
         currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
-      expect(result.stateSchemaVersion).toBe(0);
-      expect(result.createdBy.adoptedAt).toBe('2026-04-27T12:00:00.000Z');
+      expect(result.stateSchemaVersion).toBe(1);
+      expect(result.createdBy.adoptedAt).toBeUndefined();
     } finally {
       cleanup();
     }

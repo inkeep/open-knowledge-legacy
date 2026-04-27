@@ -59,14 +59,31 @@ export type ProjectShape = 'fresh' | 'adopt';
  * Determine whether the project is genuinely fresh (no prior state) or has
  * pre-existing on-disk state that pre-dates the manifest scheme.
  *
- * Pre-existing state is signaled by EITHER (a) the `<contentDir>/.open-knowledge/`
- * directory existing OR (b) the project's shadow repo at
- * `<projectRoot>/.git/open-knowledge/` existing. Both pre-date this scheme.
+ * Adoption is signaled ONLY by the shadow repo at `<projectRoot>/.git/open-knowledge/`.
+ * The `<contentDir>/.open-knowledge/` directory is NOT a reliable signal — it
+ * can exist for reasons that don't imply pre-version-field durable state:
+ *
+ * - `initContent` (CLI's `ok start` autoInitFn) creates it during boot before
+ *   the manifest check runs.
+ * - `acquireServerLock` creates it when writing the lock file.
+ * - A prior boot crash mid-init may have left an empty `.open-knowledge/`.
+ *
+ * If we treated lockDir-existence as adoption, every fresh project would be
+ * misclassified as adopted and stamp schema-0 instead of the current schema.
+ * The shadow repo is durable, version-relevant state — the actual artifact
+ * future binaries might not be able to read. The `.open-knowledge/` directory
+ * contents (`config.yml`, sync caches) are version-independent or cheap to
+ * regenerate. The lockDir parameter is retained for API stability and future
+ * use (e.g., a more specific signal once we have one).
+ *
+ * Note: the original spec text in §6.2 listed both signals; this implementation
+ * narrows to the shadow repo per D14's calibration after the user's smoke test
+ * surfaced the lockDir-misclassification bug (2026-04-27).
  */
 export function detectProjectShape(opts: { lockDir: string; shadowRepoDir: string }): ProjectShape {
-  const lockDirExists = existsSync(opts.lockDir);
-  const shadowRepoExists = existsSync(opts.shadowRepoDir);
-  if (lockDirExists || shadowRepoExists) return 'adopt';
+  // lockDir intentionally unused — see docstring above.
+  void opts.lockDir;
+  if (existsSync(opts.shadowRepoDir)) return 'adopt';
   return 'fresh';
 }
 
