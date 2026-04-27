@@ -11,7 +11,7 @@ All H + M + most L findings applied to SPEC in the same commit. Summary:
 
 | Finding | Status   | Applied how                                                                                                          |
 |---------|----------|----------------------------------------------------------------------------------------------------------------------|
-| H1      | APPLIED  | Added SIGTERM+SIGINT handler to `bootServer` scope (§5 server row); relaxed kill-poll to process-death only (§6.4); reframed D12; added AC A6. |
+| H1      | APPLIED (spec only — see below) | Added SIGTERM+SIGINT handler to the spec's §5 scope table (`bootServer` server row); relaxed kill-poll to process-death only (§6.4); reframed D12; added AC A6. **Implementation note (added post-D14 reduced scope, 2026-04-27):** the handler was NOT implemented in `boot.ts` — G4 (kill-and-restart) is NOT NOW per D14, so the handler has no consumer in the reduced scope. Re-add to scope when G4 is revisited per D14's revisit clause. |
 | H2      | APPLIED  | Split G2 / §6.2 into fresh-vs-adopt; adoption path writes `stateSchemaVersion: 0` sentinel with `createdBy.adoptedAt`; added AC B6. |
 | M1      | APPLIED  | Tagged-union `readProcessLock` return — `'absent' \| 'stale' \| 'live' \| 'incompatible'` — defined in §6.1; A4/A5 updated; callers enumerated. |
 | M2      | APPLIED  | New `'incompatible'` compatibility value, distinct from `'older-desktop'`. Matrix row split (§6.3). Desktop scope row updated with `promptRefuseIncompatible`. AC C9 added. |

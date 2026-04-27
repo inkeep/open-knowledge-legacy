@@ -1,3 +1,24 @@
+---
+title: "Open Knowledge Server Paths"
+description: "Process spawn DAG, Hocuspocus composition paths, CLI vs Electron DMG distribution, and HMR matrix for the seven collab entry points and four UI entry points. §5 maps the cross-install version-drift surface this topology exposes."
+createdAt: 2026-04-22
+updatedAt: 2026-04-27
+subjects:
+  - Hocuspocus
+  - bootServer
+  - createServer
+  - Electron
+  - Vite
+  - CLI
+  - Playwright
+topics:
+  - server entry points
+  - process model
+  - HMR
+  - distribution
+  - cross-install version drift
+---
+
 # Open Knowledge — server paths
 
 Four views: process spawn DAG, code-path composition, distribution, HMR matrix.

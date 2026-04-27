@@ -1,9 +1,20 @@
 ---
 title: "Server Paths, Entry Points, and Version-Drift Architecture"
 description: "Staff-architect synthesis of the cross-install version-drift problem across CLI, desktop, npx, and editor-launched MCP, with a scoped three-authority target architecture."
-tags: [architecture, versioning, mcp, desktop, cli, server-lock, shadow-repo]
-status: draft
-audience: [staff-architect, maintainers]
+createdAt: 2026-04-23
+updatedAt: 2026-04-23
+subjects:
+  - Open Knowledge
+  - CLI
+  - Electron
+  - MCP
+  - server.lock
+  - shadow-repo
+topics:
+  - cross-install version drift
+  - architecture review
+  - three-authority model
+  - server entry points
 ---
 
 # Server Paths, Entry Points, and Version-Drift Architecture
