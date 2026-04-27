@@ -66,6 +66,7 @@ import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
+  showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
 import {
@@ -688,6 +689,27 @@ function registerIpcHandlers() {
         mkdir: (path) => fsPromises.mkdir(path, { recursive: true }).then(() => undefined),
       },
       line,
+    );
+    return undefined;
+  });
+
+  handle('ok:shell:show-item-in-folder', async (event, path) => {
+    // Scope the reveal to the caller window's project directory — same
+    // defense pattern as `ok:shell:spawn-cursor`. A renderer compromise can't
+    // steer Finder/Explorer at `~/.ssh/`, `/etc/`, or any other off-project
+    // location. Navigator windows (no bound project) refuse every path.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    showItemInFolderImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        showItemInFolder: (p) => shell.showItemInFolder(p),
+      },
+      path,
     );
     return undefined;
   });

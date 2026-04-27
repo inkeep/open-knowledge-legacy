@@ -11,6 +11,7 @@ import {
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
   Copy,
+  FolderOpen,
   FolderPlus,
   FoldVertical,
   Pencil,
@@ -194,6 +195,13 @@ interface PendingCreate {
   renamePath: string;
 }
 
+/** Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy. */
+function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
+  if (platform === 'darwin') return 'Reveal in Finder';
+  if (platform === 'win32') return 'Reveal in Explorer';
+  return 'Show in File Manager';
+}
+
 interface FileTreeMenuProps {
   item: ContextMenuItem;
   context: ContextMenuOpenContext;
@@ -350,6 +358,24 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        {handoff.isElectronHost && window.okDesktop ? (
+          <DropdownMenuItem
+            disabled={!workspace}
+            onSelect={() => {
+              if (!workspace) return;
+              close();
+              const full = joinWorkspacePath(
+                workspace.contentDir,
+                relativePathForTreeItem(item),
+                workspace.pathSeparator,
+              );
+              void window.okDesktop?.shell.showItemInFolder(full);
+            }}
+          >
+            <FolderOpen aria-hidden="true" />
+            {revealInFileManagerLabel(window.okDesktop.platform)}
+          </DropdownMenuItem>
+        ) : null}
         {!isFolder && (
           <OpenInAgentContextSubmenu
             input={handoffInput}

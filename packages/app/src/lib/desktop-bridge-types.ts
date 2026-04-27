@@ -198,6 +198,11 @@ export interface OkDesktopBridge {
         | 'dispatch-error'
         | 'web-host-cursor-unsupported';
     }): Promise<void>;
+    /**
+     * Reveal a file or folder in the OS file manager. See canonical JSDoc
+     * in `packages/desktop/src/shared/bridge-contract.ts`.
+     */
+    showItemInFolder(path: string): Promise<void>;
   };
   clipboard: {
     writeText(text: string): Promise<void>;

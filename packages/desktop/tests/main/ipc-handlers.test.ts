@@ -13,6 +13,7 @@ import {
   isPathWithinProject,
   recordHandoff,
   STATS_FILE_RELATIVE_PATH,
+  showItemInFolder,
   spawnCursor,
   validateSpawnPath,
 } from '../../src/main/ipc-handlers.ts';
@@ -611,5 +612,119 @@ describe('recordHandoff', () => {
     await expect(recordHandoff(failingDeps, sampleLine)).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('plain-string-failure');
+  });
+});
+
+describe('showItemInFolder', () => {
+  test('reveals path within project (POSIX)', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      '/Users/me/proj/specs/foo.md',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual(['/Users/me/proj/specs/foo.md']);
+  });
+
+  test('reveals project root itself', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      '/Users/me/proj',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual(['/Users/me/proj']);
+  });
+
+  test('refuses path outside project (parent escape)', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      '/Users/me/other/secrets.txt',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(calls).toEqual([]);
+  });
+
+  test('refuses non-absolute path', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      'relative/foo.md',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(calls).toEqual([]);
+  });
+
+  test('refuses path with null byte', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: '/Users/me/proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      '/Users/me/proj/foo\0.md',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(calls).toEqual([]);
+  });
+
+  test('refuses every path when projectPath is undefined (Navigator window)', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'darwin',
+        projectPath: undefined,
+        showItemInFolder: (p) => calls.push(p),
+      },
+      '/Users/me/proj/foo.md',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(calls).toEqual([]);
+  });
+
+  test('Windows: reveals path within project', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'win32',
+        projectPath: 'C:\\Users\\me\\proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      'C:\\Users\\me\\proj\\specs\\foo.md',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual(['C:\\Users\\me\\proj\\specs\\foo.md']);
+  });
+
+  test('Windows: refuses cross-drive escape', () => {
+    const calls: string[] = [];
+    const result = showItemInFolder(
+      {
+        platform: 'win32',
+        projectPath: 'C:\\Users\\me\\proj',
+        showItemInFolder: (p) => calls.push(p),
+      },
+      'D:\\elsewhere\\foo.md',
+    );
+    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(calls).toEqual([]);
   });
 });

@@ -283,6 +283,45 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   return deps.spawn(exec, args, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
 }
 
+/** Outcome of a `showItemInFolder` invocation — observable in main logs / tests. */
+type ShowItemInFolderOutcome = { ok: true } | { ok: false; reason: 'invalid-path' };
+
+/** Injected deps for `showItemInFolder` — the electron `shell.showItemInFolder` and platform/projectPath. */
+interface ShowItemInFolderDeps {
+  readonly platform: NodeJS.Platform;
+  /** Caller window's project directory; if omitted, validation refuses any path. */
+  readonly projectPath: string | undefined;
+  /** Wraps `electron.shell.showItemInFolder`. Replaceable in tests. */
+  readonly showItemInFolder: (path: string) => void;
+}
+
+/**
+ * Reveal the given path in the OS file manager. The path must be absolute,
+ * free of null bytes, and lie at or under `deps.projectPath` — otherwise the
+ * call is refused. Bounds a renderer compromise from steering the OS file
+ * manager at arbitrary filesystem locations. Same defense pattern as
+ * `spawnCursor`.
+ *
+ * When `projectPath` is undefined (e.g. Navigator window with no bound
+ * project), refuses every path — the only safe default.
+ */
+export function showItemInFolder(
+  deps: ShowItemInFolderDeps,
+  path: string,
+): ShowItemInFolderOutcome {
+  if (!validateSpawnPath(path, deps.platform)) {
+    return { ok: false, reason: 'invalid-path' };
+  }
+  if (deps.projectPath === undefined) {
+    return { ok: false, reason: 'invalid-path' };
+  }
+  if (!isPathWithinProject(path, deps.projectPath, deps.platform)) {
+    return { ok: false, reason: 'invalid-path' };
+  }
+  deps.showItemInFolder(path);
+  return { ok: true };
+}
+
 /**
  * Local-only telemetry sink. Append-only writer to
  * `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent dispatch.

@@ -155,6 +155,16 @@ export interface RequestChannels {
    */
   'ok:shell:spawn-cursor': { args: [path: string]; result: SpawnOutcome };
   /**
+   * Reveal a file or folder in the OS file manager (Finder on macOS, Explorer
+   * on Windows, default file manager on Linux). Wraps Electron's
+   * `shell.showItemInFolder`. Path is validated against the caller window's
+   * `projectPath` via `isPathWithinProject` — paths outside the project tree
+   * (or invalid / non-absolute / null-byte-bearing) reject silently to bound
+   * a renderer compromise from steering the OS file manager at arbitrary
+   * filesystem locations. Same defense pattern as `ok:shell:spawn-cursor`.
+   */
+  'ok:shell:show-item-in-folder': { args: [path: string]; result: undefined };
+  /**
    * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`.
    * Zero phone-home (XQ3 LOCKED). Resolves on success; resolves (without
    * throwing) when HOME is unwritable so the dispatch path is never affected

@@ -340,6 +340,12 @@ export interface OkDesktopBridge {
         | 'dispatch-error'
         | 'web-host-cursor-unsupported';
     }): Promise<void>;
+    /**
+     * Reveal a file or folder in the OS file manager (Finder / Explorer /
+     * Linux default). Path is validated against the caller window's project
+     * directory in main; paths outside the project tree resolve as no-ops.
+     */
+    showItemInFolder(path: string): Promise<void>;
   };
 
   /** IPC-relayed clipboard writer (sandboxed renderer cannot call clipboard directly). */
