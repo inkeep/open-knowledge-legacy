@@ -19,8 +19,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Page } from '@playwright/test';
+import type { ApiHelpers } from './_helpers';
 import { expect, test } from './_helpers';
-import type { ApiHelpers } from './_helpers/fixtures';
 
 function uid() {
   return `tl-${randomUUID().slice(0, 8)}`;
@@ -546,9 +546,18 @@ test.describe('Timeline inline diff — side pane', () => {
     await dialog.getByTestId('timeline-entry-restore-cancel').click();
     await expect(dialog).toBeHidden();
 
+    // Verify the late response fires no side-effects. Auto-retrying assertions
+    // can't catch absence-of-change, so wait for the response to actually arrive
+    // and yield two frames to let React run (or correctly skip) handlers first.
+    const lateResponse = page.waitForResponse('/api/rollback');
     release();
-
-    await page.waitForTimeout(500);
+    await lateResponse;
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
 
     await expect(diffPanels(page)).toHaveCount(1);
     await expect(expandButtons(page).nth(1)).toHaveAttribute('aria-expanded', 'true');
