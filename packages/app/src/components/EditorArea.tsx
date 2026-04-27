@@ -3,7 +3,7 @@ import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
+import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { FolderOverview } from '@/components/FolderOverview';
 import { OkBlob } from '@/components/OkBlob';
@@ -30,6 +30,8 @@ interface EditorAreaProps {
   onNoDiff?: () => void;
   onEntrySelect?: (entry: TimelineEntry) => void;
   selectedSha?: string;
+  activeTab: PanelTab;
+  onActiveTabChange: (tab: PanelTab) => void;
 }
 
 export function EditorArea(props: EditorAreaProps) {
@@ -47,6 +49,8 @@ function EditorAreaInner({
   onNoDiff,
   onEntrySelect,
   selectedSha,
+  activeTab,
+  onActiveTabChange,
 }: EditorAreaProps) {
   const {
     activeDocName,
@@ -86,9 +90,6 @@ function EditorAreaInner({
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
-
-  // Lifted activeTab state — DocPanel is controlled (spec D2).
-  const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -365,7 +366,7 @@ function EditorAreaInner({
               docName={activeDocName}
               isSourceMode={isSourceMode}
               activeTab={activeTab}
-              onActiveTabChange={setActiveTab}
+              onActiveTabChange={onActiveTabChange}
               onEntrySelect={onEntrySelect}
               selectedSha={selectedSha}
               diffLayout={diffLayout}
@@ -402,7 +403,7 @@ function EditorAreaInner({
             docName={activeDocName}
             isSourceMode={isSourceMode}
             activeTab={activeTab}
-            onActiveTabChange={setActiveTab}
+            onActiveTabChange={onActiveTabChange}
             onEntrySelect={onEntrySelect}
             selectedSha={selectedSha}
             diffLayout={diffLayout}

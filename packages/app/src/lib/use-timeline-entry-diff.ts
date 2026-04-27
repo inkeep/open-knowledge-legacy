@@ -50,9 +50,9 @@ export class HistoricalContentCache {
 // Hook
 // ---------------------------------------------------------------
 
-export type TimelineEntryDiffStatus = 'idle' | 'loading' | 'ready' | 'error';
+type TimelineEntryDiffStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-export interface UseTimelineEntryDiffResult {
+interface UseTimelineEntryDiffResult {
   diff: string | null;
   status: TimelineEntryDiffStatus;
 }

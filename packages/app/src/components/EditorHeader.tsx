@@ -1,4 +1,3 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { Columns2, FolderOpen, GitFork, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -22,6 +21,7 @@ import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
+import type { PanelTab } from './DocPanel';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
@@ -70,7 +70,7 @@ interface EditorHeaderProps {
   onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
-  previewEntry: TimelineEntry | null;
+  activeTab: PanelTab;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
@@ -84,7 +84,7 @@ export function EditorHeader({
   onModeChange,
   onSaveVersion,
   saving,
-  previewEntry,
+  activeTab,
   diffLayout,
   onDiffLayoutChange,
   onSignIn,
@@ -492,8 +492,7 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Diff mode: layout toggle (Restore/Close moved to timeline panel footer) */}
-      {isDiffMode && previewEntry && (
+      {activeTab === 'timeline' && (
         <div className="flex items-center gap-2 shrink-0">
           <ToggleGroup
             type="single"

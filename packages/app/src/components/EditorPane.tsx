@@ -23,6 +23,7 @@ import { CloneDialog } from './CloneDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
+import { type PanelTab, TABS } from './DocPanel';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
@@ -53,6 +54,7 @@ export function EditorPane() {
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
+  const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -208,7 +210,7 @@ export function EditorPane() {
         onModeChange={handleModeChange}
         onSaveVersion={handleSaveVersion}
         saving={saving}
-        previewEntry={previewEntry}
+        activeTab={activeTab}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
         onSignIn={() => {
@@ -266,6 +268,8 @@ export function EditorPane() {
         onNoDiff={handleNoDiff}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
+        activeTab={activeTab}
+        onActiveTabChange={setActiveTab}
       />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal

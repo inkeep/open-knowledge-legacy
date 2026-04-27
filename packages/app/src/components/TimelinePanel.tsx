@@ -437,19 +437,25 @@ function EntryRow({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docName, commitSha: entry.sha }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setDialogOpen(false);
-      setDiffExpanded(false);
-      onRestoreSuccess();
+      if (res.ok) {
+        setDialogOpen(false);
+        setDiffExpanded(false);
+        onRestoreSuccess();
+      } else {
+        const msg = 'Restore failed — document unchanged';
+        setRestoreError(msg);
+        toast.error(msg, { duration: 4000 });
+        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
+      }
     } catch {
       const msg = 'Restore failed — document unchanged';
       setRestoreError(msg);
       toast.error(msg, { duration: 4000 });
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
       errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
-    } finally {
-      setRestoring(false);
     }
+    setRestoring(false);
   }
 
   // Leading icon: checkpoint variants get special icons, others get contributor icon
