@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import FILE_TREE_SOURCE from './FileTree?raw'
-import FILE_SIDEBAR_SOURCE from './FileSidebar?raw'
+import FILE_SIDEBAR_SOURCE from './FileSidebar?raw';
+import FILE_TREE_SOURCE from './FileTree?raw';
 
 describe('file tree document-list freshness wiring', () => {
   test('uses the bounded refresh scheduler for document-list refreshes', () => {
