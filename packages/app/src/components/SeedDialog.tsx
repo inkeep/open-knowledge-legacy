@@ -179,7 +179,7 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4">
+        <div className="subtle-scrollbar -mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4">
           <RootPicker
             choice={rootChoice}
             subfolder={subfolder}
