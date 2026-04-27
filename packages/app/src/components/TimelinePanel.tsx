@@ -457,6 +457,8 @@ function EntryRow({
         <div
           role="button"
           tabIndex={0}
+          aria-expanded={diffExpanded}
+          data-testid="timeline-entry-expand"
           className={[
             'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
             diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
@@ -533,7 +535,7 @@ function EntryRow({
         </div>
 
         {diffExpanded && (
-          <div className="px-3 pb-2">
+          <div className="px-3 pb-2" data-testid="timeline-entry-diff">
             {status === 'loading' && (
               <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3 animate-spin" />
