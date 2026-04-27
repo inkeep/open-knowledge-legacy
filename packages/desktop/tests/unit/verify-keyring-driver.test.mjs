@@ -244,7 +244,7 @@ describe('runDriver (full orchestration)', () => {
       // Inject a spawn that never exits so we can fire SIGINT before normal finally
       spawn: () => {
         // Fire SIGINT synchronously after spawn "starts"
-        setImmediate(() => sigintHandler?.());
+        globalThis.setImmediate(() => sigintHandler?.());
         return {
           on: () => {},
           kill: () => {},
@@ -286,7 +286,7 @@ describe('runDriver (full orchestration)', () => {
     const deps = fakeDeps({
       process: proc,
       spawn: () => {
-        setImmediate(() => sigtermHandler?.());
+        globalThis.setImmediate(() => sigtermHandler?.());
         return {
           on: () => {},
           kill: () => {},
@@ -317,7 +317,7 @@ describe('runDriver (full orchestration)', () => {
     const deps = fakeDeps({
       process: proc,
       spawn: () => {
-        setImmediate(() => {
+        globalThis.setImmediate(() => {
           sigintHandler?.();
           sigintHandler?.(); // second fire — guarded by signalHandled
         });
