@@ -84,12 +84,15 @@ What to log:
 - Folder restructures (\`ok seed\`, manual reorganization)
 - \`.open-knowledge/config.yml\` changes
 
+**Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[path/to/doc](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs. A bare path string (\`Files touched: foo/bar.md\`) does not register in the doc graph — the audit trail compounds only when the log is a real linker.
+
 <!-- Example entry shape:
 
 ## YYYY-MM-DD — <short title>
 
 - <what was done>
-- Files touched: <path>, <path>
+- Files touched: [path/to/doc-a](./path/to/doc-a.md), [path/to/doc-b](./path/to/doc-b.md)
+- Sources ingested: [source-slug](./external-sources/source-slug.md)
 - Open follow-ups: <topic-1>, <topic-2>
 
 -->
