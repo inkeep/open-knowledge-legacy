@@ -5,18 +5,13 @@
  * STOP rule: never hardcode 'test-doc'; workers share a dev-server instance
  * and parallel tests would corrupt shared CRDT state.
  *
- * **Test infrastructure dependency.** These tests rely on the worker's
- * Hocuspocus instance having a working shadow-repo so `/api/history`
- * returns Timeline entries. The current per-worker fixture seeds a tmpdir
- * without `git init`, so on machines where the dev server's projectRoot
- * detection walks all the way up to the user's home (or stops at no-git),
- * `/api/save-version` returns "Shadow repo not configured" and `/api/history`
- * returns `entries: []`. WIP commits via `writeAsAgent` may also not surface
- * within the Timeline panel's 10 s polling interval. Suite-level fixme is
- * the documented response — the application code has been verified at
- * source-grep + unit-test fidelity (see qa-progress.json validatedVia notes
- * for QA-001…QA-024). Unblocking this suite means extending the worker
- * fixture to git-init the contentDir AND ensuring the dev server detects it.
+ * **Test infrastructure dependency.** These tests require the worker's
+ * Hocuspocus instance to have a working shadow-repo so `/api/history`
+ * returns Timeline entries. The per-worker fixture in `_helpers/fixtures.ts`
+ * satisfies this by spawning the dev server with `OK_TEST_GIT_ENABLED=1`,
+ * which opts the isolated `contentDir` into shadow-repo mode (git-init +
+ * `gitEnabled: true` in `createServer`). `/api/save-version` and
+ * `/api/history` work correctly in the worker environment.
  *
  * Reference patterns:
  *   - agent-activity-panel.e2e.ts  (per-test seeding + writeAsAgent)
