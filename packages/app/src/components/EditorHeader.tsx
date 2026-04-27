@@ -491,49 +491,40 @@ export function EditorHeader({
 
       {activeTab === 'timeline' && (
         <div className="flex items-center gap-2 shrink-0">
-          <ToggleGroup
-            type="single"
-            value={diffLayout}
-            onValueChange={(v) => {
-              if (v) onDiffLayoutChange(v as DiffLayout);
-            }}
-            aria-label="Diff layout"
-            variant="segmented"
-            size="sm"
-            spacing={1}
-            className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <ToggleGroupItem
-                    value="unified"
-                    aria-label="Unified diff"
-                    className="gap-1 text-xs px-2"
-                  >
-                    <Rows2 className="size-3.5" />
-                    <span className="hidden md:inline">Unified</span>
-                  </ToggleGroupItem>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="md:hidden">Unified</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <ToggleGroupItem
-                    value="split"
-                    aria-label="Split diff"
-                    className="gap-1 text-xs px-2"
-                  >
-                    <Columns2 className="size-3.5" />
-                    <span className="hidden md:inline">Split</span>
-                  </ToggleGroupItem>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="md:hidden">Split</TooltipContent>
-            </Tooltip>
-          </ToggleGroup>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroup
+                type="single"
+                value={diffLayout}
+                onValueChange={(v) => {
+                  if (v) onDiffLayoutChange(v as DiffLayout);
+                }}
+                aria-label="Diff layout"
+                variant="segmented"
+                size="sm"
+                spacing={1}
+                className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
+              >
+                <ToggleGroupItem
+                  value="unified"
+                  aria-label="Unified diff"
+                  className="gap-1 text-xs px-2"
+                >
+                  <Rows2 className="size-3.5" />
+                  <span className="hidden md:inline">Unified</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="split"
+                  aria-label="Split diff"
+                  className="gap-1 text-xs px-2"
+                >
+                  <Columns2 className="size-3.5" />
+                  <span className="hidden md:inline">Split</span>
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent>Layout for expanded Timeline diffs</TooltipContent>
+          </Tooltip>
         </div>
       )}
 

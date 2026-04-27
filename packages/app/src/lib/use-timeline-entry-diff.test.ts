@@ -1,51 +1,73 @@
 import { describe, expect, test } from 'bun:test';
-import { HISTORICAL_CONTENT_CACHE_LIMIT, HistoricalContentCache } from './use-timeline-entry-diff';
+import { computeTimelineDiff, timelineEntryCacheKey } from './use-timeline-entry-diff';
 
-describe('HistoricalContentCache', () => {
-  test('get on miss returns undefined', () => {
-    const cache = new HistoricalContentCache();
-    expect(cache.get('nonexistent')).toBeUndefined();
+describe('timelineEntryCacheKey', () => {
+  test('composes docName and sha with a NUL separator', () => {
+    expect(timelineEntryCacheKey('foo', 'abc123')).toBe('foo\u0000abc123');
+    expect(timelineEntryCacheKey('docs/page', 'abc123')).toBe('docs/page\u0000abc123');
   });
 
-  test('set/get round-trip', () => {
-    const cache = new HistoricalContentCache();
-    cache.set('sha1', 'content1');
-    expect(cache.get('sha1')).toBe('content1');
+  test('different docs with the same sha produce different keys', () => {
+    expect(timelineEntryCacheKey('foo', 'abc')).not.toBe(timelineEntryCacheKey('bar', 'abc'));
   });
 
-  test('get re-inserts to MRU position', () => {
-    const cache = new HistoricalContentCache();
-    // Fill to limit
-    for (let i = 0; i < HISTORICAL_CONTENT_CACHE_LIMIT; i++) {
-      cache.set(`sha${i}`, `content${i}`);
-    }
-    // Access sha0 to move it to MRU
-    cache.get('sha0');
-    // Add one more — sha1 (now LRU) should be evicted, sha0 survives
-    cache.set('shaNew', 'contentNew');
-    expect(cache.get('sha0')).toBe('content0');
-    expect(cache.get('sha1')).toBeUndefined();
+  test('same doc + sha produces the same key', () => {
+    expect(timelineEntryCacheKey('foo', 'abc')).toBe(timelineEntryCacheKey('foo', 'abc'));
+  });
+});
+
+describe('computeTimelineDiff', () => {
+  test('returns empty string when bodies are identical after frontmatter strip', () => {
+    const historical = '---\ntitle: a\n---\nhello world';
+    const current = '---\ntitle: b\n---\nhello world';
+    expect(computeTimelineDiff(historical, current, 'doc')).toBe('');
   });
 
-  test('eviction at LIMIT+1 drops the LRU entry', () => {
-    const cache = new HistoricalContentCache();
-    for (let i = 0; i < HISTORICAL_CONTENT_CACHE_LIMIT; i++) {
-      cache.set(`sha${i}`, `content${i}`);
-    }
-    expect(cache.size).toBe(HISTORICAL_CONTENT_CACHE_LIMIT);
-    // Adding one more should evict sha0 (insertion-order LRU)
-    cache.set('shaExtra', 'contentExtra');
-    expect(cache.size).toBe(HISTORICAL_CONTENT_CACHE_LIMIT);
-    expect(cache.get('sha0')).toBeUndefined();
-    expect(cache.get('shaExtra')).toBe('contentExtra');
+  test('returns empty string when both inputs are empty', () => {
+    expect(computeTimelineDiff('', '', 'doc')).toBe('');
   });
 
-  test('clear empties the map', () => {
-    const cache = new HistoricalContentCache();
-    cache.set('sha1', 'content1');
-    cache.set('sha2', 'content2');
-    cache.clear();
-    expect(cache.size).toBe(0);
-    expect(cache.get('sha1')).toBeUndefined();
+  test('returns non-empty unified diff when bodies differ', () => {
+    const historical = 'line1\nline2\nline3\n';
+    const current = 'line1\nLINE TWO\nline3\n';
+    const out = computeTimelineDiff(historical, current, 'doc');
+    expect(out).toContain('@@');
+    expect(out).toContain('-line2');
+    expect(out).toContain('+LINE TWO');
+  });
+
+  test('strips frontmatter from both sides before comparing', () => {
+    const historical = '---\ntitle: old\n---\nbody';
+    const current = '---\ntitle: new\n---\nbody';
+    expect(computeTimelineDiff(historical, current, 'doc')).toBe('');
+  });
+
+  test('frontmatter difference alone does not produce a diff', () => {
+    const historical = '---\nauthor: a\n---\nsame body';
+    const current = '---\nauthor: b\n---\nsame body';
+    expect(computeTimelineDiff(historical, current, 'doc')).toBe('');
+  });
+
+  test('a body change with frontmatter unchanged still produces a diff', () => {
+    const historical = '---\ntitle: t\n---\nold body';
+    const current = '---\ntitle: t\n---\nnew body';
+    const out = computeTimelineDiff(historical, current, 'doc');
+    expect(out).toContain('-old body');
+    expect(out).toContain('+new body');
+  });
+
+  test('docName is reflected in the patch header', () => {
+    const out = computeTimelineDiff('a\n', 'b\n', 'docs/timeline');
+    expect(out).toContain('docs/timeline');
+  });
+
+  test('handles empty historical against non-empty current (a "new file" case)', () => {
+    const out = computeTimelineDiff('', 'fresh content\n', 'doc');
+    expect(out).toContain('+fresh content');
+  });
+
+  test('handles non-empty historical against empty current (a "deleted file" case)', () => {
+    const out = computeTimelineDiff('was here\n', '', 'doc');
+    expect(out).toContain('-was here');
   });
 });

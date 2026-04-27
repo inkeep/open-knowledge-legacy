@@ -150,8 +150,10 @@ test.describe('Timeline inline diff — side pane', () => {
     // Re-expand — cache hit, no new request
     await row.click();
     await expect(diffPanels(page)).toHaveCount(1);
-    // Settle any in-flight network activity before asserting count
-    await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => {});
+    // Wait deterministically for the cached diff to render — the loading
+    // skeleton cycles to hidden in the same tick on a cache hit, but we want
+    // to observe the diff DOM landing before asserting no extra request fired.
+    await expect(page.getByText('Loading diff…')).toBeHidden({ timeout: 5_000 });
     expect(historyShaCalls).toBe(1);
   });
 
@@ -284,23 +286,30 @@ test.describe('Timeline inline diff — side pane', () => {
     const layoutGroup = page.getByRole('group', { name: 'Diff layout' });
     await expect(layoutGroup).toBeVisible();
 
-    // Switch to split
+    // The diff renderer (react-diff-view) emits a single root <table> with
+    // class `diff diff-{viewType}` — we assert against the rendered structure
+    // so a future regression that drops the prop chain (e.g. hardcoding
+    // `viewType="unified"` on ActivityPanelDiffView) fails this test.
+    const diffRoot = diffPanels(page).first().locator('table.diff').first();
+
+    // Switch to split → DOM reflects split layout
     await layoutGroup.getByRole('button', { name: 'Split diff' }).click();
-    // The ToggleGroup item becomes active
     await expect(layoutGroup.getByRole('button', { name: 'Split diff' })).toHaveAttribute(
       'data-state',
       'on',
     );
+    await expect(diffRoot).toHaveClass(/diff-split/);
 
     // Diff panel still showing (not collapsed by toggle)
     await expect(diffPanels(page)).toHaveCount(1);
 
-    // Switch back to unified
+    // Switch back to unified → DOM reflects unified layout
     await layoutGroup.getByRole('button', { name: 'Unified diff' }).click();
     await expect(layoutGroup.getByRole('button', { name: 'Unified diff' })).toHaveAttribute(
       'data-state',
       'on',
     );
+    await expect(diffRoot).toHaveClass(/diff-unified/);
   });
 
   // ── AC-D9 ──────────────────────────────────────────────────────────────────
@@ -431,7 +440,7 @@ test.describe('Timeline inline diff — side pane', () => {
   });
 
   // ── Restore failure ─────────────────────────────────────────────────────────
-  test('restore failure: error toast appears and Restore button re-enables', async ({
+  test('restore failure: toast appears, dialog stays open, both confirm + outer Restore re-enable', async ({
     page,
     api,
   }) => {
@@ -449,16 +458,123 @@ test.describe('Timeline inline diff — side pane', () => {
     await expect(expandButtons(page).first()).toBeVisible({ timeout: 10_000 });
 
     await page.locator('[data-testid="timeline-entry-restore"]').first().click();
-    await page.getByTestId('timeline-entry-restore-confirm').click();
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId('timeline-entry-restore-confirm').click();
 
     // Toast with failure message appears
     await expect(page.getByText('Restore failed — document unchanged')).toBeVisible({
       timeout: 5_000,
     });
 
-    // Restore button returns to enabled (restoring state cleared after failure)
+    // Dialog stays open so the user can retry without re-finding the row
+    await expect(dialog).toBeVisible();
+
+    // Confirm button inside the dialog re-enables — the user can retry the action
+    await expect(dialog.getByTestId('timeline-entry-restore-confirm')).not.toBeDisabled({
+      timeout: 5_000,
+    });
+
+    // Outer Restore icon re-enables — the row's button is no longer in `restoring` state
     await expect(page.locator('[data-testid="timeline-entry-restore"]').first()).not.toBeDisabled({
       timeout: 5_000,
     });
+  });
+
+  // ── Cancel aborts in-flight restore ────────────────────────────────────────
+  test('Cancel during a slow rollback aborts the request — no side effects fire on late response', async ({
+    page,
+    api,
+  }) => {
+    const doc = uid();
+    await api.seedDocs([{ name: doc, markdown: '# v1' }]);
+    await api.writeAsAgent(doc, '# v2', AGENT);
+    await api.writeAsAgent(doc, '# v3', AGENT);
+
+    // Hold the rollback response open until the test releases it
+    let release: () => void = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let rollbackHits = 0;
+    await page.route('/api/rollback', async (route) => {
+      rollbackHits++;
+      await released;
+      await route.fulfill({ status: 200, body: JSON.stringify({ ok: true }) });
+    });
+
+    await navigateToDoc(page, doc);
+    await openTimelineTab(page);
+
+    await expect(expandButtons(page).nth(1)).toBeVisible({ timeout: 10_000 });
+
+    // Expand a second row so we can verify it stays expanded if the cancel
+    // truly aborts (auto-collapse only fires on rollback success).
+    await expandButtons(page).nth(1).click();
+    await expect(diffPanels(page)).toHaveCount(1);
+
+    // Open the dialog on row 0 and click Confirm — this fires the held POST
+    await page.locator('[data-testid="timeline-entry-restore"]').first().click();
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByTestId('timeline-entry-restore-confirm').click();
+
+    // Wait until the route handler has actually been hit
+    await expect.poll(() => rollbackHits, { timeout: 5_000 }).toBe(1);
+
+    // Cancel mid-flight — should abort the controller
+    await dialog.getByTestId('timeline-entry-restore-cancel').click();
+    await expect(dialog).toBeHidden();
+
+    // Release the held response — by now the AbortController has aborted
+    release();
+
+    // Wait a beat for any (incorrect) side effects to fire if the abort failed
+    await page.waitForTimeout(500);
+
+    // No success-side-effects: the previously expanded row stays expanded
+    await expect(diffPanels(page)).toHaveCount(1);
+    await expect(expandButtons(page).nth(1)).toHaveAttribute('aria-expanded', 'true');
+
+    // Outer Restore button re-enables (restoring cleared)
+    await expect(page.locator('[data-testid="timeline-entry-restore"]').first()).not.toBeDisabled({
+      timeout: 5_000,
+    });
+  });
+
+  // ── Real (un-mocked) rollback round-trip ───────────────────────────────────
+  test('un-mocked rollback round-trip: confirming Restore actually replaces editor content with the historical version', async ({
+    page,
+    api,
+  }) => {
+    const doc = uid();
+    const v1 = '# Doc\n\nVersion-one body that we will restore to.';
+    const v2 = '# Doc\n\nVersion-two body that we are throwing away.';
+    await api.seedDocs([{ name: doc, markdown: v1 }]);
+    await api.writeAsAgent(doc, v2, AGENT);
+
+    await navigateToDoc(page, doc);
+
+    // Editor shows v2 currently
+    await expect(page.locator('.ProseMirror')).toContainText('Version-two body');
+
+    await openTimelineTab(page);
+    await expect(expandButtons(page).first()).toBeVisible({ timeout: 10_000 });
+
+    // The OLDEST entry (last in the list) is the v1 seed — that's what we
+    // want to restore to.
+    const lastRestoreIcon = page.locator('[data-testid="timeline-entry-restore"]').last();
+    await lastRestoreIcon.click();
+
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId('timeline-entry-restore-confirm').click();
+
+    // Editor content updates via the CRDT bridge to the v1 body
+    await expect(page.locator('.ProseMirror')).toContainText('Version-one body', {
+      timeout: 10_000,
+    });
+    // And the v2 body is gone (it's preserved in the timeline as a NEW row,
+    // but the editor itself reflects v1)
+    await expect(page.locator('.ProseMirror')).not.toContainText('Version-two body');
   });
 });

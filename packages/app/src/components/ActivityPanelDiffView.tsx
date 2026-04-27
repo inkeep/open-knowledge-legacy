@@ -68,7 +68,11 @@ export function ActivityPanelDiffView({
     );
   }
 
-  if (files.length === 0) {
+  // Defense in depth: jsdiff can produce a non-empty patch header (Index/---/+++)
+  // for byte-identical inputs that still parses to one file with zero hunks.
+  // The Timeline hook short-circuits this case before it lands here, but the
+  // server-synthesized burst path could in principle hit it too.
+  if (files.length === 0 || files.every((f) => f.hunks.length === 0)) {
     return (
       <div className="activity-panel-diff px-3 py-2 text-xs text-muted-foreground italic">
         No changes

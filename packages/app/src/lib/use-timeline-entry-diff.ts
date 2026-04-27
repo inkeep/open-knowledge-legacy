@@ -1,81 +1,45 @@
 /**
  * `useTimelineEntryDiff` — data layer for the inline diff in the Timeline
  * tab's expanded entry rows. Mirrors the cache + cancellation shape of
- * `useActivityPanel`'s `fetchBurstDiff`, but the diff is computed
- * client-side (no server endpoint synthesizes it) so the live Y.Text WIP is
- * always part of the comparison.
+ * `useActivityPanel`'s burst-diff fetch, but the diff is computed client-side
+ * (no server endpoint synthesizes it) so the live Y.Text WIP is part of the
+ * comparison.
  *
  * Responsibilities:
  *   1. On `sha` set: fetch `GET /api/history/<sha>?docName=<>`. Cache the
- *      response.content keyed by sha — sha is git-immutable per content, so
- *      a cache hit means the historical side is fixed.
- *   2. Read `current` from `activeProvider.document.getText('source')`,
- *      strip frontmatter from both sides, and compute the diff via
+ *      response.content keyed by `${docName}\u0000${sha}` — sha alone is not
+ *      sufficient: an upstream-import commit can touch many files and the
+ *      same sha appears across multiple docs' timelines with different
+ *      bodies.
+ *   2. Snapshot `current` from `activeProvider.document.getText('source')`
+ *      once at the moment the effect fires (when the user expands a row).
+ *      The provider is read via a ref, NOT the effect's deps array, so a
+ *      provider-identity churn (reconnect, server-instance-mismatch
+ *      recovery) does not silently re-snapshot mid-view. Strip frontmatter
+ *      from both sides; if the bodies match exactly, surface an empty diff
+ *      string so the renderer's "No changes" placeholder fires. Otherwise
+ *      compute the unified diff via
  *      `diff.createPatch(docName, historical, current, '', '', { context: 3 })`.
  *      The diff is recomputed every effect run — never cached, because the
- *      `current` side is mutable (user types, agents write, the doc gets
- *      rolled back).
+ *      `current` side is mutable.
  *   3. Cancellation: an in-flight fetch that completes after `sha` swapped
  *      or the host component unmounted must not produce stale state.
  *
  * Inert mode: `sha === null` → no fetch, `{ diff: null, status: 'idle' }`.
  *
- * Cache scope: `HistoricalContentCache` is owned by the consuming component
- * (lifted via `useRef` in `TimelineContent`) and passed in. Lifetime matches
- * the host component's mount; `TimelinePanel` re-mounts on document
- * navigation, which clears the cache without explicit invalidation.
+ * Cache scope: `LruStringCache` is owned by `TimelineContent` (via `useState`
+ * initializer) and passed in. The composite cache key keeps entries
+ * partitioned per docName, so even if `TimelineContent` survives doc-to-doc
+ * navigation (no `key={docName}` on the parent today), a hit is always for
+ * the right document.
  */
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { createPatch } from 'diff';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
-
-// ---------------------------------------------------------------
-// Cache
-// ---------------------------------------------------------------
+import type { LruStringCache } from '@/lib/lru-string-cache';
 
 export const HISTORICAL_CONTENT_CACHE_LIMIT = 32;
-
-/**
- * LRU-bounded cache for historical document content keyed by git sha.
- * Historical content is immutable per sha (git guarantee), so only the diff
- * against `current` needs recomputing each expand.
- * Map-insertion-order LRU: get re-inserts to MRU; set evicts oldest entry
- * when the limit is exceeded.
- */
-export class HistoricalContentCache {
-  private readonly map = new Map<string, string>();
-
-  get(key: string): string | undefined {
-    const value = this.map.get(key);
-    if (value === undefined) return undefined;
-    this.map.delete(key);
-    this.map.set(key, value);
-    return value;
-  }
-
-  set(key: string, value: string): void {
-    if (this.map.has(key)) this.map.delete(key);
-    this.map.set(key, value);
-    while (this.map.size > HISTORICAL_CONTENT_CACHE_LIMIT) {
-      const oldestKey = this.map.keys().next().value;
-      if (oldestKey === undefined) break;
-      this.map.delete(oldestKey);
-    }
-  }
-
-  clear(): void {
-    this.map.clear();
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-}
-
-// ---------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------
 
 type TimelineEntryDiffStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -85,22 +49,47 @@ interface UseTimelineEntryDiffResult {
 }
 
 /**
- * Fetches historical document content for a timeline entry, caches it by sha,
- * and computes a unified diff against the live Y.Text source.
- *
- * Cache is passed in (component-scoped via useRef in TimelineContent) so
- * multiple EntryRow instances share a single cache per TimelinePanel mount.
- *
- * When sha is null, returns idle state immediately with no fetches.
+ * Composite cache key format for `LruStringCache`. Exported for unit tests
+ * + TimelineContent consumers that want to manipulate cache entries directly.
  */
+export function timelineEntryCacheKey(docName: string, sha: string): string {
+  return `${docName}\u0000${sha}`;
+}
+
+/**
+ * Pure function: compute the inline-diff string from raw historical content
+ * and raw current content. Strips frontmatter from both sides and either
+ * returns `''` (bodies match — caller should render the "No changes"
+ * placeholder) or the unified-diff string from `diff.createPatch`.
+ *
+ * Exported for unit tests; the hook below is the only production caller.
+ */
+export function computeTimelineDiff(
+  historicalRaw: string,
+  currentRaw: string,
+  docName: string,
+): string {
+  const historical = stripFrontmatter(historicalRaw).body;
+  const current = stripFrontmatter(currentRaw).body;
+  if (historical === current) return '';
+  return createPatch(docName, historical, current, '', '', { context: 3 });
+}
+
 export function useTimelineEntryDiff(
   sha: string | null,
   docName: string,
-  cache: HistoricalContentCache,
+  cache: LruStringCache,
 ): UseTimelineEntryDiffResult {
   const { activeProvider } = useDocumentContext();
   const [diff, setDiff] = useState<string | null>(null);
   const [status, setStatus] = useState<TimelineEntryDiffStatus>('idle');
+
+  // Provider identity churns on reconnect / instance-mismatch recovery.
+  // Snapshotting via a ref keeps the diff stable while the row is expanded.
+  const providerRef = useRef(activeProvider);
+  useEffect(() => {
+    providerRef.current = activeProvider;
+  });
 
   useEffect(() => {
     if (!sha) {
@@ -109,49 +98,40 @@ export function useTimelineEntryDiff(
       return;
     }
 
+    const activeSha = sha;
     let cancelled = false;
     setStatus('loading');
     setDiff(null);
 
     async function run() {
-      // sha is non-null here but TypeScript needs the local check
-      if (!sha) return;
-
       try {
-        let historicalRaw: string;
-        const cached = cache.get(sha);
-        if (cached !== undefined) {
-          historicalRaw = cached;
-        } else {
-          const res = await fetch(`/api/history/${sha}?docName=${encodeURIComponent(docName)}`);
+        const key = timelineEntryCacheKey(docName, activeSha);
+        let historicalRaw = cache.get(key);
+        if (historicalRaw === undefined) {
+          const res = await fetch(
+            `/api/history/${activeSha}?docName=${encodeURIComponent(docName)}`,
+          );
           if (cancelled) return;
           if (!res.ok) {
-            if (!cancelled) setStatus('error');
+            setStatus('error');
             return;
           }
-          const body = (await res.json()) as { content: string };
+          const body = (await res.json()) as { content?: string };
           if (cancelled) return;
           historicalRaw = body.content ?? '';
-          cache.set(sha, historicalRaw);
+          cache.set(key, historicalRaw);
         }
 
         if (cancelled) return;
 
-        const historical = stripFrontmatter(historicalRaw).body;
-        const current = stripFrontmatter(
-          activeProvider?.document.getText('source').toString() ?? '',
-        ).body;
+        const currentRaw = providerRef.current?.document.getText('source').toString() ?? '';
+        const patchStr = computeTimelineDiff(historicalRaw, currentRaw, docName);
 
-        const patchStr = createPatch(docName, historical, current, '', '', { context: 3 });
-
-        if (!cancelled) {
-          setDiff(patchStr);
-          setStatus('ready');
-        }
+        if (cancelled) return;
+        setDiff(patchStr);
+        setStatus('ready');
       } catch {
-        if (!cancelled) {
-          setStatus('error');
-        }
+        if (!cancelled) setStatus('error');
       }
     }
 
@@ -159,7 +139,7 @@ export function useTimelineEntryDiff(
     return () => {
       cancelled = true;
     };
-  }, [sha, docName, cache, activeProvider]);
+  }, [sha, docName, cache]);
 
   return { diff, status };
 }
