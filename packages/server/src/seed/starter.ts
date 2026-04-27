@@ -42,7 +42,7 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
     match: 'external-sources/**',
     title: 'External Sources',
     description:
-      'Raw sources SAVED verbatim — not just cited. The actual fetched text of URLs, extracted text of PDFs, and copies of any referenced files live as .md files here, each with frontmatter carrying the original URL, access date, and any publisher / author metadata. Produced by `ingest`. Immutable after capture (update only to refresh a stale fetch). No analysis in these files — that belongs in `research/`. Downstream articles cite specific docs here by path so every claim is traceable to preserved evidence rather than a dead link.',
+      'Raw sources SAVED verbatim — not just cited. The actual fetched text of URLs, extracted text of PDFs, and copies of any referenced files live as .md files here, each with frontmatter carrying the original URL, access date, and any publisher / author metadata. Produced by `ingest` — applies whether the user shared the URL OR the agent fetched it itself to ground a knowledge-base claim. The KB is closed-loop: downstream docs cite local paths in this folder, never bare web URLs. Immutable after capture (update only to refresh a stale fetch). No analysis in these files — that belongs in `research/`. Downstream articles cite specific docs here by path so every claim is traceable to preserved evidence rather than a dead link.',
     tags: ['source', 'immutable', 'layer-ingest'],
   },
   {
@@ -69,18 +69,27 @@ export const STARTER_FOLDERS: readonly StarterFolder[] = [
  */
 export const LOG_MD_TEMPLATE = `---
 title: Work Log
-description: Chronological record of knowledge base activity
+description: Append-only audit trail. After each turn that creates, edits, or restructures content in the knowledge base, append one dated entry here (one per turn, not per file). Silent edits break the audit trail.
 ---
 
 # Work Log
 
-Append-only record of ingests, research, consolidations, and maintenance. Each entry is dated and briefly describes what was done.
+Append-only audit trail. **Append a dated entry after any turn that creates, edits, or restructures content in the knowledge base** — one entry per turn, not per file. Silent edits break the chain that makes knowledge-base changes auditable.
+
+What to log:
+
+- \`ingest\` runs (new external sources captured)
+- \`research\` / \`consolidate\` runs (provisional or canonical articles produced)
+- Direct \`write_document\` / \`edit_document\` / renames / deletions outside the three workflow tools
+- Folder restructures (\`ok seed\`, manual reorganization)
+- \`.open-knowledge/config.yml\` changes
 
 <!-- Example entry shape:
 
 ## YYYY-MM-DD — <short title>
 
 - <what was done>
+- Files touched: <path>, <path>
 - Open follow-ups: <topic-1>, <topic-2>
 
 -->

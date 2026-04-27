@@ -21,9 +21,9 @@ When this workspace has Open Knowledge MCP configured, do **not** use your host'
 - **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent activity per child.
 - **Glob patterns that target markdown** (`**/*.md`, any dir known to be markdown-heavy like `specs/**`, `reports/**`, `docs/**`) — use `exec` with `find`, or `list_documents({ dir })`.
 - **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search`. Subagents remain appropriate for **source-code** exploration.
-- **Reading `.open-knowledge/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.open-knowledge/` directory is in-scope; treat its contents the same as any other wiki file.
+- **Reading `.open-knowledge/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.open-knowledge/` directory is in-scope; treat its contents the same as any other knowledge-base file.
 
-Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched wiki file. `exec` is the primary read surface; it runs read-only bash (`cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` — pipes OK) and returns raw stdout plus enriched metadata per file.
+Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched knowledge-base file. `exec` is the primary read surface; it runs read-only bash (`cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` — pipes OK) and returns raw stdout plus enriched metadata per file.
 
 **MCP tool visibility — not seeing `exec` is NOT the escape hatch.** MCP wiring varies by client. Claude Code, Cursor, Codex, Windsurf, VS Code — each surfaces MCP differently. Server labels are user-defined; tools may not appear as top-level symbols named `exec` in your specific UI. If Open Knowledge is registered as an MCP server in this workspace, route markdown reads through its `exec` / `search` / `read_document` via your client's documented MCP invocation (including any generic "call MCP tool" flow). Registration is the test, not top-level-symbol visibility.
 
@@ -62,17 +62,19 @@ Call `write_document` / `edit_document` as soon as you have content. Native `Edi
 
 ## Grounding — every factual claim needs a source (MUST)
 
-Knowledge-base docs are factual artifacts. Every claim must be traceable to a source.
+Knowledge-base docs are factual artifacts — whether the project is a wiki, an LLM brain, a spec collection, a research log, or anything else markdown-shaped. Every claim must be traceable, and **the source has to live inside the knowledge base**, not float on the public web.
 
+- **The knowledge base is source-of-truth — closed loop.** External sources don't get *cited out* to the live web; they get *pulled in* via `ingest`, then cited locally. A bare `[source](https://...)` URL inside a knowledge-base doc is **not** a finished citation — it's a TODO that says "this source still needs to be ingested." The chain only works if every leaf is a local doc.
 - **Every factual claim MUST cite its source at the point of claim.** No unsourced speculation.
-- **Web sources** → inline markdown link: `[source name](https://example.com/path)`. Use your host's web-fetch / web-search tool (`WebFetch`, `WebSearch`, or equivalent) to find the source *first*. Don't write a fact and then look for a source to justify it.
-- **Internal cross-refs** → standard markdown link to the OK doc that contains the authoritative claim: `[text](./path/to/doc.md)`. The linked doc itself must cite its sources — chains should terminate in external evidence eventually.
+- **Web sources for knowledge-base docs** → fetch the page (your host's `WebFetch` / `WebSearch` / equivalent), then `ingest` it as a local doc, then cite the local path: `[source name](./path/to/source.md)`. The local doc carries the original URL in its frontmatter `source_url:`. **Inline `[source](URL)` is a chat affordance, not a knowledge-base one.**
+- **Self-fetched counts.** When YOU fetched a URL to ground a claim that's about to land in the knowledge base, that fetch triggers `ingest` exactly like a user share does. Don't downgrade to inline-URL citation because the fetch was agent-initiated — same KB, same closed-loop contract.
+- **Internal cross-refs** → standard markdown link to the OK doc that contains the authoritative claim: `[text](./path/to/doc.md)`. The linked doc itself must cite its sources — chains should terminate in preserved local docs. Where ingested sources live is project-specific (an `external-sources/` folder if the project uses Karpathy's layout; wherever the project's existing layout puts raw references otherwise).
 - **If you don't have evidence:**
-  1. Run a web search and cite the result, OR
+  1. Run a web search and `ingest` the result, OR
   2. Mark inline `(TODO: needs source)` so a human can verify, OR
   3. Don't write the claim. Do NOT fabricate.
 - Unsourced speculation looks authoritative but rots into tribal knowledge that can't be audited. The knowledge base loses its value if readers can't trust it.
-- If a fact is in the knowledge base, a reader must be able to trace it to its origin. Grounded evidence is the knowledge base's core contract.
+- If a fact is in the knowledge base, a reader must be able to trace it to its origin via local docs only — no dead-link-on-the-public-web exposure.
 
 ## Linking — use standard markdown links
 
@@ -147,7 +149,7 @@ tags:
 
 - **Folder structure intent** — the `folders:` block tells you which folders exist, what each one contains, and what tags its files should carry. Every `exec("ls <folder>")` / `read_document` / `search` call merges these defaults with per-file frontmatter automatically, but you should also read config.yml directly when orienting so you can *place new docs in the right folder* and *write them in the voice + shape the project expects*.
 - **Per-folder instructions** — each `folders:` entry's `description:` field is the canonical place for "what does this folder contain + how should agents work inside it." Treat the description as a binding instruction, not flavor text. If a folder's description says "preserve verbatim, no analysis" (e.g. `external-sources/`), don't synthesize into those files; takeaways belong elsewhere.
-- **Content scope** — `content.dir` / `content.include` / `content.exclude` define which files count as knowledge-base documents. Anything outside those globs is regular source code, not a wiki doc.
+- **Content scope** — `content.dir` / `content.include` / `content.exclude` define which files count as knowledge-base documents. Anything outside those globs is regular source code, not a knowledge-base doc.
 
 If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), each folder's description in `config.yml` encodes the layer's rules. Projects with custom layouts put their own discipline in their own descriptions. Either way: **follow what config.yml says.**
 
@@ -195,6 +197,12 @@ If a hub doc exists in a folder, update it as you change children. Don't batch f
 
 This is primarily a human-watchability concern — the user watches edits land in the preview; interleaved cadence makes the narrative legible.
 
+## Log discipline — check for a project log when KB content changes
+
+Some projects keep an append-only project log to make agent activity auditable. **After any turn that creates, edits, or restructures docs in the knowledge base, check for a project log:** look for a `log.md` at the project root (or at the seed `rootDir` if `ok seed --root <dir>` was used). If one exists, follow whatever its frontmatter `description:` and in-file comment say — they carry the project-specific contract (entry shape, cadence, categories). Different projects log differently — some treat the log as a wiki audit trail, others as an LLM-brain history, others as a spec changelog. If no `log.md` exists, no log discipline applies; don't fabricate one.
+
+The skill carries the trigger ("KB content changed this turn — go look"). The file owns the policy.
+
 ## Anti-patterns — at a glance
 
 | Task                                            | Don't                                                                              | Do                                                                                |
@@ -208,7 +216,9 @@ This is primarily a human-watchability concern — the user watches edits land i
 | Ignore the attach hint                          | Skip the `warning: { action: "attach-preview-once" }` hint in write-tool responses | Open the `previewUrl` when the hint fires; otherwise do nothing                   |
 | Reference another doc                           | `` `[text](./page.md)` `` (backticked) or HTML `<a>`                               | `[text](./page.md)` (raw markdown)                                                |
 | Embed an image                                  | `<img src="...">` (HTML) or hot-linked external URL                                | Fetch + save locally + `![meaningful alt](./assets/images/path)`                  |
-| Write a factual claim                           | plausible prose without citation                                                   | prose with `[source](URL)` per Grounding rule                                     |
+| Write a factual claim in a KB doc               | plausible prose without citation, OR inline `[source](https://URL)`                | `ingest` the source first, then cite the local path per Grounding                  |
+| Cite a web source you just fetched              | inline `[source](https://...)` because YOU did the fetch (not the user)            | `ingest` it — agent-initiated fetches are not exempt from the closed-loop rule    |
+| Finish a turn that changed KB content           | move on without checking for a log                                                 | check for a `log.md` and follow its contract per Log discipline                    |
 | Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
 | Catalog folder contents                         | create `INDEX.md` hub file                                                         | add `folders:` entry in `.open-knowledge/config.yml`                              |
 | Fork a skill and expect no stomp                | Edit installed SKILL.md                                                            | `npx skills remove` before CLI upgrade                                            |
@@ -217,11 +227,11 @@ This is primarily a human-watchability concern — the user watches edits land i
 
 Three MCP tools build on the primitives above and correspond to [Karpathy's three-layer knowledge-base pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
 
-| Tool          | Layer                   | When to invoke                                                                                                                                                                                                                                                                          |
-| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ingest`      | Raw sources (immutable) | User shares a URL, PDF, or file to preserve verbatim. No analysis in the file itself — takeaways go back to the user in chat.                                                                                                                                                           |
-| `research`    | Wiki, provisional       | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
-| `consolidate` | Wiki, canonical         | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
+| Tool          | Layer                   | When to invoke                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ingest`      | Raw sources (immutable) | User shares a URL/PDF/file to preserve verbatim, **OR you fetched a URL** (`WebFetch` / `WebSearch` / equivalent) to ground a claim that's about to land in the knowledge base. The KB is closed-loop — agent-initiated fetches are not exempt. No analysis in the file itself — takeaways go back to the user in chat.                                                                                                                                  |
+| `research`    | KB, provisional         | User asks you to investigate, compare alternatives, or synthesize multiple sources. Produces a `status: provisional` article with a `sources:` list. Follows scan-first routing, a STOP scoping gate, 3P-external framing, and a validate checklist — the tool body enforces each step. |
+| `consolidate` | KB, canonical           | Team has actually decided after research and wants the outcome committed as source-of-truth. Starts with a STOP gate confirming the decision exists; writes a `status: canonical` article with a `supersedes:` chain.                                                                   |
 
 Each tool returns a multi-step instructional body when invoked. The bodies enforce their own gates — follow the numbered steps in order, don't skip the STOP gates.
 
