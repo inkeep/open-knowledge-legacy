@@ -115,7 +115,7 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 // Scope types + helpers
 // ---------------------------------------------------------------------------
 
-export type McpScope = 'user' | 'project' | 'both';
+type McpScope = 'user' | 'project' | 'both';
 
 const writesUser = (s: McpScope) => s !== 'project';
 const writesProject = (s: McpScope) => s !== 'user';
