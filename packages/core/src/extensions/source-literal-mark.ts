@@ -13,6 +13,8 @@ import { Mark } from '@tiptap/core';
 
 export const SourceLiteralMark = Mark.create({
   name: 'sourceLiteral',
+  // Run after structural marks; this mark is a serialization hint and should
+  // not win extension-order conflicts over user-visible formatting.
   priority: 10,
   excludes: '',
   inclusive: false,

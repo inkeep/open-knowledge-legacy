@@ -507,13 +507,30 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       return children.map((child) => child.mark(mark.addToSet(child.marks)));
     };
 
-    // linkReference → same link mark but with reference style info
-    handlers.linkReference = toPmMark(m.link, (node: LinkReference) => ({
-      href: '',
-      title: null,
-      linkStyle: node.referenceType ?? 'shortcut',
-      refLabel: node.label ?? node.identifier ?? null,
-    }));
+    // linkReference → same link mark but with reference style info.
+    // Empty labels have no text to carry the mark; preserve them as literal
+    // source, matching the inline-link fallback above.
+    handlers.linkReference = (node: LinkReference, _parent: MdastParent, state: MdastToPmState) => {
+      if ((node.children ?? []).length === 0) {
+        const raw =
+          typeof node.data?.sourceRaw === 'string'
+            ? node.data.sourceRaw
+            : `[${node.label ?? ''}][${node.identifier ?? ''}]`;
+        return raw
+          ? sourceLiteralMark
+            ? schema.text(raw, [sourceLiteralMark.create({ sourceRaw: raw })])
+            : schema.text(raw)
+          : null;
+      }
+      const children = state.all(node).flat();
+      const mark = m.link.create({
+        href: '',
+        title: null,
+        linkStyle: node.referenceType ?? 'shortcut',
+        refLabel: node.label ?? node.identifier ?? null,
+      });
+      return children.map((child) => child.mark(mark.addToSet(child.marks)));
+    };
   }
 
   // HTML block — content attr (HtmlBlockFidelity extension)

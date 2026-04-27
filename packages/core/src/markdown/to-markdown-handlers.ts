@@ -463,6 +463,9 @@ function safeText(state: State, value: string, info: Info): string {
   state.unsafe = originalUnsafe.filter((u) => {
     if (u.character === '&' && u.after === '[#A-Za-z]') return false;
     if (u.character === '<') return false;
+    // Plain text `[` / `(` is safe here because complete link constructs have
+    // already parsed into link nodes. Extension-level unsafe rules, such as
+    // wiki-link `[[...]]` protection, live outside this local safeText filter.
     if (u.character === '[') return false;
     if (u.character === '(') return false;
     return true;
