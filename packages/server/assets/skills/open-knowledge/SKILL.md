@@ -79,7 +79,7 @@ Knowledge-base docs are factual artifacts — whether the project is a wiki, an 
 ## Linking — use standard markdown links
 
 - **Every noun-phrase that names another document should be linked** using standard markdown link syntax: `[text](./relative/path.md)` or `[text](/absolute/from/content-root.md)`.
-- **External web sources** → `[source name](https://...)` — required for citations per the Grounding rule above.
+- **External web sources are NOT inline body links.** Per the Grounding rule above, web URLs live in the `source_url:` frontmatter of an ingested doc under `external-sources/` (or the project's equivalent raw-sources folder); the body cites the local path: `[source name](./external-sources/source-slug.md)`. A raw `[source](https://...)` inline in the body is a TODO, not a citation — see Grounding for the closed-loop contract.
 - **Internal cross-refs between OK docs** → `[text](./other-doc.md)` — link liberally to aid navigation.
 - **Never wrap a link in backticks.** `` `[text](./foo.md)` `` is a bug — the backticks make it render as literal code rather than a link.
 - **Never use HTML anchors** (`<a href="...">`). Markdown link syntax only.
