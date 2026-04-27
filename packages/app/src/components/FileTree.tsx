@@ -158,6 +158,26 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
   } as CSSProperties;
 }
 
+// Two MiddleTruncate-only patches for `@pierre/trees`. Without them, long
+// folder names render with a visible glyph next to the ellipsis: the visible
+// content cell extends to the marker's right edge, so any character that
+// straddles the marker's left edge leaks a partial-glyph sliver. Painting an
+// extra 6px of marker bg via box-shadow swallows it; the two stacked shadows
+// mirror the marker's bg-color + overlay-image layering so the patch keeps
+// pace with hover/selected rows. Killing the transition collapses the
+// `@container measure` flicker on folder expand to a single frame instead of
+// a fade.
+const TREE_TRUNCATION_POLISH_CSS = `
+  [data-truncate-marker] {
+    transition-duration: 0ms;
+  }
+  [data-truncate-segment-priority='2'] [data-truncate-marker] {
+    box-shadow:
+      -6px 0 0 var(--truncate-marker-background-overlay-color, transparent),
+      -6px 0 0 var(--truncate-marker-background-color, var(--trees-bg));
+  }
+`;
+
 function isAgentTreePath(treePath: string): boolean {
   const name = treePath.split('/').pop()?.replace(/\.md$/i, '').toLowerCase();
   return !!name && AGENT_FILE_NAMES.has(name);
@@ -438,6 +458,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     fileTreeSearchMode: 'hide-non-matches',
     initialVisibleRowCount: 18,
     stickyFolders: true,
+    unsafeCSS: TREE_TRUNCATION_POLISH_CSS,
     icons: {
       set: 'complete',
       spriteSheet: FILE_TREE_DECORATION_SPRITE_SHEET,
