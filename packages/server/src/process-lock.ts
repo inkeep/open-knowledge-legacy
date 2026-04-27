@@ -385,10 +385,11 @@ export function readProcessLock(opts: {
  * "live lock with missing version fields" (the MCP protocol gate).
  *
  * Statuses:
- * - `absent` — no lock file, or file present but cross-host (read-only on
- *   this machine; we cannot classify foreign-host locks).
- * - `stale` — lock present, parseable, dead pid OR cross-host. The file is
- *   unlinked on the dead-pid path as a side effect (same as `readProcessLock`).
+ * - `absent` — no lock file exists at all.
+ * - `stale` — lock present + parseable, but holder is dead OR on a foreign
+ *   host. The file is unlinked on the dead-pid path as a side effect; cross-
+ *   host locks are NOT unlinked (they may be owned by a live process on
+ *   another machine sharing the contentDir over NFS / shared volume).
  * - `live` — lock present, parseable, holder alive on this host, ALL version
  *   fields present. Compatible with the MCP gate's `protocolVersion` check.
  * - `incompatible` — lock present, parseable, holder alive, but missing one
