@@ -59,6 +59,7 @@ import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorSkeleton } from './EditorSkeleton';
 import { usePageList } from './PageListContext';
+import { PropertyPanel } from './PropertyPanel';
 import { Button } from './ui/button';
 
 /**
@@ -693,30 +694,40 @@ function ActivityEntry({
                   the MAX intrinsic size across children, stretching the
                   visible editor to 8000px and creating bottom whitespace on
                   short docs — see globals.css §.ok-mode-hidden). */}
-                  <div className="relative h-full">
-                    {gate.renderSource ? (
-                      <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
-                        <SourceEditorSlot
-                          entry={entry}
-                          isActive={isActive}
-                          isSourceMode={isSourceMode}
-                          editorPlaceholder={editorPlaceholder}
-                        />
-                      </div>
-                    ) : null}
-                    {gate.renderVisual ? (
-                      <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
-                        <TiptapEditor
-                          // Composite key matches existing pattern at EditorArea.tsx:172 —
-                          // forces TipTap remount on draft → saved transition (the isNewDoc
-                          // flip changes the page list's membership of this docName).
-                          key={`${entry.docName}-${String(isNewDoc)}`}
-                          provider={entry.provider}
-                          placeholder={editorPlaceholder}
-                          isSourceMode={isSourceMode}
-                        />
-                      </div>
-                    ) : null}
+                  <div className="flex h-full flex-col">
+                    {/* PropertyPanel: top-of-doc frontmatter table, sibling to the
+                        dual-editor stack inside DocumentBoundary so it shares the
+                        same suspend/error scope and remounts cleanly on doc switch.
+                        Hidden in source mode (CodeMirror surfaces raw YAML).
+                        The panel itself returns null when the doc has no
+                        frontmatter — empty-state shows the toolbar trigger in
+                        EditorHeader instead (see D17). */}
+                    {!isSourceMode && <PropertyPanel provider={entry.provider} />}
+                    <div className="relative flex-1">
+                      {gate.renderSource ? (
+                        <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
+                          <SourceEditorSlot
+                            entry={entry}
+                            isActive={isActive}
+                            isSourceMode={isSourceMode}
+                            editorPlaceholder={editorPlaceholder}
+                          />
+                        </div>
+                      ) : null}
+                      {gate.renderVisual ? (
+                        <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
+                          <TiptapEditor
+                            // Composite key matches existing pattern at EditorArea.tsx:172 —
+                            // forces TipTap remount on draft → saved transition (the isNewDoc
+                            // flip changes the page list's membership of this docName).
+                            key={`${entry.docName}-${String(isNewDoc)}`}
+                            provider={entry.provider}
+                            placeholder={editorPlaceholder}
+                            isSourceMode={isSourceMode}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </DocumentBoundary>
               </Suspense>
