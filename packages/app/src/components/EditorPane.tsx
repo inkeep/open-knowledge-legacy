@@ -97,11 +97,6 @@ export function EditorPane() {
     setRestoreError(null);
   }
 
-  function handleNoDiff() {
-    handleExitPreview();
-    toast.info('No changes since this version');
-  }
-
   // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
   // The pending navigation store preserves the target offset until the source
   // chunk finishes loading for the active doc.
@@ -263,9 +258,7 @@ export function EditorPane() {
       )}
       <EditorArea
         editorMode={editorMode}
-        previewEntry={previewEntry}
         diffLayout={diffLayout}
-        onNoDiff={handleNoDiff}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
         activeTab={activeTab}

@@ -633,7 +633,7 @@ export function TimelineContent({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cacheRef = useRef(new HistoricalContentCache());
+  const [cache] = useState(() => new HistoricalContentCache());
   const [collapseAllSignal, setCollapseAllSignal] = useState(0);
   const handleRestoreSuccess = () => setCollapseAllSignal((c) => c + 1);
 
@@ -768,7 +768,7 @@ export function TimelineContent({
                 onSelect={onEntrySelect}
                 isDark={isDark}
                 diffLayout={diffLayout}
-                cache={cacheRef.current}
+                cache={cache}
                 docName={docName}
                 collapseAllSignal={collapseAllSignal}
                 onRestoreSuccess={handleRestoreSuccess}
@@ -795,7 +795,7 @@ export function TimelineContent({
                     prominent
                     isDark={isDark}
                     diffLayout={diffLayout}
-                    cache={cacheRef.current}
+                    cache={cache}
                     docName={docName}
                     collapseAllSignal={collapseAllSignal}
                     onRestoreSuccess={handleRestoreSuccess}
@@ -811,7 +811,7 @@ export function TimelineContent({
                   onSelect={onEntrySelect}
                   isDark={isDark}
                   diffLayout={diffLayout}
-                  cache={cacheRef.current}
+                  cache={cache}
                   docName={docName}
                   collapseAllSignal={collapseAllSignal}
                   onRestoreSuccess={handleRestoreSuccess}
