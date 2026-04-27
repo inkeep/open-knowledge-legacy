@@ -78,6 +78,7 @@ import {
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { createRefreshScheduler } from '@/lib/refresh-scheduler';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
 import {
@@ -516,6 +517,9 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         const data = await res.json().catch(() => null);
         if (!active) return;
         if (res.ok && data?.ok) {
+          model.resetPaths(documentsToTreePaths(data.documents), {
+            initialExpandedPaths: activeAncestorTreePathsRef.current,
+          });
           setDocuments(data.documents);
           setError(null);
         } else {
@@ -528,26 +532,28 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (active) setLoading(false);
     }
 
-    void refreshDocs();
+    const scheduler = createRefreshScheduler(refreshDocs);
+    scheduler.request();
     const handleResume = () => {
       if (document.visibilityState === 'visible') {
-        void refreshDocs();
+        scheduler.request();
       }
     };
     window.addEventListener('focus', handleResume);
     window.addEventListener('visibilitychange', handleResume);
     const unsubscribe = subscribeToDocumentsChanged((channels) => {
       if (channels.includes('files')) {
-        void refreshDocs();
+        scheduler.request();
       }
     });
     return () => {
       active = false;
+      scheduler.dispose();
       window.removeEventListener('focus', handleResume);
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, []);
+  }, [model]);
 
   useEffect(() => {
     let active = true;
