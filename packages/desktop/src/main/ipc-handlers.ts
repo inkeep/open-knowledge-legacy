@@ -192,6 +192,10 @@ export function validateSpawnPath(path: string, platform: NodeJS.Platform): bool
  * Windows inputs resolve correctly on a POSIX dev runner under test, and
  * production behavior follows the caller's platform regardless of Node's
  * runtime `path` module.
+ *
+ * Lexical comparison only — does not resolve symlinks. A symlink inside
+ * `projectPath` that targets a path outside (e.g. `<proj>/notes -> /etc`)
+ * passes this check; the OS will follow it at use time.
  */
 export function isPathWithinProject(
   userPath: string,
@@ -248,6 +252,8 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   if (!validateSpawnPath(path, deps.platform)) {
     return { ok: false, reason: 'invalid-path' };
   }
+  // Skip-on-undefined `projectPath`. Sibling `showItemInFolder` refuses on
+  // undefined (its safer default) — the divergence is intentional.
   if (
     deps.projectPath !== undefined &&
     !isPathWithinProject(path, deps.projectPath, deps.platform)

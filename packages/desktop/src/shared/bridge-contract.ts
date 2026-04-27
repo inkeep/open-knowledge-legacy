@@ -200,7 +200,9 @@ export interface OkDesktopBridge {
     /**
      * Reveal a file or folder in the OS file manager (Finder / Explorer /
      * Linux default). Path is validated against the caller window's project
-     * directory in main; paths outside the project tree resolve as no-ops.
+     * directory in main; out-of-project, non-absolute, or null-byte-bearing
+     * paths are silently refused at the wire (channel returns `undefined`
+     * regardless; refusals emit a main-process `console.warn` for debugging).
      */
     showItemInFolder(path: string): Promise<void>;
   };

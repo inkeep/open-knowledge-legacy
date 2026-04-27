@@ -694,10 +694,8 @@ function registerIpcHandlers() {
   });
 
   handle('ok:shell:show-item-in-folder', async (event, path) => {
-    // Scope the reveal to the caller window's project directory — same
-    // defense pattern as `ok:shell:spawn-cursor`. A renderer compromise can't
-    // steer Finder/Explorer at `~/.ssh/`, `/etc/`, or any other off-project
-    // location. Navigator windows (no bound project) refuse every path.
+    // Resolve caller window's project directory (undefined for Navigator).
+    // Validation, refusal, and security rationale live in `showItemInFolderImpl`.
     const callerWin = BrowserWindow.fromWebContents(event.sender);
     const callerProjectPath =
       callerWin && wm
