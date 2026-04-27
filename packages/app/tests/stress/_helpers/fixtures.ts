@@ -50,6 +50,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { test as base } from '@playwright/test';
 
@@ -149,7 +150,7 @@ async function waitForServerReady(baseURL: string, timeoutMs = 30_000): Promise<
     } catch (err) {
       lastErr = err;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await wait(250);
   }
   throw new Error(
     `Worker server at ${baseURL} did not become ready within ${timeoutMs}ms. Last error: ${String(lastErr)}`,

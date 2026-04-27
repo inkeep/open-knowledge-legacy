@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   agentPatch,
   agentUndo,
@@ -20,7 +21,6 @@ import {
   awaitFileWatcherIndexed,
   createTestServer,
   type TestServer,
-  wait,
 } from './test-harness';
 
 /**
@@ -39,7 +39,7 @@ async function seedDoc(contentDir: string, docName: string, body: string): Promi
   const filePath = join(contentDir, `${docName}.md`);
   mkdirSync(dirname(filePath), { recursive: true });
   // parcelWatcherSubdirRaceGap — see JSDoc above.
-  await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  await wait(100);
   writeFileSync(filePath, body, 'utf-8');
 }
 

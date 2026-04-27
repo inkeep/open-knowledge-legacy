@@ -9,6 +9,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   commitUpstreamImport,
   commitWip,
@@ -65,13 +66,13 @@ OAuth is a protocol that...
   };
 
   await commitWip(shadow, human, contentDir, 'initial draft of auth doc', branch);
-  await new Promise((r) => setTimeout(r, 1100));
+  await wait(1100);
   writeFileSync(resolve(contentDir, 'auth.md'), '# Auth v2\n\nRewrote §3 oauth examples.\n');
   await commitWip(shadow, agent, contentDir, 'rewrite §3 oauth examples', branch);
-  await new Promise((r) => setTimeout(r, 1100));
+  await wait(1100);
   writeFileSync(resolve(contentDir, 'auth.md'), '# Auth v3\n\nFixed typo.\n');
   await commitWip(shadow, human, contentDir, 'typo fix', branch);
-  await new Promise((r) => setTimeout(r, 1100));
+  await wait(1100);
   // And a fake "upstream" git pull import
   const oldHead = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
   const newHead = 'f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9';
