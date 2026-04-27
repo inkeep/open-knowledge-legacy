@@ -23,6 +23,7 @@ import {
   detectInstalledEditors,
   type EditorMcpResult,
   formatInitResult,
+  initCommand,
   readExistingMcpEntry,
   resolveMcpScope,
   runInit,
@@ -1333,6 +1334,18 @@ describe('resolveMcpScope', () => {
     };
     const result = await resolveMcpScope({ mcp: false, isTTY: true, promptFn });
     expect(result).toBe('user');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initCommand -- Commander option validation
+// ---------------------------------------------------------------------------
+
+describe('initCommand', () => {
+  it('rejects --scope with an invalid value (non-zero exit)', () => {
+    const cmd = initCommand();
+    cmd.exitOverride();
+    expect(() => cmd.parse(['--scope', 'bogus'], { from: 'user' })).toThrow();
   });
 });
 

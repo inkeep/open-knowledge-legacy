@@ -23,7 +23,7 @@ import {
   ProjectGitInitError,
 } from '@inkeep/open-knowledge-server';
 import checkbox from '@inquirer/checkbox';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
@@ -962,7 +962,12 @@ export function initCommand(): Command {
       '--dev-mcp',
       'Register a local dev MCP entry using node + packages/cli/dist/cli.mjs with debug logging',
     )
-    .option('--scope <scope>', 'Write MCP config at user level, project level, or both')
+    .addOption(
+      new Option(
+        '--scope <scope>',
+        'Write MCP config at user level, project level, or both',
+      ).choices(['user', 'project', 'both']),
+    )
     .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope }) => {
       const cwd = process.cwd();
 
