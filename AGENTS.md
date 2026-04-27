@@ -98,7 +98,7 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 **`app`** — React editor frontend: TipTap WYSIWYG + CodeMirror source mode, real-time CRDT collaboration. Dev mode (`bun run dev`) serves Vite + Hocuspocus on port 5173 from one process via `packages/app/src/server/hocuspocus-plugin.ts` — shares the same `server.lock` as `open-knowledge start`, so both against the same contentDir is mutually exclusive.
 
-**`desktop`** — Electron macOS app (`@inkeep/open-knowledge-desktop`, private). Milestones M1-M6 shipped (signed-DMG scaffolding, auto-update, `openknowledge://` URL scheme, keyring E2E, CLI-on-PATH, first-launch MCP consent). Windows/Linux parity (M7) deferred. See [`packages/desktop/README.md`](packages/desktop/README.md) and the per-milestone specs under `specs/2026-04-2*-m[2-6]-*/SPEC.md`. Process model: one editor `BrowserWindow` ↔ one `utilityProcess.fork` ↔ one `createServer` ↔ one `contentDir`. IPC discipline: never `ipcMain.handle`/`ipcRenderer.invoke` directly — always via `createHandler`/`createInvoker` from `src/shared/ipc-*.ts` (Biome GritQL rule `no-loosely-typed-webcontents-ipc` enforces).
+**`desktop`** — Electron macOS app (`@inkeep/open-knowledge-desktop`, private). Windows/Linux parity deferred. See [`packages/desktop/README.md`](packages/desktop/README.md). Process model: one editor `BrowserWindow` ↔ one `utilityProcess.fork` ↔ one `createServer` ↔ one `contentDir`. IPC discipline: never `ipcMain.handle`/`ipcRenderer.invoke` directly — always via `createHandler`/`createInvoker` from `src/shared/ipc-*.ts` (Biome GritQL rule `no-loosely-typed-webcontents-ipc` enforces).
 
 ## Editor substrate
 
@@ -197,6 +197,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Server-side disk writes go through `fs-traced.ts` wrappers.** Use `tracedWriteFile` / `tracedRename` / `tracedMkdir` / `tracedUnlink` (+ `*Sync`) from `packages/server/src/fs-traced.ts` rather than importing raw `node:fs` write functions in production paths — every disk write needs an `fs.*` span with bounded-cardinality attributes. `@opentelemetry/instrumentation-fs` does not work on Bun (oven-sh/bun#6546). Test-only code is exempt.
 - **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
 - **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates (stale IDB + new clientID → markers twice). Auth-token Zod-validated via `parseHocuspocusAuthToken`. Ref: `provider-pool.ts`.
+- **No OK sidecars in user-content paths.** OK state lives in `<contentDir>/.open-knowledge/`; no `.frontmatter.yml`, no per-doc sidecars, no `_meta.json` / `_index.md`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](specs/2026-04-25-config-edit-paths/SPEC.md).
 
 ## WARN rules
 
