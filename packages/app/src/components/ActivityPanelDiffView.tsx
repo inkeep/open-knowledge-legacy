@@ -20,6 +20,7 @@ import 'react-diff-view/style/index.css';
 
 interface ActivityPanelDiffViewProps {
   diff: string;
+  viewType?: 'split' | 'unified';
 }
 
 /**
@@ -36,7 +37,10 @@ function stripIndexHeader(diff: string): string {
   return diff;
 }
 
-export function ActivityPanelDiffView({ diff }: ActivityPanelDiffViewProps): React.JSX.Element {
+export function ActivityPanelDiffView({
+  diff,
+  viewType = 'unified',
+}: ActivityPanelDiffViewProps): React.JSX.Element {
   if (!diff.trim()) {
     return (
       <div className="activity-panel-diff px-3 py-2 text-xs text-muted-foreground italic">
@@ -71,7 +75,7 @@ export function ActivityPanelDiffView({ diff }: ActivityPanelDiffViewProps): Rea
       {files.map((file) => (
         <Diff
           key={`${file.oldPath ?? 'a'}→${file.newPath ?? 'b'}`}
-          viewType="unified"
+          viewType={viewType}
           diffType={file.type}
           hunks={file.hunks}
         >
