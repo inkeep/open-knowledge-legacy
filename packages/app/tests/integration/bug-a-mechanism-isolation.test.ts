@@ -15,8 +15,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
-
 import {
   agentWriteMd,
   createTestClient,
@@ -26,7 +26,6 @@ import {
   type TestClient,
   type TestServer,
   testReset,
-  wait,
 } from './test-harness';
 
 // ─────────────────────────────────────────────────────────────
