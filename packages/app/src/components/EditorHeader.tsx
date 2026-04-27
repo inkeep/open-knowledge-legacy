@@ -126,8 +126,6 @@ export function EditorHeader({
     if (isPinned) unpin();
     else pin(activeDocName);
   }
-  const isDiffMode = editorMode === 'diff';
-
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -436,8 +434,7 @@ export function EditorHeader({
         {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
-      {/* Normal editing mode: Visual/Markdown toggle */}
-      {!isDiffMode && activeDocName && (
+      {activeDocName && (
         <ToggleGroup
           type="single"
           value={editorMode === 'source' ? 'source' : 'visual'}
@@ -541,7 +538,7 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {!isDiffMode && onOpenClone && (
+        {onOpenClone && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -557,7 +554,7 @@ export function EditorHeader({
             <TooltipContent>Clone from GitHub…</TooltipContent>
           </Tooltip>
         )}
-        {!isDiffMode && activeDocName && (
+        {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -574,7 +571,7 @@ export function EditorHeader({
             <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
           </Tooltip>
         )}
-        {!isDiffMode && activeDocName && <OpenInAgentMenu input={handoffInput} />}
+        {activeDocName && <OpenInAgentMenu input={handoffInput} />}
         <SyncStatusBadge
           onSignIn={onSignIn}
           onSetIdentity={onSetIdentity}

@@ -1,18 +1,5 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
@@ -26,24 +13,13 @@ import type { DiffLayout } from './DiffView';
 import { type PanelTab, TABS } from './DocPanel';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
-/**
- * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
- * Replaces the prior `isSourceMode: boolean` + `previewEntry: TimelineEntry | null`
- * two-boolean encoding. Booleans don't scale past 2 states.
- *
- * Derives from `EditorModeValue` (the persistable subset) + `'diff'` — so the
- * "diff is the only non-persistable mode" invariant is enforced structurally
- * by the compiler. Adding a new persistable mode updates `EDITOR_MODE_VALUES`
- * in `use-editor-mode.ts` and this type follows automatically.
- */
-export type EditorMode = EditorModeValue | 'diff';
+export type EditorMode = EditorModeValue;
 
 export function EditorPane() {
   // Persisted preference (localStorage). Read once at mount via
   // `useEditorMode`'s `useState` initializer and seeded into session-local
-  // `editorMode`. Open tabs are independent for their lifetime (SPEC D9);
+  // `editorMode`. Open tabs are independent for their lifetime;
   // the persisted value applies at load (refresh / new tab / new window).
   const [persistedMode, setPersistedMode] = useEditorMode();
   const [editorMode, setEditorMode] = useState<EditorMode>(persistedMode);
@@ -52,50 +28,14 @@ export function EditorPane() {
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
-  const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
-  const [restoring, setRestoring] = useState(false);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optInToastShownRef = useRef(false);
-  /** Remembers which editing mode to restore after exiting diff preview. */
-  const modeBeforeDiffRef = useRef<EditorModeValue>('wysiwyg');
 
   const syncStatus = useGitSyncStatus();
 
-  useEffect(() => {
-    return () => {
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    };
-  }, []);
-
   const { activeDocName } = useDocumentContext();
-
-  function handleEntrySelect(entry: TimelineEntry) {
-    if (!entry.sha) {
-      // "Current version" clicked — exit diff mode, restore prior editing mode
-      setPreviewEntry(null);
-      setEditorMode(modeBeforeDiffRef.current);
-    } else {
-      if (editorMode !== 'diff') {
-        // editorMode is narrowed to EditorModeValue here (the 'diff' branch
-        // excluded); direct assignment works since modeBeforeDiffRef is typed
-        // as EditorModeValue too.
-        modeBeforeDiffRef.current = editorMode;
-      }
-      setPreviewEntry(entry);
-      setEditorMode('diff');
-    }
-    setRestoreError(null);
-  }
-
-  function handleExitPreview() {
-    setPreviewEntry(null);
-    setEditorMode(modeBeforeDiffRef.current);
-    setRestoreError(null);
-  }
 
   // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
   // The pending navigation store preserves the target offset until the source
@@ -112,21 +52,7 @@ export function EditorPane() {
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, [activeDocName]);
 
-  // Clear stale diff state when the active document changes (spec D3 / FR-3).
-  // Uses a ref to detect doc changes in an effect that reads activeDocName,
-  // satisfying the React Compiler's dependency analysis.
-  const prevDocNameRef = useRef(activeDocName);
-  useEffect(() => {
-    if (prevDocNameRef.current !== activeDocName) {
-      prevDocNameRef.current = activeDocName;
-      setPreviewEntry(null);
-      if (editorMode === 'diff') {
-        setEditorMode(modeBeforeDiffRef.current);
-      }
-    }
-  }, [activeDocName, editorMode]);
-
-  // Opt-in prompt (D36): show a dismissible toast the first time we detect
+  // Opt-in prompt: show a dismissible toast the first time we detect
   // a remote exists but sync is dormant (not yet enabled).
   useEffect(() => {
     if (!optInToastShownRef.current && syncStatus?.state === 'dormant' && syncStatus.hasRemote) {
@@ -171,32 +97,6 @@ export function EditorPane() {
     setSaving(false);
   }
 
-  async function handleRestore() {
-    if (!previewEntry?.sha || !activeDocName) return;
-    setRestoring(true);
-    try {
-      const res = await fetch('/api/rollback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: activeDocName, commitSha: previewEntry.sha }),
-      });
-      if (res.ok) {
-        setPreviewEntry(null);
-        setEditorMode(modeBeforeDiffRef.current);
-        setRestoreError(null);
-      } else {
-        setRestoreError('Restore failed — document unchanged');
-        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-        errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
-      }
-    } catch {
-      setRestoreError('Restore failed — document unchanged');
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-      errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
-    }
-    setRestoring(false);
-  }
-
   return (
     <>
       <ConflictBanner onOpenResolver={() => setConflictResolverOpen(true)} />
@@ -219,48 +119,9 @@ export function EditorPane() {
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
         onOpenClone={() => setCloneDialogOpen(true)}
       />
-      {editorMode === 'diff' && previewEntry && (
-        <div className="flex h-8 shrink-0 items-center border-b bg-muted/30 px-3 gap-2">
-          <span className="flex-1 truncate text-xs text-muted-foreground">
-            Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
-          </span>
-          {restoreError && <span className="text-xs text-destructive">{restoreError}</span>}
-          <Button
-            variant="ghost"
-            className="font-mono uppercase"
-            size="xs"
-            onClick={handleExitPreview}
-          >
-            Close
-          </Button>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="default" size="xs" disabled={restoring}>
-                {restoring ? 'Restoring…' : 'Restore'}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Restore this version?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will replace the current document content with the version from{' '}
-                  {formatRelativeTime(previewEntry.timestamp)}. Your current content is already
-                  saved in the timeline — you can restore it anytime.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel className="font-mono uppercase">Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleRestore}>Restore</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      )}
       <EditorArea
         editorMode={editorMode}
         diffLayout={diffLayout}
-        onEntrySelect={handleEntrySelect}
-        selectedSha={previewEntry?.sha}
         activeTab={activeTab}
         onActiveTabChange={setActiveTab}
       />

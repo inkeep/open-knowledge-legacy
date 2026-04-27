@@ -1,4 +1,3 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { BrainCircuit, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
@@ -24,8 +23,6 @@ import type { EditorMode } from './EditorPane';
 interface EditorAreaProps {
   editorMode: EditorMode;
   diffLayout: DiffLayout;
-  onEntrySelect?: (entry: TimelineEntry) => void;
-  selectedSha?: string;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
 }
@@ -41,8 +38,6 @@ export function EditorArea(props: EditorAreaProps) {
 function EditorAreaInner({
   editorMode,
   diffLayout,
-  onEntrySelect,
-  selectedSha,
   activeTab,
   onActiveTabChange,
 }: EditorAreaProps) {
@@ -268,8 +263,6 @@ function EditorAreaInner({
               isSourceMode={isSourceMode}
               activeTab={activeTab}
               onActiveTabChange={onActiveTabChange}
-              onEntrySelect={onEntrySelect}
-              selectedSha={selectedSha}
               diffLayout={diffLayout}
               mode={docPanelMode}
             />
@@ -305,8 +298,6 @@ function EditorAreaInner({
             isSourceMode={isSourceMode}
             activeTab={activeTab}
             onActiveTabChange={onActiveTabChange}
-            onEntrySelect={onEntrySelect}
-            selectedSha={selectedSha}
             diffLayout={diffLayout}
             mode={docPanelMode}
           />

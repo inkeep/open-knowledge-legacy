@@ -57,14 +57,12 @@ import { HistoricalContentCache, useTimelineEntryDiff } from '@/lib/use-timeline
 
 interface TimelineContentProps {
   docName: string;
-  onEntrySelect?: (entry: TimelineEntry) => void;
-  selectedSha?: string;
   diffLayout: DiffLayout;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-export function formatRelativeTime(isoString: string): string {
+function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -86,7 +84,7 @@ export function formatRelativeTime(isoString: string): string {
 }
 
 /** Map internal author names to user-friendly display names. Uses structured contributors when available. */
-export function displayAuthor(entry: TimelineEntry): string {
+function displayAuthor(entry: TimelineEntry): string {
   if (entry.type === 'upstream') return 'Upstream sync';
   if (entry.contributors.length === 1) return entry.contributors[0].name;
   if (entry.contributors.length > 1) return entry.contributors.map((c) => c.name).join(', ');
@@ -154,48 +152,24 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
 
 // ─── "Current version" pinned row ────────────────────────────────────────────
 
-function CurrentVersionRow({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+function CurrentVersionRow() {
   return (
-    <button
-      type="button"
-      className={[
-        'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected ? 'bg-muted' : 'hover:bg-muted/50',
-      ].join(' ')}
-      onClick={onSelect}
-    >
+    <div className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5">
       <div className="flex items-center justify-center w-3.5 h-3.5">
-        {' '}
         <span className="inline-block size-2 rounded-full bg-emerald-500 shrink-0" />
       </div>
-
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">Current version</p>
       </div>
-    </button>
+    </div>
   );
 }
-
-// ─── Empty entry sentinel (for current-version clicks) ──────────────────────
-
-const EMPTY_ENTRY: TimelineEntry = {
-  sha: '',
-  timestamp: '',
-  author: '',
-  authorEmail: '',
-  type: 'wip',
-  message: '',
-  contributors: [],
-  checkpoint: null,
-};
 
 // ─── WIP Group component ──────────────────────────────────────────────────────
 
 interface WipGroupProps {
   entries: TimelineEntry[];
   defaultExpanded: boolean;
-  selectedSha?: string;
-  onSelect?: (entry: TimelineEntry) => void;
   isDark: boolean;
   diffLayout: DiffLayout;
   cache: HistoricalContentCache;
@@ -207,8 +181,6 @@ interface WipGroupProps {
 function WipGroup({
   entries,
   defaultExpanded,
-  selectedSha,
-  onSelect,
   isDark,
   diffLayout,
   cache,
@@ -238,8 +210,6 @@ function WipGroup({
           <EntryRow
             key={entry.sha}
             entry={entry}
-            selected={entry.sha === selectedSha}
-            onSelect={onSelect}
             isDark={isDark}
             diffLayout={diffLayout}
             cache={cache}
@@ -377,8 +347,6 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
 
 interface EntryRowProps {
   entry: TimelineEntry;
-  selected: boolean;
-  onSelect?: (entry: TimelineEntry) => void;
   prominent?: boolean;
   isDark: boolean;
   diffLayout: DiffLayout;
@@ -390,8 +358,6 @@ interface EntryRowProps {
 
 function EntryRow({
   entry,
-  selected,
-  onSelect: _onSelect,
   prominent = false,
   isDark,
   diffLayout,
@@ -493,7 +459,7 @@ function EntryRow({
           tabIndex={0}
           className={[
             'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            selected || diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
+            diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
           ].join(' ')}
           onClick={handleActivate}
           onKeyDown={(e) => {
@@ -621,12 +587,7 @@ function EntryRow({
 
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
-export function TimelineContent({
-  docName,
-  onEntrySelect,
-  selectedSha,
-  diffLayout,
-}: TimelineContentProps) {
+export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
@@ -713,8 +674,6 @@ export function TimelineContent({
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
-  const isViewingCurrent = !selectedSha;
-
   return (
     <div className="flex h-full flex-col">
       {/* Scrollable entry list */}
@@ -756,16 +715,11 @@ export function TimelineContent({
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow
-              selected={isViewingCurrent}
-              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
-            />
+            <CurrentVersionRow />
             {entries.map((entry) => (
               <EntryRow
                 key={entry.sha}
                 entry={entry}
-                selected={entry.sha === selectedSha}
-                onSelect={onEntrySelect}
                 isDark={isDark}
                 diffLayout={diffLayout}
                 cache={cache}
@@ -780,18 +734,13 @@ export function TimelineContent({
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow
-              selected={isViewingCurrent}
-              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
-            />
+            <CurrentVersionRow />
             {groups.map((group, idx) => {
               if (group.kind === 'checkpoint') {
                 return (
                   <EntryRow
                     key={group.entry.sha}
                     entry={group.entry}
-                    selected={group.entry.sha === selectedSha}
-                    onSelect={onEntrySelect}
                     prominent
                     isDark={isDark}
                     diffLayout={diffLayout}
@@ -807,8 +756,6 @@ export function TimelineContent({
                   key={group.entries[0]?.sha ?? `wip-${idx}`}
                   entries={group.entries}
                   defaultExpanded={group.isPreCheckpoint}
-                  selectedSha={selectedSha}
-                  onSelect={onEntrySelect}
                   isDark={isDark}
                   diffLayout={diffLayout}
                   cache={cache}
