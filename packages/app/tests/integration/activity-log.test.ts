@@ -7,6 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { EffectValue } from '../../../../packages/server/src/activity-log.ts';
 import {
   agentWriteMd,
@@ -14,7 +15,6 @@ import {
   createTestServer,
   type TestServer,
   testReset,
-  wait,
 } from './test-harness.ts';
 
 let server: TestServer;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   assertNoClientIdDrift,
@@ -9,7 +10,6 @@ import {
   pollUntil,
   type RestartableServer,
   seedPoolServerInstanceId,
-  wait,
 } from './test-harness';
 
 // Fixture with markers that appear at known counts: 2 `# Test Document`,

@@ -11,13 +11,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   agentWriteMd,
   createTestClient,
   createTestServer,
   pollUntil,
   type TestServer,
-  wait,
 } from './test-harness';
 
 let server: TestServer;
