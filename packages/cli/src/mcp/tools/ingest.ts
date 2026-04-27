@@ -18,7 +18,7 @@ import {
 } from './shared.ts';
 
 function buildBody(source: string, contentDir: string): string {
-  return `${buildWorkflowFrame('ingest')}Capture this external source into the project knowledge base as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
+  return `${buildWorkflowFrame('ingest')}Capture this external source into the project knowledge base as raw reference material. The KB is **closed-loop**: external sources are pulled INTO the knowledge base here so downstream docs cite local paths, never bare web URLs. This applies whether a user shared the source OR you fetched it yourself to ground a knowledge-base claim — agent-initiated fetches are not exempt. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
 
 Source: ${source}
 
@@ -105,16 +105,19 @@ If the source is directly relevant to an existing article or research doc, updat
 export const DESCRIPTION = [
   'Fetch an external source (URL or local file) and save raw content as reference material in the project content directory.',
   'Raw preservation only — no analysis or interpretation.',
+  'The knowledge base is closed-loop: web sources cited by KB docs MUST resolve to a local doc captured here, not bare URLs.',
   '',
   '**Use when:**',
   '- Capturing reference material for the project knowledge base',
   '- Saving a URL or document for later research',
   '- Archiving an external source alongside the codebase',
   '- The user shares a URL or document they want preserved',
+  '- **You yourself fetched a URL (`WebFetch` / `WebSearch` / equivalent) to ground a claim that is about to land in a knowledge-base doc** — agent-initiated fetches are not exempt from the closed-loop rule',
   '',
   '**Triggers on:**',
   '- "ingest", "save this source", "capture this URL", "add to external sources"',
   '- User shares a URL, article, or document to preserve in the knowledge base',
+  '- Agent fetches a URL via WebFetch/WebSearch to support a knowledge-base claim — preserve the source before citing it',
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 
