@@ -354,13 +354,22 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   if (m.escapeMark) {
     handlers.text = (node: Text) => {
       const value: string = node.value ?? '';
+      const sourceRaw = typeof node.data?.sourceRaw === 'string' ? node.data.sourceRaw : null;
       // Mirror the patched library-default text handler's null-on-empty guard
       // (see `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` hunk 2).
       // `schema.text('')` throws in recent PM versions; returning `null` lets
       // upstream filter the node. mdast-from-markdown normally doesn't emit
       // empty text nodes, but stripping helpers / custom splitters can, so
       // the guard is parity defense not just hypothetical.
-      if (!value) return null;
+      if (!value && !sourceRaw) return null;
+      // Preserve verbatim source for text shapes the serializer would otherwise
+      // canonicalize to a different byte form (for example trailing `\`).
+      if (sourceRaw) {
+        const normalized = value.replaceAll('\u00A0', ' ');
+        return m.sourceLiteral
+          ? schema.text(normalized, [m.sourceLiteral.create({ sourceRaw })])
+          : schema.text(normalized);
+      }
       const escapedChars: Array<{ offset: number; char: string }> | undefined =
         node.data?.escapedChars;
       if (!escapedChars?.length) {
@@ -477,12 +486,25 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Link mark — linkStyle + refLabel attrs (LinkFidelity extension)
   if (m.link) {
-    handlers.link = toPmMark(m.link, (node: Link) => ({
+    const sourceLiteralMark = m.sourceLiteral;
+    const inlineLinkHandler = toPmMark(m.link, (node: Link) => ({
       href: node.url ?? '',
       title: node.title ?? null,
       linkStyle: node.data?.sourceStyle ?? 'inline',
       refLabel: null,
     }));
+    handlers.link = (node: Link, parent: MdastParent, state: MdastToPmState) => {
+      if ((node.children ?? []).length === 0) {
+        const raw =
+          typeof node.data?.sourceRaw === 'string' ? node.data.sourceRaw : `[](${node.url ?? ''})`;
+        return raw
+          ? sourceLiteralMark
+            ? schema.text(raw, [sourceLiteralMark.create({ sourceRaw: raw })])
+            : schema.text(raw)
+          : null;
+      }
+      return inlineLinkHandler(node, parent, state);
+    };
 
     // linkReference → same link mark but with reference style info
     handlers.linkReference = toPmMark(m.link, (node: LinkReference) => ({
@@ -987,6 +1009,23 @@ function buildPmToMdastHandlers(schema: Schema): {
       }
       // Return children unwrapped (escapeMark doesn't correspond to an mdast node)
       return children.length === 1 ? children[0] : children;
+    };
+  }
+
+  if (m.sourceLiteral) {
+    markHandlers.sourceLiteral = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
+      const raw = typeof mark.attrs.sourceRaw === 'string' ? mark.attrs.sourceRaw : '';
+      if (children.length === 1 && children[0]?.type === 'text') {
+        const textChild = children[0] as Text;
+        textChild.data = textChild.data ?? {};
+        textChild.data.sourceRaw = raw || textChild.value;
+        return textChild;
+      }
+      return {
+        type: 'text' as const,
+        value: raw,
+        data: { sourceRaw: raw },
+      } as Text;
     };
   }
 

@@ -56,6 +56,7 @@ describe('runInit', () => {
     runtimeExecutable: 'node',
     runtimeArgs: [join(devRepoRoot(), 'packages', 'cli', 'dist', 'cli.mjs'), 'ui'],
     port: 3000,
+    autoPort: true,
   });
   /**
    * Stubbed installUserSkill used by every test unless overridden. Prevents
@@ -745,7 +746,7 @@ describe('runInit', () => {
       expect(entry.runtimeExecutable).toBe('npx');
       expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
       expect(entry.port).toBe(3000);
-      expect(entry.autoPort).toBeUndefined();
+      expect(entry.autoPort).toBe(true);
     });
 
     it('overwrites a stale open-knowledge-ui entry by default', async () => {
@@ -801,6 +802,7 @@ describe('runInit', () => {
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
                 port: 3000,
+                autoPort: true,
               },
             ],
           },
@@ -827,6 +829,7 @@ describe('runInit', () => {
                 runtimeExecutable: 'npx',
                 runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
                 port: 3000,
+                autoPort: true,
               },
             ],
           },
@@ -872,7 +875,7 @@ describe('runInit', () => {
         (c: { name: string }) => c.name === 'open-knowledge-ui',
       );
       expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
-      expect(ok.autoPort).toBeUndefined();
+      expect(ok.autoPort).toBe(true);
     });
 
     it('does NOT scaffold launch.json when Claude is not among selected editors', async () => {

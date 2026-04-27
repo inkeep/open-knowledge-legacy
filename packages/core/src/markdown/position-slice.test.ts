@@ -210,6 +210,17 @@ describe('position-slice: hard break recovery', () => {
   });
 });
 
+describe('position-slice: sourceRaw text preservation', () => {
+  test('literal trailing backslash runs keep data.sourceRaw', () => {
+    const triple = '\\'.repeat(3);
+    const tree = parseMdast(`text ${triple}\n`);
+    const textNodes = findNodes(tree, 'text');
+    const trailing = textNodes.find((n) => n.value === `text ${'\\'.repeat(2)}`);
+    expect(trailing).toBeDefined();
+    expect(trailing?.data?.sourceRaw).toBe(`text ${triple}`);
+  });
+});
+
 describe('position-slice: escapeMark tagging (D20)', () => {
   test('backslash-escaped # → data.escapedChars', () => {
     const tree = parseMdast('text \\# more\n');

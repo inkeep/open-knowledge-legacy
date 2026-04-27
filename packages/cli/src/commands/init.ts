@@ -216,6 +216,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
     runtimeExecutable: string;
     runtimeArgs: string[];
     port: number;
+    autoPort: boolean;
   } =
     installOptions.mode === 'dev'
       ? {
@@ -223,6 +224,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
           runtimeExecutable: 'node',
           runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
           port: 3000,
+          autoPort: true,
         }
       : {
           name: LAUNCH_CONFIG_NAME,
@@ -232,6 +234,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
           // works if the package is already installed (local or global).
           runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
           port: 3000,
+          autoPort: true,
         };
 
   try {

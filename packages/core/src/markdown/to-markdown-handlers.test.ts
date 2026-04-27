@@ -101,6 +101,35 @@ describe('to-markdown: text handler (NG5 fidelity)', () => {
   test('literal < in text survives round-trip', () => {
     expect(roundTrip('a < b\n')).toBe('a < b\n');
   });
+
+  test('literal [ in prose survives round-trip', () => {
+    expect(roundTrip('text [ more\n')).toBe('text [ more\n');
+  });
+
+  test('literal trailing backslash runs stay literal text', () => {
+    const triple = '\\'.repeat(3);
+    expect(roundTrip('\\\n')).toBe('\\\n');
+    expect(roundTrip('text \\\n')).toBe('text \\\n');
+    expect(roundTrip(`${triple}\n`)).toBe(`${triple}\n`);
+    expect(roundTrip(`text ${triple}\n`)).toBe(`text ${triple}\n`);
+  });
+
+  test('unfinished link label stays literal text', () => {
+    expect(roundTrip('[foo]\n')).toBe('[foo]\n');
+  });
+
+  test('unfinished wiki-link stays literal text', () => {
+    expect(roundTrip('[[Page\n')).toBe('[[Page\n');
+  });
+
+  test('empty-label inline link stays literal text', () => {
+    expect(roundTrip('[]()\n')).toBe('[]()\n');
+    expect(roundTrip('[](x)\n')).toBe('[](x)\n');
+  });
+
+  test('unfinished link destination stays literal text', () => {
+    expect(roundTrip('[foo](\n')).toBe('[foo](\n');
+  });
 });
 
 describe('to-markdown: link URL preservation', () => {

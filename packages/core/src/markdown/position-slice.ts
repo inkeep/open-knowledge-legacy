@@ -134,6 +134,18 @@ export function applyPositionSliceToNode(
           node.data.escapedChars = escaped;
         }
       }
+
+      // Preserve literal trailing backslash runs verbatim. At paragraph end,
+      // mdast-util-to-markdown normalizes a trailing plain-text `\` to `\\`
+      // so the next parse can't reinterpret it as line-break syntax. For odd
+      // run lengths like `\\\`, remark collapses part of the run into
+      // escapedChars and leaves the final `\` literal in `value`; preserving
+      // only the raw===value case fixed the single-backslash variant but still
+      // let 3→4, 5→6, etc. canonicalize. If both the raw slice and parsed text
+      // end in `\`, keep the exact raw bytes instead of inventing a longer run.
+      if (raw.endsWith('\\') && value.endsWith('\\')) {
+        node.data.sourceRaw = raw;
+      }
       break;
     }
 
@@ -205,6 +217,18 @@ export function applyPositionSliceToNode(
 
     case 'thematicBreak': {
       node.data.sourceRaw = source.slice(startOff, endOff);
+      break;
+    }
+
+    case 'link':
+    case 'linkReference': {
+      // Empty-label links are syntactically valid markdown, but this editor's
+      // inline-link representation attaches the link to text content. Preserve
+      // the raw source so mdast→PM can fall back to literal text instead of
+      // dropping the construct.
+      if ('children' in node && node.children.length === 0) {
+        node.data.sourceRaw = source.slice(startOff, endOff);
+      }
       break;
     }
 

@@ -19,6 +19,7 @@ import { LinkFidelity } from './link-fidelity.ts';
 import { LinkRefDefFidelity } from './link-ref-def-fidelity.ts';
 import { List, ListItem } from './list.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
+import { SourceLiteralMark } from './source-literal-mark.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
 
@@ -56,6 +57,8 @@ export const sharedExtensions = [
   HardBreakFidelity,
   // D20: escapeMark for structurally-ambiguous backslash escapes
   EscapeMark,
+  // Verbatim source text for unsupported inline markdown constructs.
+  SourceLiteralMark,
   StarterKit.configure({
     undoRedo: false,
     bulletList: false,
