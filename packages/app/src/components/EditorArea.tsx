@@ -368,6 +368,7 @@ function EditorAreaInner({
               onActiveTabChange={setActiveTab}
               onEntrySelect={onEntrySelect}
               selectedSha={selectedSha}
+              diffLayout={diffLayout}
               mode={docPanelMode}
             />
           </SheetContent>
@@ -404,6 +405,7 @@ function EditorAreaInner({
             onActiveTabChange={setActiveTab}
             onEntrySelect={onEntrySelect}
             selectedSha={selectedSha}
+            diffLayout={diffLayout}
             mode={docPanelMode}
           />
         </ResizablePanel>

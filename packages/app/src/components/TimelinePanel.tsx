@@ -23,12 +23,15 @@ import {
   FileArchive,
   GitBranch,
   HardDrive,
+  Loader2,
   Sparkles,
   User,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import type { SVGProps } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
+import { ActivityPanelDiffView } from '@/components/ActivityPanelDiffView';
+import type { DiffLayout } from '@/components/DiffView';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { ClineIcon } from '@/components/icons/cline';
 import { CodexIcon } from '@/components/icons/codex';
@@ -36,6 +39,7 @@ import { CopilotIcon } from '@/components/icons/copilot';
 import { CursorIcon } from '@/components/icons/cursor';
 import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Skeleton } from '@/components/ui/skeleton';
+import { HistoricalContentCache, useTimelineEntryDiff } from '@/lib/use-timeline-entry-diff';
 
 // ─── Public props ────────────────────────────────────────────────────────────
 
@@ -43,6 +47,7 @@ interface TimelineContentProps {
   docName: string;
   onEntrySelect?: (entry: TimelineEntry) => void;
   selectedSha?: string;
+  diffLayout: DiffLayout;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -180,9 +185,21 @@ interface WipGroupProps {
   selectedSha?: string;
   onSelect?: (entry: TimelineEntry) => void;
   isDark: boolean;
+  diffLayout: DiffLayout;
+  cache: HistoricalContentCache;
+  docName: string;
 }
 
-function WipGroup({ entries, defaultExpanded, selectedSha, onSelect, isDark }: WipGroupProps) {
+function WipGroup({
+  entries,
+  defaultExpanded,
+  selectedSha,
+  onSelect,
+  isDark,
+  diffLayout,
+  cache,
+  docName,
+}: WipGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (entries.length === 0) return null;
@@ -208,6 +225,9 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect, isDark }: W
             selected={entry.sha === selectedSha}
             onSelect={onSelect}
             isDark={isDark}
+            diffLayout={diffLayout}
+            cache={cache}
+            docName={docName}
           />
         ))}
     </div>
@@ -343,15 +363,30 @@ interface EntryRowProps {
   onSelect?: (entry: TimelineEntry) => void;
   prominent?: boolean;
   isDark: boolean;
+  diffLayout: DiffLayout;
+  cache: HistoricalContentCache;
+  docName: string;
 }
 
-function EntryRow({ entry, selected, onSelect, prominent = false, isDark }: EntryRowProps) {
+function EntryRow({
+  entry,
+  selected,
+  onSelect: _onSelect,
+  prominent = false,
+  isDark,
+  diffLayout,
+  cache,
+  docName,
+}: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
   const allSummaries = allSummariesFor(entry);
+  const [diffExpanded, setDiffExpanded] = useState(false);
 
-  const handleActivate = () => onSelect?.(entry);
+  const { diff, status } = useTimelineEntryDiff(diffExpanded ? entry.sha : null, docName, cache);
+
+  const handleActivate = () => setDiffExpanded((prev) => !prev);
 
   // Leading icon: checkpoint variants get special icons, others get contributor icon
   const leadingIcon = prominent ? (
@@ -380,73 +415,96 @@ function EntryRow({ entry, selected, onSelect, prominent = false, isDark }: Entr
   );
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
-    <div
-      role="button"
-      tabIndex={0}
-      className={[
-        'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected ? 'bg-muted' : 'hover:bg-muted/50',
-      ].join(' ')}
-      onClick={handleActivate}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleActivate();
-        }
-      }}
-    >
-      {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
-      <span className="mt-0.5 shrink-0">{leadingIcon}</span>
+    <div className="flex flex-col rounded-lg">
+      {/* biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child. */}
+      <div
+        role="button"
+        tabIndex={0}
+        className={[
+          'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          selected || diffExpanded ? 'bg-muted' : 'hover:bg-muted/50',
+        ].join(' ')}
+        onClick={handleActivate}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleActivate();
+          }
+        }}
+      >
+        {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
+        <span className="mt-0.5 shrink-0">{leadingIcon}</span>
 
-      <div className="min-w-0 flex-1 space-y-0.5">
-        {/* Row 1: title + date, vertically centered with the icon */}
-        <div className="flex items-center gap-1.5">
-          {prominent ? (
-            <>
-              <span className="text-xs text-foreground truncate">
-                {checkpointHeadlineLabel(entry)}
-              </span>
-              <span className="text-xs text-muted-foreground/50">·</span>
-              <span className="truncate text-xs text-muted-foreground">{authorName}</span>
-            </>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {/* Row 1: title + date, vertically centered with the icon */}
+          <div className="flex items-center gap-1.5">
+            {prominent ? (
+              <>
+                <span className="text-xs text-foreground truncate">
+                  {checkpointHeadlineLabel(entry)}
+                </span>
+                <span className="text-xs text-muted-foreground/50">·</span>
+                <span className="truncate text-xs text-muted-foreground">{authorName}</span>
+              </>
+            ) : (
+              <span className="truncate text-xs text-foreground">{authorName}</span>
+            )}
+            <time
+              className="ml-auto shrink-0 text-xs text-muted-foreground/80"
+              dateTime={entry.timestamp}
+              title={entry.timestamp}
+            >
+              {relative}
+            </time>
+          </div>
+
+          {/* Row 2: details, aligned with title start */}
+          {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
+          {allDocs.length > 0 ? (
+            <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
+              {allDocs.join(', ')}
+            </p>
           ) : (
-            <span className="truncate text-xs text-foreground">{authorName}</span>
+            <p className="truncate text-xs text-muted-foreground" title={entry.message}>
+              {entry.message}
+            </p>
           )}
-          <time
-            className="ml-auto shrink-0 text-xs text-muted-foreground/80"
-            dateTime={entry.timestamp}
-            title={entry.timestamp}
-          >
-            {relative}
-          </time>
         </div>
-
-        {/* Row 2: details, aligned with title start */}
-        {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
-        {allDocs.length > 0 ? (
-          <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
-            {allDocs.join(', ')}
-          </p>
-        ) : (
-          <p className="truncate text-xs text-muted-foreground" title={entry.message}>
-            {entry.message}
-          </p>
-        )}
       </div>
+
+      {diffExpanded && (
+        <div className="px-3 pb-2">
+          {status === 'loading' && (
+            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              Loading diff…
+            </div>
+          )}
+          {status === 'error' && <p className="py-2 text-xs text-destructive">Diff unavailable</p>}
+          {status === 'ready' && diff !== null && (
+            <ActivityPanelDiffView diff={diff} viewType={diffLayout} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
-export function TimelineContent({ docName, onEntrySelect, selectedSha }: TimelineContentProps) {
+export function TimelineContent({
+  docName,
+  onEntrySelect,
+  selectedSha,
+  diffLayout,
+}: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cacheRef = useRef(new HistoricalContentCache());
 
   useEffect(() => {
     if (!docName) {
@@ -578,6 +636,9 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                 selected={entry.sha === selectedSha}
                 onSelect={onEntrySelect}
                 isDark={isDark}
+                diffLayout={diffLayout}
+                cache={cacheRef.current}
+                docName={docName}
               />
             ))}
           </div>
@@ -600,6 +661,9 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                     onSelect={onEntrySelect}
                     prominent
                     isDark={isDark}
+                    diffLayout={diffLayout}
+                    cache={cacheRef.current}
+                    docName={docName}
                   />
                 );
               }
@@ -611,6 +675,9 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                   selectedSha={selectedSha}
                   onSelect={onEntrySelect}
                   isDark={isDark}
+                  diffLayout={diffLayout}
+                  cache={cacheRef.current}
+                  docName={docName}
                 />
               );
             })}
