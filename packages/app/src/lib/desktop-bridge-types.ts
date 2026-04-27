@@ -207,9 +207,36 @@ export interface OkDesktopBridge {
     open(request: { path: string; target: 'new-window' }): Promise<void>;
     close(): Promise<void>;
   };
+  /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Focus-existing-or-create — idempotent on already-focused. Used by
+   * `ProjectSwitcher` and `CommandPalette` to expose the navigator from
+   * inside the editor without closing the current window.
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
   seed: {
     plan(rootDir?: string): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
+  skill: {
+    /** True when Claude Desktop's config dir exists on this machine. */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Build `openknowledge.skill` from the bundled source, save to
+     * Downloads, invoke the OS file association (`.skill` → Claude
+     * Desktop). Fire-and-forget — Claude's native install dialog takes
+     * over on `ok: true`. Local build; no network.
+     */
+    buildAndOpen(): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
   };
   update: {
     relaunchNow(): Promise<void>;

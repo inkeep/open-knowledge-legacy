@@ -19,6 +19,15 @@ export {
   safeSubdir,
 } from './api-extension.ts';
 export {
+  HOCUSPOCUS_AUTH_REJECTION_REASONS,
+  HocuspocusAuthRejection,
+  type HocuspocusAuthRejectionReason,
+  type HocuspocusAuthToken,
+  HocuspocusAuthTokenSchema,
+  isHocuspocusAuthRejectionReason,
+  parseHocuspocusAuthToken,
+} from './auth-token-schema.ts';
+export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,
@@ -35,9 +44,15 @@ export {
   parseKeepaliveConnectionId,
 } from './boot.ts';
 export {
+  type BuildSkillZipOptions,
+  type BuildSkillZipResult,
+  buildSkillZip,
+  resolveBundledSkillDir,
+  validateSkillZip,
+} from './build-skill-zip.ts';
+export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
-  type CC1Signal,
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
@@ -52,6 +67,10 @@ export {
   formatContributors,
   recordContributor,
 } from './contributor-tracker.ts';
+export {
+  type DetectClaudeDesktopOptions,
+  detectClaudeDesktopPresence,
+} from './detect-claude-desktop.ts';
 export {
   applyExternalChange,
   createExternalChangeHandler,

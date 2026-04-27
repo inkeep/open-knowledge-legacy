@@ -490,6 +490,48 @@ describe('runInit', () => {
         /Claude Desktop is not available on linux\. Supported: macOS, Windows\./,
       );
     });
+
+    // Cowork install hint — SPEC 2026-04-24-skill-dual-track-install FR5 / D12.
+    // When Claude Desktop's config dir exists, `ok init` appends a one-line
+    // hint pointing at the docs + the pinned-version .skill release asset.
+    it('flags claudeDesktopDetected=true when Claude config dir exists', async () => {
+      // Create the config-dir parent that detectClaudeDesktopPresence probes.
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(true);
+    });
+
+    it('flags claudeDesktopDetected=false when Claude config dir is absent', async () => {
+      // No Claude config dir created — fakeHome/.claude exists (from beforeEach)
+      // but not the Application Support/Claude dir.
+      const result = await runInitForTest();
+
+      expect(result.claudeDesktopDetected).toBe(false);
+    });
+
+    it('renders the Cowork install hint when Claude Desktop is detected', async () => {
+      mkdirSync(dirname(resolveClaudeDesktopConfigPath({ home: fakeHome })), { recursive: true });
+
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      // Hint names the Desktop App + Chat & Cowork (distinguishes from
+      // Claude Code) and points at the `ok install-skill` command —
+      // users install the skill locally, no GitHub download in the loop.
+      expect(output).toContain('Claude Desktop App detected.');
+      expect(output).toContain('Claude Chat & Cowork');
+      expect(output).toContain('ok install-skill');
+    });
+
+    it('omits the Cowork install hint when Claude Desktop is absent', async () => {
+      const result = await runInitForTest();
+      const output = formatInitResult(result, testDir);
+
+      expect(output).not.toContain('Claude Desktop detected. For Cowork:');
+      expect(output).not.toContain('openknowledge.skill');
+    });
   });
 
   describe('Windsurf', () => {
@@ -1098,7 +1140,7 @@ describe('runInit', () => {
 
   describe('ensureProjectGit wiring (US-005)', () => {
     it('fresh tmpdir (no .git/) → runInit creates .git/ and reports didGitInit=true', async () => {
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(true);
       expect(existsSync(join(testDir, '.git/HEAD'))).toBe(true);
@@ -1113,7 +1155,7 @@ describe('runInit', () => {
     it('pre-existing .git/ → runInit does not re-init and reports didGitInit=false', async () => {
       mkdirSync(join(testDir, '.git'));
 
-      const result = await runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] });
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(false);
       // formatInitResult omits the disclosure line
@@ -1128,9 +1170,9 @@ describe('runInit', () => {
         // Import the server error type lazily to keep the import surface minimal
         // for other tests in this file.
         const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
-        await expect(
-          runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] }),
-        ).rejects.toBeInstanceOf(ProjectGitInitError);
+        await expect(runInitForTest({ editors: ['claude'] })).rejects.toBeInstanceOf(
+          ProjectGitInitError,
+        );
       } finally {
         process.env.PATH = originalPath;
       }

@@ -15,6 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
+  detectClaudeDesktopPresence,
   ensureProjectGit,
   type InstallUserSkillOptions,
   type InstallUserSkillResult,
@@ -26,7 +27,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
-import { warning } from '../ui/colors.ts';
+import { accent, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -165,6 +166,13 @@ interface InitCommandResult {
   launchJson?: LaunchJsonResult;
   /** `true` if `ensureProjectGit` ran `git init` during this invocation (SPEC R2 / D9). */
   didGitInit: boolean;
+  /**
+   * `true` when Claude Desktop's config directory is present on this machine.
+   * Used to decide whether to append the Cowork install hint to the summary.
+   * Detection reuses `detectClaudeDesktopPresence` from
+   * `@inkeep/open-knowledge-server`; returns false on Linux (unsupported).
+   */
+  claudeDesktopDetected: boolean;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction: 'written' | 'overwritten' | 'skipped-missing' | 'skipped-flag' | 'failed';
   mcpPath: string;
@@ -545,6 +553,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
       editors: [],
       legacyProjectConfigs: [],
       didGitInit: gitResult.didInit,
+      claudeDesktopDetected: false,
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -603,6 +612,11 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   const installSkill = options.installUserSkill ?? installUserSkill;
   const skillInstall = await installSkill({ home: options.home });
 
+  // 5. Detect Claude Desktop for the Cowork install hint (SPEC 2026-04-24
+  // D12 / FR5). Non-fatal — just controls whether the summary surfaces the
+  // hint line. Linux returns false (Anthropic doesn't ship a Linux build).
+  const claudeDesktopDetected = detectClaudeDesktopPresence({ home: options.home });
+
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const defaultAction: EditorMcpResult['action'] =
     options.mcp === false ? 'skipped-flag' : 'skipped-missing';
@@ -620,6 +634,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     launchJson,
     skillInstall,
     didGitInit: gitResult.didInit,
+    claudeDesktopDetected,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -775,6 +790,19 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         );
         break;
     }
+  }
+
+  // Chat & Cowork install hint (SPEC 2026-04-24 FR5 / D12). Surfaced only
+  // when the Claude Desktop App's config dir exists on this machine.
+  // `npx skills` covers Claude Code (including the Code tab inside the
+  // Desktop App) but not Claude Chat or Claude Cowork modes — those read
+  // from a separate, isolated Skills list and need a manual `.skill`
+  // install via `ok install-skill`.
+  if (result.claudeDesktopDetected) {
+    lines.push('');
+    lines.push(
+      `Claude Desktop App detected. To enable in Claude Chat & Cowork, run: ${accent('ok install-skill')}`,
+    );
   }
 
   // Content preview block (between MCP and Next steps)

@@ -321,7 +321,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await expect(inset).not.toHaveAttribute('data-push-pulse', '');
 
     // Click the other file in the tree to fire navigateToWithPulse.
-    await page.getByRole('button', { name: 'l2.md' }).click();
+    await page.getByRole('treeitem', { name: 'l2.md', exact: true }).click();
 
     // Pulse fires within ~50ms of the click; assert it appears.
     await expect(inset).toHaveAttribute('data-push-pulse', '', { timeout: 1500 });
@@ -342,7 +342,7 @@ test.describe('sidebar push-mode (small width)', () => {
     await expect.poll(() => isSidebarOpen(page)).toBe(true);
 
     // Click the other file. With reduced motion, no pulse attribute appears.
-    await page.getByRole('button', { name: 'm2.md' }).click();
+    await page.getByRole('treeitem', { name: 'm2.md', exact: true }).click();
 
     // Hash changed (proving navigation actually fired); pulse never appears.
     await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('m2');

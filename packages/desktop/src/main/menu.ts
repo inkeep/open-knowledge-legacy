@@ -3,7 +3,7 @@
  *
  * Covers the SPEC §8.2 File / Edit / View / Window scope at the minimum
  * useful level for M1:
- *   - File: New Project (open Navigator), Open Folder (native picker),
+ *   - File: Switch Project (open Navigator), Open Folder (native picker),
  *     Open Recent submenu, Close Window
  *   - Edit: macOS defaults (Undo/Redo/Cut/Copy/Paste/Select All)
  *   - View: Reload / Toggle DevTools / zoom / fullscreen (Electron built-in roles)
@@ -33,6 +33,7 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
 
@@ -43,7 +44,7 @@ export interface MenuDeps {
    *  can call `promptForFolder(dialog)` without importing `dialog` at module
    *  scope (breaks Bun-test module load; see file header). */
   dialog: Dialog;
-  /** Open the Project Navigator window (File → New Project…). */
+  /** Open the Project Navigator window (File → Switch Project…). */
   openNavigator(): void;
   /** Open a specific project folder (File → Open Folder… or File → Open Recent ▸ <row>). */
   openProject(projectPath: string): Promise<void>;
@@ -82,6 +83,13 @@ export interface MenuDeps {
    * the menu item is hidden there.
    */
   reconfigureMcpWiring?(): Promise<void> | void;
+  /**
+   * Ship 1g — Help → Install in Claude Desktop… click handler. Navigates
+   * the focused window's URL hash to `#install-claude-desktop` so App.tsx's
+   * `InstallInClaudeDesktopTrigger` opens the dialog. Optional because the
+   * menu renders even in contexts that don't wire it (unit tests).
+   */
+  openInstallSkillDialog?(): void;
 }
 
 /**
@@ -150,7 +158,7 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
       label: 'File',
       submenu: [
         {
-          label: 'New Project\u2026',
+          label: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS,
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => deps.openNavigator(),
         },
@@ -250,6 +258,20 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
     {
       label: 'Help',
       submenu: [
+        {
+          // SPEC 2026-04-24 Ship 1g — primary install entry point. Standard
+          // macOS/Windows convention for setup actions. The click sets the
+          // renderer's URL hash so App.tsx's InstallInClaudeDesktopTrigger
+          // opens the dialog — one source of truth for dialog visibility.
+          //
+          // Label explicitly names both modes (Claude Chat + Claude Cowork)
+          // and the Desktop App context. Distinguishes from Claude Code,
+          // which is already covered by `ok init` via `npx skills add` and
+          // would be a different install.
+          label: 'Install for Claude Chat & Cowork (Desktop App)…',
+          click: () => deps.openInstallSkillDialog?.(),
+        },
+        { type: 'separator' },
         {
           label: 'Open Knowledge on GitHub',
           click: () => deps.openExternalUrl('https://github.com/inkeep/open-knowledge'),

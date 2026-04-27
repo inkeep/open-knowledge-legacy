@@ -360,6 +360,18 @@ export interface OkDesktopBridge {
   };
 
   /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Backed by main's `openNavigator()` helper — focus-existing-or-create
+   * with no toggle semantics. Renderer call sites: `ProjectSwitcher`
+   * dropdown's "Switch Project…" item and `CommandPalette`'s "Switch
+   * Project" entry. The File menu's "Switch Project…" item invokes
+   * `openNavigator()` directly inside main without crossing the bridge.
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
+
+  /**
    * `ok seed` scaffolder surface consumed by the FileSidebar + menu.
    * `plan()` is read-only and returns what the scaffolder would write;
    * `apply(plan)` performs the writes. Mirrors the shadcn-3.0 shared-
@@ -369,6 +381,30 @@ export interface OkDesktopBridge {
   seed: {
     plan(rootDir?: string): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
+
+  /**
+   * Claude Chat & Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship
+   * 1e/1j). Drives the 2-click install via Claude.app's `.skill`
+   * `CFBundleDocumentType`. Local-build design: `.skill` is produced on
+   * demand from the app-bundled SKILL.md; no GitHub Releases dep.
+   */
+  skill: {
+    /** True when Claude Desktop's config dir exists on this machine. */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Build `openknowledge.skill` from the bundled source, save to
+     * Downloads, invoke the OS file association. Fire-and-forget —
+     * Claude's native install dialog takes over on `ok: true`.
+     */
+    buildAndOpen(): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
   };
 
   /**

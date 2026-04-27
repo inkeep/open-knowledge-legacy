@@ -209,6 +209,17 @@ export interface OkDesktopBridge {
     close(): Promise<void>;
   };
 
+  /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Lifecycle is focus-existing-or-create (idempotent on already-focused).
+   * Renderer surfaces: `ProjectSwitcher` dropdown "Switch Project…",
+   * CommandPalette "Switch Project", and File → Switch Project… (which
+   * calls main's `openNavigator()` directly via the menu binding).
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
+
   seed: {
     /**
      * Compute a scaffold plan for the current window's project (read-only).
@@ -218,6 +229,38 @@ export interface OkDesktopBridge {
     plan(rootDir?: string): Promise<OkSeedPlanResult>;
     /** Apply a ScaffoldPlan — writes folders, log.md, and config.yml entries. */
     apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
+  };
+
+  /**
+   * Cowork skill install-dialog hooks (SPEC 2026-04-24 Ship 1e). The renderer
+   * shows a React dialog explaining the 2-click install; these IPC channels
+   * implement the "concierge" actions the dialog takes.
+   */
+  skill: {
+    /**
+     * Returns true when Claude Desktop's config directory exists on this
+     * machine (macOS ~/Library/Application Support/Claude/ or Windows
+     * %APPDATA%/Claude/). False on Linux (unsupported upstream) and absent.
+     * Reuses `detectClaudeDesktopPresence` from the server package.
+     */
+    detectClaudeDesktop(): Promise<boolean>;
+    /**
+     * Build `openknowledge.skill` from the bundled SKILL.md source, save to
+     * the user's Downloads folder, then invoke the OS file association so
+     * the Claude Desktop App opens it (via its registered `.skill`
+     * CFBundleDocumentType on macOS / registry entry on Windows). Resolves
+     * with `{ok: true, path}` on success. Fire-and-forget from the
+     * renderer's perspective — Claude's own install dialog becomes the
+     * user's next surface. Local build: no network, no GitHub Releases.
+     */
+    buildAndOpen(): Promise<
+      | { ok: true; path: string }
+      | {
+          ok: false;
+          reason: 'build-failed' | 'open-failed' | 'no-downloads-dir';
+          message?: string;
+        }
+    >;
   };
 
   update: {

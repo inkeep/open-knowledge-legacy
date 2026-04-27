@@ -61,6 +61,7 @@ import {
   isDriverBootSmokeMode,
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
+import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
 import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -472,6 +473,17 @@ function refreshApplicationMenu() {
             }
           }
         : undefined,
+    // Ship 1g — Help → Install in Claude Desktop… opens the skill install
+    // dialog in the focused window via the same URL-hash trigger the command
+    // palette + docs link use. Falls back to iterating all BrowserWindows
+    // when no window is focused (e.g. menu clicked from the Dock).
+    openInstallSkillDialog: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      target.webContents.executeJavaScript(
+        "window.location.hash = '#install-claude-desktop'; undefined",
+      );
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });
@@ -675,6 +687,11 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:navigator:open', async () => {
+    openNavigator();
+    return undefined;
+  });
+
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
@@ -693,6 +710,17 @@ function registerIpcHandlers() {
   });
   handle('ok:seed:apply', async (event, plan) => {
     return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);
+  });
+
+  // Chat & Cowork skill install-dialog IPC — SPEC 2026-04-24 Ship 1e/1j.
+  // Two channels: (1) detect Claude Desktop's presence, (2) build .skill
+  // locally + invoke OS file association. No network, no GitHub Releases.
+  // See packages/desktop/src/main/ipc/install-skill.ts.
+  handle('ok:skill:detect-claude-desktop', async () => {
+    return handleDetectClaudeDesktop();
+  });
+  handle('ok:skill:build-and-open', async () => {
+    return handleBuildAndOpen({ app, shell });
   });
 }
 

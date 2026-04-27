@@ -7,8 +7,13 @@
  * the shared `runWithToast` helper exposes (success / Error-rejection /
  * non-Error / empty-message / non-rethrow / internal-clear-regression-
  * guard), keeping the silent-error class of bug out of future diffs.
+ *
+ * Plus source-level regression guards on the "Switch Project" entry that
+ * replaced the old "Start fresh in a new folder…" placeholder.
  */
 import { describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('CommandPalette module', () => {
   test('Component module imports cleanly', async () => {
@@ -74,5 +79,59 @@ describe('CommandPalette.runWithToast (IPC rejection → toast feedback)', () =>
     // Smoke — calling runWithToast without the test double must not throw.
     const { runWithToast } = await import('./CommandPalette');
     await expect(runWithToast(() => Promise.resolve(), 'fallback')).resolves.toBeUndefined();
+  });
+});
+
+describe('Switch Project entry (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  // Isolate the single CommandItem block carrying our testid. Splitting
+  // on `<CommandItem` boundaries means the chunk for our testid contains
+  // ALL wiring (icon, label, onSelect, shortcut) for THAT entry — a
+  // refactor that crosses onSelect onto a sibling item would fail the
+  // `bridge.navigator.open()` assertion below.
+  const switchProjectBlock = (() => {
+    const chunks = src.split(/(?=<CommandItem\b)/);
+    const ours = chunks.find((c) => c.includes('data-testid="command-palette-switch-project"'));
+    if (!ours) return '';
+    return ours.split('</CommandItem>')[0] ?? '';
+  })();
+
+  test('replaces the legacy "Start fresh" placeholder entry', () => {
+    expect(src).not.toContain('Start fresh in a new folder');
+    expect(src).not.toContain('command-palette-start-fresh');
+  });
+
+  test('imports the shared label constant and the LayoutGrid icon', () => {
+    expect(src).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
+    expect(src).toMatch(/import\s*\{[^}]*\bLayoutGrid\b[^}]*\}\s*from\s*'lucide-react'/);
+  });
+
+  test('Switch Project block contains LayoutGrid icon, shared label, Cmd+Shift+N hint, and bridge.navigator.open() in the SAME CommandItem', () => {
+    expect(
+      switchProjectBlock,
+      'CommandItem with command-palette-switch-project not found',
+    ).toBeTruthy();
+    expect(switchProjectBlock).toContain('<LayoutGrid');
+    expect(switchProjectBlock).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
+    expect(switchProjectBlock).toContain('<CommandShortcut>⌘⇧N</CommandShortcut>');
+    // Wiring lives inside this CommandItem's onSelect — guards against a
+    // refactor that swaps the call onto a sibling CommandItem (open-folder,
+    // install-claude-desktop, recent-*, open-in-agent-*).
+    expect(switchProjectBlock).toMatch(/bridge\.navigator\.open\(\)/);
+  });
+
+  test('search-token value covers FR4(e) substrings (switch / projects / navigator)', () => {
+    // The cmdk `value` prop drives substring matching. Each required
+    // partial must be reachable from this entry's value tokens. `manage`
+    // was dropped per spec D3 — the Navigator does not currently support
+    // manage operations (rename/move/remove are NG3 Future Work), so
+    // surfacing the entry on `manage` would set a mental-model trap.
+    const valueLine = switchProjectBlock.match(/value="switch-project[^"]*"/)?.[0] ?? '';
+    expect(valueLine).toContain('switch');
+    expect(valueLine).toContain('projects');
+    expect(valueLine).toContain('navigator');
+    expect(valueLine).not.toContain('manage');
   });
 });

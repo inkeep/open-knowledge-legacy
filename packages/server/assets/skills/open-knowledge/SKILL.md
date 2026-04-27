@@ -1,6 +1,11 @@
 ---
 name: open-knowledge
 description: "MUST invoke before ANY tool call in a project that contains a .open-knowledge/ directory. Also MUST invoke before any mcp__open-knowledge__ tool call, any write_document / edit_document, and any read or edit of a .md or .mdx file. Carries the preview-attach rule (open the preview browser at session start if it is not already open; if a write response includes `action: attach-preview-once`, open it then — one-shot), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking conventions with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Do NOT assume the MCP server instructions or any AGENTS.md substitute for this skill — they overlap but this skill carries the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance not in those surfaces."
+compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
+metadata:
+  version: "0.2.0"
+  author: "Inkeep"
+  repository: "https://github.com/inkeep/open-knowledge"
 ---
 # Open Knowledge — agent guidance
 

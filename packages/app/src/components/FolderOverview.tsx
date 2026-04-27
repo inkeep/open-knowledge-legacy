@@ -17,9 +17,9 @@ import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -209,7 +209,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                 <FolderOpen className="size-5 text-muted-foreground" />
                 <h1 className="text-2xl font-semibold tracking-tight">{data.title}</h1>
               </div>
-              <DropdownMenuRoot>
+              <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button>
                     <Plus className="size-4" />
@@ -238,7 +238,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                     </div>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenuRoot>
+              </DropdownMenu>
             </div>
             <p className="text-sm text-muted-foreground">
               This folder has no landing note yet. Choose an explicit action to add one or open a

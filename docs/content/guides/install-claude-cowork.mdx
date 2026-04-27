@@ -1,0 +1,117 @@
+---
+title: Install for Claude Chat & Cowork (Desktop App)
+description: One-command install for getting the Open Knowledge skill into the Claude Desktop App so it's available in Claude Chat and Claude Cowork modes.
+---
+
+This page covers installing the Open Knowledge skill for use inside the **Claude Desktop App** — specifically in **Claude Chat** and **Claude Cowork** modes.
+
+<Callout type="info" title="Not needed for Claude Code">
+If you use **Claude Code** (the CLI or the Code tab inside the Claude Desktop App), you're already covered. `ok init` installed the skill via `npx skills add` — see [Getting started](/guides/getting-started). **This page is specifically for the Claude Desktop App's Chat and Cowork modes**, which the Desktop App keeps in a separate, isolated Skills list.
+</Callout>
+
+## What this does
+
+- Adds an `open-knowledge` skill to the Claude Desktop App's Skills list
+- Makes the skill available in **Claude Chat** (the default conversational tab)
+- Makes the skill available in **Claude Cowork** (the agentic VM mode)
+- Does **not** affect Claude Code (already set up separately)
+
+## Install — one command
+
+<Callout type="warn" title="Claude Code in the Desktop App already works — don't repeat these steps for it">
+The **Code tab inside the Claude Desktop App** is Claude Code and reads its skills from `~/.claude/skills/`, which `ok init` already populated. **Do not run this command for Claude Code** — it's specifically for **Claude Chat** and **Claude Cowork** modes.
+</Callout>
+
+Run this in your terminal:
+
+```bash
+npx @inkeep/open-knowledge install-skill
+```
+
+Or if you have `@inkeep/open-knowledge` installed:
+
+```bash
+ok install-skill
+```
+
+**What the command does:**
+
+1. Builds `openknowledge.skill` from the CLI's bundled source.
+2. Saves it to `~/Downloads/openknowledge.skill`.
+3. Opens the **Claude Desktop App** for you.
+
+**Then upload it manually** (5 clicks inside the Claude Desktop App — the `.skill` file association opens the app, but doesn't auto-install):
+
+1. In the Claude Desktop App sidebar: **Customize** → **Skills**.
+2. Click the **+** button.
+3. Click **Create skill**.
+4. Click **Upload skill**.
+5. Pick `openknowledge.skill` from your **Downloads** folder.
+
+The skill appears in your Skills list toggled on. Use it in any Chat or Cowork session.
+
+<Callout type="info" title="If `Customize → Skills` isn't visible in the Claude Desktop App">
+Enable it first: **Settings → Capabilities → Code execution and file creation**.
+</Callout>
+
+## Flags
+
+- `--out <path>` — write `openknowledge.skill` to a custom path instead of `~/Downloads/`
+- `--no-open` — build the file but skip the OS file-association handoff. Useful for Team / Enterprise admins who want the file to upload via **Organization settings → Skills → + Add**, or for scripted workflows.
+
+## Verify it's working
+
+In a new Claude Chat or Cowork session, ask:
+
+> Use the `open-knowledge` skill to summarize what's in this workspace.
+
+Claude should recognize the skill, list its available commands, and use Open Knowledge's conventions for reading/writing markdown.
+
+## If the skill "appears installed but doesn't fire"
+
+Claude Cowork has an [open bug class](https://github.com/anthropics/claude-code/issues/26254) where custom skills register in the UI but don't mount in the session VM at runtime. Symptom: `open-knowledge` shows enabled in **Customize → Skills**, but trying to use it produces *"it looks like there isn't a `[skill]` skill available in your current setup"* — or silently does nothing.
+
+**Workaround:**
+
+1. In the Claude Desktop App: **Customize → Skills** → find `open-knowledge` → delete it.
+2. Run `ok install-skill` again — this rebuilds the file + reopens the Desktop App.
+3. Repeat the 5-click upload sequence (**Customize → Skills → + → Create skill → Upload skill** → pick the file).
+4. Start a **fresh** Claude Cowork session.
+
+There's a related "Save and Replace" bug ([#46836](https://github.com/anthropics/claude-code/issues/46836)) where same-name re-installs silently no-op. Same workaround: delete first, then re-upload.
+
+<Callout type="warn" title="Cowork persistence is currently unreliable">
+Until Anthropic resolves the mount-bug class ([#26254](https://github.com/anthropics/claude-code/issues/26254), [#31542](https://github.com/anthropics/claude-code/issues/31542), [#39400](https://github.com/anthropics/claude-code/issues/39400)), installed skills may need to be re-installed after Claude Desktop App restarts or session resets. This affects every third-party Cowork skill, not just Open Knowledge.
+
+**Claude Chat mode is less affected** than Cowork — Chat's Skills are more persistent because it doesn't spawn per-session VMs.
+</Callout>
+
+## For Team / Enterprise admins
+
+If your organization is on a **Team** or **Enterprise** plan, you can provision Open Knowledge org-wide instead of asking each user to install individually. Build the file first, then upload via the org console:
+
+```bash
+ok install-skill --no-open --out ./openknowledge.skill
+```
+
+Then as an Org Owner:
+
+1. Open **Organization settings → Skills → + Add**.
+2. Upload `openknowledge.skill`.
+3. Every org member gets it in their Skills list by default — visible immediately in both Chat and Cowork.
+
+**GitHub-sync path (not recommended yet):** Anthropic's Team+ *plugin* marketplace pulls from a GitHub repo on push, but it's for **plugins** (bundles of MCP + skills), not standalone Skills, and the Claude Desktop App has two open bugs that affect GitHub-sourced marketplaces ([#39400](https://github.com/anthropics/claude-code/issues/39400), [#38429](https://github.com/anthropics/claude-code/issues/38429)). Direct upload is more reliable today.
+
+## Related
+
+<Cards>
+  <Card title="Getting started" href="/guides/getting-started">
+    Initialize a project and wire MCP across Claude Code, Cursor, Codex, Windsurf.
+  </Card>
+  <Card title="MCP integration" href="/guides/mcp-integration">
+    How the MCP server connects agents to the knowledge base.
+  </Card>
+  <Card title="Open in Agent Desktop" href="/guides/open-in-agent-desktop">
+    Hand off individual docs to Claude, Codex, or Cursor via URL-scheme dispatch.
+  </Card>
+</Cards>

@@ -49,6 +49,13 @@ extraResources:
       - "!**/*.d.ts.map"
   - from: "resources/cli/bin/ok.sh"
     to: "cli/bin/ok.sh"
+  # Top-level discoverable third-party attribution. The same file ships inside
+  # cli/dist via the rule above; this places a copy at the Resources root so
+  # license reviewers and an eventual in-app About panel can find it without
+  # crawling cli/dist/. Electron's own LICENSE + LICENSES.chromium.html are
+  # placed by electron-builder automatically and cover Electron + Chromium.
+  - from: "../cli/dist/THIRD_PARTY_NOTICES.md"
+    to: "THIRD_PARTY_NOTICES.md"
 
 asarUnpack:
   - "**/*.node"
@@ -73,9 +80,15 @@ mac:
   # (`build/icon.png`) because Electron's runtime nativeImage API can't
   # consume `.icon` bundles yet — tracked in electron/electron#48476.
   icon: build/okglass.icon
+  # arm64-only until the universal-DMG keyring SHA-parity fix lands (NG1 in
+  # specs/2026-04-24-desktop-packaging-first-boot/). bun installs only the
+  # host-arch keyring native (@napi-rs/keyring-darwin-arm64), so
+  # @electron/universal.makeUniversalApp rejects the SHA-identical binary in
+  # both slices. Narrowing to arm64 keeps the packaged-boot path green; Intel
+  # Mac support returns when NG1 ships.
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
     # `.zip` is required by the electron-updater / Squirrel.Mac swap path.
     # MacUpdater.ts:~89 calls `findFile(files, "zip", ["pkg", "dmg"])` — it
     # downloads the ZIP variant (not the DMG) and pipes it to Squirrel.Mac
@@ -84,7 +97,7 @@ mac:
     # that needs `.zip`; M2 shipped DMG-only because auto-update was out of
     # M2's scope (NG4). See specs/2026-04-21-m3-electron-updater/ D6.
     - target: zip
-      arch: [universal]
+      arch: [arm64]
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

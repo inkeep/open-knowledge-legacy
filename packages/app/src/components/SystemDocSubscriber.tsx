@@ -1,14 +1,44 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
+import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { createSyncedReconnectGate } from '@/lib/server-info-refresh';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { collabUrl, setSystemProvider } = useDocumentContext();
+  const {
+    collabUrl,
+    setSystemProvider,
+    updateServerInstanceId,
+    onBranchSwitched,
+    observeBranch,
+    observeDiskAck,
+    refreshServerInfo,
+  } = useDocumentContext();
+
+  // Ref pattern: dispatchers are re-created per-render in DocumentContext's `value`
+  // literal. Capturing them by closure inside `onStateless` would tie the main
+  // effect's lifecycle to every render. One ref over an object holds all five
+  // dispatchers; a no-deps effect refreshes the snapshot after every render.
+  const handlersRef = useRef({
+    updateServerInstanceId,
+    onBranchSwitched,
+    observeBranch,
+    observeDiskAck,
+    refreshServerInfo,
+  });
+  useEffect(() => {
+    handlersRef.current = {
+      updateServerInstanceId,
+      onBranchSwitched,
+      observeBranch,
+      observeDiskAck,
+      refreshServerInfo,
+    };
+  });
 
   useEffect(() => {
     if (collabUrl === null) return;
@@ -18,12 +48,30 @@ export function SystemDocSubscriber() {
       name: SYSTEM_DOC_NAME,
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
-        const signal = parseCC1Signal(payload);
-        if (!signal) {
-          console.warn('[CC1] Unparseable stateless payload, skipping:', payload.slice(0, 100));
-          return;
-        }
-        emitDocumentsChanged([signal.ch]);
+        // CC1 stateless channel multiplexes four payload shapes via the
+        // shared dispatcher in `@/lib/cc1` — adding a fifth channel is
+        // a one-place edit there, not parallel updates here + the
+        // integration harness's `attachSystemDocSubscriber`.
+        dispatchCC1Stateless(payload, {
+          onServerInfo: (info) => {
+            handlersRef.current.updateServerInstanceId(info.serverInstanceId);
+            if (info.currentBranch !== undefined) {
+              void handlersRef.current.observeBranch(info.currentBranch);
+            }
+          },
+          onBranchSwitched: (p) => {
+            void handlersRef.current.onBranchSwitched(p.branch);
+          },
+          onDiskAck: (p) => {
+            handlersRef.current.observeDiskAck(p.docName, p.sv);
+          },
+          onDerivedView: (p) => {
+            emitDocumentsChanged([p.ch]);
+          },
+          onUnknown: (raw) => {
+            console.warn('[CC1] Unparseable stateless payload, skipping:', raw.slice(0, 100));
+          },
+        });
       },
       onClose: ({ event }) => {
         console.warn('[CC1] __system__ connection closed:', event.code, event.reason);
@@ -44,8 +92,21 @@ export function SystemDocSubscriber() {
       }
     });
 
+    // Track first-sync vs subsequent-sync via the shared
+    // `createSyncedReconnectGate` helper — same semantics as the
+    // integration harness's `attachSystemDocSubscriber`, single
+    // source of truth for the "fire-on-reconnect-only" wire-up. The
+    // boot fetch (DocumentContext) already covers the initial sync,
+    // so we skip the first one to avoid a redundant request. After
+    // that, every `synced` is a real WebSocket reconnect — re-fetch
+    // /api/server-info to recover any disk-ack / server-info /
+    // branch-switched frames missed during the WS drop.
+    const onReconnectSynced = createSyncedReconnectGate(() => {
+      void handlersRef.current.refreshServerInfo();
+    });
     provider.on('synced', () => {
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
+      onReconnectSynced();
     });
 
     // One-shot per-clientID warning when a stale bundled client still publishes

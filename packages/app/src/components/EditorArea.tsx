@@ -14,11 +14,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
+import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
+import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
@@ -55,6 +57,7 @@ function EditorAreaInner({
     docPanelExpandSignal,
   } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  const stats = useDocumentStats(activeProvider, activeDocName);
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
   // value via `useDocumentContext`). The editor subtree, however, pays a
@@ -70,6 +73,7 @@ function EditorAreaInner({
   // at 250ms shell-snap.
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
+  const showFooter = !!activeDocName && activeTarget?.kind !== 'folder' && editorMode !== 'diff';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -258,8 +262,9 @@ function EditorAreaInner({
   );
 
   const editorContent = (
-    <div className="relative h-full">
-      {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+    <div className="relative flex h-full flex-col">
+      <div className="relative min-h-0 flex-1">
+        {/* No outer scroller. Scrolling is owned by (a) DiffView's own
           internal scroller in diff mode and (b) the per-Activity scroller
           inside EditorActivityPool in editor mode. Hoisting the scroller
           to this level would let the Activity subtree's content contract
@@ -267,21 +272,21 @@ function EditorAreaInner({
           losing the user's position across warm navigation (QA-002 /
           SPEC US-007/F1). */}
 
-      {/* Diff view — shown when editorMode === 'diff' */}
-      {isDiffMode && previewLoading && (
-        <div
-          className="flex items-center justify-center py-16"
-          role="status"
-          aria-label="Loading version"
-        >
-          <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-        </div>
-      )}
-      {isDiffMode && !previewLoading && diffContent !== null && (
-        <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
-      )}
+        {/* Diff view — shown when editorMode === 'diff' */}
+        {isDiffMode && previewLoading && (
+          <div
+            className="flex items-center justify-center py-16"
+            role="status"
+            aria-label="Loading version"
+          >
+            <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+          </div>
+        )}
+        {isDiffMode && !previewLoading && diffContent !== null && (
+          <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
+        )}
 
-      {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+        {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
           Outer display:none keeps the editor DOM alive when in diff mode.
           EditorActivityPool keeps Tiptap eager and lazy-loads SourceEditor on
           the first source-mode visit for each doc, then preserves the per-doc
@@ -294,34 +299,34 @@ function EditorAreaInner({
           hidden doc's cached rejected syncPromise cannot re-throw into
           the visible UI (QA-023/024). See EditorActivityPool.tsx file
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-      <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-        <EditorActivityPool
-          // Fall back to the urgent `activeDocName` when the deferred
-          // value is still null (initial load, before the first
-          // deferred-commit pass populates it). The outer guard at
-          // line 173 already short-circuits with skeleton/empty-state
-          // when `activeDocName` itself is null, so we can assert
-          // non-null here.
-          activeDocName={deferredActiveDocName ?? activeDocName}
-          isSourceMode={isSourceMode}
-          editorPlaceholder={editorPlaceholder}
-          previousDocName={previousDocName ?? undefined}
-          onNavigateBack={(prev) => {
-            // Navigate via hash so the URL stays in sync with app state —
-            // NavigationHandler's hashchange listener will call
-            // openDocumentTransition(prev). If the hash is already at
-            // prev (rare — happens when back-nav is used after agent
-            // nav without URL update), fall back to direct transition.
-            const nextHash = hashFromDocName(prev);
-            if (window.location.hash === nextHash) {
-              openDocumentTransition(prev);
-            } else {
-              window.location.hash = nextHash;
-            }
-          }}
-          onRecycle={recycleDocument}
-        />
-        {/* Nav-pending skeleton overlay. Rendered when the urgent
+        <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+          <EditorActivityPool
+            // Fall back to the urgent `activeDocName` when the deferred
+            // value is still null (initial load, before the first
+            // deferred-commit pass populates it). The outer guard at
+            // line 173 already short-circuits with skeleton/empty-state
+            // when `activeDocName` itself is null, so we can assert
+            // non-null here.
+            activeDocName={deferredActiveDocName ?? activeDocName}
+            isSourceMode={isSourceMode}
+            editorPlaceholder={editorPlaceholder}
+            previousDocName={previousDocName ?? undefined}
+            onNavigateBack={(prev) => {
+              // Navigate via hash so the URL stays in sync with app state —
+              // NavigationHandler's hashchange listener will call
+              // openDocumentTransition(prev). If the hash is already at
+              // prev (rare — happens when back-nav is used after agent
+              // nav without URL update), fall back to direct transition.
+              const nextHash = hashFromDocName(prev);
+              if (window.location.hash === nextHash) {
+                openDocumentTransition(prev);
+              } else {
+                window.location.hash = nextHash;
+              }
+            }}
+            onRecycle={recycleDocument}
+          />
+          {/* Nav-pending skeleton overlay. Rendered when the urgent
             `activeDocName` (shell state — driving sidebar highlight +
             header title) has moved past `deferredActiveDocName` (editor
             subtree prop). That delta window is exactly the interval
@@ -335,13 +340,15 @@ function EditorAreaInner({
             without unmounting it — Activity state (scroll, selection,
             editor instances) survives underneath. Regression test:
             docs-open.e2e.ts F0b. */}
-        {activeDocName && activeDocName !== deferredActiveDocName ? (
-          <div className="absolute inset-0 z-10 bg-background">
-            <EditorSkeleton />
-          </div>
-        ) : null}
+          {activeDocName && activeDocName !== deferredActiveDocName ? (
+            <div className="absolute inset-0 z-10 bg-background">
+              <EditorSkeleton />
+            </div>
+          ) : null}
+        </div>
+        {toggleButton}
       </div>
-      {toggleButton}
+      {showFooter && <EditorFooter stats={stats} />}
     </div>
   );
 

@@ -1,1 +1,2 @@
+bash scripts/check-agents-md-size.sh
 bun run lint-staged
