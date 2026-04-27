@@ -20,6 +20,7 @@ import {
   planSeed as planSeedImpl,
   type ScaffoldPlan,
   SeedPrerequisiteError,
+  SeedRootDirError,
 } from '@inkeep/open-knowledge-server';
 import type { OkSeedApplyResult, OkSeedPlanResult } from '../../shared/bridge-contract.ts';
 
@@ -71,6 +72,9 @@ export async function handleSeedPlan(deps: SeedIpcDeps, rootDir?: string): Promi
   } catch (err) {
     if (err instanceof SeedPrerequisiteError) {
       return { ok: false, error: { kind: 'prerequisite-missing', message: err.message } };
+    }
+    if (err instanceof SeedRootDirError) {
+      return { ok: false, error: { kind: 'invalid-root', message: err.message } };
     }
     return {
       ok: false,

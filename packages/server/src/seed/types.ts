@@ -130,6 +130,21 @@ export class SeedPrerequisiteError extends Error {
 }
 
 /**
+ * Thrown by planSeed() when the user-supplied `rootDir` is unusable —
+ * absolute, contains `..` segments, resolves outside the project directory,
+ * or otherwise rejected by normalization. Distinct from
+ * `SeedPrerequisiteError` so callers (CLI, HTTP route, Electron IPC) can
+ * surface a focused "fix your input" message rather than emit telemetry as
+ * if the server malfunctioned.
+ */
+export class SeedRootDirError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SeedRootDirError';
+  }
+}
+
+/**
  * Filename of the workspace config under `.open-knowledge/`. Duplicates the
  * same literal defined in `packages/cli/src/constants.ts:CONFIG_FILENAME` —
  * kept local so the server-side seed module has no CLI dependency.

@@ -135,7 +135,13 @@ import {
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
-import { applySeed, planSeed, type ScaffoldPlan, SeedPrerequisiteError } from './seed/index.ts';
+import {
+  applySeed,
+  planSeed,
+  type ScaffoldPlan,
+  SeedPrerequisiteError,
+  SeedRootDirError,
+} from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
@@ -5358,11 +5364,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
         return;
       }
-      // rootDir-validation rejections come through as plain Errors. Return as
-      // an `internal`-kind result with a 200 (not 500) so the dialog can
-      // render the message inline rather than treat it as a transport failure.
+      if (err instanceof SeedRootDirError) {
+        json(res, 200, {
+          ok: false,
+          error: { kind: 'invalid-root', message: err.message },
+        });
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
-      json(res, 200, { ok: false, error: { kind: 'internal', message } });
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
     }
   }
 

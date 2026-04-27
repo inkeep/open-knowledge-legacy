@@ -217,7 +217,7 @@ export interface OkScaffoldApplyResult {
 }
 
 export interface OkSeedError {
-  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }
 export type OkSeedPlanResult =

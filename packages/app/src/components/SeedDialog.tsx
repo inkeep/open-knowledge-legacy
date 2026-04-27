@@ -1,5 +1,5 @@
 import { BrainCircuit, ChevronRight, FileText, Folder, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -75,6 +75,10 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
   // 'project-root' scaffolds at `.`; 'subfolder' uses the typed `subfolder` value.
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
   const [subfolder, setSubfolder] = useState<string>('brain');
+  // Tracks whether the next re-plan is the first one this open cycle. The
+  // first one fires immediately so the dialog renders without a 200ms delay;
+  // subsequent runs (driven by typing) keep the debounce. Reset on open.
+  const isFirstLoadRef = useRef(true);
 
   // Reset form whenever the dialog opens so users get a predictable starting
   // state (rather than stale values from a previous cancel).
@@ -82,19 +86,40 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
     if (open) {
       setRootChoice('project-root');
       setSubfolder('brain');
+      isFirstLoadRef.current = true;
     }
   }, [open]);
 
-  // Re-plan whenever the chosen root changes. Debounced lightly so typing in
-  // the subfolder field doesn't fire a request per keystroke.
+  // Whitespace-only subfolder while the "subfolder" radio is selected is a
+  // form error — we surface it inline and gate Initialize. Computed once per
+  // render so both the effect and the JSX read the same source of truth.
+  const trimmedSubfolder = subfolder.trim();
+  const subfolderInvalid = rootChoice === 'subfolder' && trimmedSubfolder === '';
+
+  // Re-plan whenever the chosen root changes. The first run after open fires
+  // immediately; subsequent runs (driven by typing in the subfolder field)
+  // get a 200ms debounce. The loading flip happens INSIDE the timer so typing
+  // doesn't strobe "Computing scaffold plan…" between keystrokes.
   useEffect(() => {
     if (!open) return;
-    setPhase({ kind: 'loading' });
 
-    const effectiveRoot = rootChoice === 'project-root' ? undefined : subfolder.trim() || undefined;
+    if (subfolderInvalid) {
+      setPhase({ kind: 'error', message: 'Enter a folder name (e.g. brain).' });
+      return;
+    }
+
+    const effectiveRoot = rootChoice === 'project-root' ? undefined : trimmedSubfolder;
+    const delay = isFirstLoadRef.current ? 0 : 200;
+    isFirstLoadRef.current = false;
 
     let cancelled = false;
     const timer = setTimeout(() => {
+      if (cancelled) return;
+      // Only flip to a loading visual if no plan is already on screen — keeps
+      // the live preview smooth when the user is still typing.
+      setPhase((prev) =>
+        prev.kind === 'plan' || prev.kind === 'already-seeded' ? prev : { kind: 'loading' },
+      );
       seedClient()
         .plan(effectiveRoot)
         .then((result) => {
@@ -114,16 +139,16 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
           if (cancelled) return;
           setPhase({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
         });
-    }, 200);
+    }, delay);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [open, rootChoice, subfolder]);
+  }, [open, rootChoice, trimmedSubfolder, subfolderInvalid]);
 
   async function handleApply() {
-    if (phase.kind !== 'plan') return;
+    if (phase.kind !== 'plan' || subfolderInvalid) return;
     setPhase({ kind: 'applying', plan: phase.plan });
     const result = await seedClient().apply(phase.plan);
     if (result.ok) {
@@ -168,7 +193,9 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
             {phase.kind === 'already-seeded' || phase.kind === 'error' ? 'Close' : 'Cancel'}
           </Button>
           {phase.kind === 'plan' ? (
-            <Button onClick={handleApply}>Initialize</Button>
+            <Button onClick={handleApply} disabled={subfolderInvalid}>
+              Initialize
+            </Button>
           ) : phase.kind === 'applying' ? (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
@@ -225,6 +252,11 @@ function RootPicker({
           <span className="block text-xs text-muted-foreground">
             Created if missing. Reuses the folder if it already exists.
           </span>
+          {/*
+           * No `disabled` here: clicking the input promotes the radio via
+           * onFocus, so the user can switch to subfolder mode and start
+           * typing in one click. With `disabled` set, focus would never fire.
+           */}
           <Input
             value={subfolder}
             onChange={(e) => onSubfolderChange(e.target.value)}
@@ -234,7 +266,6 @@ function RootPicker({
             autoCapitalize="off"
             autoCorrect="off"
             className="mt-1.5 font-mono text-xs"
-            disabled={choice !== 'subfolder'}
           />
         </span>
       </label>

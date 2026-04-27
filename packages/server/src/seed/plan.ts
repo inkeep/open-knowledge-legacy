@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { parseDocument } from 'yaml';
 import { STARTER_FOLDERS, starterFolderRule } from './starter.ts';
 import type { ConfigEdit, FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
 const LOG_MD_FILENAME = 'log.md';
 
@@ -31,19 +31,36 @@ function readExistingFolderMatches(configYmlRaw: string | null): string[] {
 /**
  * Normalize a user-supplied rootDir to a POSIX-style relative path with no
  * trailing slash. `.` and `''` both collapse to `''` (= project-root scaffold,
- * historical behavior). Leading `./` is stripped. Rejects absolute paths and
- * `..` escape segments — the brain must live inside the project.
+ * historical behavior).
+ *
+ * String-shape checks reject the obvious bad inputs (absolute paths, `..`
+ * segments). The resolved-path containment check after that catches every
+ * platform-specific shape that string-level checks miss: Windows UNC paths
+ * (`\\server\share`), drive-letter forms (`C:/foo`), and any other input
+ * whose `path.resolve(projectDir, rootDir)` lands outside `projectDir`.
  */
-function normalizeRootDir(rootDir: string | undefined): string {
+function normalizeRootDir(rootDir: string | undefined, projectDir: string): string {
   if (!rootDir) return '';
   const trimmed = rootDir.trim();
   if (trimmed === '' || trimmed === '.' || trimmed === './') return '';
   if (trimmed.startsWith('/')) {
-    throw new Error(`rootDir must be relative to the project directory, got: ${rootDir}`);
+    throw new SeedRootDirError(
+      `rootDir must be relative to the project directory, got: ${rootDir}`,
+    );
   }
   const posix = trimmed.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
   if (posix.split('/').some((seg) => seg === '..')) {
-    throw new Error(`rootDir must not contain '..' segments, got: ${rootDir}`);
+    throw new SeedRootDirError(`rootDir must not contain '..' segments, got: ${rootDir}`);
+  }
+  // Path-shape verification: the resolved absolute path must equal projectDir
+  // (impossible here since posix is non-empty) or sit strictly under it. The
+  // `+ sep` guard prevents `<projectDir>foo` from passing as `<projectDir>/foo`.
+  const projectAbs = resolve(projectDir);
+  const candidateAbs = resolve(projectAbs, posix);
+  if (candidateAbs !== projectAbs && !candidateAbs.startsWith(projectAbs + sep)) {
+    throw new SeedRootDirError(
+      `rootDir must resolve inside the project directory, got: ${rootDir}`,
+    );
   }
   return posix;
 }
@@ -70,7 +87,7 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
     );
   }
 
-  const rootDir = normalizeRootDir(opts.rootDir);
+  const rootDir = normalizeRootDir(opts.rootDir, projectDir);
 
   const created: FileEntry[] = [];
   const skipped: SkipEntry[] = [];

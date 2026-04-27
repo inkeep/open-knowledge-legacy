@@ -29,7 +29,10 @@ export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
   | {
       ok: false;
-      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+      error: {
+        kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
+        message: string;
+      };
     };
 
 /** Renderer-facing result of `okDesktop.seed.apply(plan)`. Mirrors `SeedApplyResult` in main. */

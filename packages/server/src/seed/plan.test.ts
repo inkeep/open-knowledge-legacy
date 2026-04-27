@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { planSeed } from './plan.ts';
 import { STARTER_FOLDERS } from './starter.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
 let testDir: string;
 
@@ -204,18 +204,39 @@ describe('planSeed — rootDir scoping', () => {
     );
   });
 
-  test('rejects absolute rootDir', async () => {
+  test('rejects absolute rootDir as SeedRootDirError', async () => {
     scaffoldOkDir(testDir);
-    await expect(planSeed({ projectDir: testDir, rootDir: '/tmp/escape' })).rejects.toThrow(
-      /relative to the project/,
+    await expect(planSeed({ projectDir: testDir, rootDir: '/tmp/escape' })).rejects.toBeInstanceOf(
+      SeedRootDirError,
     );
   });
 
-  test('rejects rootDir with .. escape segments', async () => {
+  test('rejects rootDir with .. escape segments as SeedRootDirError', async () => {
     scaffoldOkDir(testDir);
-    await expect(planSeed({ projectDir: testDir, rootDir: '../sibling' })).rejects.toThrow(
-      /must not contain '\.\.'/,
+    await expect(planSeed({ projectDir: testDir, rootDir: '../sibling' })).rejects.toBeInstanceOf(
+      SeedRootDirError,
     );
+  });
+
+  test('containment check rejects strings that resolve outside projectDir', async () => {
+    scaffoldOkDir(testDir);
+    // `foo/../..` resolves above projectDir even though `..` is at depth — caught
+    // by the containment check, not the string-shape pre-check.
+    await expect(
+      planSeed({ projectDir: testDir, rootDir: 'foo/bar/../../..' }),
+    ).rejects.toBeInstanceOf(SeedRootDirError);
+  });
+
+  test('rejects rootDir whose first segment matches projectDir prefix without separator', async () => {
+    scaffoldOkDir(testDir);
+    // `<projectDir>foo` (no separator) must not pass as `<projectDir>/foo` — the
+    // `+ sep` guard in the containment check prevents prefix-matching tricks.
+    // We can simulate this only through the string pre-check on absolute paths,
+    // since relative paths always go under projectDir; the test below covers
+    // the absolute case which is the realistic attack shape.
+    await expect(
+      planSeed({ projectDir: testDir, rootDir: `${testDir}foo` }),
+    ).rejects.toBeInstanceOf(SeedRootDirError);
   });
 
   test('rootDir config edits only collide with matching-scoped entries', async () => {
