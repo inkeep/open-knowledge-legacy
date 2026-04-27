@@ -1,5 +1,5 @@
 import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } from 'lucide-react';
-import { useRef } from 'react';
+import { type ComponentProps, type FC, useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
 import { ProjectSwitcher } from '@/components/ProjectSwitcher';
 import { UpdateNotices } from '@/components/UpdateNotices';
@@ -28,13 +28,29 @@ export function FileSidebar() {
     </ProfilerBoundary>
   );
 }
+interface ToolbarButtonProps extends ComponentProps<typeof Button> {
+  icon: FC;
+  label: string;
+}
+
+const ToolbarButton: FC<ToolbarButtonProps> = ({ icon: Icon, label, ...props }) => {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label={label} {...props}>
+          <Icon aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+};
 
 function FileSidebarInner() {
   // Imperative handle to the FileTree — replaces the prior createTrigger seq
   // counter. Header buttons call methods directly; no useEffect on the child
   // side, no "did-I-already-handle-this-seq" bookkeeping. See FileTree.tsx.
   const fileTreeRef = useRef<FileTreeHandle | null>(null);
-
   return (
     <Sidebar variant="inset">
       <SidebarHeader className="flex-row items-center justify-between">
@@ -54,16 +70,9 @@ function FileSidebarInner() {
            * for toolbar menus.
            */}
           <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label="Tree view options">
-                    <ListCollapse aria-hidden="true" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>Tree view options</TooltipContent>
-            </Tooltip>
+            <DropdownMenuTrigger asChild>
+              <ToolbarButton icon={ListCollapse} label="Tree view options" />
+            </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => fileTreeRef.current?.expandAll()}>
                 <UnfoldVertical aria-hidden="true" />
@@ -75,32 +84,16 @@ function FileSidebarInner() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="New file"
-                onClick={() => fileTreeRef.current?.startCreating('file', '')}
-              >
-                <SquarePen aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New File</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="New folder"
-                onClick={() => fileTreeRef.current?.startCreating('folder', '')}
-              >
-                <FolderPlus aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New Folder</TooltipContent>
-          </Tooltip>
+          <ToolbarButton
+            icon={SquarePen}
+            label="New file"
+            onClick={() => fileTreeRef.current?.startCreating('file', '')}
+          />
+          <ToolbarButton
+            icon={FolderPlus}
+            label="New Folder"
+            onClick={() => fileTreeRef.current?.startCreating('folder', '')}
+          />
         </div>
       </SidebarHeader>
       <SidebarContent>
