@@ -22,6 +22,7 @@ import {
   installUserSkill,
   ProjectGitInitError,
 } from '@inkeep/open-knowledge-server';
+import checkbox from '@inquirer/checkbox';
 import { Command } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
@@ -111,6 +112,55 @@ function writeTomlConfig(path: string, config: Record<string, unknown>): void {
 }
 
 // ---------------------------------------------------------------------------
+// Scope types + helpers
+// ---------------------------------------------------------------------------
+
+type McpScope = 'user' | 'project' | 'both';
+
+const writesUser = (s: McpScope) => s !== 'project';
+const writesProject = (s: McpScope) => s !== 'user';
+
+/**
+ * Prompt the user interactively to select MCP scope via a checkbox multi-select.
+ * Both 'user' and 'project' are pre-selected (default answer: 'both').
+ */
+async function promptMcpScope(): Promise<McpScope> {
+  const choices = await checkbox({
+    message: 'Where should the MCP server be configured?',
+    choices: [
+      {
+        name: 'User-level  (~/.claude.json, ~/.cursor/mcp.json, …)',
+        value: 'user' as const,
+        checked: true,
+      },
+      {
+        name: 'Project-level  (.mcp.json, .cursor/mcp.json, …)',
+        value: 'project' as const,
+        checked: true,
+      },
+    ],
+  });
+  if (choices.includes('user') && choices.includes('project')) return 'both';
+  if (choices.includes('user')) return 'user';
+  if (choices.includes('project')) return 'project';
+  return 'both'; // neither selected → default both (same as non-TTY default)
+}
+
+export async function resolveMcpScope(opts: {
+  scope?: McpScope;
+  mcp?: boolean;
+  isTTY?: boolean;
+  promptFn?: () => Promise<McpScope>;
+}): Promise<McpScope> {
+  if (opts.mcp === false) return 'user'; // --no-mcp wins; scope irrelevant
+  if (opts.scope) return opts.scope;
+  const tty = opts.isTTY ?? process.stdout.isTTY;
+  if (!tty) return 'both';
+  const prompt = opts.promptFn ?? promptMcpScope;
+  return prompt();
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -121,9 +171,11 @@ export interface EditorMcpResult {
   configPath: string;
   serverName: string;
   error?: string;
+  /** Set when the result came from an explicit project-scope write. */
+  configScope?: 'user' | 'project';
 }
 
-interface LegacyProjectConfigResult {
+interface ProjectConfigResult {
   editorId: EditorId;
   label: string;
   path: string;
@@ -145,6 +197,12 @@ interface InitCommandOptions {
    * `@inkeep/open-knowledge-server`. Introduced per SPEC 2026-04-22 FR6.
    */
   installUserSkill?: (opts?: InstallUserSkillOptions) => Promise<InstallUserSkillResult>;
+  /** MCP scope: user-level only, project-level only, or both. */
+  scope?: McpScope;
+  /** Test hook: override isTTY detection for the interactive scope prompt. */
+  isTTY?: boolean;
+  /** Test hook: inject a custom promptFn for the interactive scope prompt. */
+  promptFn?: () => Promise<McpScope>;
 }
 
 interface InitCommandResult {
@@ -152,8 +210,8 @@ interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
-  /** Legacy project-local MCP configs left in place after global init. */
-  legacyProjectConfigs: LegacyProjectConfigResult[];
+  /** Project-local MCP configs detected (excluding ones we just wrote). */
+  legacyProjectConfigs: ProjectConfigResult[];
   /**
    * Result of the user-global Agent Skill install step (SPEC 2026-04-22 FR6).
    * `undefined` only when `content` scaffolding failed before the install
@@ -306,11 +364,12 @@ export function writeEditorMcpConfig(
   cwd: string,
   installOptions: McpInstallOptions,
   home?: string,
+  configPathOverride?: string,
 ): EditorMcpResult {
   const serverName = target.serverName(cwd);
   let configPath: string;
   try {
-    configPath = target.configPath(cwd, home);
+    configPath = configPathOverride ?? target.configPath(cwd, home);
   } catch (err) {
     return {
       editorId: target.id,
@@ -325,7 +384,13 @@ export function writeEditorMcpConfig(
   // M6b bypass (US-006): the consent dialog showed the editor's checkbox and
   // the user explicitly toggled it. Skipping on `isEditorTargetAvailable` would
   // silently drop their choice — treat the click as the consent.
-  if (!installOptions.skipAvailabilityCheck && !isEditorTargetAvailable(target, cwd, home)) {
+  // Also skip the check for project-scope writes (configPathOverride set) — the
+  // project directory always exists by definition.
+  if (
+    !configPathOverride &&
+    !installOptions.skipAvailabilityCheck &&
+    !isEditorTargetAvailable(target, cwd, home)
+  ) {
     return {
       editorId: target.id,
       label: target.label,
@@ -397,19 +462,20 @@ export function writeEditorMcpConfig(
     action: existing !== undefined ? 'overwritten' : 'written',
     configPath,
     serverName,
+    ...(configPathOverride !== undefined ? { configScope: 'project' as const } : {}),
   };
 }
 
-function collectLegacyProjectConfig(
+function collectProjectConfig(
   target: EditorMcpTarget,
   cwd: string,
-): LegacyProjectConfigResult | undefined {
-  const legacyPath = target.legacyProjectConfigPath?.(cwd);
-  if (!legacyPath || !existsSync(legacyPath)) return undefined;
+): ProjectConfigResult | undefined {
+  const projectPath = target.projectConfigPath?.(cwd);
+  if (!projectPath || !existsSync(projectPath)) return undefined;
   return {
     editorId: target.id,
     label: target.label,
-    path: legacyPath,
+    path: projectPath,
   };
 }
 
@@ -567,7 +633,17 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     isEditorTargetAvailable(target, cwd, options.home),
   );
 
+  const scope = await resolveMcpScope({
+    scope: options.scope,
+    mcp: options.mcp,
+    isTTY: options.isTTY,
+    promptFn: options.promptFn,
+  });
+
   const editorResults: EditorMcpResult[] = [];
+  // Track project-scope paths we wrote so we can suppress them from the notice.
+  const writtenProjectPaths = new Set<string>();
+
   for (const target of targets) {
     if (options.mcp === false) {
       let configPath = '';
@@ -586,14 +662,28 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
       });
       continue;
     }
-    editorResults.push(writeEditorMcpConfig(target, cwd, installOptions, options.home));
+
+    if (writesUser(scope)) {
+      editorResults.push(writeEditorMcpConfig(target, cwd, installOptions, options.home));
+    }
+    if (writesProject(scope) && target.projectConfigPath) {
+      const projPath = target.projectConfigPath(cwd);
+      const projResult = writeEditorMcpConfig(target, cwd, installOptions, options.home, projPath);
+      editorResults.push(projResult);
+      if (projResult.action === 'written' || projResult.action === 'overwritten') {
+        writtenProjectPaths.add(projPath);
+      }
+    }
   }
+
   const legacyProjectConfigs =
     options.mcp === false
       ? []
       : availableTargets
-          .map((target) => collectLegacyProjectConfig(target, cwd))
-          .filter((result): result is LegacyProjectConfigResult => result !== undefined);
+          .map((target) => collectProjectConfig(target, cwd))
+          .filter((result): result is ProjectConfigResult => result !== undefined)
+          // Suppress paths we just wrote during project-scope install.
+          .filter((result) => !writtenProjectPaths.has(result.path));
 
   // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
   const hasClaude = availableTargets.some((target) => target.id === 'claude');
@@ -715,7 +805,9 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
         ? relative(cwd, editor.configPath)
         : editor.configPath.replace(/^\/Users\/[^/]+/, '~');
       const serverNameNote = editor.serverName === MCP_SERVER_NAME ? '' : ` (${editor.serverName})`;
-      const pad = ' '.repeat(Math.max(1, 14 - editor.label.length));
+      const scopeTag = editor.configScope === 'project' ? ' (project)' : '';
+      const labelWithScope = `${editor.label}${scopeTag}`;
+      const pad = ' '.repeat(Math.max(1, 20 - labelWithScope.length));
       const restartHint =
         editor.editorId === 'claude-desktop' &&
         (editor.action === 'written' || editor.action === 'overwritten')
@@ -724,19 +816,19 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       switch (editor.action) {
         case 'written':
           lines.push(
-            `  ${editor.label}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
+            `  ${labelWithScope}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
           );
           break;
         case 'overwritten':
           lines.push(
-            `  ${editor.label}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
+            `  ${labelWithScope}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
           );
           break;
         case 'skipped-missing':
-          lines.push(`  ${editor.label}${pad}${displayPath}  config root missing; skipped`);
+          lines.push(`  ${labelWithScope}${pad}${displayPath}  config root missing; skipped`);
           break;
         case 'failed':
-          lines.push(`  ${editor.label}${pad}${displayPath}  FAILED: ${editor.error}`);
+          lines.push(`  ${labelWithScope}${pad}${displayPath}  FAILED: ${editor.error}`);
           break;
         case 'skipped-flag':
           break;
@@ -756,12 +848,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 
   if (result.legacyProjectConfigs.length > 0) {
     lines.push('');
-    lines.push('Legacy project MCP configs detected:');
-    for (const legacy of result.legacyProjectConfigs) {
-      lines.push(`  ${legacy.label}  ${relative(cwd, legacy.path)}`);
+    lines.push('Project MCP configs found:');
+    for (const proj of result.legacyProjectConfigs) {
+      lines.push(`  ${proj.label}  ${relative(cwd, proj.path)}`);
     }
     lines.push(
-      '  These project-local files may override the new global config. Remove them if you want fully user-scoped MCP setup in this project.',
+      '  These project-local files may override the global config. Remove them if you want fully user-scoped MCP setup in this project.',
     );
   }
 
@@ -870,7 +962,8 @@ export function initCommand(): Command {
       '--dev-mcp',
       'Register a local dev MCP entry using node + packages/cli/dist/cli.mjs with debug logging',
     )
-    .action(async (opts: { mcp?: boolean; devMcp?: boolean }) => {
+    .option('--scope <scope>', 'Write MCP config at user level, project level, or both')
+    .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope }) => {
       const cwd = process.cwd();
 
       let result: InitCommandResult;
@@ -879,6 +972,7 @@ export function initCommand(): Command {
           cwd,
           mcp: opts.mcp,
           devMcp: opts.devMcp,
+          scope: opts.scope,
         });
       } catch (err) {
         if (err instanceof ProjectGitInitError) {
