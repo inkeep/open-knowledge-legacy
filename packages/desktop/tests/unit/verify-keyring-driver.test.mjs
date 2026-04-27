@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { setImmediate } from 'node:timers/promises';
 import {
   classifyInputPath,
   parseArgs,
@@ -258,9 +259,9 @@ describe('runDriver (full orchestration)', () => {
     // simulating signal-driven exit. Fire SIGINT via setImmediate above.
     const runPromise = runDriver(['node', 'script', '/tmp/foo.dmg'], deps);
     // Let the event loop drain so the setImmediate + signal cleanup runs
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
+    await setImmediate();
+    await setImmediate();
+    await setImmediate();
 
     expect(exits).toEqual([130]);
     expect(rm).toHaveBeenCalled();
@@ -296,8 +297,8 @@ describe('runDriver (full orchestration)', () => {
       timeoutMs: 60_000,
     });
     const runPromise = runDriver(['node', 'script', '/tmp/app.app'], deps);
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
+    await setImmediate();
+    await setImmediate();
     expect(exits).toEqual([143]);
     expect(deps.messages.stderr.join('')).toContain('received SIGTERM');
     runPromise.catch(() => {});
@@ -330,8 +331,8 @@ describe('runDriver (full orchestration)', () => {
       timeoutMs: 60_000,
     });
     const runPromise = runDriver(['node', 'script', '/tmp/app.app'], deps);
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
+    await setImmediate();
+    await setImmediate();
     expect(exits).toEqual([130]); // single exit despite two signal fires
     runPromise.catch(() => {});
   });
