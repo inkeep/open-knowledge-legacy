@@ -1,5 +1,5 @@
 /**
- * Per-tab identity constants (D50, US-024).
+ * Per-tab identity constants.
  *
  * `tabSessionId` is generated once at module load — frozen for the lifetime
  * of the browser tab. Two tabs opening the same document will have distinct

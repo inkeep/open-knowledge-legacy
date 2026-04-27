@@ -217,7 +217,7 @@ export interface OkScaffoldApplyResult {
 }
 
 export interface OkSeedError {
-  kind: 'no-project' | 'prerequisite-missing' | 'internal';
+  kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }
 export type OkSeedPlanResult =
@@ -379,7 +379,7 @@ export interface OkDesktopBridge {
    * (`ok seed`). See SPEC 2026-04-23-ok-seed-scaffold.
    */
   seed: {
-    plan(): Promise<OkSeedPlanResult>;
+    plan(rootDir?: string): Promise<OkSeedPlanResult>;
     apply(plan: OkScaffoldPlan): Promise<OkSeedApplyResult>;
   };
 

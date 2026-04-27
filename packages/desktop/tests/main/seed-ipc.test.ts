@@ -64,6 +64,17 @@ describe('handleSeedPlan', () => {
       expect(result.error.message).toBe('boom');
     }
   });
+
+  test('returns {ok:false, invalid-root} when rootDir resolves outside projectDir', async () => {
+    scaffoldOkDir(testDir);
+    // Real planSeed (no inject) — exercises the typed-error path end-to-end.
+    const result = await handleSeedPlan({ resolveProjectRoot: () => testDir }, '/tmp/escape');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('invalid-root');
+      expect(result.error.message).toContain('relative');
+    }
+  });
 });
 
 describe('handleSeedApply', () => {

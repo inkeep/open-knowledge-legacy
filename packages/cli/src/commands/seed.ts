@@ -22,6 +22,12 @@ import { accent, dim, error as errorColor, info, success, warning } from '../ui/
 
 interface SeedCommandOptions {
   cwd?: string;
+  /**
+   * Subfolder (relative to `cwd`) where the knowledge-base starter pack is
+   * scaffolded. `.` / `''` scaffolds at the project root (historical behavior).
+   * When omitted and stdin is a TTY, the user is prompted interactively.
+   */
+  root?: string;
   /** Skip the Y/n confirmation prompt. */
   yes?: boolean;
   /** Print the plan and exit without writing. */
@@ -49,7 +55,7 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
 
   let plan: ScaffoldPlan;
   try {
-    plan = await planSeed({ projectDir: cwd });
+    plan = await planSeed({ projectDir: cwd, rootDir: opts.root });
   } catch (err) {
     if (err instanceof SeedPrerequisiteError) {
       return {
@@ -98,6 +104,8 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     }
   }
 
+  // applySeed reads absolute paths from plan.created/configEdits directly, so
+  // it needs only projectDir — rootDir is already baked into the plan entries.
   const applyResult = await applySeed(plan, { projectDir: cwd });
 
   if (applyResult.errors.length > 0) {
@@ -189,20 +197,30 @@ async function confirm(prompt: string, input?: NodeJS.ReadableStream): Promise<b
 export function seedCommand(): Command {
   return new Command('seed')
     .description(
-      'Scaffold the Karpathy three-layer knowledge-base structure (external-sources/, research/, articles/) + log.md + config.yml folders: entries',
+      'Scaffold the Karpathy three-layer knowledge-base structure (external-sources/, research/, articles/) + log.md + config.yml folders: entries. Use --root to place them inside a subfolder instead of the project root.',
     )
     .argument('[path]', 'Project directory (defaults to cwd)')
+    .option(
+      '-r, --root <path>',
+      'Subfolder (relative to the project dir) to scaffold into — created if missing. Defaults to the project root when omitted in non-interactive runs; prompts on a TTY.',
+    )
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--dry-run', 'Print the plan and exit without writing')
-    .action(async (pathArg: string | undefined, opts: { yes?: boolean; dryRun?: boolean }) => {
-      const result = await runSeed({
-        cwd: pathArg ?? process.cwd(),
-        yes: opts.yes,
-        dryRun: opts.dryRun,
-      });
-      process.stdout.write(`${result.message}\n`);
-      if (result.exitCode !== 0) {
-        process.exitCode = result.exitCode;
-      }
-    });
+    .action(
+      async (
+        pathArg: string | undefined,
+        opts: { root?: string; yes?: boolean; dryRun?: boolean },
+      ) => {
+        const result = await runSeed({
+          cwd: pathArg ?? process.cwd(),
+          root: opts.root,
+          yes: opts.yes,
+          dryRun: opts.dryRun,
+        });
+        process.stdout.write(`${result.message}\n`);
+        if (result.exitCode !== 0) {
+          process.exitCode = result.exitCode;
+        }
+      },
+    );
 }

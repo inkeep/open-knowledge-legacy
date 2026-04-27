@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
+  CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
-  CC1Broadcaster,
-  type CC1Signal,
-  isSystemDoc,
+  CC1BranchSwitchedPayloadSchema,
+  CC1DerivedViewPayloadSchema,
+  CC1DiskAckPayloadSchema,
   SYSTEM_DOC_NAME,
-} from './cc1-broadcast.ts';
+} from '@inkeep/open-knowledge-core';
+import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
 function wait(ms: number): Promise<void> {
@@ -65,7 +68,7 @@ describe('CC1Broadcaster', () => {
     }
     await wait(150);
     expect(broadcasts).toHaveLength(1);
-    const payload: CC1Signal = JSON.parse(broadcasts[0]);
+    const payload = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(payload).toEqual({ v: 1, ch: 'files', seq: 1 });
   });
 
@@ -77,13 +80,13 @@ describe('CC1Broadcaster', () => {
 
     // 'files' should have fired at ~100ms, 'backlinks' not yet
     expect(broadcasts).toHaveLength(1);
-    const first: CC1Signal = JSON.parse(broadcasts[0]);
+    const first = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
     expect(first.ch).toBe('files');
 
     await wait(50);
     // 'backlinks' should have fired by now (~120ms after its signal)
     expect(broadcasts).toHaveLength(2);
-    const second: CC1Signal = JSON.parse(broadcasts[1]);
+    const second = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[1]));
     expect(second.ch).toBe('backlinks');
     expect(second.seq).toBe(1);
   });
@@ -97,7 +100,7 @@ describe('CC1Broadcaster', () => {
     await wait(120);
 
     expect(broadcasts).toHaveLength(3);
-    const seqs = broadcasts.map((b) => (JSON.parse(b) as CC1Signal).seq);
+    const seqs = broadcasts.map((b) => CC1DerivedViewPayloadSchema.parse(JSON.parse(b)).seq);
     expect(seqs).toEqual([1, 2, 3]);
   });
 
@@ -110,7 +113,7 @@ describe('CC1Broadcaster', () => {
     await wait(120);
 
     expect(broadcasts).toHaveLength(3);
-    const payloads = broadcasts.map((b) => JSON.parse(b) as CC1Signal);
+    const payloads = broadcasts.map((b) => CC1DerivedViewPayloadSchema.parse(JSON.parse(b)));
     expect(payloads[0]).toEqual({ v: 1, ch: 'files', seq: 1 });
     expect(payloads[1]).toEqual({ v: 1, ch: 'backlinks', seq: 1 });
     expect(payloads[2]).toEqual({ v: 1, ch: 'files', seq: 2 });
@@ -156,11 +159,192 @@ describe('CC1Broadcaster', () => {
   test('payload shape matches CC1 contract v1', async () => {
     broadcaster.signal('files');
     await wait(150);
-    const payload = JSON.parse(broadcasts[0]);
-    expect(payload).toHaveProperty('v', 1);
-    expect(payload).toHaveProperty('ch', 'files');
-    expect(payload).toHaveProperty('seq');
-    expect(typeof payload.seq).toBe('number');
+    const payload = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({ v: 1, ch: 'files', seq: 1 });
     expect(Object.keys(payload).sort()).toEqual(['ch', 'seq', 'v']);
+  });
+
+  test('CC1_CHANNEL_BRANCH_SWITCHED exported as "branch-switched"', () => {
+    expect(CC1_CHANNEL_BRANCH_SWITCHED).toBe('branch-switched');
+  });
+
+  test('emitBranchSwitched publishes payload with branch + seq=1 on first call', () => {
+    broadcaster.emitBranchSwitched('main');
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1BranchSwitchedPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({
+      v: 1,
+      ch: CC1_CHANNEL_BRANCH_SWITCHED,
+      seq: 1,
+      branch: 'main',
+    });
+  });
+
+  test('emitBranchSwitched emits synchronously — no debounce', () => {
+    broadcaster.emitBranchSwitched('feature-x');
+    // No wait — branch switches are discrete events, emit immediately.
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitBranchSwitched seq increments monotonically across calls', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('feature-x');
+    broadcaster.emitBranchSwitched('feature-y');
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map((b) => CC1BranchSwitchedPayloadSchema.parse(JSON.parse(b)).seq);
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitBranchSwitched carries the supplied branch name', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('detached-abc123');
+    broadcaster.emitBranchSwitched('feature/user-auth');
+    const branches = broadcasts.map(
+      (b) => CC1BranchSwitchedPayloadSchema.parse(JSON.parse(b)).branch,
+    );
+    expect(branches).toEqual(['main', 'detached-abc123', 'feature/user-auth']);
+  });
+
+  test('emitBranchSwitched broadcasts on __system__ doc', () => {
+    // Remove __system__ — emit must be a no-op (graceful degradation like signal()).
+    mockHocuspocus.documents.clear();
+    broadcaster.emitBranchSwitched('main');
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitBranchSwitched updates cc1LastSeq metric for branch-switched channel', () => {
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitBranchSwitched('feature-x');
+    const m = getMetrics();
+    expect(m.cc1LastSeq[CC1_CHANNEL_BRANCH_SWITCHED]).toBe(2);
+    expect(m.cc1BroadcastCount).toBe(2);
+  });
+
+  test('emitBranchSwitched seq independent from signal()-driven channels', async () => {
+    broadcaster.signal('files');
+    await wait(120);
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.signal('files');
+    await wait(120);
+
+    // First + third broadcasts are derived-view ('files'); second is branch-switched.
+    const derived0 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    const branchSwitch = CC1BranchSwitchedPayloadSchema.parse(JSON.parse(broadcasts[1]));
+    const derived2 = CC1DerivedViewPayloadSchema.parse(JSON.parse(broadcasts[2]));
+    expect(derived0).toMatchObject({ ch: 'files', seq: 1 });
+    expect(branchSwitch).toMatchObject({ ch: CC1_CHANNEL_BRANCH_SWITCHED, seq: 1, branch: 'main' });
+    expect(derived2).toMatchObject({ ch: 'files', seq: 2 });
+  });
+
+  test('emitDiskAck publishes payload with docName + base64 sv + seq=1 on first call', () => {
+    const sv = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    broadcaster.emitDiskAck('notes/intro', sv);
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload).toEqual({
+      v: 1,
+      ch: CC1_CHANNEL_DISK_ACK,
+      seq: 1,
+      docName: 'notes/intro',
+      sv: Buffer.from(sv).toString('base64'),
+    });
+  });
+
+  test('emitDiskAck round-trips the state vector via base64', () => {
+    // Realistic SV: encoded by Y.js, several bytes including high bytes.
+    // The wire encoding (base64) must preserve byte-identity so the client's
+    // `decodeStateVector(payload.sv)` reproduces the original Uint8Array.
+    const sv = new Uint8Array([0x00, 0x7f, 0x80, 0xff, 0x42, 0x10]);
+    broadcaster.emitDiskAck('doc-a', sv);
+    const payload = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    const decoded = Buffer.from(payload.sv, 'base64');
+    expect(new Uint8Array(decoded)).toEqual(sv);
+  });
+
+  test('emitDiskAck emits synchronously — no debounce', () => {
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1, 2, 3]));
+    // No wait — disk-ack tracks completed disk writes, emit immediately.
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitDiskAck seq increments monotonically across docs', () => {
+    // Per-document is irrelevant to seq — the seq is per-channel for
+    // observability uniformity, not for client-side ordering.
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([3]));
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map((b) => CC1DiskAckPayloadSchema.parse(JSON.parse(b)).seq);
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitDiskAck graceful no-op when __system__ document missing', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1, 2, 3]));
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitDiskAck updates cc1LastSeq metric for disk-ack channel', () => {
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+    const m = getMetrics();
+    expect(m.cc1LastSeq[CC1_CHANNEL_DISK_ACK]).toBe(2);
+    expect(m.cc1BroadcastCount).toBe(2);
+  });
+
+  test('emitDiskAck seq independent from other channels', async () => {
+    broadcaster.signal('files');
+    await wait(120);
+    broadcaster.emitBranchSwitched('main');
+    broadcaster.emitDiskAck('doc-a', new Uint8Array([1]));
+    broadcaster.emitDiskAck('doc-b', new Uint8Array([2]));
+
+    const ack1 = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[2]));
+    const ack2 = CC1DiskAckPayloadSchema.parse(JSON.parse(broadcasts[3]));
+    expect(ack1.seq).toBe(1);
+    expect(ack2.seq).toBe(2);
+  });
+
+  test('getLatestDiskAckSVsAsBase64 returns empty object before any flush', () => {
+    expect(broadcaster.getLatestDiskAckSVsAsBase64()).toEqual({});
+  });
+
+  test('getLatestDiskAckSVsAsBase64 returns the latest SV per docName', () => {
+    broadcaster.emitDiskAck('notes/intro', new Uint8Array([0xde, 0xad]));
+    broadcaster.emitDiskAck('notes/details', new Uint8Array([0xbe, 0xef]));
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(Object.keys(snapshot).sort()).toEqual(['notes/details', 'notes/intro']);
+    expect(snapshot['notes/intro']).toBe(Buffer.from([0xde, 0xad]).toString('base64'));
+    expect(snapshot['notes/details']).toBe(Buffer.from([0xbe, 0xef]).toString('base64'));
+  });
+
+  test('getLatestDiskAckSVsAsBase64 reflects the most recent emit per docName', () => {
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01]));
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01, 0x02]));
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01, 0x02, 0x03]));
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot.doc).toBe(Buffer.from([0x01, 0x02, 0x03]).toString('base64'));
+  });
+
+  // Late-join recovery contract: the snapshot is the source of truth for
+  // `__system__`-disconnected clients to refresh `lastDiskAckedSV` on
+  // reconnect via `GET /api/server-info`. It MUST advance even when the
+  // broadcast itself was dropped (no `__system__` subscribers, document
+  // missing). Otherwise a client that reconnects after a brief drop
+  // would receive a stale snapshot and the missed-frame bug recurs.
+  test('getLatestDiskAckSVsAsBase64 advances even when broadcast is dropped (no __system__ subscribers)', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitDiskAck('doc', new Uint8Array([0xab, 0xcd]));
+    expect(broadcasts).toHaveLength(0);
+    const snapshot = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot.doc).toBe(Buffer.from([0xab, 0xcd]).toString('base64'));
+  });
+
+  test('getLatestDiskAckSVsAsBase64 returns a fresh object each call (caller-owned)', () => {
+    broadcaster.emitDiskAck('doc', new Uint8Array([0x01]));
+    const snapshot1 = broadcaster.getLatestDiskAckSVsAsBase64();
+    const snapshot2 = broadcaster.getLatestDiskAckSVsAsBase64();
+    expect(snapshot1).not.toBe(snapshot2);
+    expect(snapshot1).toEqual(snapshot2);
   });
 });

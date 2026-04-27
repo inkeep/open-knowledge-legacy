@@ -12,8 +12,10 @@ import type {
 } from './types.ts';
 
 /**
- * Content lookup for scaffolded files. Keyed by the `path` field from a
- * `FileEntry`. Folders have no content and are not represented here.
+ * Content lookup for scaffolded files. Keyed by the `template` field from a
+ * `FileEntry` (stable across `rootDir` choices — an entry might land at
+ * `log.md` or `brain/log.md` on disk, but its template id stays `log.md`).
+ * Folders have no content and are not represented here.
  */
 const FILE_CONTENT: Readonly<Record<string, string>> = {
   'log.md': LOG_MD_TEMPLATE,
@@ -57,9 +59,13 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
     (e): e is FileEntry & { kind: 'file' } => e.kind === 'file',
   )) {
     const absPath = join(projectDir, entry.path);
-    const content = FILE_CONTENT[entry.path];
+    const templateId = entry.template ?? entry.path;
+    const content = FILE_CONTENT[templateId];
     if (content === undefined) {
-      errors.push({ path: entry.path, error: `No content template registered for ${entry.path}` });
+      errors.push({
+        path: entry.path,
+        error: `No content template registered for template id "${templateId}"`,
+      });
       continue;
     }
     if (existsSync(absPath)) {

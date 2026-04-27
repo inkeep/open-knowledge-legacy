@@ -205,7 +205,7 @@ export interface RequestChannels {
    * 2026-04-23-ok-seed-scaffold. Renderer branches on `result.ok` then
    * renders the plan (unseeded) or "already seeded" (empty plan).
    */
-  'ok:seed:plan': { args: []; result: SeedPlanResult };
+  'ok:seed:plan': { args: [rootDir?: string]; result: SeedPlanResult };
   /**
    * Apply a previously-computed ScaffoldPlan to disk. Writes folders, the
    * optional log.md, and `config.yml` `folders:` entries. Returns an

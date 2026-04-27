@@ -131,11 +131,18 @@ import {
 } from './metrics.ts';
 import {
   deleteReconciledBase,
+  getActiveBranch,
   isWithinContentDir,
   safeContentPath,
   setReconciledBase,
 } from './persistence.ts';
-import { applySeed, planSeed, type ScaffoldPlan, SeedPrerequisiteError } from './seed/index.ts';
+import {
+  applySeed,
+  planSeed,
+  type ScaffoldPlan,
+  SeedPrerequisiteError,
+  SeedRootDirError,
+} from './seed/index.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
 import {
   listRescueCheckpoints,
@@ -529,6 +536,14 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * Per-process UUID advertised via `GET /api/server-info` and the
+   * `__system__` CC1 `server-info` broadcast. Clients cache this value
+   * and claim it in the `expectedServerInstanceId` field of their auth
+   * token on every connect; the server rejects on mismatch. Part of the
+   * CRDT server-restart recovery defense.
+   */
+  serverInstanceId: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /** Accessor for the alias map (alias docName → canonical docName). */
@@ -547,6 +562,17 @@ export interface ApiExtensionOptions {
   flushGitCommit?: () => Promise<void>;
   /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
   getCurrentBranch?: () => string | null;
+  /**
+   * Accessor for the latest disk-ack state vectors per document. Wired
+   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
+   * Returned as part of `GET /api/server-info` so clients can recover
+   * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
+   * without relying on stateless CC1 broadcasts (which have no replay).
+   * Empty `{}` is the cold-server case (no docs flushed yet); omitted
+   * when the broadcaster isn't available (e.g. plugin mode in dev
+   * server). Values are base64-encoded `Uint8Array` state vectors.
+   */
+  getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
@@ -595,9 +621,9 @@ export interface ApiExtensionOptions {
    */
   projectDir?: string;
   /**
-   * Getter for the server's principal record (D50, US-024).
-   * Called at request time so deferred async init propagates.
-   * Returns null if principal has not yet been loaded or loading failed.
+   * Getter for the server's principal record. Called at request time so
+   * deferred async init propagates. Returns null if principal has not
+   * yet been loaded or loading failed.
    */
   getPrincipal?: () => Principal | null;
   /**
@@ -704,12 +730,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     hocuspocus,
     sessionManager,
     contentDir,
+    serverInstanceId,
     getFileIndex,
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
     getCurrentBranch,
+    getDiskAckSVs,
     contentRoot,
     backlinkIndex,
     signalChannel,
@@ -3243,6 +3271,71 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  /**
+   * GET /api/server-info
+   *
+   * Returns `{ ok, serverInstanceId, currentBranch, currentDiskAckSVs }`.
+   * Called by the client's `ProviderPool` as a boot-time warmup BEFORE
+   * any WebSocket provider opens, so the first provider's auth token
+   * can carry `expectedServerInstanceId` and `expectedBranch` on the
+   * very first connect (avoiding one "null-claim accept → broadcast →
+   * populate cache → next connect claim" cycle on cold start).
+   *
+   * `currentBranch` is the late-join backstop for CC1's `branch-switched`
+   * stateless broadcast — disconnected clients reconnecting compare it
+   * against their last-observed branch and trigger `handleBranchSwitched`
+   * on mismatch (also surfaced as the `expectedBranch` auth-token claim,
+   * see `auth-token-schema.ts`). Always populated — `getActiveBranch()`
+   * defaults to `'main'` when git is disabled.
+   *
+   * `currentDiskAckSVs` is the late-join backstop for the per-doc CC1
+   * `disk-ack` channel — same recovery shape as `currentBranch` but the
+   * per-doc state vector watermark used by mismatch-recycle baseline-
+   * selection. Omitted in dev/plugin mode (no CC1 broadcaster).
+   *
+   * Gating: protected by the global `/api/*` Origin allowlist (CSRF
+   * guard against cross-origin browsers). No-Origin requests (curl,
+   * server-to-server, LAN peers using non-browser tooling) pass through
+   * — the same posture as the rest of the read-side `/api/*` surface
+   * (`/api/documents`, `/api/document`, `/api/pages`, `/api/backlinks`).
+   * Disclosure shape: `serverInstanceId` is a per-process random UUID;
+   * `currentBranch` matches the workspace's git history; the SV map
+   * enumerates the same docName set as `/api/documents` plus per-
+   * client Lamport op counts (random clientID, no wall-clock).
+   * Single-user-loopback deployment model is documented in
+   * `standalone.ts` near the principalAuthExtension; hosted/multi-
+   * tenant deployments must wrap this entire `/api/*` class with
+   * authentication and per-caller scoping.
+   */
+  async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const currentBranch = getActiveBranch();
+    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
+    // server) doesn't have a CC1Broadcaster and omits the field. The
+    // schema's `.optional()` keeps the response shape valid in both
+    // cases without a separate "no broadcaster" branch on the client.
+    const currentDiskAckSVs = getDiskAckSVs?.();
+    // `Cache-Control: no-store` matches the disclosure semantics: every
+    // field is per-process / per-moment state. A back/forward-cached
+    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
+    // the recycle baseline-selection on the next mismatch.
+    json(
+      res,
+      200,
+      {
+        ok: true,
+        serverInstanceId,
+        currentBranch,
+        ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
+      },
+      { 'Cache-Control': 'no-store' },
+    );
+  }
+
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -5333,20 +5426,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Gated on `checkLocalOpSecurity` because the operation mutates the local
   // filesystem; same contract as /api/local-op/* and /api/installed-agents.
 
+  /**
+   * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
+   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
+   * (absolute path, escape segments) surface as `{ ok: false, error }` so
+   * the dialog can render the message without an HTTP failure.
+   */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const rootDir = url.searchParams.get('rootDir') ?? undefined;
     try {
-      const plan = await planSeed({ projectDir: contentDir });
+      const plan = await planSeed({ projectDir: contentDir, rootDir });
       json(res, 200, { ok: true, plan });
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
         json(res, 200, {
           ok: false,
           error: { kind: 'prerequisite-missing', message: err.message },
+        });
+        return;
+      }
+      if (err instanceof SeedRootDirError) {
+        json(res, 200, {
+          ok: false,
+          error: { kind: 'invalid-root', message: err.message },
         });
         return;
       }
@@ -5377,6 +5485,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
+      // The plan already has rootDir baked into its entries — apply only
+      // needs projectDir.
       const result = await applySeed(plan, { projectDir: contentDir });
       json(res, 200, { ok: true, result });
     } catch (err) {
@@ -5452,6 +5562,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/metrics/agent-presence': handleMetricsAgentPresence,
+    '/api/server-info': handleServerInfo,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,

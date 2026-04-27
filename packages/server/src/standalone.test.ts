@@ -716,3 +716,354 @@ describe('createServer() server-lock integration (V0-1)', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 });
+
+describe('createServer() — serverInstanceId', () => {
+  let tmpDirA: string;
+  let tmpDirB: string;
+
+  beforeEach(async () => {
+    tmpDirA = await mkdtemp(join(tmpdir(), 'ok-iid-a-'));
+    tmpDirB = await mkdtemp(join(tmpdir(), 'ok-iid-b-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDirA, { recursive: true, force: true });
+    await rm(tmpDirB, { recursive: true, force: true });
+  });
+
+  test('each createServer() call produces a distinct serverInstanceId (UUID)', async () => {
+    const serverA = createServer({ contentDir: tmpDirA, projectDir: tmpDirA, quiet: true });
+    const serverB = createServer({ contentDir: tmpDirB, projectDir: tmpDirB, quiet: true });
+    try {
+      await serverA.ready;
+      await serverB.ready;
+
+      // Both IDs are non-empty strings.
+      expect(typeof serverA.serverInstanceId).toBe('string');
+      expect(serverA.serverInstanceId.length).toBeGreaterThan(0);
+      expect(typeof serverB.serverInstanceId).toBe('string');
+      expect(serverB.serverInstanceId.length).toBeGreaterThan(0);
+
+      // UUID v4 shape (8-4-4-4-12 hex with the `-4` version nibble).
+      expect(serverA.serverInstanceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(serverB.serverInstanceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+
+      // Distinct between instances — this is the load-bearing property for
+      // the CRDT restart-recovery defense: every server process advertises
+      // a fresh ID so a client's cached prior ID will mismatch and force a
+      // recycle before Yjs sync can merge stale state.
+      expect(serverA.serverInstanceId).not.toBe(serverB.serverInstanceId);
+    } finally {
+      await serverA.destroy();
+      await serverB.destroy();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// US-002 / Commit 4: onAuthenticate enforcement for expectedServerInstanceId.
+// Exercises the principalAuthExtension directly rather than through a live
+// WebSocket — the hook is deterministic and the onAuthenticate contract is
+// "throw with reason X → client sees authenticationFailed({reason: X})".
+// Full end-to-end behavior is covered by the bug-class integration tests
+// (T1/T2/T6/T9 flip from FAIL→PASS at this commit).
+// ---------------------------------------------------------------------------
+describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-auth-mismatch-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // Pull the principalAuthExtension out of the configured Hocuspocus
+  // extensions list via its `__kind: 'principal-auth'` marker. Matching on a
+  // named marker is robust against future additions of other extensions
+  // that also implement `onAuthenticate` — the `find` by function existence
+  // alone would silently pick the wrong one.
+  function getAuthExtension(server: Awaited<ReturnType<typeof createServer>>): {
+    onAuthenticate: (payload: unknown) => Promise<void>;
+  } {
+    const ext = server.hocuspocus.configuration.extensions.find(
+      (e) => (e as { __kind?: string }).__kind === 'principal-auth',
+    ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+    if (!ext) throw new Error('expected principalAuthExtension on hocuspocus.configuration');
+    return ext;
+  }
+
+  test('token claiming a mismatched expectedServerInstanceId is rejected', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const staleToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: 'stale-server-id-from-prior-process',
+      });
+      const context: Record<string, unknown> = {};
+
+      let thrown: unknown = null;
+      try {
+        await authExt.onAuthenticate({
+          token: staleToken,
+          context,
+          documentName: 'test-doc',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).not.toBeNull();
+      expect((thrown as { reason?: string }).reason).toBe('server-instance-mismatch');
+      // Rejection happens before context mutation — no partial state leaks
+      // through to the connection's identity.
+      expect(context.principalId).toBeUndefined();
+      expect(context.kind).toBeUndefined();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('token claiming the matching serverInstanceId is accepted', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const goodToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: server.serverInstanceId,
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: goodToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // No throw, and the principal path still hoisted the identity into ctx.
+      expect(context.kind).toBe('human');
+      expect(context.tabSessionId).toBe('s-1');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('legacy token without expectedServerInstanceId is accepted (backward compat)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const legacyToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: legacyToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      expect(context.kind).toBe('human');
+      expect(context.tabSessionId).toBe('s-1');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('missing token is accepted (anonymous legacy path)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: undefined,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // Anonymous path — no principal, no kind.
+      expect(context.principalId).toBeUndefined();
+      expect(context.kind).toBeUndefined();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('empty-string expectedServerInstanceId claim is treated as absent (not rejected)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const emptyClaimToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedServerInstanceId: '',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: emptyClaimToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // No throw — empty claim is legacy-equivalent and accepted.
+      expect(context.kind).toBe('human');
+    } finally {
+      await server.destroy();
+    }
+  });
+});
+
+// expectedBranch is the late-join backstop for cross-branch invalidation:
+// CC1 `branch-switched` is stateless (no replay), so a client offline
+// during the broadcast misses it. The auth-token claim mirrors
+// expectedServerInstanceId — server rejects on mismatch, client routes
+// the rejection through handleBranchSwitched.
+describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-auth-branch-'));
+  });
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function getAuthExtension(server: Awaited<ReturnType<typeof createServer>>): {
+    onAuthenticate: (payload: unknown) => Promise<void>;
+  } {
+    const ext = server.hocuspocus.configuration.extensions.find(
+      (e) => (e as { __kind?: string }).__kind === 'principal-auth',
+    ) as { onAuthenticate: (payload: unknown) => Promise<void> } | undefined;
+    if (!ext) throw new Error('expected principalAuthExtension on hocuspocus.configuration');
+    return ext;
+  }
+
+  test('token claiming a mismatched expectedBranch is rejected', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+      // Server defaults activeBranch to 'main' when git is disabled or
+      // not yet initialized — claim 'feature' to force the mismatch.
+      const staleToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedBranch: 'feature',
+      });
+      const context: Record<string, unknown> = {};
+
+      let thrown: unknown = null;
+      try {
+        await authExt.onAuthenticate({
+          token: staleToken,
+          context,
+          documentName: 'test-doc',
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).not.toBeNull();
+      expect((thrown as { reason?: string }).reason).toBe('branch-mismatch');
+      // Rejection runs before context hoisting.
+      expect(context.principalId).toBeUndefined();
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('token claiming the matching branch is accepted', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const goodToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedBranch: 'main', // server default
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: goodToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      expect(context.kind).toBe('human');
+      expect(context.tabSessionId).toBe('s-1');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('empty-string expectedBranch is treated as absent (legacy path)', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const emptyClaimToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+        expectedBranch: '',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: emptyClaimToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      // No throw — empty claim is legacy-equivalent and accepted.
+      expect(context.kind).toBe('human');
+    } finally {
+      await server.destroy();
+    }
+  });
+
+  test('legacy token without expectedBranch is accepted', async () => {
+    const server = createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true });
+    try {
+      await server.ready;
+      const authExt = getAuthExtension(server);
+
+      const legacyToken = JSON.stringify({
+        principalId: 'p-1',
+        tabSessionId: 's-1',
+      });
+      const context: Record<string, unknown> = {};
+
+      await authExt.onAuthenticate({
+        token: legacyToken,
+        context,
+        documentName: 'test-doc',
+      });
+
+      expect(context.kind).toBe('human');
+    } finally {
+      await server.destroy();
+    }
+  });
+});
