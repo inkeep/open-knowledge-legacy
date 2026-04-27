@@ -177,6 +177,7 @@ export {
   SEED_CONFIG_FILENAME,
   type SeedOptions,
   SeedPrerequisiteError,
+  SeedRootDirError,
   type SkipEntry,
   STARTER_FOLDERS,
   type StarterFolder,

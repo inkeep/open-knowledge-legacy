@@ -28,4 +28,4 @@ export type {
   SeedOptions,
   SkipEntry,
 } from './types.ts';
-export { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
+export { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
