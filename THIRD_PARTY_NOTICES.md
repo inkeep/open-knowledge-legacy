@@ -1105,11 +1105,6 @@ Homepage: https://github.com/codemirror/state
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
-### `@codemirror/view@6.41.1`
-Homepage: https://code.haverbeke.berlin/codemirror/view
-
-Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
-
 ### `@codemirror/view@6.41.0`
 Homepage: https://github.com/codemirror/view
 
@@ -1200,7 +1195,7 @@ Homepage: https://github.com/SBoudrias/Inquirer.js
 
 Copyright (c) 2025 Simon Boudrias
 
-### `@inquirer/password@5.0.12`
+### `@inquirer/password@5.0.11`
 Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/password/README.md
 
 Copyright (c) 2025 Simon Boudrias
@@ -1790,6 +1785,11 @@ Homepage: https://radix-ui.com/primitives
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
+### `@remirror/core-constants@3.0.0`
+Homepage: https://github.com/remirror/remirror/tree/HEAD/packages/remirror__core-constants
+
+Copyright (c) 2019-2022, Remirror Contributors
+
 ### `@sec-ant/readable-stream@0.4.1`
 Homepage: https://github.com/Sec-ant/readable-stream
 
@@ -1815,12 +1815,12 @@ Homepage: https://tanstack.com/query
 
 Copyright (c) 2021-present Tanner Linsley
 
-### `@tanstack/react-query@5.99.2`
+### `@tanstack/react-query@5.99.0`
 Homepage: https://tanstack.com/query
 
 Copyright (c) 2021-present Tanner Linsley
 
-### `@tiptap/core@3.22.4`
+### `@tiptap/core@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1830,7 +1830,7 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-bold@3.22.4`
+### `@tiptap/extension-bold@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1850,12 +1850,12 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-code-block@3.22.4`
+### `@tiptap/extension-code-block@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-collaboration@3.22.4`
+### `@tiptap/extension-collaboration@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1865,7 +1865,7 @@ Homepage: https://tiptap.dev
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
-### `@tiptap/extension-document@3.22.4`
+### `@tiptap/extension-document@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1880,7 +1880,7 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-file-handler@3.22.4`
+### `@tiptap/extension-file-handler@3.22.3`
 Homepage: https://tiptap.dev/docs/editor/extensions/functionality/filehandler
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1895,37 +1895,37 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-hard-break@3.22.4`
+### `@tiptap/extension-hard-break@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-heading@3.22.4`
+### `@tiptap/extension-heading@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-highlight@3.22.4`
+### `@tiptap/extension-highlight@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-horizontal-rule@3.22.4`
+### `@tiptap/extension-horizontal-rule@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-image@3.22.4`
+### `@tiptap/extension-image@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-italic@3.22.4`
+### `@tiptap/extension-italic@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-link@3.22.4`
+### `@tiptap/extension-link@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1950,12 +1950,12 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-paragraph@3.22.4`
+### `@tiptap/extension-paragraph@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-placeholder@3.22.4`
+### `@tiptap/extension-placeholder@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1965,12 +1965,12 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-table@3.22.4`
+### `@tiptap/extension-table@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/extension-text@3.22.4`
+### `@tiptap/extension-text@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -1990,17 +1990,22 @@ Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/react@3.22.4`
+### `@tiptap/pm@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/starter-kit@3.22.4`
+### `@tiptap/react@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
 
-### `@tiptap/suggestion@3.22.4`
+### `@tiptap/starter-kit@3.22.3`
+Homepage: https://tiptap.dev
+
+Copyright (c) 2025, Tiptap GmbH
+
+### `@tiptap/suggestion@3.22.3`
 Homepage: https://tiptap.dev
 
 Copyright (c) 2025, Tiptap GmbH
@@ -2055,8 +2060,23 @@ Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/h
 
 Copyright (c) Microsoft Corporation.
 
+### `@types/linkify-it@5.0.0`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/linkify-it
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/markdown-it@14.1.2`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/markdown-it
+
+Copyright (c) Microsoft Corporation.
+
 ### `@types/mdast@4.0.4`
 Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdast
+
+Copyright (c) Microsoft Corporation.
+
+### `@types/mdurl@2.0.0`
+Homepage: https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdurl
 
 Copyright (c) Microsoft Corporation.
 
@@ -2631,6 +2651,11 @@ Homepage: https://github.com/sindresorhus/escape-string-regexp
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
+### `escape-string-regexp@4.0.0`
+Homepage: https://github.com/sindresorhus/escape-string-regexp
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
 ### `estree-util-is-identifier-name@3.0.0`
 Homepage: https://github.com/syntax-tree/estree-util-is-identifier-name
 
@@ -2767,6 +2792,11 @@ Homepage: https://github.com/sindresorhus/file-type
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
+### `file-type@21.3.4`
+Homepage: https://github.com/sindresorhus/file-type
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
 ### `fill-range@7.1.1`
 Homepage: https://github.com/jonschlinkert/fill-range
 
@@ -2812,10 +2842,10 @@ Homepage: https://github.com/mafintosh/fs-constants
 
 Copyright (c) 2018 Mathias Buus
 
-### `fs-extra@7.0.1`
+### `fs-extra@11.3.4`
 Homepage: https://github.com/jprichardson/node-fs-extra
 
-Copyright (c) 2011-2017 JP Richardson
+Copyright (c) 2011-2024 JP Richardson
 
 ### `fs-extra@10.1.0`
 Homepage: https://github.com/jprichardson/node-fs-extra
@@ -3207,11 +3237,6 @@ Homepage: http://json5.org/
 
 Copyright (c) 2012-2018 Aseem Kishore, and [others].
 
-### `jsonfile@4.0.0`
-Homepage: https://github.com/jprichardson/node-jsonfile
-
-Copyright (c) 2012-2015, JP Richardson <jprichardson@gmail.com>
-
 ### `jsonfile@6.2.0`
 Homepage: https://github.com/jprichardson/node-jsonfile
 
@@ -3246,6 +3271,11 @@ Copyright (c) 2019 Kevin Jahns <kevin.jahns@protonmail.com>.
 Homepage: https://github.com/eventualbuddha/lines-and-columns#readme
 
 Copyright (c) 2015 Brian Donovan
+
+### `linkify-it@5.0.0`
+Homepage: https://github.com/markdown-it/linkify-it
+
+Copyright (c) 2015 Vitaly Puzrin.
 
 ### `linkifyjs@4.3.2`
 Homepage: https://linkify.js.org
@@ -3286,6 +3316,11 @@ Copyright (c) 2015 Titus Wormer <mailto:tituswormer@gmail.com>
 Homepage: https://github.com/zertosh/loose-envify
 
 Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
+
+### `markdown-it@14.1.1`
+Homepage: https://github.com/markdown-it/markdown-it
+
+Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
 
 ### `markdown-table@3.0.4`
 Homepage: https://github.com/wooorm/markdown-table
@@ -3381,6 +3416,12 @@ Copyright (c) Titus Wormer <tituswormer@gmail.com>
 Homepage: https://github.com/syntax-tree/mdast-util-to-string
 
 Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
+
+### `mdurl@2.0.0`
+Homepage: https://github.com/markdown-it/mdurl
+
+Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
+Copyright Joyent, Inc. and other Node contributors. All rights reserved.
 
 ### `media-typer@1.1.0`
 Homepage: https://github.com/jshttp/media-typer
@@ -3942,6 +3983,11 @@ Homepage: https://github.com/prosemirror/prosemirror-changeset
 
 Copyright (C) 2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `prosemirror-collab@1.3.1`
+Homepage: https://github.com/prosemirror/prosemirror-collab
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
 ### `prosemirror-commands@1.7.1`
 Homepage: https://github.com/prosemirror/prosemirror-commands
 
@@ -3962,13 +4008,33 @@ Homepage: https://github.com/prosemirror/prosemirror-history
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `prosemirror-inputrules@1.5.1`
+Homepage: https://github.com/prosemirror/prosemirror-inputrules
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
 ### `prosemirror-keymap@1.2.3`
 Homepage: https://github.com/prosemirror/prosemirror-keymap
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `prosemirror-markdown@1.13.4`
+Homepage: https://github.com/prosemirror/prosemirror-markdown
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+### `prosemirror-menu@1.3.0`
+Homepage: https://github.com/prosemirror/prosemirror-menu
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
 ### `prosemirror-model@1.25.4`
 Homepage: https://github.com/prosemirror/prosemirror-model
+
+Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+### `prosemirror-schema-basic@1.2.4`
+Homepage: https://github.com/prosemirror/prosemirror-schema-basic
 
 Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
@@ -3986,6 +4052,11 @@ Copyright (C) 2015-2017 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 Homepage: https://github.com/ProseMirror/prosemirror-tables
 
 Copyright (C) 2015-2016 by Marijn Haverbeke <marijnh@gmail.com> and others
+
+### `prosemirror-trailing-node@3.0.0`
+Homepage: https://github.com/remirror/remirror/tree/HEAD/packages/prosemirror-trailing-node
+
+Copyright (c) 2019-2022, Remirror Contributors
 
 ### `prosemirror-transform@1.12.0`
 Homepage: https://github.com/prosemirror/prosemirror-transform
@@ -4006,6 +4077,11 @@ Copyright (c) 2014-2016 Douglas Christopher Wilson
 Homepage: https://github.com/mafintosh/pump
 
 Copyright (c) 2014 Mathias Buus
+
+### `punycode.js@2.3.1`
+Homepage: https://mths.be/punycode
+
+_(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
 ### `queue-microtask@1.2.3`
 Homepage: https://github.com/feross/queue-microtask
@@ -4092,7 +4168,7 @@ Homepage: https://github.com/theKashey/react-remove-scroll-bar
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
 
-### `react-resizable-panels@4.10.0`
+### `react-resizable-panels@4.9.0`
 Homepage: https://react-resizable-panels.vercel.app/
 
 Copyright (c) 2018 Brian Vaughn
@@ -4263,7 +4339,7 @@ Homepage: https://github.com/expressjs/serve-static
 
 Copyright (c) 2010 Sencha Inc. Copyright (c) 2011 LearnBoost Copyright (c) 2011 TJ Holowaychuk Copyright (c) 2014-2016 Douglas Christopher Wilson
 
-### `shadcn@4.3.1`
+### `shadcn@4.2.0`
 Homepage: https://github.com/shadcn-ui/ui
 
 Copyright (c) 2023 shadcn
@@ -4575,6 +4651,11 @@ Homepage: https://github.com/jshttp/type-is
 
 Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2015 Douglas Christopher Wilson <doug@somethingdoug.com>
 
+### `uc.micro@2.1.0`
+Homepage: https://github.com/markdown-it/uc.micro
+
+Copyright Mathias Bynens <https://mathiasbynens.be/>
+
 ### `uint8array-extras@1.5.0`
 Homepage: https://github.com/sindresorhus/uint8array-extras
 
@@ -4634,11 +4715,6 @@ Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>
 Homepage: https://github.com/syntax-tree/unist-util-visit-parents
 
 Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
-
-### `universalify@0.1.2`
-Homepage: https://github.com/RyanZim/universalify#readme
-
-Copyright (c) 2017, Ryan Zimmerman <opensrc@ryanzim.com>
 
 ### `universalify@2.0.1`
 Homepage: https://github.com/RyanZim/universalify#readme
@@ -4786,6 +4862,11 @@ Homepage: https://github.com/sindresorhus/yoctocolors
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
 ### `zod@4.3.6`
+Homepage: https://zod.dev
+
+Copyright (c) 2025 Colin McDonnell
+
+### `zod@3.25.76`
 Homepage: https://zod.dev
 
 Copyright (c) 2025 Colin McDonnell
@@ -5268,6 +5349,11 @@ Homepage: https://github.com/motdotla/dotenv#readme
 Copyright (c) 2015, Scott Motte
 
 ### `entities@6.0.1`
+Homepage: https://github.com/fb55/entities
+
+Copyright (c) Felix Böhm
+
+### `entities@4.5.0`
 Homepage: https://github.com/fb55/entities
 
 Copyright (c) Felix Böhm
