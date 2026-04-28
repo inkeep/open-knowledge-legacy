@@ -33,11 +33,23 @@ export default {
     // silencing the warning here is the whole-workspace pattern we already
     // use for the bridge-contract + ipc-events duplicated-by-design files.
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
+    'docs/content/guides/agent-activity-panel.mdx': ['files'],
+    'docs/content/guides/install-claude-cowork.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
+    // Co-located src/**/*.test.{ts,tsx} files: knip auto-discovers these via
+    // the package's main entry (src/index.ts) only when `exports.default`
+    // resolves to src/. After PR #320 made workspace deps emit conditional
+    // exports with `default → dist/index.mjs`, knip walks the bundled output
+    // and co-located test files become unreachable. Each workspace below
+    // explicitly adds them to `entry` to restore pre-#320 reachability.
     'packages/app': {
-      entry: 'tests/**/*.{test,e2e}.ts',
+      entry: [
+        'src/**/*.test.{ts,tsx}',
+        'tests/**/*.{test,e2e}.ts',
+        'tests/integration/idb-preload.ts', // bunfig.toml `[test] preload`
+      ],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
@@ -46,15 +58,20 @@ export default {
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
     'packages/core': {
-      entry: ['tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      entry: ['src/**/*.test.ts', 'tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
+      project: 'src/**',
     },
     docs: {
       ignoreDependencies: [
         'postcss', // Bundled in Next.js
       ],
     },
+    'packages/server': {
+      entry: ['src/**/*.test.ts'],
+      project: 'src/**',
+    },
     'packages/cli': {
-      entry: ['scripts/*.ts', 'tests/**/*.ts'],
+      entry: ['src/**/*.test.ts', 'scripts/*.ts', 'tests/**/*.ts'],
       ignoreDependencies: [
         '@inkeep/open-knowledge-app', // the CLI's `build:assets` script runs `cp -r ../app/dist dist/public`
       ],
@@ -76,6 +93,7 @@ export default {
         'src/main/index.ts',
         'src/preload/index.ts',
         'src/utility/server-entry.ts',
+        'src/**/*.test.ts',
         'electron.vite.config.ts',
         'scripts/*.mjs',
         'tests/**/*.test.ts',

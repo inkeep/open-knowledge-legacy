@@ -175,6 +175,52 @@ describe('applySeed — file write guards', () => {
   });
 });
 
+describe('applySeed — rootDir scaffolding', () => {
+  test('writes the full starter pack inside a new rootDir', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    const result = await applySeed(plan, { projectDir: testDir });
+
+    expect(result.errors).toEqual([]);
+    expect(existsSync(join(testDir, 'brain'))).toBe(true);
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, 'brain', folder.path))).toBe(true);
+    }
+    expect(existsSync(join(testDir, 'brain', 'log.md'))).toBe(true);
+    expect(readFileSync(join(testDir, 'brain', 'log.md'), 'utf-8')).toBe(LOG_MD_TEMPLATE);
+    // Nothing leaked to the project root.
+    expect(existsSync(join(testDir, 'log.md'))).toBe(false);
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, folder.path))).toBe(false);
+    }
+
+    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
+    expect(config).toContain('brain/external-sources/**');
+    expect(config).toContain('brain/research/**');
+    expect(config).toContain('brain/articles/**');
+  });
+
+  test('a project-root scaffold and a rootDir scaffold coexist without collision', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+
+    const firstPlan = await planSeed({ projectDir: testDir });
+    await applySeed(firstPlan, { projectDir: testDir });
+
+    const secondPlan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    const result = await applySeed(secondPlan, { projectDir: testDir });
+
+    expect(result.errors).toEqual([]);
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, folder.path))).toBe(true);
+      expect(existsSync(join(testDir, 'brain', folder.path))).toBe(true);
+    }
+
+    const config = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
+    expect(config).toContain('external-sources/**');
+    expect(config).toContain('brain/external-sources/**');
+  });
+});
+
 describe('applySeed — error handling', () => {
   test('records error in errors[] for unknown file content template', async () => {
     scaffoldOkDir(testDir);

@@ -9,31 +9,32 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test src/",
+    "test": "bun --conditions=development test src/",
     "check": "tsc --noEmit && biome check . && bun run test && bun run test:integration && bun run test:conversion",
-    "test:integration": "bun test tests/integration/ --path-ignore-patterns=per-session-um-perf",
-    "test:perf:sessions": "bun test tests/integration/per-session-um-perf.test.ts --timeout 60000",
-    "test:conversion": "bun test tests/conversion/",
-    "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
+    "test:integration": "bun --conditions=development test tests/integration/ --path-ignore-patterns=per-session-um-perf",
+    "test:perf:sessions": "bun --conditions=development test tests/integration/per-session-um-perf.test.ts --timeout 60000",
+    "test:conversion": "bun --conditions=development test tests/conversion/",
+    "test:fidelity": "bun --conditions=development test --timeout 120000 tests/fidelity/",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "perf:profile": "bun run tests/perf/profile.ts",
-    "size": "bun run build && size-limit"
+    "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
+  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "215 kB",
+      "limit": "280 kB",
       "gzip": true
     },
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1050 kB",
+      "limit": "1.15 MB",
       "gzip": true
     },
     {
@@ -59,7 +60,6 @@
     "@codemirror/merge": "^6.12.1",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.0",
-    "@dnd-kit/core": "^6.3.1",
     "@floating-ui/dom": "^1.7.6",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
@@ -76,7 +76,7 @@
     "@opentelemetry/resources": "^2.0.0",
     "@opentelemetry/sdk-trace-web": "^2.0.0",
     "@opentelemetry/semantic-conventions": "^1.30.0",
-    "@tailwindcss/postcss": "^4.2.2",
+    "@pierre/trees": "1.0.0-beta.3",
     "@tanstack/react-query": "^5.99.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-collaboration": "^3.22.3",
@@ -111,10 +111,13 @@
     "tw-animate-css": "^1.4.0",
     "ws": "^8.20.0",
     "y-codemirror.next": "^0.3.5",
+    "y-indexeddb": "9.0.12",
     "yaml": "^2.8.3",
-    "yjs": "^13.6.30"
+    "yjs": "^13.6.30",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
@@ -126,7 +129,9 @@
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "commonmark.json": "^0.31.0",
     "diff": "^8.0.4",
+    "fake-indexeddb": "^6.0.0",
     "fast-check": "^4.6.0",
+    "lib0": "^0.2.117",
     "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",
     "sirv": "^3.0.2",

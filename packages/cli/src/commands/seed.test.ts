@@ -99,6 +99,73 @@ describe('runSeed — prerequisite', () => {
   });
 });
 
+describe('runSeed — --root', () => {
+  test('scaffolds the starter pack inside a new subfolder', async () => {
+    scaffoldOkDir(testDir);
+    const result = await runSeed({ cwd: testDir, root: 'brain', yes: true });
+    expect(result.status).toBe('applied');
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, 'brain', folder.path))).toBe(true);
+      expect(existsSync(join(testDir, folder.path))).toBe(false);
+    }
+    expect(existsSync(join(testDir, 'brain', 'log.md'))).toBe(true);
+    const config = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    expect(config).toContain('brain/external-sources/**');
+    expect(config).toContain('brain/research/**');
+    expect(config).toContain('brain/articles/**');
+  });
+
+  test('reuses an existing subfolder without error', async () => {
+    scaffoldOkDir(testDir);
+    mkdirSync(join(testDir, 'knowledge'), { recursive: true });
+    writeFileSync(join(testDir, 'knowledge', '.keep'), '', 'utf-8');
+    const result = await runSeed({ cwd: testDir, root: 'knowledge', yes: true });
+    expect(result.status).toBe('applied');
+    // Pre-existing user file is untouched.
+    expect(existsSync(join(testDir, 'knowledge', '.keep'))).toBe(true);
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, 'knowledge', folder.path))).toBe(true);
+    }
+  });
+
+  test('root "." matches default project-root behavior', async () => {
+    scaffoldOkDir(testDir);
+    const result = await runSeed({ cwd: testDir, root: '.', yes: true });
+    expect(result.status).toBe('applied');
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, folder.path))).toBe(true);
+    }
+  });
+
+  test('re-running with the same root is a no-op', async () => {
+    scaffoldOkDir(testDir);
+    await runSeed({ cwd: testDir, root: 'brain', yes: true });
+    const second = await runSeed({ cwd: testDir, root: 'brain', yes: true });
+    expect(second.status).toBe('no-op');
+  });
+
+  test('two distinct roots coexist', async () => {
+    scaffoldOkDir(testDir);
+    await runSeed({ cwd: testDir, root: 'work', yes: true });
+    const second = await runSeed({ cwd: testDir, root: 'personal', yes: true });
+    expect(second.status).toBe('applied');
+    for (const folder of STARTER_FOLDERS) {
+      expect(existsSync(join(testDir, 'work', folder.path))).toBe(true);
+      expect(existsSync(join(testDir, 'personal', folder.path))).toBe(true);
+    }
+    const config = readFileSync(join(testDir, OK_DIR, CONFIG_FILENAME), 'utf-8');
+    expect(config).toContain('work/external-sources/**');
+    expect(config).toContain('personal/external-sources/**');
+  });
+
+  test('rejects absolute root paths with a failed status', async () => {
+    scaffoldOkDir(testDir);
+    const result = await runSeed({ cwd: testDir, root: '/tmp/escape', yes: true });
+    expect(result.status).toBe('failed');
+    expect(result.exitCode).toBe(1);
+  });
+});
+
 describe('runSeed — path argument', () => {
   test('operates on explicit path rather than cwd', async () => {
     scaffoldOkDir(testDir);

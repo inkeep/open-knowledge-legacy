@@ -65,6 +65,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
       - run: bun install --frozen-lockfile
+      # The per-worker fixture spawns `bun run dev`, which loads
+      # vite.config.ts. Vite's externalize-deps plugin walks
+      # workspace deps (e.g. `@inkeep/open-knowledge-server` via
+      # `hocuspocus-plugin.ts`) at config-load time without honoring
+      # the `development` condition, so resolution lands on the
+      # `default` export — `./dist/index.mjs`. Building server first
+      # (and core via `^build`) ensures dist/ exists. ci.yml's
+      # playwright job gets this transitively from
+      # `bunx turbo run test:e2e`; this nightly invokes playwright
+      # directly with extra flags, so the build step is explicit.
+      - run: bunx turbo run build --filter=@inkeep/open-knowledge-server
       - run: bunx playwright install --with-deps chromium
       - id: playwright
         env:

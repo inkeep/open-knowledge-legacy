@@ -1,9 +1,7 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
-import { DocPanel, type PanelTab, TABS } from '@/components/DocPanel';
+import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
@@ -17,18 +15,15 @@ import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import type { DiffLayout } from './DiffView';
-import { DiffView } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
-  previewEntry: TimelineEntry | null;
   diffLayout: DiffLayout;
-  onNoDiff?: () => void;
-  onEntrySelect?: (entry: TimelineEntry) => void;
-  selectedSha?: string;
+  activeTab: PanelTab;
+  onActiveTabChange: (tab: PanelTab) => void;
 }
 
 export function EditorArea(props: EditorAreaProps) {
@@ -41,11 +36,9 @@ export function EditorArea(props: EditorAreaProps) {
 
 function EditorAreaInner({
   editorMode,
-  previewEntry,
   diffLayout,
-  onNoDiff,
-  onEntrySelect,
-  selectedSha,
+  activeTab,
+  onActiveTabChange,
 }: EditorAreaProps) {
   const {
     activeDocName,
@@ -72,7 +65,7 @@ function EditorAreaInner({
   // at 250ms shell-snap.
   const deferredActiveDocName = useDeferredValue(activeDocName);
   const isNewDoc = activeTarget?.kind === 'missing';
-  const showFooter = !!activeDocName && activeTarget?.kind !== 'folder' && editorMode !== 'diff';
+  const showFooter = !!activeDocName && activeTarget?.kind !== 'folder';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -85,9 +78,6 @@ function EditorAreaInner({
   // Reset when the user manually expands, or when entering auto-collapse range
   // (so that leaving auto-collapse range later triggers a fresh expand).
   const userCollapsedRef = useRef(false);
-
-  // Lifted activeTab state — DocPanel is controlled (spec D2).
-  const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
 
   useEffect(() => {
     if (docPanelLayout === 'panel') {
@@ -134,75 +124,6 @@ function EditorAreaInner({
     }
   }, [activeDocName]);
 
-  // FUTURE: The diff is a snapshot fetched once. If the document changes while
-  // the user is in diff mode (e.g., agent writes), the diff view becomes stale.
-  // @codemirror/merge supports incremental updates via Chunk.updateA()/updateB()
-  // — a future iteration could subscribe to Y.Text changes and live-update the
-  // "current" side of the diff. For v0 (solo + AI) this is acceptable as-is.
-  const [diffContent, setDiffContent] = useState<{ old: string; new: string } | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-
-  useEffect(() => {
-    if (!previewEntry?.sha || !activeDocName) {
-      setDiffContent(null);
-      return;
-    }
-
-    let cancelled = false;
-    const sha = previewEntry.sha;
-    const docName = activeDocName;
-    setPreviewLoading(true);
-    setDiffContent(null);
-
-    async function fetchHistoricalContent() {
-      try {
-        const res = await fetch(`/api/history/${sha}?docName=${encodeURIComponent(docName)}`);
-        if (cancelled) return;
-        if (!res.ok) {
-          setDiffContent(null);
-          setPreviewLoading(false);
-          return;
-        }
-        const data = (await res.json()) as { content: string };
-        if (!cancelled) {
-          // Strip frontmatter from both sides so the diff shows only body changes.
-          // Git stores full file (with frontmatter); Y.Text('source') also includes
-          // frontmatter (Observer A prepends it), so both must be stripped.
-          const historical = stripFrontmatter(data.content ?? '').body;
-          const current = stripFrontmatter(
-            activeProvider?.document.getText('source').toString() ?? '',
-          ).body;
-          // Normalize trailing whitespace + line endings before comparing —
-          // the markdown pipeline may add/remove trailing newlines or spaces.
-          const norm = (s: string) =>
-            s
-              .replace(/\r\n/g, '\n')
-              .replace(/[ \t]+$/gm, '')
-              .trimEnd();
-          if (norm(historical) === norm(current)) {
-            setPreviewLoading(false);
-            onNoDiff?.();
-            return;
-          }
-          // Capture both sides together so they're consistent — Y.Text may not
-          // be populated during the synchronous render that triggers this effect.
-          setDiffContent({ old: historical, new: current });
-          setPreviewLoading(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setDiffContent(null);
-          setPreviewLoading(false);
-        }
-      }
-    }
-
-    fetchHistoricalContent();
-    return () => {
-      cancelled = true;
-    };
-  }, [previewEntry?.sha, activeDocName, activeProvider, onNoDiff]);
-
   if (activeTarget?.kind === 'folder') {
     return <FolderOverview folderPath={activeTarget.folderPath} />;
   }
@@ -222,7 +143,6 @@ function EditorAreaInner({
     return <EmptyEditorState />;
   }
 
-  const isDiffMode = editorMode === 'diff';
   const isSourceMode = editorMode === 'source';
 
   const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
@@ -263,30 +183,7 @@ function EditorAreaInner({
   const editorContent = (
     <div className="relative flex h-full flex-col">
       <div className="relative min-h-0 flex-1">
-        {/* No outer scroller. Scrolling is owned by (a) DiffView's own
-          internal scroller in diff mode and (b) the per-Activity scroller
-          inside EditorActivityPool in editor mode. Hoisting the scroller
-          to this level would let the Activity subtree's content contract
-          on hidden-mode effect cleanup, clamping scrollTop to 0 and
-          losing the user's position across warm navigation (QA-002 /
-          SPEC US-007/F1). */}
-
-        {/* Diff view — shown when editorMode === 'diff' */}
-        {isDiffMode && previewLoading && (
-          <div
-            className="flex items-center justify-center py-16"
-            role="status"
-            aria-label="Loading version"
-          >
-            <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-          </div>
-        )}
-        {isDiffMode && !previewLoading && diffContent !== null && (
-          <DiffView oldContent={diffContent.old} newContent={diffContent.new} layout={diffLayout} />
-        )}
-
         {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
-          Outer display:none keeps the editor DOM alive when in diff mode.
           EditorActivityPool keeps Tiptap eager and lazy-loads SourceEditor on
           the first source-mode visit for each doc, then preserves the per-doc
           display:none toggle after that initial load. Each Activity entry owns
@@ -298,7 +195,7 @@ function EditorAreaInner({
           hidden doc's cached rejected syncPromise cannot re-throw into
           the visible UI (QA-023/024). See EditorActivityPool.tsx file
           docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
-        <div className="relative h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+        <div className="relative h-full">
           <EditorActivityPool
             // Fall back to the urgent `activeDocName` when the deferred
             // value is still null (initial load, before the first
@@ -364,9 +261,8 @@ function EditorAreaInner({
               docName={activeDocName}
               isSourceMode={isSourceMode}
               activeTab={activeTab}
-              onActiveTabChange={setActiveTab}
-              onEntrySelect={onEntrySelect}
-              selectedSha={selectedSha}
+              onActiveTabChange={onActiveTabChange}
+              diffLayout={diffLayout}
               mode={docPanelMode}
             />
           </SheetContent>
@@ -400,9 +296,8 @@ function EditorAreaInner({
             docName={activeDocName}
             isSourceMode={isSourceMode}
             activeTab={activeTab}
-            onActiveTabChange={setActiveTab}
-            onEntrySelect={onEntrySelect}
-            selectedSha={selectedSha}
+            onActiveTabChange={onActiveTabChange}
+            diffLayout={diffLayout}
             mode={docPanelMode}
           />
         </ResizablePanel>

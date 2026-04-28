@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import {
   type ActiveClickLevel,
@@ -125,8 +125,11 @@ export function OkBlob({
 }: OkBlobProps) {
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const leftEyeRef = useRef<SVGEllipseElement>(null);
-  const rightEyeRef = useRef<SVGEllipseElement>(null);
+  // Single offset transform shared by all eye variants (open ellipses, happy
+  // arcs, sleeping arcs) so swapping between them doesn't jump — every eye
+  // type sits at the same cursor-followed position.
+  const eyesGroupRef = useRef<SVGGElement>(null);
+  const eyeOffsetRef = useRef({ x: 0, y: 0 });
   const [clickLevel, setClickLevel] = useState<ClickLevel>(0);
   const [clickSeq, setClickSeq] = useState(0);
   const [particles, setParticles] = useState<FireworkParticle[]>([]);
@@ -235,10 +238,12 @@ export function OkBlob({
       const parallaxY = -currentRotX * EYE_PARALLAX_FACTOR;
       const ox = currentEyeX + parallaxX;
       const oy = currentEyeY + parallaxY;
-      leftEyeRef.current?.setAttribute('cx', (LEFT_EYE_CX + ox).toFixed(3));
-      leftEyeRef.current?.setAttribute('cy', (EYE_CY + oy).toFixed(3));
-      rightEyeRef.current?.setAttribute('cx', (RIGHT_EYE_CX + ox).toFixed(3));
-      rightEyeRef.current?.setAttribute('cy', (EYE_CY + oy).toFixed(3));
+      eyeOffsetRef.current.x = ox;
+      eyeOffsetRef.current.y = oy;
+      eyesGroupRef.current?.setAttribute(
+        'transform',
+        `translate(${ox.toFixed(3)} ${oy.toFixed(3)})`,
+      );
     }
 
     document.addEventListener('mousemove', onMouseMove, { passive: true });
@@ -247,8 +252,22 @@ export function OkBlob({
       document.removeEventListener('mousemove', onMouseMove);
       cancelAnimationFrame(raf);
       if (wrapperRef.current) wrapperRef.current.style.transform = '';
+      eyeOffsetRef.current = { x: 0, y: 0 };
+      eyesGroupRef.current?.removeAttribute('transform');
     };
   }, [trackMouse, isSleeping]);
+
+  // Re-apply the last-known eye offset after every render — the body+eyes
+  // group remounts on each click (clickSeq key) so the bounce keyframes
+  // replay, and without this the freshly-mounted eyes group would paint at
+  // resting for one frame before the next rAF tick. Runs synchronously
+  // before paint so there's no visible flash.
+  useLayoutEffect(() => {
+    const g = eyesGroupRef.current;
+    if (!g) return;
+    const { x, y } = eyeOffsetRef.current;
+    g.setAttribute('transform', `translate(${x.toFixed(3)} ${y.toFixed(3)})`);
+  });
 
   const isClicked = clickLevel > 0;
   const activeLevel: ActiveClickLevel = isClicked ? (clickLevel as ActiveClickLevel) : 1;
@@ -267,6 +286,7 @@ export function OkBlob({
         className={isSleeping ? 'cursor-default' : 'cursor-pointer'}
         aria-hidden="true"
         onClick={handleClick}
+        onMouseDown={(e) => e.preventDefault()}
       >
         {/* Body + eyes share a group so the click bounce deforms them together.
           Key re-mounts the group on every click so the CSS animation replays. */}
@@ -279,62 +299,72 @@ export function OkBlob({
             className="ok-blob-body"
           />
 
-          {/* Normal eyes — vertical ellipses, hidden when clicked OR sleeping */}
-          <ellipse
-            ref={leftEyeRef}
-            cx={LEFT_EYE_CX}
-            cy={EYE_CY}
-            rx={1.2722}
-            ry={1.9083}
-            className={cn('ok-blob-eye', (isClicked || isSleeping) && 'ok-blob-eye-hidden')}
-          />
-          <ellipse
-            ref={rightEyeRef}
-            cx={RIGHT_EYE_CX}
-            cy={EYE_CY}
-            rx={1.2722}
-            ry={1.9083}
-            className={cn(
-              'ok-blob-eye ok-blob-eye-right',
-              (isClicked || isSleeping) && 'ok-blob-eye-hidden',
-            )}
-          />
+          {/* Eye group — receives the cursor-tracking translate transform so
+            every eye variant (open ellipses, happy arcs, sleeping arcs) sits
+            at the same offset. Without this, swapping between variants on
+            click would teleport the eyes between offset and resting. */}
+          <g ref={eyesGroupRef}>
+            {/* Normal eyes — vertical ellipses, hidden when clicked OR sleeping */}
+            <ellipse
+              cx={LEFT_EYE_CX}
+              cy={EYE_CY}
+              rx={1.2722}
+              ry={1.9083}
+              className={cn('ok-blob-eye', (isClicked || isSleeping) && 'ok-blob-eye-hidden')}
+            />
+            <ellipse
+              cx={RIGHT_EYE_CX}
+              cy={EYE_CY}
+              rx={1.2722}
+              ry={1.9083}
+              className={cn(
+                'ok-blob-eye ok-blob-eye-right',
+                (isClicked || isSleeping) && 'ok-blob-eye-hidden',
+              )}
+            />
 
-          {/* Happy eyes — rounded ^^ arcs, squintier at higher levels */}
-          <path
-            d={happyEyeArc(LEFT_EYE_CX, activeLevel)}
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            fill="none"
-            className={cn('ok-blob-happy-eye', (!isClicked || isSleeping) && 'ok-blob-eye-hidden')}
-          />
-          <path
-            d={happyEyeArc(RIGHT_EYE_CX, activeLevel)}
-            strokeWidth="1.2"
-            strokeLinecap="round"
-            fill="none"
-            className={cn('ok-blob-happy-eye', (!isClicked || isSleeping) && 'ok-blob-eye-hidden')}
-          />
+            {/* Happy eyes — rounded ^^ arcs, squintier at higher levels */}
+            <path
+              d={happyEyeArc(LEFT_EYE_CX, activeLevel)}
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              fill="none"
+              className={cn(
+                'ok-blob-happy-eye',
+                (!isClicked || isSleeping) && 'ok-blob-eye-hidden',
+              )}
+            />
+            <path
+              d={happyEyeArc(RIGHT_EYE_CX, activeLevel)}
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              fill="none"
+              className={cn(
+                'ok-blob-happy-eye',
+                (!isClicked || isSleeping) && 'ok-blob-eye-hidden',
+              )}
+            />
 
-          {/* Sleeping eyes — downward arcs that read as closed eyelids */}
-          {isSleeping ? (
-            <>
-              <path
-                d={sleepingEyeArc(LEFT_EYE_CX)}
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                fill="none"
-                className="ok-blob-sleeping-eye"
-              />
-              <path
-                d={sleepingEyeArc(RIGHT_EYE_CX)}
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                fill="none"
-                className="ok-blob-sleeping-eye"
-              />
-            </>
-          ) : null}
+            {/* Sleeping eyes — downward arcs that read as closed eyelids */}
+            {isSleeping ? (
+              <>
+                <path
+                  d={sleepingEyeArc(LEFT_EYE_CX)}
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  fill="none"
+                  className="ok-blob-sleeping-eye"
+                />
+                <path
+                  d={sleepingEyeArc(RIGHT_EYE_CX)}
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  fill="none"
+                  className="ok-blob-sleeping-eye"
+                />
+              </>
+            ) : null}
+          </g>
         </g>
 
         {/* Floating "z"s — sleep-state only. Two staggered letters drift up and

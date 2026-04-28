@@ -30,9 +30,9 @@ import { useState } from 'react';
 import { toast as sonnerToast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
-  DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -98,7 +98,7 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
   // `packages/app/src/main.tsx` already covers the whole tree, and the
   // disabled-row submenu pattern doesn't rely on tooltips for affordances.
   return (
-    <DropdownMenuRoot open={open} onOpenChange={handleOpenChange}>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
@@ -136,6 +136,6 @@ export function OpenInAgentMenu({ input }: OpenInAgentMenuProps): ReactNode {
           );
         })}
       </DropdownMenuContent>
-    </DropdownMenuRoot>
+    </DropdownMenu>
   );
 }

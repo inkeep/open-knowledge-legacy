@@ -681,20 +681,12 @@ jobs:
           track_progress: true
           claude_args: |
             --plugin-dir /tmp/team-skills/ci/pr-review
+            --plugin-dir /tmp/team-skills/plugins/shared
             --agent pr-review:pr-review
             --mcp-config '{"mcpServers":{"exa":{"command":"npx","args":["-y","exa-mcp-server"],"env":{"EXA_API_KEY":"${{ secrets.EXA_API_KEY }}"}}}}'
-            --allowedTools "Task,Read,Write,Grep,Glob,mcp__exa__web_search_exa,mcp__github__create_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github__submit_pending_pull_request_review,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(mkdir:*)"
+            --allowedTools "Task,Read,Write,Grep,Glob,Skill,mcp__exa__web_search_exa,mcp__github__create_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github__submit_pending_pull_request_review,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(mkdir:*)"
           prompt: |
             Review PR #${{ steps.pr.outputs.number }}. Begin Phase 1.
-
-      - name: Clean up progress comment
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/issues/${{ steps.pr.outputs.number }}/comments \
-            --jq '.[] | select((.user.login == "claude[bot]" or .user.login == "inkeep-internal-ci[bot]") and (.body | contains("actions/runs/${{ github.run_id }}"))) | .id' \
-          | xargs -I {} gh api -X DELETE repos/${{ github.repository }}/issues/comments/{} 2>/dev/null || true
 
       - name: Upload Debug Artifacts
         if: always()

@@ -5,14 +5,20 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.mjs"
     },
     "./shadow-repo-layout": {
+      "development": "./src/shadow-repo-layout.ts",
       "types": "./src/shadow-repo-layout.ts",
-      "default": "./src/shadow-repo-layout.ts"
+      "default": "./dist/shadow-repo-layout.mjs"
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "dependencies": {
     "@handlewithcare/remark-prosemirror": "0.1.5",
     "@tiptap/core": "^3.22.3",
@@ -48,11 +54,13 @@
     "unist-util-visit": "^5.1.0",
     "vfile": "^6.0.0",
     "vfile-message": "^4.0.3",
-    "yjs": "^13.6.30"
+    "yjs": "^13.6.30",
+    "zod": "^4.3.6"
   },
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src/",
+    "test": "bun --conditions=development test src/",
     "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
     "test:perf:fallback": "RUN_BENCH=1 bun test src/markdown/parse-with-fallback.test.ts",
     "test:perf:r15-guard": "RUN_BENCH=1 bun test src/markdown/autolink-void-html-guard.perf.test.ts",
@@ -73,6 +81,7 @@
     "commonmark.json": "^0.31.0",
     "fast-check": "^4.6.0",
     "mdast-util-to-hast": "^13.2.1",
+    "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
 }

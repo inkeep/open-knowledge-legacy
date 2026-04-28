@@ -687,6 +687,11 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:navigator:open', async () => {
+    openNavigator();
+    return undefined;
+  });
+
   handle('ok:debug:keyring-smoke', async (event) => {
     return ensureDebugIpc().requestKeyringSmoke(event.sender);
   });
@@ -700,8 +705,8 @@ function registerIpcHandlers() {
       ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
       : undefined;
   };
-  handle('ok:seed:plan', async (event) => {
-    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) });
+  handle('ok:seed:plan', async (event, rootDir) => {
+    return handleSeedPlan({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, rootDir);
   });
   handle('ok:seed:apply', async (event, plan) => {
     return handleSeedApply({ resolveProjectRoot: () => resolveSeedProjectRoot(event) }, plan);

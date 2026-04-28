@@ -4,10 +4,12 @@
  * Phase 8 review asked for a command-palette UI (beyond the menu bar + the
  * top-bar ProjectSwitcher pill) for project selection.
  *
- * Commands (all open a NEW editor BrowserWindow per D3 revised):
+ * Commands (project actions open a NEW editor BrowserWindow per D3 revised):
  *   - Open folder on disk…            — `bridge.dialog.openFolder()` → open
- *   - New Project (open Navigator)    — via File menu parallel; IPC TBD
- *                                       (falls back to openFolder for v0)
+ *   - Switch Project…                 — `bridge.navigator.open()` (focus or
+ *                                       create the Project Navigator window)
+ *   - Install for Claude Chat & Cowork (Desktop App)…
+ *   - Open in agent (per-target)
  *   - Open Recent → <one item per recent project>, up to 10
  *
  * Web / CLI distribution: `window.okDesktop` is undefined → the palette never
@@ -17,7 +19,7 @@
  * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
  */
 
-import { Download, FolderOpen, FolderPlus, Sparkles } from 'lucide-react';
+import { Download, FolderOpen, LayoutGrid, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   CommandDialog,
@@ -31,6 +33,7 @@ import {
 } from '@/components/ui/command';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-types';
+import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import { useWorkspace } from '@/lib/use-workspace';
@@ -118,7 +121,7 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       open={open}
       onOpenChange={setOpen}
       title="Project Command Palette"
-      description="Switch projects, open folders, or start a new project."
+      description="Open a folder, switch to a recent project, or open the Project Navigator."
     >
       <CommandInput placeholder="Type a command or search recent projects…" />
       <CommandList className="subtle-scrollbar">
@@ -140,20 +143,14 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <CommandShortcut>⌘O</CommandShortcut>
           </CommandItem>
           <CommandItem
+            value="switch-project navigator projects"
             onSelect={() =>
-              runAction(async () => {
-                // M4/M5 wires a proper New Project → Navigator invocation.
-                // For now: same as Open folder (opens native picker) so users
-                // get "create or pick a folder" behavior without a dead item.
-                const path = await bridge.dialog.createFolder();
-                if (!path) return;
-                await bridge.project.open({ path, target: 'new-window' });
-              })
+              runAction(() => bridge.navigator.open(), 'Failed to open Project Navigator.')
             }
-            data-testid="command-palette-start-fresh"
+            data-testid="command-palette-switch-project"
           >
-            <FolderPlus />
-            <span>Start fresh in a new folder…</span>
+            <LayoutGrid />
+            <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
             <CommandShortcut>⌘⇧N</CommandShortcut>
           </CommandItem>
           <CommandItem
