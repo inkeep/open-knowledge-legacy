@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import babel from '@rolldown/plugin-babel';
 import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 
 /**
  * electron-vite config — M1 desktop build.
@@ -34,8 +34,8 @@ const appRoot = resolve(__dirname, '../app');
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     build: {
+      externalizeDeps: true,
       sourcemap: 'inline',
       rollupOptions: {
         // Two entries in the main bundle: the main-process entry itself AND
@@ -63,7 +63,6 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
       sourcemap: 'inline',
       rollupOptions: {
@@ -84,10 +83,10 @@ export default defineConfig({
   },
   renderer: {
     root: appRoot,
-    configFile: false,
     plugins: [
       react(),
-      babel({
+      // Error: Cannot deep clone non-plain object https://github.com/alex8088/electron-vite/issues/902
+      await babel({
         presets: [reactCompilerPreset(reactCompilerConfig)],
       }),
     ],

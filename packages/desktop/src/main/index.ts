@@ -92,8 +92,6 @@ import {
   WindowManager,
 } from './window-manager.ts';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const DEFAULT_WIN_OPTS = {
   width: 1280,
   height: 800,
