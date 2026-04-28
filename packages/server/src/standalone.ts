@@ -1556,6 +1556,19 @@ export function createServer(options: ServerOptions): ServerInstance {
             switchReconciledBaseScope(newBranch);
             backlinkIndex.switchBranch(newBranch);
 
+            // Rebuild `ContentFilter`'s sibling-asset refcount BEFORE the
+            // basenameIndex reseed. ContentFilter's `dirCount` is normally
+            // maintained incrementally via `incrementMdDir` /
+            // `decrementMdDir` calls fired by the file watcher's create /
+            // delete events, but the cross-branch path discarded those
+            // events above (`eventBuffer.splice`). Without a rebuild, the
+            // refcount holds the previous branch's directory shape and
+            // legitimate sibling-asset pairs on the new branch
+            // (`assets/cover.md` next to `assets/photo.png`) are rejected
+            // by `seedBasenameIndex`'s admission check, leaving the asset
+            // unresolved.
+            contentFilter.rebuildDirCount();
+
             // Reseed `basenameIndex` BEFORE the doc-reset loop. The reset
             // calls `applyToDoc` → `applyExternalChange` → mdast→PM with
             // `resolveEmbed`, which resolves `![[photo.png]]` against the
@@ -1563,8 +1576,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             // still in the index, the PM image `src` carries the
             // pre-switch resolution until the next user edit — disk
             // markdown round-trips fine, but the rendered preview is
-            // wrong. The reseed has to land before the reset for the
-            // PM image src to reflect the new branch.
+            // wrong.
             //
             // Asset DiskEvents from the switch itself are discarded
             // (`eventBuffer.splice` above) and `basenameIndex` is a flat
