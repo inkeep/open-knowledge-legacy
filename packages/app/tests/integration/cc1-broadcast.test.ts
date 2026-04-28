@@ -98,7 +98,7 @@ describe('CC1 broadcast — L1 integration', () => {
       await pollUntil(() => signals.length > 0, 5000, 50);
 
       const docsRes = await fetch(`http://localhost:${server.port}/api/documents`);
-      const docsBody = (await docsRes.json()) as { documents?: Array<{ docName: string }> };
+      const docsBody: { documents?: Array<{ docName: string }> } = await docsRes.json();
       expect(docsBody.documents?.some((doc) => doc.docName === docName)).toBe(true);
     } finally {
       destroy();
