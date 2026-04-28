@@ -1,5 +1,3 @@
-'use client';
-
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
@@ -108,7 +106,7 @@ function FieldLabel({ className, ...props }: React.ComponentProps<typeof Label>)
 function FieldTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
-      data-slot="field-label"
+      data-slot="field-title"
       className={cn(
         'flex w-fit items-center gap-2 text-sm font-medium group-data-[disabled=true]/field:opacity-50',
         className,

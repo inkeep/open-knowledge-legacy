@@ -161,7 +161,11 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
   }, [open, rootChoice, trimmedSubfolder, subfolderInvalid]);
 
   async function handleApply() {
-    if (phase.kind !== 'plan' || subfolderInvalid) return;
+    // `phase.kind !== 'plan'` already covers subfolderInvalid — when invalid,
+    // the planning effect parks phase at 'error' before this can fire. The
+    // Initialize button is also disabled in that state. Triple-redundant
+    // guard simplified to the one that's actually load-bearing.
+    if (phase.kind !== 'plan') return;
     setPhase({ kind: 'applying', plan: phase.plan });
     const result = await seedClient().apply(phase.plan);
     if (result.ok) {
@@ -425,7 +429,6 @@ function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
   return (
     <section className="space-y-3">
       <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase font-mono tracking-wider text-primary">
-        {/* <Diamond aria-hidden="true" className="h-3 w-3" /> */}
         <span aria-hidden="true" className="flex items-center justify-center">
           ◇
         </span>
