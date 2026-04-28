@@ -1,4 +1,8 @@
-import { type AgentPresenceEntry, deriveIconColor } from '@inkeep/open-knowledge-core';
+import {
+  type AgentPresenceEntry,
+  computeInitials,
+  deriveIconColor,
+} from '@inkeep/open-knowledge-core';
 import {
   Bird,
   Cat,
@@ -58,14 +62,24 @@ const AGENT_DISPLAY_NAME: Record<string, string> = {
   bot: 'Agent',
 };
 
-function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipant['mode'] }) {
-  const animal = user.name.split(' ')[1];
+function HumanAvatar({
+  user,
+  mode,
+  tabCount,
+}: {
+  user: AwarenessUser;
+  mode: HumanParticipant['mode'];
+  tabCount: number;
+}) {
+  // Git-config users (principalId present) always render initials — never the
+  // animal icon, even if user.name's second word coincidentally matches one
+  // (D1: source-gating via principalId presence avoids the 'John Bird' quirk).
+  const hasPrincipalId = typeof user.principalId === 'string' && user.principalId.length > 0;
+  const animal = hasPrincipalId ? undefined : user.name.split(' ')[1];
   const AnimalIcon = animal ? ANIMAL_ICON_MAP[animal] : undefined;
-  const initials = user.name
-    .split(' ')
-    .map((w) => w[0])
-    .join('');
+  const initials = computeInitials(user.name);
   const iconColor = deriveIconColor(user.color);
+  const tooltipText = tabCount > 1 ? `${user.name} · ${tabCount} tabs` : user.name;
 
   return (
     <Tooltip>
@@ -90,7 +104,7 @@ function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipa
           )}
         </div>
       </TooltipTrigger>
-      <TooltipContent>{user.name}</TooltipContent>
+      <TooltipContent>{tooltipText}</TooltipContent>
     </Tooltip>
   );
 }
@@ -280,7 +294,9 @@ function OverflowChip({
         <div className="flex flex-wrap items-center gap-1.5">
           {remainder.map((p) => {
             if (p.kind === 'human') {
-              return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
+              return (
+                <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} tabCount={p.tabCount} />
+              );
             }
             return (
               <AgentAvatar
@@ -305,7 +321,7 @@ function renderParticipant(
   scopedAgentId: string | null,
 ) {
   if (p.kind === 'human') {
-    return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
+    return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} tabCount={p.tabCount} />;
   }
   return (
     <AgentAvatar
