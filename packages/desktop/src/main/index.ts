@@ -727,52 +727,6 @@ function registerIpcHandlers() {
     return undefined;
   });
 
-  handle('ok:find:in-page', async (event, request) => {
-    const query = request.query;
-    if (!query) {
-      event.sender.stopFindInPage('clearSelection');
-      return { activeMatchOrdinal: 0, matches: 0 };
-    }
-
-    return new Promise<{ activeMatchOrdinal: number; matches: number }>((resolve) => {
-      let requestId = 0;
-      const cleanup = () => {
-        clearTimeout(timeout);
-        event.sender.removeListener('found-in-page', onFound);
-      };
-      const timeout = setTimeout(() => {
-        cleanup();
-        resolve({ activeMatchOrdinal: 0, matches: 0 });
-      }, 2000);
-      const onFound = (
-        _event: Electron.Event,
-        result: {
-          requestId: number;
-          activeMatchOrdinal: number;
-          matches: number;
-        },
-      ) => {
-        if (requestId !== 0 && result.requestId !== requestId) return;
-        cleanup();
-        resolve({
-          activeMatchOrdinal: result.activeMatchOrdinal,
-          matches: result.matches,
-        });
-      };
-
-      event.sender.on('found-in-page', onFound);
-      requestId = event.sender.findInPage(query, {
-        forward: request.forward ?? true,
-        findNext: request.findNext ?? false,
-        matchCase: request.matchCase ?? false,
-      });
-    });
-  });
-
-  handle('ok:find:stop', async (event, action) => {
-    event.sender.stopFindInPage(action);
-    return undefined;
-
   handle('ok:project:get-info', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('webContents has no parent BrowserWindow');
