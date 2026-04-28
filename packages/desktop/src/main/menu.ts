@@ -33,6 +33,7 @@
  */
 
 import type { Dialog, MenuItemConstructorOptions } from 'electron';
+import type { OkMenuAction } from '../shared/bridge-contract.ts';
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '../shared/labels.ts';
 import type { CliInstallStatus } from './cli-install.ts';
 import { promptForFolder } from './dialog-helpers.ts';
@@ -52,6 +53,8 @@ export interface MenuDeps {
   getRecentProjects(): ReadonlyArray<{ path: string; name: string }>;
   /** Clear the recent-projects list (File → Open Recent → Clear Menu). */
   clearRecentProjects(): void;
+  /** Send a menu action to the focused renderer window. */
+  sendMenuAction?(action: OkMenuAction): void;
   /** Open an external URL (Help menu). Injected so the `shell` runtime value doesn't cross the module boundary. */
   openExternalUrl(url: string): void;
   /**
@@ -223,6 +226,12 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
         { role: 'copy' },
         { role: 'paste' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => deps.sendMenuAction?.('focus-search'),
+        },
       ],
     },
 
