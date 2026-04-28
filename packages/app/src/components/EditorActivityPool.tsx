@@ -625,6 +625,7 @@ function ActivityEntry({
                       key={`${entry.docName}-${String(isNewDoc)}`}
                       provider={entry.provider}
                       placeholder={editorPlaceholder}
+                      isSourceMode={isSourceMode}
                     />
                   </div>
                 ) : null}
