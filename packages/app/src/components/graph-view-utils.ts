@@ -1,6 +1,6 @@
 import { hashFromDocName } from '@/lib/doc-hash';
 
-export interface DocGraphNode {
+interface DocGraphNode {
   kind: 'doc';
   id: string;
   label: string;
@@ -11,7 +11,7 @@ export interface DocGraphNode {
   tags?: string[] | null;
 }
 
-export interface ExternalGraphNode {
+interface ExternalGraphNode {
   kind: 'external';
   id: string;
   label: string;

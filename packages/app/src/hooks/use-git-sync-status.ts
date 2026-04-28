@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
-export type GitSyncState =
+type GitSyncState =
   | 'dormant'
   | 'idle'
   | 'fetching'

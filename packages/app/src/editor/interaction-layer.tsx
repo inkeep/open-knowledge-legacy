@@ -74,7 +74,7 @@ export interface InteractionContext {
  * web "open in new tab" mental model even though they're plain-DOM chips
  * without an `<a href>`.
  */
-export interface InteractionPrimaryContext {
+interface InteractionPrimaryContext {
   nodeId: string;
   type: string;
   /** True when the user intended new-tab semantics (Cmd/Ctrl/middle-click). */

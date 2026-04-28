@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export interface RecentProject {
+interface RecentProject {
   path: string;
   name: string;
   lastOpenedAt: string;

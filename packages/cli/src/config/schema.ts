@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const FolderFrontmatterSchema = z
+const FolderFrontmatterSchema = z
   .object({
     title: z.string().optional(),
     description: z.string().optional(),
@@ -8,7 +8,7 @@ export const FolderFrontmatterSchema = z
   })
   .strict();
 
-export const FolderRuleSchema = z
+const FolderRuleSchema = z
   .object({
     match: z
       .string()

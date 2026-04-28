@@ -22,8 +22,6 @@
 import type { ApplyResult, ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 
-export type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
-
 /** Renderer-facing result of `okDesktop.seed.plan()`. Mirrors `SeedPlanResult` in main. */
 export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
@@ -44,7 +42,7 @@ export type OkSeedApplyResult =
     };
 
 /** Render mode picked by the main process when creating a BrowserWindow. */
-export type OkDesktopMode = 'editor' | 'navigator';
+type OkDesktopMode = 'editor' | 'navigator';
 
 /** Frozen snapshot of window-level config injected at preload-exposure time. */
 export interface OkDesktopConfig {
@@ -69,9 +67,9 @@ export type OkMenuAction =
   | 'focus-command-palette';
 
 /** Returned by `onProjectSwitched` / `onMenuAction`. Call to detach the listener. */
-export type OkUnsubscribe = () => void;
+type OkUnsubscribe = () => void;
 
-export interface RecentProjectEntry {
+interface RecentProjectEntry {
   path: string;
   name: string;
   lastOpenedAt: string;
@@ -100,13 +98,7 @@ export interface OkUpdateStuckHintInfo {
  * `EditorId` in `packages/cli/src/commands/editors.ts`. Drift across the
  * three bridge-contract copies is caught by the M1 invariant test.
  */
-export type OkMcpWiringEditorId =
-  | 'claude'
-  | 'claude-desktop'
-  | 'cursor'
-  | 'vscode'
-  | 'windsurf'
-  | 'codex';
+type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
 
 /** Payload passed to `onShow` subscribers. Mirrors ok:mcp-wiring:show.
  *  `willReplace: true` signals the editor has an existing OK-managed entry
@@ -121,7 +113,7 @@ export interface OkMcpWiringShowPayload {
 }
 
 /** Result shape for `mcpWiring.confirm` / `skip`. */
-export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
