@@ -14,6 +14,157 @@ import type { Config } from '../config/schema.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import type { McpLogger } from './logger.ts';
 
+/**
+ * Classify how the running MCP child was launched, by inspecting the path of
+ * `process.argv[1]` (or whatever the caller passes). Used to tailor the
+ * remedy in the protocol-mismatch diagnostic.
+ *
+ * - `'npx-cache'` — the launch path lives inside an npx / bunx / pnpm-dlx
+ *   cache. Each editor relaunch may resolve a different version. Remedy:
+ *   stop `ok start` so the next spawn matches; consider `ok init --pin` for
+ *   determinism.
+ * - `'stable-shim'` — well-known shim location (M6 bundled CLI at
+ *   `/usr/local/bin/ok`, Homebrew at `/opt/homebrew/bin/ok`, or the bundle's
+ *   in-app shim). The desktop or a package upgrade likely bumped the shim
+ *   while a project server was still running. Remedy: close and reopen the
+ *   project window, or stop `ok start`.
+ * - `'absolute-pin'` — looks like a user-specific absolute path that does not
+ *   match the other shapes (matches `ok init --pin`-style writes pointing at
+ *   a worktree dist, a custom prefix, or a per-version shim). Remedy: re-run
+ *   `ok init --pin` from the current install.
+ * - `'unknown'` — anything else (relative path, empty, or unknown shape).
+ *   Remedy: generic.
+ *
+ * The classifier is intentionally conservative — false-negatives demote
+ * `stable-shim` / `absolute-pin` to `unknown` and just print the generic
+ * remedy. False-positives are the more harmful failure mode.
+ *
+ * Exported for tests.
+ */
+export type McpLaunchShape = 'npx-cache' | 'stable-shim' | 'absolute-pin' | 'unknown';
+
+/** Path segments that indicate the binary is being served from a transient package-manager cache. */
+const NPX_CACHE_MARKERS = [
+  '/_npx/',
+  '/.npm/_npx/',
+  '/_bunx/',
+  '/.bun/install/cache/',
+  '/pnpm/dlx/',
+];
+
+/** Absolute paths that count as a "stable shim" — symlink/wrapper that survives upgrades in place. */
+const STABLE_SHIM_PATHS = new Set([
+  '/usr/local/bin/ok',
+  '/usr/local/bin/open-knowledge',
+  '/opt/homebrew/bin/ok',
+  '/opt/homebrew/bin/open-knowledge',
+]);
+
+/** Path fragments that mark a binary as living inside a signed `.app` bundle (M6's wrapper). */
+const APP_BUNDLE_MARKERS = ['/Applications/', '.app/Contents/'];
+
+export function classifyMcpLaunchPath(launchPath: string | undefined): McpLaunchShape {
+  if (!launchPath || typeof launchPath !== 'string' || launchPath.length === 0) return 'unknown';
+  for (const marker of NPX_CACHE_MARKERS) {
+    if (launchPath.includes(marker)) return 'npx-cache';
+  }
+  if (STABLE_SHIM_PATHS.has(launchPath)) return 'stable-shim';
+  for (const marker of APP_BUNDLE_MARKERS) {
+    if (launchPath.includes(marker)) return 'stable-shim';
+  }
+  // Absolute paths that didn't match the cache or shim heuristics — typical
+  // shape of an `ok init --pin` write (dist/cli.mjs, ~/.npm-global/bin/ok,
+  // /Users/x/.local/bin/ok, etc.).
+  if (launchPath.startsWith('/')) return 'absolute-pin';
+  return 'unknown';
+}
+
+/**
+ * Build a launch-shape-specific remedy hint for the protocol-mismatch
+ * diagnostic. Kept as a separate function (not inlined into the message
+ * template) so tests can assert each shape's text independently.
+ */
+export function describeProtocolMismatchRemedy(
+  shape: McpLaunchShape,
+  launchPath: string | undefined,
+): string {
+  switch (shape) {
+    case 'npx-cache':
+      return (
+        'This MCP was launched via a package-manager cache (npx / bunx / pnpm dlx) ' +
+        'and just resolved a different package version than the running server. ' +
+        'Stop `ok start` so the next launch matches, or run `ok init --pin` for a stable launch path.'
+      );
+    case 'stable-shim':
+      return (
+        'The CLI shim was likely upgraded while a project server is still running ' +
+        '(a desktop auto-update or `npm i -g` / `brew upgrade` will do this). ' +
+        'Close and reopen the project window, or stop `ok start`, so the next launch matches.'
+      );
+    case 'absolute-pin': {
+      const pathSuffix = launchPath ? ` (${launchPath})` : '';
+      return (
+        `This MCP is launched from a pinned path${pathSuffix} that no longer matches the running server. ` +
+        'Re-run `ok init --pin` from your current install to refresh, or stop `ok start` so the next launch matches.'
+      );
+    }
+    default:
+      return 'Stop `ok start` and retry, or align CLI versions across your installs.';
+  }
+}
+
+/** True when `spawn` failed because an executable or script path was missing (ENOENT). */
+export function isSpawnEnoentMessage(message: string): boolean {
+  if (!message) return false;
+  return /\bENOENT\b/i.test(message);
+}
+
+/**
+ * Hint when MCP auto-start cannot spawn `ok start` because the CLI entry is gone —
+ * typical after changing install method while the editor still points at an old
+ * `ok init --pin` path. Exported for tests.
+ */
+export function describeSpawnEnoentRemedy(launchPath: string | undefined): string {
+  const shape = classifyMcpLaunchPath(launchPath);
+  switch (shape) {
+    case 'absolute-pin':
+      return (
+        'This failure usually means the CLI entry script no longer exists at the pinned path ' +
+        '(common after changing how you installed Open Knowledge or removing an old global package). ' +
+        'Re-run `ok init --pin` from your current install and update your editor MCP config, ' +
+        'or use an unpinned launcher such as `npx @inkeep/open-knowledge mcp`.'
+      );
+    case 'stable-shim':
+      return (
+        'The expected `ok` shim is missing on disk. Reinstall or repair your Open Knowledge CLI. ' +
+        'If you switched install sources, run `ok init --pin` again so your editor matches the binary you have.'
+      );
+    case 'npx-cache':
+      return (
+        'The package-manager cache copy used for this launch may have been removed. Retry once, ' +
+        'or run `ok init --pin` so your editor uses a durable absolute path.'
+      );
+    default:
+      return (
+        'Often means the configured launcher path does not exist (stale pin, moved install, or missing runtime). ' +
+        'Re-run `ok init --pin` from your current install or fix the MCP command in your editor settings.'
+      );
+  }
+}
+
+function formatSpawnFailedMessage(
+  asyncSpawnError: string,
+  stderr: string,
+  launchPath: string | undefined,
+): string {
+  const stderrBlock = stderr ? ` stderr:\n${stderr}` : '';
+  let out = `Error: spawn failed: ${asyncSpawnError}${stderrBlock}`;
+  if (isSpawnEnoentMessage(asyncSpawnError)) {
+    out += `\n\n${describeSpawnEnoentRemedy(launchPath)}`;
+  }
+  return out;
+}
+
 /** Default deadline for the post-spawn `server.lock` poll. */
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
 /** Default polling interval during the spawn deadline window. */
@@ -46,6 +197,8 @@ export type AutoStartDecision =
       expectedProtocolVersion: number;
       actualProtocolVersion: number | undefined;
       lock: ServerLockMetadata;
+      launchShape: McpLaunchShape;
+      launchPath: string | undefined;
     };
 
 interface DecideAutoStartInput {
@@ -62,6 +215,13 @@ interface DecideAutoStartInput {
    * package's `PROTOCOL_VERSION` constant.
    */
   expectedProtocolVersion?: number;
+  /**
+   * Path to the executable / script that launched this MCP child. Defaults to
+   * `process.argv[1]`. Used only on the `incompatible` branch to classify the
+   * launch shape and pick a tailored remedy in the diagnostic — see
+   * `classifyMcpLaunchPath`. Tests pass an explicit value to drive each branch.
+   */
+  launchPath?: string;
 }
 
 /**
@@ -111,16 +271,21 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
     }
     const actualLabel = actual === undefined ? 'unknown (pre-version-field lock)' : `v${actual}`;
     const runtimeLabel = lock.runtimeVersion ? ` runtime ${lock.runtimeVersion}` : '';
+    const launchPath = input.launchPath ?? process.argv[1];
+    const launchShape = classifyMcpLaunchPath(launchPath);
+    const remedy = describeProtocolMismatchRemedy(launchShape, launchPath);
     const message =
       `Open Knowledge server at port ${lock.port} (pid ${lock.pid}${runtimeLabel}) ` +
-      `speaks protocol ${actualLabel}; this MCP needs protocol v${expected}. ` +
-      `Stop the server and retry, or align versions.`;
+      `speaks protocol ${actualLabel}; this MCP needs protocol v${expected}.\n` +
+      remedy;
     return {
       action: 'incompatible',
       message,
       expectedProtocolVersion: expected,
       actualProtocolVersion: actual,
       lock,
+      launchShape,
+      launchPath,
     };
   }
 
@@ -176,6 +341,12 @@ interface EnsureServerRunningOptions {
   closeFd?: (fd: number) => void;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  /**
+   * Path used to classify the protocol-mismatch remedy. Defaults to
+   * `process.argv[1]`. See `classifyMcpLaunchPath` — only used on the
+   * `incompatible` branch.
+   */
+  launchPath?: string;
 }
 
 interface EnsureServerRunningResult {
@@ -204,6 +375,7 @@ export async function ensureServerRunning(
   const closeFd = opts.closeFd ?? closeSync;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const launchPathForHints = opts.launchPath ?? process.argv[1];
 
   const decision = decideAutoStart({
     host: opts.host,
@@ -212,6 +384,7 @@ export async function ensureServerRunning(
     configAutoStart: opts.configAutoStart,
     readLock,
     isAlive,
+    launchPath: opts.launchPath,
   });
 
   opts.logger?.info('auto-start decision', {
@@ -237,6 +410,8 @@ export async function ensureServerRunning(
       lockPid: decision.lock.pid,
       lockPort: decision.lock.port,
       lockRuntimeVersion: decision.lock.runtimeVersion,
+      launchShape: decision.launchShape,
+      launchPath: decision.launchPath,
     });
     throw new Error(decision.message);
   }
@@ -301,10 +476,13 @@ export async function ensureServerRunning(
   while (Date.now() < deadline) {
     if (asyncSpawnError) {
       const stderr = readErrorLog(stderrPath);
-      opts.logger?.error('spawn failed', undefined, { error: asyncSpawnError, stderr });
-      throw new Error(
-        `Error: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`,
-      );
+      opts.logger?.error('spawn failed', undefined, {
+        error: asyncSpawnError,
+        stderr,
+        launchPath: launchPathForHints,
+        stalePinHint: isSpawnEnoentMessage(asyncSpawnError),
+      });
+      throw new Error(formatSpawnFailedMessage(asyncSpawnError, stderr, launchPathForHints));
     }
     await sleep(pollIntervalMs);
     const lock = readLock();
@@ -330,10 +508,10 @@ export async function ensureServerRunning(
     opts.logger?.error('spawn failed (post-deadline)', undefined, {
       error: asyncSpawnError,
       stderr,
+      launchPath: launchPathForHints,
+      stalePinHint: isSpawnEnoentMessage(asyncSpawnError),
     });
-    throw new Error(
-      `Error: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`,
-    );
+    throw new Error(formatSpawnFailedMessage(asyncSpawnError, stderr, launchPathForHints));
   }
   const stderr = readErrorLog(stderrPath);
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);

@@ -204,6 +204,69 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(wipRefs).toBeTruthy();
   });
 
+  test('shutdown order: lock release happens AFTER L1 disk flush completes', async () => {
+    // Locks in the invariant from specs/2026-04-24-cross-install-version-handshake
+    // §6.4 + AC A6: phase 6 (`releaseServerLock`) must run AFTER phase 3
+    // (`flushAllStoresAndWait`). Reordering them would let a concurrent
+    // acquirer boot before in-flight writes have landed, racing two servers
+    // against the same disk file.
+    //
+    // Strategy: hook `afterUnloadDocument` (fires from inside phase 3 for each
+    // unloaded doc) and capture lock-file + content-file presence at that
+    // exact moment. Phase-3 → phase-6 ordering means the lock MUST still
+    // exist when this hook fires, and the disk write MUST have already
+    // landed.
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+      debounce: 60_000, // Suppress natural flush — proves destroy-time path
+    });
+    await server.ready;
+
+    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const docName = 'shutdown-order';
+    const contentPath = join(tmpDir, `${docName}.md`);
+    const captures: Array<{ lockExists: boolean; contentOnDisk: boolean; payload: string }> = [];
+
+    server.hocuspocus.configuration.extensions.push({
+      async afterUnloadDocument(payload: { documentName: string }) {
+        if (payload.documentName !== docName) return;
+        captures.push({
+          lockExists: existsSync(lockPath),
+          contentOnDisk: existsSync(contentPath),
+          payload: existsSync(contentPath) ? readFileSync(contentPath, 'utf-8') : '',
+        });
+      },
+    });
+
+    const conn = await server.hocuspocus.openDirectConnection(docName);
+    await conn.transact((doc) => {
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('order-marker')]);
+      xmlFragment.insert(0, [paragraph]);
+    });
+    const doc = server.hocuspocus.documents.get(docName);
+    expect(doc).toBeDefined();
+    doc?.removeDirectConnection();
+
+    expect(existsSync(lockPath)).toBe(true);
+    await server.destroy();
+
+    // Phase-3 capture: at unload-time, the lock was still held AND the L1
+    // write had already landed. If phase 6 ran before phase 3 finished, this
+    // capture would see `lockExists: false`.
+    expect(captures.length).toBe(1);
+    expect(captures[0]?.lockExists).toBe(true);
+    expect(captures[0]?.contentOnDisk).toBe(true);
+    expect(captures[0]?.payload).toContain('order-marker');
+
+    // Post-destroy: lock is gone, content survived. The standard end-state.
+    expect(existsSync(lockPath)).toBe(false);
+    expect(readFileSync(contentPath, 'utf-8')).toContain('order-marker');
+  });
+
   test('destroy() completes within destroyTimeoutMs AND rescues hung docs when onStoreDocument throws', async () => {
     // Pre-construct shadow handle so the test can assert the D15 rescue-buffer
     // file exists on disk post-destroy. Mirrors Test 2's layout.
