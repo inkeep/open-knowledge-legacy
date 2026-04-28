@@ -113,11 +113,18 @@ import {
   applyIncrementalDiff,
   assertContentPreservation,
   BridgeMergeContentLossError,
+  getFrontmatter,
+  getFrontmatterMap,
   MarkdownManager,
   mergeThreeWay,
+  parseFrontmatterYaml,
   prependFrontmatter,
+  serializeFrontmatterMap,
+  setFrontmatterFromYaml,
   sharedExtensions,
   stripFrontmatter,
+  unwrapFrontmatterFences,
+  withFences,
 } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -1038,6 +1045,164 @@ describe('Chain D — frontmatter strip/prepend conversion', () => {
     },
     PBT_TIMEOUT_MS,
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chain D — per-key frontmatter equivalence (US-013, AC #7)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Under per-key Y.Map storage (US-001..US-005), the conversion path is:
+//
+//   Observer B reads Y.Text → stripFrontmatter → setFrontmatterFromYaml(doc, body)
+//   Observer A reads metaMap → getFrontmatter(doc) → prependFrontmatter(fm, body)
+//
+// The original Chain D above proved the regex pair (stripFrontmatter +
+// prependFrontmatter) is identity-correct on a single in-out string.
+// This extension closes the loop with the per-key codec: a YAML body fed
+// through `parseFrontmatterYaml → Y.Map → serializeFrontmatterMap → withFences`
+// must reproduce a fenced string that, when fed back into prependFrontmatter
+// against the original body, equates the original full markdown under the same
+// normalization the bridge invariant uses.
+//
+// Why this matters: the substrate bridge invariant (D11) composes one side of
+// the equality from `getFrontmatter(doc)` post per-key write. If the codec
+// drifts (e.g. yaml@2 changes scalar-style defaults), the watcher would flap
+// against per-key writes and integration tests would surface a noisy red.
+// This deterministic PBT pins the codec contract at the same tier the
+// observer conversion functions are tested.
+
+// A codec-compatible YAML frontmatter arbitrary. The legacy Chain D arbitrary
+// `mdWithFrontmatter` allows YAML that the per-key codec rejects (null values
+// from `key: ` / `key: -` / `key: ~`) or normalizes (`00` → `0`, leading-zero
+// integers). This arbitrary requires the value to start with a letter so:
+//   - YAML 1.2 null sentinels (`-`, `~`, `?`, `!`) cannot lead → no null map
+//   - The value cannot be parsed as a number (so the input token survives
+//     re-serialization byte-for-byte, which the body-token survival test
+//     in Chain D enforces).
+const codecValue = fc.stringMatching(/^[A-Za-z][A-Za-z0-9 _-]{0,19}$/);
+const codecFrontmatterBlock = fc
+  .array(fc.tuple(fc.stringMatching(/^[a-z][a-z0-9_]{1,10}$/), codecValue), {
+    minLength: 1,
+    maxLength: 3,
+  })
+  .map((pairs) => {
+    // Dedup on key so the YAML doesn't have duplicate keys (yaml@2 keeps the
+    // last; the test would compare against the first-write parse).
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    for (const [k, v] of pairs) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      lines.push(`${k}: ${v}`);
+    }
+    return `---\n${lines.join('\n')}\n---\n`;
+  });
+const mdWithCodecFrontmatter = fc
+  .tuple(codecFrontmatterBlock, bodyOnly)
+  .map(([fm, body]) => `${fm}${body}`);
+
+describe('Chain D — per-key frontmatter equivalence (US-013)', () => {
+  test(
+    'parseFrontmatterYaml(strip(full).frontmatter) → serialize → withFences round-trips',
+    () => {
+      // The Observer B → Observer A path: strip the YAML body, parse it into
+      // a per-key map, re-serialize, re-fence. The result must be identical
+      // (modulo canonicalization) to what the original frontmatter expressed.
+      assertAcrossSeeds(
+        fc.property(mdWithCodecFrontmatter, (full) => {
+          const { frontmatter } = stripFrontmatter(full);
+          const yamlBody = unwrapFrontmatterFences(frontmatter);
+          const { map } = parseFrontmatterYaml(yamlBody);
+          // The codec arbitrary only emits valid YAML; map should never be null.
+          expect(map).not.toBeNull();
+          if (map === null) return;
+          const reFenced = withFences(serializeFrontmatterMap(map));
+          // The re-fenced string parses to the same logical map.
+          const { map: roundTrippedMap } = parseFrontmatterYaml(unwrapFrontmatterFences(reFenced));
+          expect(roundTrippedMap).toEqual(map);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'Observer B → Observer A composite: per-key write + getFrontmatter mirrors strip/prepend identity for body tokens',
+    () => {
+      // Simulate the full per-key path:
+      //   1. strip frontmatter from input markdown (Observer B input)
+      //   2. write the parsed YAML to per-key Y.Map via setFrontmatterFromYaml
+      //   3. read back via getFrontmatter (Observer A composition source)
+      //   4. prepend onto the body — this is what Observer A would yield
+      // The composite output must contain every body token AND every YAML
+      // value-token from the original input, the same survival contract the
+      // legacy Chain D enforces — but routed through the per-key codec.
+      assertAcrossSeeds(
+        fc.property(mdWithCodecFrontmatter, (full) => {
+          const { frontmatter, body } = stripFrontmatter(full);
+          const yamlBody = unwrapFrontmatterFences(frontmatter);
+          const doc = new Y.Doc();
+          doc.transact(() => {
+            const ok = setFrontmatterFromYaml(doc, yamlBody);
+            expect(ok).toBe(true);
+          });
+          const composedFm = getFrontmatter(doc);
+          const fullOut = prependFrontmatter(composedFm, body);
+
+          // Every YAML value token in the input must survive (the codec must
+          // not drop any key/value across parse → set → re-serialize).
+          const inputFmTokens = presentInputTokens(frontmatter);
+          for (const token of inputFmTokens) {
+            expect(fullOut.includes(token)).toBe(true);
+          }
+          // Body tokens survive trivially because the body string is reused.
+          const inputBodyTokens = presentInputTokens(body);
+          for (const token of inputBodyTokens) {
+            expect(fullOut.includes(token)).toBe(true);
+          }
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test(
+    'getFrontmatterMap matches the raw parsed map for any per-key write',
+    () => {
+      // Pin the round-trip through Y.Map: the map you read back must equal
+      // the map the codec produced from the raw YAML. This catches `Y.Text`
+      // / `Y.Array<Y.Text>` unwrap regressions in `getFrontmatterMap`.
+      assertAcrossSeeds(
+        fc.property(mdWithCodecFrontmatter, (full) => {
+          const { frontmatter } = stripFrontmatter(full);
+          const yamlBody = unwrapFrontmatterFences(frontmatter);
+          const { map: directParsed } = parseFrontmatterYaml(yamlBody);
+          if (directParsed === null) return;
+          const doc = new Y.Doc();
+          doc.transact(() => setFrontmatterFromYaml(doc, yamlBody));
+          expect(getFrontmatterMap(doc)).toEqual(directParsed);
+        }),
+      );
+    },
+    PBT_TIMEOUT_MS,
+  );
+
+  test('empty-YAML input via per-key path produces empty map', () => {
+    // The arbitrary's empty-YAML branch (`---\n---\n`) must drive `setFrontmatterFromYaml`
+    // to a no-op + return `true` (valid empty input is success), and the
+    // resulting per-key map must be empty so getFrontmatter falls through to
+    // the legacy slot (or empty when no slot either).
+    const { frontmatter } = stripFrontmatter('---\n---\nBody.\n');
+    const yamlBody = unwrapFrontmatterFences(frontmatter);
+    expect(yamlBody).toBe('');
+    const doc = new Y.Doc();
+    doc.transact(() => {
+      const ok = setFrontmatterFromYaml(doc, yamlBody);
+      expect(ok).toBe(true);
+    });
+    expect(getFrontmatterMap(doc)).toEqual({});
+    expect(getFrontmatter(doc)).toBe('');
+  });
 });
 
 describe('Handler-specific survivability (chains A+C)', () => {
