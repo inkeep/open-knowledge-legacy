@@ -20,6 +20,7 @@ const SIDEBAR_ID = 'app-file-sidebar';
 const MIN_SIDEBAR_WIDTH = '14rem';
 const MAX_SIDEBAR_WIDTH = '22rem';
 const SIDEBAR_WIDTH_COOKIE_NAME = 'sidebar_width';
+const SIDEBAR_WIDTH_VALUE_PATTERN = /^\d+(?:\.\d+)?(?:rem|px)$/;
 
 type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -48,6 +49,20 @@ type SidebarContextProps = {
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
 
+function getInitialSidebarWidth(defaultWidth: string) {
+  if (typeof document === 'undefined') return defaultWidth;
+
+  const savedWidth = document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${SIDEBAR_WIDTH_COOKIE_NAME}=`))
+    ?.split('=')[1];
+
+  if (!savedWidth) return defaultWidth;
+
+  const decodedWidth = decodeURIComponent(savedWidth);
+  return SIDEBAR_WIDTH_VALUE_PATTERN.test(decodedWidth) ? decodedWidth : defaultWidth;
+}
+
 function useSidebar() {
   const context = React.use(SidebarContext);
   if (!context) {
@@ -73,7 +88,7 @@ function SidebarProvider({
   defaultWidth?: string;
 }) {
   const isMobile = useIsMobile();
-  const [width, setWidth] = React.useState(defaultWidth);
+  const [width, setWidth] = React.useState(() => getInitialSidebarWidth(defaultWidth));
   const [openMobile, setOpenMobile] = React.useState(false);
   const [isDraggingRail, setIsDraggingRail] = React.useState(false);
   const [showPushPulse, setShowPushPulse] = React.useState(false);
