@@ -509,6 +509,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     skipNextResetSignatureRef.current = documentsTreePathSignature(nextDocuments);
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only on mount
   useEffect(() => {
     let active = true;
 
