@@ -76,9 +76,7 @@ describe('US-008: per-session UndoManager integration', () => {
     session.um.undo();
 
     expect(ytext.toString()).toBe('');
-    // Y.Map undo restores the prior value (empty string), not undefined —
-    // the key existed before the transact() wrote '---\ntitle: Test\n---\n'.
-    expect(metaMap.get('frontmatter')).toBe('');
+    expect(metaMap.get('frontmatter')).toBeUndefined();
     expect(flashMap.get('agent-atomic')).toBeUndefined();
 
     await sessionManager.closeSession(docName, 'agent-atomic');

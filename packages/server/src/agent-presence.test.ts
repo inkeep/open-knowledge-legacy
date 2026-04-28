@@ -377,13 +377,15 @@ describe('AgentPresenceBroadcaster', () => {
     // above prove the pattern IS race-safe.
     //
     // The expected-match count is DISCOVERED from the source — counting
-    // `applyAgentMarkdownWrite(` + `applyAgentUndo(` call sites — rather
-    // than hardcoded. That's the load-bearing signal of an "agent write
-    // handler": every handler that dispatches an agent-origin CRDT mutation
-    // must wrap it in the same try/finally + setPresence('writing') shape.
-    // `extractAgentIdentity` call sites are too broad — post-D42 identity
-    // threading, it's also called by admin handlers (rollback, create-page,
-    // rename, save-version) that don't produce a live presence badge.
+    // `applyAgentMarkdownWrite(` + `applyAgentUndo(` call sites plus the
+    // per-key write loop in `handleFrontmatterPatch` (which writes via
+    // `setFrontmatterProperty` per-key, not a legacy composer). That's
+    // the load-bearing signal of an "agent write handler": every handler
+    // that dispatches an agent-origin CRDT mutation must wrap it in the
+    // same try/finally + setPresence('writing') shape. `extractAgentIdentity`
+    // call sites are too broad — post-D42 identity threading, it's also
+    // called by admin handlers (rollback, create-page, rename, save-version)
+    // that don't produce a live presence badge.
     //
     // If you are reading this because this test just failed:
     //   - If a NEW handler was added that calls applyAgentMarkdownWrite
@@ -398,12 +400,16 @@ describe('AgentPresenceBroadcaster', () => {
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
     const src = readFileSync(resolve(dir, 'api-extension.ts'), 'utf-8');
 
-    // Discover agent-write handlers via `applyAgentMarkdownWrite(` +
-    // `applyAgentUndo(` call sites (the import lines start with
-    // `  applyAgent…,` with no `(`, so they're naturally excluded).
+    // Discover agent-write handlers via:
+    //   - `applyAgentMarkdownWrite(` / `applyAgentUndo(` call sites (legacy composers)
+    //   - `for (const [key, value] of Object.entries(validatedPatch))` — the
+    //     per-key write loop unique to `handleFrontmatterPatch` (US-005)
     const handlerCallSites = src.match(/apply(?:AgentMarkdownWrite|AgentUndo)\(/g) ?? [];
-    const expectedCount = handlerCallSites.length;
-    expect(expectedCount).toBeGreaterThanOrEqual(4); // 3 write + 1 undo
+    const perKeyWriteSites =
+      src.match(/for\s+\(const\s+\[key,\s*value\]\s+of\s+Object\.entries\(validatedPatch\)\)/g) ??
+      [];
+    const expectedCount = handlerCallSites.length + perKeyWriteSites.length;
+    expect(expectedCount).toBeGreaterThanOrEqual(5); // 3 write + 1 undo + 1 frontmatter-patch
 
     // Each handler's try block must open with icon/color derivation
     // immediately followed by setPresence(mode:'writing'). Arbitrary

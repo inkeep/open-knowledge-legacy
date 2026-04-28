@@ -1,12 +1,3 @@
-/**
- * PropertyPanel — static-render tests.
- *
- * Pattern matches ActivityPanelFileRow.test.tsx: render via `renderToString`
- * and inspect the resulting HTML. Interactive widget commits, type picker
- * dropdown, and observer-driven re-render are exercised in browser smoke
- * (US-007/US-008 AC), not here.
- */
-
 import { afterEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { renderToString } from 'react-dom/server';
@@ -137,20 +128,15 @@ describe('PropertyPanel widget routing (US-008)', () => {
     const html = renderToString(<PropertyPanel provider={provider} />);
     expect(html).toContain('data-widget-type="list"');
     expect(html).toContain('data-testid="list-widget"');
-    // Each chip rendered with its index
     expect(html).toContain('data-index="0"');
     expect(html).toContain('data-index="1"');
     expect(html).toContain('data-index="2"');
-    // Chip values appear in the markup
     expect(html).toContain('docs');
     expect(html).toContain('crdt');
     expect(html).toContain('mcp');
   });
 
   test('value-shape wins: array always renders as list, even if declared was text', () => {
-    // Initial render takes inferred type; no override yet, but inference for
-    // string[] is 'list' anyway. This pins the contract from the resolveWidgetType
-    // helper that arrays trump declared types.
     const provider = makeProvider('shape-wins-doc');
     seedMetaMap(provider, { topics: ['a', 'b'] });
     const html = renderToString(<PropertyPanel provider={provider} />);
@@ -161,8 +147,9 @@ describe('PropertyPanel widget routing (US-008)', () => {
     const provider = makeProvider('type-icon-doc');
     seedMetaMap(provider, { title: 'Hello', count: 5 });
     const html = renderToString(<PropertyPanel provider={provider} />);
-    // Two type-icon buttons, one per row, each carries its declared type.
     const iconMatches = html.match(/data-testid="type-icon-button"/g) ?? [];
+    // One per row + one in the (possibly hidden) AddPropertyRow if present;
+    // with no add-row open, only per-row icons render.
     expect(iconMatches.length).toBe(2);
     expect(html).toContain('data-key="title"');
     expect(html).toContain('aria-label="title type: Text. Click to change."');
@@ -170,8 +157,6 @@ describe('PropertyPanel widget routing (US-008)', () => {
   });
 
   test('observeDeep picks up Y.Text-wrapped string slots (forward-compat)', () => {
-    // List slots may be Y.Text in the future — getFrontmatterMap unwraps,
-    // panel still routes through the text widget for the unwrapped string.
     const provider = makeProvider('ytext-doc');
     const metaMap = provider.document.getMap<unknown>('metadata');
     provider.document.transact(() => {
@@ -180,5 +165,57 @@ describe('PropertyPanel widget routing (US-008)', () => {
     const html = renderToString(<PropertyPanel provider={provider} />);
     expect(html).toContain('value="YText title"');
     expect(html).toContain('data-widget-type="text"');
+  });
+});
+
+describe('PropertyPanel row chrome (US-009)', () => {
+  test('each row renders a remove button with key-scoped aria-label', () => {
+    const provider = makeProvider('chrome-remove-doc');
+    seedMetaMap(provider, { title: 'A', status: 'draft' });
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    const trashMatches = html.match(/data-testid="property-remove-button"/g) ?? [];
+    expect(trashMatches.length).toBe(2);
+    expect(html).toContain('aria-label="Remove title"');
+    expect(html).toContain('aria-label="Remove status"');
+  });
+
+  test('property name renders as a button (rename affordance)', () => {
+    const provider = makeProvider('chrome-rename-doc');
+    seedMetaMap(provider, { title: 'A' });
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    expect(html).toContain('data-testid="property-name-button"');
+    expect(html).toContain('data-key="title"');
+  });
+});
+
+describe('PropertyPanel add-property trigger (US-009)', () => {
+  test('persistent add-property button at the bottom of the expanded panel', () => {
+    const provider = makeProvider('add-trigger-doc');
+    seedMetaMap(provider, { title: 'A' });
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    expect(html).toContain('data-testid="add-property-trigger"');
+    expect(html).toContain('Add property');
+  });
+
+  test('add-property button renders even when there are no rows yet — wait, panel is hidden in that case', () => {
+    // Panel is null when (a) no rows AND (b) no add-row open. The add-trigger
+    // is only visible when rows already exist; the toolbar trigger in
+    // EditorHeader handles the empty-state init path.
+    const provider = makeProvider('add-trigger-empty-doc');
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    expect(html).toBe('');
+  });
+});
+
+describe('PropertyPanel duplicate-name guard (US-009)', () => {
+  test('Object.hasOwn surface is the rejection signal (contract pin)', () => {
+    const provider = makeProvider('dup-guard-shape-doc');
+    seedMetaMap(provider, { title: 'A', status: 'draft' });
+    // Rebuild the map shape readers see — this pins that hasOwn discriminates
+    // existing vs new keys across the same surface the panel queries.
+    const map = provider.document.getMap<unknown>('metadata');
+    expect(map.has('title')).toBe(true);
+    expect(map.has('status')).toBe(true);
+    expect(map.has('newKey')).toBe(false);
   });
 });
