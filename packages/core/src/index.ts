@@ -80,7 +80,12 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
-export { type ServerInfoResponse, ServerInfoResponseSchema } from './schemas/api.ts';
+export {
+  type PrincipalResponse,
+  PrincipalResponseSchema,
+  type ServerInfoResponse,
+  ServerInfoResponseSchema,
+} from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CHANNEL_DISK_ACK,
@@ -160,7 +165,9 @@ export {
   AGENT_ICON_COLORS,
   AGENT_ICON_COLORS_DARK,
   colorFromSeed,
+  computeInitials,
   deriveIconColor,
+  formatPresenceLabel,
   generateRandomColor,
   generateRandomName,
   getIdentity,

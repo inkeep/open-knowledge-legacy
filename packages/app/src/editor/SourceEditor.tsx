@@ -114,15 +114,12 @@ export function SourceEditor({
   if (mountError) throw mountError;
   const { resolvedTheme } = useTheme();
 
-  // Keep awareness aligned with the currently visible editor for this doc.
-  useEffect(() => {
-    const awareness = provider.awareness;
-    if (!awareness) return;
-    awareness.setLocalStateField('mode', isSourceModeActive ? 'source' : 'wysiwyg');
-    return () => {
-      awareness.setLocalStateField('mode', 'wysiwyg');
-    };
-  }, [provider, isSourceModeActive]);
+  // Awareness `mode` is published by TiptapEditor (single writer), driven by
+  // the same `isSourceMode` prop. Two writers raced previously: peers' observed
+  // mode depended on React's effect-firing order across siblings, and after a
+  // navigate-away clear (setLocalState(null)) SourceEditor's setLocalStateField
+  // would no-op while TiptapEditor's setLocalState rebuilt the entry. SourceEditor
+  // now reads only — it doesn't write awareness.
 
   // V2 EDITOR CACHE WIRING (US-008)
   //

@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { WRITING_PULSE_MIN_MS } from './PresenceBar';
+import { ANIMAL_ICON_NAMES, pickHumanAvatarKind, WRITING_PULSE_MIN_MS } from './PresenceBar';
 
 describe('WRITING_PULSE_MIN_MS', () => {
   test('is at least 500ms — below this, animate-pulse barely starts', () => {
@@ -39,5 +39,53 @@ describe('WRITING_PULSE_MIN_MS', () => {
     // refactor accidentally wires the pulse to the stale-MS constant, the
     // pulse would hold for 5s (too long) and couple two unrelated timings.
     expect(WRITING_PULSE_MIN_MS).not.toBe(5_000);
+  });
+});
+
+describe('pickHumanAvatarKind', () => {
+  test('git-config user (principalId set) always renders initials, even when name matches an animal', () => {
+    // The "John Bird" rule — a real human whose surname coincides with an
+    // ANIMAL_ICON_MAP key must never render an animal icon. The principalId
+    // presence is the discriminator.
+    const result = pickHumanAvatarKind({ name: 'John Bird', principalId: 'principal-jb' });
+    expect(result).toEqual({ kind: 'initials' });
+  });
+
+  test('git-config user with empty-string principalId is treated as ineligible (renders animal if name matches)', () => {
+    // Eligibility mirrors the dedupe rule in usePresence: empty string is
+    // not a valid principalId. A user without a real principal who happens
+    // to have a name matching an animal-key still renders the animal.
+    const result = pickHumanAvatarKind({ name: 'Curious Bird', principalId: '' });
+    expect(result).toEqual({ kind: 'animal', animal: 'Bird' });
+  });
+
+  test('synthesized fallback name with second word matching an animal key renders that animal', () => {
+    const result = pickHumanAvatarKind({ name: 'Curious Squirrel' });
+    expect(result).toEqual({ kind: 'animal', animal: 'Squirrel' });
+  });
+
+  test('synthesized fallback name whose second word does not match falls back to initials', () => {
+    // Defensive: any random-name pool change that produces a non-mapped
+    // second word must still render — initials cover it.
+    const result = pickHumanAvatarKind({ name: 'Curious Phoenix' });
+    expect(result).toEqual({ kind: 'initials' });
+  });
+
+  test('single-word name without principalId falls back to initials', () => {
+    const result = pickHumanAvatarKind({ name: 'Solo' });
+    expect(result).toEqual({ kind: 'initials' });
+  });
+
+  test('empty name returns initials (computeInitials handles the rendering)', () => {
+    const result = pickHumanAvatarKind({ name: '' });
+    expect(result).toEqual({ kind: 'initials' });
+  });
+
+  test('ANIMAL_ICON_NAMES is non-empty and contains the canonical animal-fallback set', () => {
+    // Tripwire: if a future commit drops the animal icon table, this test
+    // catches it before the integration test fleet would notice.
+    expect(ANIMAL_ICON_NAMES.length).toBeGreaterThan(0);
+    expect(ANIMAL_ICON_NAMES).toContain('Bird');
+    expect(ANIMAL_ICON_NAMES).toContain('Squirrel');
   });
 });
