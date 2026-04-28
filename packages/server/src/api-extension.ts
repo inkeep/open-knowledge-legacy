@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
@@ -231,7 +232,9 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
   if (!docName || docName.includes('..') || docName.includes('\0')) {
     return { error: 'Invalid document name' };
   }
-  const normalized = contentRoot.replace(/^\.\//, '');
+  // Normalize: strip leading './' AND treat bare '.' as empty (git rejects
+  // both "./foo" and "./" pathspecs when operating against a bare repo).
+  const normalized = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
   const ext = getDocExtension(docName);
   const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
   return { path };
@@ -2681,7 +2684,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      const resolvedContentRoot = contentRoot ?? 'content';
+      const resolvedContentRoot = contentRoot ?? '.';
       const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
       console.log(`[history] checkpoint ${result.checkpointRef}`);
@@ -2820,7 +2823,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const t0 = Date.now();
     try {
-      const resolvedContentRoot = contentRoot ?? 'content';
+      const resolvedContentRoot = contentRoot ?? '.';
       const result = await getDocumentHistory(
         shadow,
         {
@@ -2869,7 +2872,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const docName = url.searchParams.get('docName') ?? '';
 
-    const resolvedContentRoot = contentRoot ?? 'content';
+    const resolvedContentRoot = contentRoot ?? '.';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
       json(res, 400, { ok: false, error: pathResult.error });
@@ -2930,7 +2933,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const resolvedContentRoot = contentRoot ?? 'content';
+    const resolvedContentRoot = contentRoot ?? '.';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
       json(res, 400, { ok: false, error: pathResult.error });
@@ -3080,7 +3083,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const resolvedContentRoot = contentRoot ?? 'content';
+    const resolvedContentRoot = contentRoot ?? '.';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
       json(res, 400, { ok: false, error: pathResult.error });
@@ -3210,7 +3213,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (projectDir) {
         const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
         const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
-        const resolvedContentRoot = contentRoot ?? 'content';
+        const resolvedContentRoot = contentRoot ?? '.';
         withParentLock(async () => {
           const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
           const gitPathspec = resolvedContentRoot || '.';
@@ -4561,7 +4564,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       cwd: absDir,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env },
+      // Explicit `interactive` — `OK_LOCK_KIND` may be inherited from a
+      // surrounding MCP-spawn parent and we don't want a user-driven
+      // local-op/open relay to mark its child server as `mcp-spawned`.
+      env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
     });
 
     const stderrChunks: Buffer[] = [];
@@ -4584,7 +4590,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      await new Promise<void>((r) => setTimeout(r, 500));
+      await wait(500);
       const uiLock = readUiLock(lockDir);
       if (uiLock && uiLock.port > 0) {
         return { port: uiLock.port };

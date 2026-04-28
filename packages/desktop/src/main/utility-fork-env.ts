@@ -1,18 +1,28 @@
 /**
  * Pure env-builder for utilityProcess.fork (M4 SPEC AC8).
  *
- * Merges `process.env` with the Electron-host marker
- * `OK_ELECTRON_PROTOCOL_HOST=1`. Extracted so the merge can be unit-tested
- * without standing up an Electron runtime.
+ * Merges `process.env` with three desktop-only markers:
+ *   - `OK_ELECTRON_PROTOCOL_HOST=1` — the utility's preview-url helper uses
+ *     this to emit `openknowledge://` deep-links instead of `http://localhost:<port>`
+ *     URLs (Electron host has the protocol handler registered). Set at fork
+ *     time (NOT `createServer`) so only forks from this desktop main process
+ *     carry the flag; CLI / bunx servers keep the existing http behavior.
+ *   - `OK_LOCK_KIND=interactive` — pin the lock kind explicitly so an
+ *     accidentally-inherited `mcp-spawned` from a surrounding shell never
+ *     causes the desktop's own server to mark itself as MCP-spawned.
+ *   - `OK_PARENT_PID=<main pid>` — lets the utility's parent-death poll
+ *     target the Electron main process (utility's `process.ppid` is the
+ *     Electron Helper, not main).
  *
- * The marker tells the utility's preview-url helper that it's running inside
- * an Electron host — so MCP clients should receive `openknowledge://` deep-
- * link URLs instead of `http://localhost:<port>` URLs. Set at fork time (NOT
- * at `createServer` time) because only forks originating from this desktop
- * main process should carry the flag; CLI / bunx servers must keep the
- * existing `http://localhost:...` behavior.
+ * Extracted so the merge can be unit-tested without standing up an Electron
+ * runtime.
  */
 
 export function buildUtilityForkEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...parentEnv, OK_ELECTRON_PROTOCOL_HOST: '1' };
+  return {
+    ...parentEnv,
+    OK_ELECTRON_PROTOCOL_HOST: '1',
+    OK_LOCK_KIND: 'interactive',
+    OK_PARENT_PID: String(process.pid),
+  };
 }

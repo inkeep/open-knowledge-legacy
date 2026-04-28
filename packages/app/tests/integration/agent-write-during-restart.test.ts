@@ -23,6 +23,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   agentWriteMd,
@@ -30,7 +31,6 @@ import {
   pollDiskContentStable,
   pollUntil,
   seedPoolServerInstanceId,
-  wait,
 } from './test-harness';
 
 const PRE_RESTART_MARKER = 'T6-PRE-RESTART-agent-write-alpha';

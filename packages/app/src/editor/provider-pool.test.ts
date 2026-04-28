@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
@@ -305,7 +306,7 @@ describe('ProviderPool disconnect recycling', () => {
     expect(entry.pendingRecycleTimer).not.toBeNull();
 
     // Wait for debounce to fire
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     const recycled = pool.getActive();
     expect(recycled).not.toBeNull();
@@ -482,7 +483,7 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(pool.has('doc2')).toBe(true);
 
     // Wait for the debounce to fire
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     // Now doc2 is removed from the pool
     expect(pool.has('doc2')).toBe(false);
@@ -851,7 +852,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     // Resolve the in-flight promise; subsequent dispatches should run
     // a fresh callback (the gate self-clears on settle).
     if (pending !== null) (pending as () => void)();
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await wait(0);
     emit(e1);
     await Promise.resolve();
     expect(called).toBe(2);
@@ -897,7 +898,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     await Promise.resolve();
     expect(called).toBe(1);
     if (resolveWork !== null) (resolveWork as () => void)();
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await wait(0);
   });
 
   // localStorage-persistence path — load-bearing for the fresh-tab-with-
@@ -1036,7 +1037,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later
@@ -1059,7 +1060,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
 
     // The re-opened provider's token must NOT carry the old claim — that's
     // the whole point of the recycle. HocuspocusProvider defaults token to
@@ -1100,14 +1101,14 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
     const postFirstEntry = pool.entries.get('doc1');
     if (!postFirstEntry) throw new Error('expected post-first entry');
     const postFirstProvider = postFirstEntry.provider;
 
     // A stale sibling's event arriving after cache is null must not churn.
     postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
     const postSecond = pool.entries.get('doc1');
     expect(postSecond?.provider).toBe(postFirstProvider);
   });
@@ -1181,7 +1182,7 @@ describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
     });
 
     // Wait for debounce to fire
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     // After recycle: original cache entry invalidated; re-opened provider has
     // no fresh syncPromise call yet, so cache is empty
@@ -1519,7 +1520,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     entry.provider.emit('disconnect', {
       event: { code: 1006, reason: 'server restart', wasClean: false },
     });
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     expect(persistenceSpy).toHaveBeenCalledTimes(1);
     expect(order[0]).toBe('persistence');
@@ -1583,7 +1584,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
     // server-instance-mismatch: buffer → clearData every entry → recycle
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
 
     expect(clearSpy1).toHaveBeenCalledTimes(1);
     expect(clearSpy2).toHaveBeenCalledTimes(1);
@@ -1632,7 +1633,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     e3.persistence.clearData = clearOk2;
 
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 50));
+    await wait(50);
 
     // Every clearData was attempted.
     expect(clearOk1).toHaveBeenCalledTimes(1);
@@ -1941,7 +1942,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     entry.lastServerSyncedSV = svAfterAAABBB;
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     const buffered = pool.__test_getBufferedUpdate(docName);
     if (!buffered) throw new Error('expected buffered update for active doc');
@@ -1980,7 +1981,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     expect(entry.lastDiskAckedSV).toBeNull();
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     const buffered = pool.__test_getBufferedUpdate(docName);
     if (!buffered) throw new Error('expected buffered update');
@@ -2002,7 +2003,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     expect(entry.lastDiskAckedSV).toBeNull();
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await new Promise((r) => setTimeout(r, 100));
+    await wait(100);
 
     // No baseline → drop unsynced state. The 50–500 ms cold-connect-then-
     // immediate-mismatch window can lose keystrokes; accepted trade-off

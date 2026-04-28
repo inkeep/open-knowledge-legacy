@@ -14,8 +14,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { updateYFragment } from '@tiptap/y-tiptap';
-
 import {
   agentWriteMd,
   assertBridgeInvariant,
@@ -27,7 +27,6 @@ import {
   type TestClient,
   type TestServer,
   testReset,
-  wait,
 } from './test-harness';
 
 let server: TestServer;

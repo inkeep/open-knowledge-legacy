@@ -15,6 +15,7 @@
  * and ui safety-net) so tests are deterministic — no real wall-clock waits.
  */
 import { describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { FetchApiConfigResult } from './api-config';
 import { runCollabUrlPoll, TERMINAL_AFTER_MS } from './use-collab-url';
 
@@ -61,7 +62,7 @@ function createManualScheduler(): ManualScheduler {
         if (idx >= 0) queue.splice(idx, 1);
         now = next.dueAt;
         next.cb();
-        await new Promise((r) => setTimeout(r, 0));
+        await wait(0);
       }
       now = target;
     },
@@ -119,8 +120,8 @@ describe('runCollabUrlPoll', () => {
     const { deps, scheduler, states } = makeDeps();
     const handle = runCollabUrlPoll(deps);
     // The first tick's fetch is async — yield so it settles.
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
 
     expect(states.length).toBeGreaterThanOrEqual(1);
     const last = states[states.length - 1];
@@ -138,8 +139,8 @@ describe('runCollabUrlPoll', () => {
       fallbackUrl: () => 'ws://localhost:5173/collab',
     });
     const handle = runCollabUrlPoll(deps);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
 
     const last = states[states.length - 1];
     expect(last?.collabUrl).toBe('ws://localhost:5173/collab');
@@ -162,8 +163,8 @@ describe('runCollabUrlPoll', () => {
     });
     runCollabUrlPoll(deps);
     // Initial null-collab tick settles.
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
     // Three null-collab retries at 2s / 4s / 8s, fourth tick resolves.
     await scheduler.advanceTime(2_100);
     await scheduler.advanceTime(4_100);
@@ -191,8 +192,8 @@ describe('runCollabUrlPoll', () => {
       maxDelayMs: 400,
     });
     runCollabUrlPoll(deps);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
     // Advance past the terminal deadline. Each tick reschedules with backoff
     // (100 → 200 → 400 → 400 ... capped).
     await scheduler.advanceTime(150);
@@ -227,9 +228,9 @@ describe('runCollabUrlPoll', () => {
     });
     const handle = runCollabUrlPoll(deps);
     // Let the fetch start.
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
     handle.cancel();
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
 
     expect(aborted).toBe(true);
     // No new state updates after cancel even if a timer would fire.
@@ -241,8 +242,8 @@ describe('runCollabUrlPoll', () => {
   test('post-resolve: no further ticks are scheduled (terminal loop exit)', async () => {
     const { deps, scheduler } = makeDeps();
     runCollabUrlPoll(deps);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
 
     expect(scheduler.pendingCount()).toBe(0);
     // Advance time far — nothing should fire.
@@ -269,8 +270,8 @@ describe('runCollabUrlPoll', () => {
       maxDelayMs: 200,
     });
     const handle1 = runCollabUrlPoll(deps1);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
     // Drive to terminal — tick times: 0, 50, 150, 350 (all null-collab).
     // At tick 4 (t=350), elapsed=350 ≥ 300 → terminal.
     await scheduler.advanceTime(60);
@@ -308,8 +309,8 @@ describe('runCollabUrlPoll', () => {
       });
     };
     runCollabUrlPoll(deps2);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
 
     // Second loop resolves on its first tick with the new URL — no carry-over
     // from the first loop's terminal state.
@@ -334,8 +335,8 @@ describe('runCollabUrlPoll', () => {
       initialDelayMs: 100,
     });
     runCollabUrlPoll(deps);
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
+    await wait(0);
 
     // First tick should have emitted lastError.kind=error, code=network.
     const firstErroredState = states.find(
@@ -347,7 +348,7 @@ describe('runCollabUrlPoll', () => {
 
     // Drive retry.
     await scheduler.advanceTime(150);
-    await new Promise((r) => setTimeout(r, 0));
+    await wait(0);
 
     const last = states[states.length - 1];
     expect(last?.collabUrl).toBe('ws://localhost:52000/collab');

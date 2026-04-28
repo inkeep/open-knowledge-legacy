@@ -16,10 +16,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { markUserTyping } from '../../src/editor/observers';
-
 import {
   agentPatch,
   agentWriteMd,
@@ -35,7 +35,6 @@ import {
   type TestClient,
   type TestServer,
   testReset,
-  wait,
 } from './test-harness';
 
 /** Simulate WYSIWYG edit: parse markdown and apply to XmlFragment via updateYFragment */

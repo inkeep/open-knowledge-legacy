@@ -45,6 +45,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { chunkedYTextInsert } from '@inkeep/open-knowledge-core';
 import { applyExternalChange, isPairedWriteOrigin } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
@@ -62,7 +63,6 @@ import {
   serializeFragment,
   type TestClient,
   type TestServer,
-  wait,
 } from '../integration/test-harness';
 
 // ─── Seeded PRNG (xorshift32 — same pattern as observers.fuzz.test.ts) ───
@@ -284,7 +284,7 @@ async function applyOp(
           // Short setTimeout yield — default `requestAnimationFrame` is not
           // available in Node test runtime; 0ms setTimeout still yields the
           // task queue, letting other fuzzer ops interleave.
-          yieldFn: () => new Promise((r) => setTimeout(r, 0)),
+          yieldFn: () => wait(0),
           resolveOffset: (n: number) => {
             const abs = Y.createAbsolutePositionFromRelativePosition(relPos, client.doc);
             return abs?.index ?? n;

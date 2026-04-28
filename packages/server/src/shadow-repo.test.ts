@@ -3,9 +3,11 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { parseCheckpoint, parseOkActor } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
+  buildWipTree,
   commitUpstreamImport,
   commitWip,
   type InMemoryCheckpointParams,
@@ -151,6 +153,27 @@ describe('initShadowRepo', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe('buildWipTree contentRoot pathspec', () => {
+  test("'.' pathspec succeeds when content lives at the project root", async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(resolve(projectRoot, 'AGENTS.md'), '# hello\n');
+    const shadow = await initShadowRepo(projectRoot);
+
+    const sha = await buildWipTree(shadow, '.');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("literal 'content' pathspec fails when no such subfolder exists", async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(resolve(projectRoot, 'AGENTS.md'), '# hello\n');
+    const shadow = await initShadowRepo(projectRoot);
+
+    expect(buildWipTree(shadow, 'content')).rejects.toThrow(/pathspec 'content'/);
   });
 });
 
@@ -852,7 +875,7 @@ describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)
       });
     }
     // Sleep 5ms so the TTL check actually triggers.
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     const { gcCheckpointRefs } = await import('./shadow-repo.ts');
     const result = await gcCheckpointRefs(shadow, 'main', {

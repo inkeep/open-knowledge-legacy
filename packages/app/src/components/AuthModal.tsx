@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { consumeAuthEventStream } from './auth-event-stream';
 import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 
 // ── NDJSON event types from /api/local-op/auth/login ──────────────────────────
@@ -474,44 +474,46 @@ export function AuthModal({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
-        {step === 'auth' && (
-          <>
-            {/* Tab selector */}
-            <div className="flex gap-1 border-b pb-2 mb-1">
-              <Button
-                variant={tab === 'device' ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setTab('device')}
-              >
-                GitHub App
-              </Button>
-              <Button
-                variant={tab === 'pat' ? 'secondary' : 'ghost'}
-                size="sm"
-                onClick={() => setTab('pat')}
-              >
-                Token
-              </Button>
-            </div>
+        <DialogBody>
+          {step === 'auth' && (
+            <>
+              {/* Tab selector */}
+              <div className="flex gap-1 border-b pb-2 mb-1">
+                <Button
+                  variant={tab === 'device' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setTab('device')}
+                >
+                  GitHub App
+                </Button>
+                <Button
+                  variant={tab === 'pat' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setTab('pat')}
+                >
+                  Token
+                </Button>
+              </div>
 
-            {tab === 'device' ? (
-              <DeviceFlowPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
-            ) : (
-              <PATPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
-            )}
-          </>
-        )}
+              {tab === 'device' ? (
+                <DeviceFlowPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
+              ) : (
+                <PATPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
+              )}
+            </>
+          )}
 
-        {step === 'identity' && authResult && (
-          <>
-            <p className="text-sm font-medium">Signed in as @{authResult.login}</p>
-            <IdentityPrompt
-              login={authResult.login}
-              onSave={handleIdentitySave}
-              onSkip={handleIdentitySkip}
-            />
-          </>
-        )}
+          {step === 'identity' && authResult && (
+            <>
+              <p className="text-sm font-medium">Signed in as @{authResult.login}</p>
+              <IdentityPrompt
+                login={authResult.login}
+                onSave={handleIdentitySave}
+                onSkip={handleIdentitySkip}
+              />
+            </>
+          )}
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

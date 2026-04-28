@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { diffMtimes, snapshotMtimes } from './mtime-scan.ts';
 
 let tmp: string;
@@ -91,7 +92,7 @@ describe('diffMtimes', () => {
     try {
       writeFileSync(resolve(tmp2, 'a.md'), 'v1');
       const before = (await snapshotMtimes(tmp2)).snapshot;
-      await new Promise((r) => setTimeout(r, 15)); // ensure mtime differs
+      await wait(15); // ensure mtime differs
       writeFileSync(resolve(tmp2, 'a.md'), 'v2');
       const after = (await snapshotMtimes(tmp2)).snapshot;
       expect(diffMtimes(before, after).changed).toEqual(['a.md']);
