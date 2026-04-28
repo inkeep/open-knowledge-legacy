@@ -137,3 +137,145 @@ Added STOP rule to AGENTS.md (between "Don't emit unbounded-cardinality" and "##
 > "OK never writes to user content outside `<contentDir>/.open-knowledge/**`. All OK-managed metadata (config, locks, caches, principal, telemetry sidecars, schema artifacts) lives in `.open-knowledge/`. No per-folder `.frontmatter.yml`, no per-doc `.<filename>.metadata.json`, no Astro/Hugo-style `_meta.json` or `_index.md`. User content is sacrosanct — markdown writes via the agent-write rails (`applyAgentMarkdownWrite` / `applyAgentUndo`) are the only OK-driven mutations to user-content paths. Folder-scoped configuration belongs in `config.yml`'s `folders[]` array — single source of truth (precedent: `reports/config-driven-folder-frontmatter/REPORT.md`)."
 
 This is the load-bearing principle that grounds NG10 in our spec and rules out Shape C (per-folder `.frontmatter.yml` files) for the right-click-folder Future Work entry.
+
+## 2026-04-27 — MCP tool scoping + folders API design deferred (Q12 added, Q6 broadened)
+
+Two related additions to the iterate phase, after analytical re-walk of every field in the actual `ConfigSchema` against the question "what should an agent be able to set?".
+
+**Q12 added — MCP `set_config` field-level gating.** Currently FR-6 accepts deep-partial input over the full ConfigSchema, which is overly permissive (a malicious or confused agent could rewrite `github.oauthAppClientId`, `preview.baseUrl`, or `server.host`). Recommendation (a): allowlist of 5 paths via Zod `.meta({ agentSettable: true })` — `folders[]`, `content.include`, `content.exclude`, `mcp.tools.search.maxResults`, `mcp.tools.read_document.historyDepth`. Everything else is rejected by the tool with `errors[].code: 'not-agent-settable'`. Modal still shows full schema (humans edit anything via UI/file/CLI). ~20 LoC. Marked 1-way: widening later is fine, retracting breaks any agents that adopted the wider surface.
+
+**Rationale (preserved here for the eventual D-decision):** agent-settable fields are the ones where the agent has natural domain knowledge and low blast radius if wrong. Three categories emerge:
+- Content-organization (yes — `folders[]`, `content.include`, `content.exclude`) — agent sees the file tree, understands content
+- Agent self-tuning (yes, narrow — `mcp.tools.*`) — agent tuning its own tool params
+- Identity / network / UX preference / system tuning (no — `github.*`, `preview.*`, `server.*`, `persistence.*`, `sync.*`, `mcp.autoStart`, `content.dir`)
+
+**Q6 broadened — folders API design across MCP, HTTP, UI.** Original Q6 framed the question as UI-only: "replace-array vs add/remove operations?" with a recommendation toward replace. After Q12, the surface that actually matters is the MCP tool shape (and corresponding HTTP endpoint). `folders` is the only schema field that's a list-of-records — every other field is a scalar or primitive map — so it's worth its own design pass, not just a corollary of FR-6's deep-partial. **Marked deferred:** worth a focused 3P pass on how mature platforms expose array-mutation APIs to LLMs (GitHub per-item endpoints, Linear bulk update, Notion append-only blocks, Anthropic's own Memory tool) before committing to a public agent contract. Marked 1-way for the same reason as Q12.
+
+**FR-6 updated** to reference Q12 (allowlist gating) and Q6 (folders shape) as dependencies. The `inputSchema` registered with MCP is now narrowed to the allowlisted paths so agents discover the bounded surface, not the full schema.
+
+**Tasks: still in iterate phase (#19).** Q12 and Q6 join the existing pending batch (Q1, Q4/D20, Q10, Q11) for the next user pass.
+
+**Process discipline note:** the threat-model framing for Q12 was initially overstated — I cited a hypothetical `embedding.openai.endpoint` field that doesn't exist in the schema. Corrected after user pushback. Walking the actual schema field-by-field surfaced 3 real fields (OAuth app ID, preview URL, server host) and zero of the speculative ones — the spec's threat surface is much narrower than VS Code's Workspace Trust scope. The `agentSettable` allowlist is the minimum viable response.
+
+## 2026-04-27 — origin/main delta audit + spec amendments from Tim's #319 (e1f3adcf) and #340 (698f104b)
+
+Pulled origin/main (was at `7c9ca6b4`, now at `698f104b` — 12 new commits). /explore subagent audited each. 9 commits unrelated; 1 LOW (#338 CLI bundling — minor FR-18 note); 1 MEDIUM (#340 Dialog viewport cap → D24); 1 HIGH (#319 seed: pick-subfolder → cascading spec amendments).
+
+**MCP tool inventory check** (user-prompted): main has 16 MCP tools — workflow (`consolidate`, `ingest`, `research`), document mutation (`write_document`, `edit_document`, `rename_document`, `save_version`, `rollback_to_version`), document read (`read_document`, `list_documents`, `get_history`), link graph (`get_backlinks` + 5 siblings), and `exec` / `search` / `preview-url`. **No config-edit tools exist.** `mcp__open-knowledge__init-content` was deliberately deleted in `specs/2026-04-23-ok-seed-scaffold/` (D7 LOCKED) for tool-surface pollution (purely instructional, no side effects). That rationale **does not apply** to our `set_config` (real side effects, narrow allowlist via Q12). The seed-scaffold spec's §3 NG explicitly leaves a future MCP `seed` wrapper open — added to §15 Future Work.
+
+**Three spec amendments from #319** (all in this commit; recorded individually below):
+
+1. **D5 expanded** — was: "All three CRUD surfaces funnel through `applyConfigPatch`." Now: "All `config.yml` writers — Modal, MCP, HTTP, AND existing `seed/apply.ts` `folders[]` writer (#319 prior art) — funnel through it." `seed/apply.ts:85-113` already does the exact `parseDocument` → mutate → `toString` round-trip our spec planned for `applyConfigPatch`, but bypasses our planned primitive and (critically) does NOT signal CC1 `'config'` — structurally violating FR-14 if left as-is.
+
+2. **FR-9b added** — Migrate `seed/apply.ts:85-113` onto `applyConfigPatch` after the latter lands. Closes the D5 gap. New seed test asserts CC1 `'config'` signal.
+
+3. **D23 (new, LOCKED) — Q2 RESOLVED.** Config-edit handlers EXEMPT from `extractAgentIdentity`, same rationale as `handleSeedPlan` / `handleSeedApply` / sync / local-op handlers per `attribution-sweep-coverage.test.ts:82-86`: project-level operations on the local user's machine settings, not agent content. FR-12 dropped the `extractAgentIdentity` call. `handleConfigPatch` joins the sweep `EXEMPT_HANDLERS` set on implementation. **In-repo precedent — not a research recommendation.** This was the strongest possible signal.
+
+**One spec amendment from #340** (Dialog viewport cap):
+
+4. **D24 (new, DIRECTED)** — Settings Modal long-form layout adopts SeedDialog's scrollable-region pattern (post-#340). Required because the Modal renders 8 schema sections + `folders[]` array-of-records, which overflow on small Electron windows without `min-h-0 flex-col overflow-y-auto` between pinned header and footer. `SeedDialog.tsx:182-190` is the canonical post-#340 long-form precedent.
+
+**Smaller amendments:**
+
+5. **Q1 reinforced (not resolved)** — seed routes ship a third distinct error shape `{ok: false, error: {kind, message}}` (singular discriminated). Three shapes already coexist; consistency-via-refactor no longer cheap. Recommend additive — confirm.
+6. **A2 status upgraded** — was research-verified (via `evidence/d1-yaml-storage-roundtrip.md`); now repo-verified (in-production at `seed/apply.ts:88-104`).
+7. **Future Work entry added** — `seed` MCP wrapper after `applyConfigPatch` unifies the primitive (per seed-scaffold spec §3 NG explicitly leaving this open).
+
+**Open after this iteration:** Q1 (recommended additive), Q4/D20 (proposed `userPrefs` topology), Q6 (deferred — folders API design follow-up), Q10 (recommended add `.local.yml`), Q11 (recommended per-array semantic), Q12 (recommended allowlist gating), Q13 not added (subsumed by FR-9b directly).
+
+**Resolved this iteration:** Q2 → D23 (in-repo precedent).
+**No LOCKED decisions reverted.** No merge/rebase conflict surface — schema unchanged across the 12 commits.
+
+## 2026-04-28 — Agent MCP surface narrowed: zero scope concept exposed (D25, D26 LOCKED; Q12 RESOLVED)
+
+User pushback on the prior FR-6 design caught two over-engineerings: (1) `inspectConfig` was being framed as if exposed publicly when it's actually internal-only, (2) the `scope` parameter on `set_config` exposed an internal concern to the agent contract that no other OK MCP tool surfaces. Recovered with a cleaner design.
+
+**Net change**: agents see no `scope` concept anywhere. Server picks via per-field metadata + inference.
+
+**D25 LOCKED — agent-facing tools expose no scope.** Server algorithm: `inspectConfig(path).local ?? .workspace ?? .user ?? schema.meta.defaultScope ?? 'user'`. Per-field `defaultScope` Zod metadata declares the natural home: `folders[]` / `content.*` / `sync.commitMessage` → `'workspace'`; `mcp.tools.*` / `sync.auto*` / `server.openOnAgentEdit` / `mcp.autoStart` → `'user'`; `server.port` / `server.host` / `preview.baseUrl` / `sync.{push,pull}IntervalSeconds` → `'local'`. Modal scope tabs and HTTP endpoint still take explicit `scope` (those are user-driven gestures); only the agent-facing MCP tools drop it. Algorithm precedent: VS Code `Configuration.update()` Layer-B `deriveConfigurationTargets` ([microsoft/vscode `configurationService.ts:1087-1115`](https://github.com/microsoft/vscode), confirmed by 2026-04-27 /explore source-walk). ~80 LoC server-side, all internal.
+
+**D26 LOCKED — agent-settable allowlist (resolves Q12).** Five paths tagged `.meta({ agentSettable: true })`: `folders[]`, `content.include`, `content.exclude`, `mcp.tools.search.maxResults`, `mcp.tools.read_document.historyDepth`. Read side (`get_config`) is unrestricted. Allowlist is the only gate the agent sees — paths only, no scopes.
+
+**FR-6 simplified** — drops `scope` parameter; tool input is `{patch: DeepPartial<AllowlistedConfig>}`. Response: `{ok, applied: string[], scope: 'workspace'|'user'|'local', current: object}` — `scope` is informational (where it landed), `current` is the effective merged config so the agent stays in sync without a separate `get_config` round-trip. Idempotent.
+
+**FR-6c added** — `get_config(path?)` MCP tool. Read effective merged config (defaults → user → workspace → local). No allowlist gating on read. Initial context comes via MCP instructions handshake; this tool is for mid-session re-reads.
+
+**Why this design** (preserved here for the eventual D-decision rationale):
+1. Agent surface stays minimal — 2 new tools, no new concepts beyond "patch one of these 5 paths."
+2. Category-aligned with rest of OK's MCP surface — no other tool exposes scope (`read_document`, `write_document`, `edit_document`, etc. all deal in content/paths, not scope ladders).
+3. Server-side `defaultScope` metadata doubles as documentation — declaring `folders[]` as `'workspace'` makes the field's natural home explicit in the schema itself.
+4. Inference algorithm matches VS Code's well-tested behavior (write-back-to-current-scope, fallback to declared default) — users coming from VS Code don't have to learn a new mental model.
+5. Optional `scope` override in `set_config` deferred to v1+ (additive, non-breaking) — no v0 evidence agents need it; all 5 allowlisted fields have unambiguous natural scope.
+
+**Open after this iteration**: Q1 (recommended additive), Q4/D20 (proposed `userPrefs` topology — possibly rename to `appearance.theme` per 3-cluster analysis), Q6 (deferred — folders API design follow-up), Q7 (first-time UX), Q8 (validation error UX), Q9 (P2 deferred), Q10 (recommended add `.local.yml`), Q11 (recommended per-array semantic).
+
+**Resolved this iteration**: Q12 → D26.
+**Process discipline note**: caught two design over-extensions before locking. (a) `inspectConfig` was framed as a public API; corrected to internal-only. (b) `scope` on `set_config` was framed as needed; corrected to server-side concern. Both errors stemmed from extending VS Code's API shape (which has both visible) without distinguishing what's visible to the *user* vs the *agent*. Net win is a cleaner spec.
+
+## 2026-04-28 — Q10 RESOLVED → D27 + sync.* wiring + base modified-indicator (FR-3b, FR-9c)
+
+User flagged a sharp question on Q10: "how are server.port / server.host / preview.baseUrl / sync.{push,pull}IntervalSeconds even used today? do they belong in config.yml?" — triggered a /explore audit of the 5 candidate per-machine fields.
+
+**Audit findings (in retrospect, partly wrong on first pass):**
+
+First /explore reported all sync.* as "schema-only with zero production read sites." Closer look (after user asked "did knip catch this") found the more accurate picture: **`SyncEngine` IS a real consumer** (`packages/server/src/sync-engine.ts:216-217, 348-349, 594, 606` reads the interval fields), but the wiring from loaded `config.sync.*` → `new SyncEngine({...})` is missing in `standalone.ts:1574-1585`. Half-wired feature, not vestigial. Same shape for the other 5 sync subfields (`enabled`, `autoCommit`, `autoPush`, `autoPull`, `commitMessage`).
+
+**Why knip didn't catch it**: knip is a symbol-level static analyzer. The schema, the `Config` type, and `SyncEngineOptions` are all "used." The bug is a **3-hop semantic chain** (schema → BootServerOptions → SyncEngine constructor) where hop 2 is missing. Static analysis tools don't model intent. Catchable by integration tests asserting "config field X actually changes runtime behavior Y," but OK doesn't have those today.
+
+**Decisions made this iteration:**
+
+1. **D27 LOCKED — Q10 resolved.** Ship `<project>/.open-knowledge/config.local.yml` as a fourth scope tier in v0. Precedence `defaults → user → workspace → LOCAL → ENV → CLI`. Gitignored by `ok init`. Modal gets a third scope tab ("Just this machine"). Cluster B has substance once FR-9c wires sync.* through.
+
+2. **FR-9c added — sync.* wiring (in scope, this spec).** Extend `BootServerOptions` and `ServerOptions` with the 7 sync subfields; pass them to `new SyncEngine({...})` in `standalone.ts:1574-1585`. Integration test asserts config-to-behavior contract. Was a separate cleanup PR; now in-scope because Q10's case rests on it.
+
+3. **FR-3b added — base modified-at-current-scope indicator.** Per /explore on VS Code / JetBrains / Cursor / Obsidian: every editor-class product with a scope ladder ships a "modified at this scope" visual (VS Code 2-3px colored bar; JetBrains blue text; Cursor inherits; Obsidian doesn't have one because single scope). **Foundational, not polish-tier.** Distinct from Q9 (cross-scope override-by-workspace badge), which IS polish-tier. ~10 LoC + CSS.
+
+4. **Q9 confirmed deferred (post-v0).** The cross-scope override-by-workspace badge is genuinely polish: only VS Code does it across the surveyed set; JetBrains has no per-setting cross-scope indicator. When/if shipped, copy VS Code's pattern (inline `Modified elsewhere` text link, no strikethrough, no inline preview).
+
+**Cleanup items surfaced by the audit (not blocking):**
+- `init.ts:61` doc says `port: 3000` but `schema.ts:74` defaults to `0` (kernel-allocated). Fix in same wiring PR. Pick `port: 0` (matches schema + multi-project concurrency).
+- The 5 unwired non-sync.* sync subfields (`enabled`, `autoCommit`, `autoPush`, `autoPull`, `commitMessage`) — wired alongside intervals via FR-9c.
+
+**Process discipline note**: I overstated the audit's conclusion on first pass ("schema-only, no production read site"). User's "did knip catch this" question prompted a closer look that surfaced the half-wired pattern. The corrected analysis flipped Q10 back to "ship in v0" with the wiring as a co-requisite.
+
+**Open after this iteration:** Q1 (recommended additive), Q4 → D20 LOCKED with `appearance.theme` rename, Q6 (deferred — folders API design), Q7 (silent file create — recommended), Q8 (inline + toast — recommended), Q9 (deferred to post-v0 polish, confirmed).
+**Resolved this iteration:** Q10 → D27 (with FR-9c as co-requisite for substance).
+
+## 2026-04-28 — Schema cleanup + 4-subagent /explore audit + D27 reversal
+
+User clarified the principle: "elegant simplicity while preserving correctness — opinionated for the 90% case is fine when architecturally clean and clearly evolvable; deferred tech debt is forbidden but 'we don't ship the knob' is opinionated, not deferred." This caught me oscillating between under-simplification (wire every speculative knob) and over-simplification (drop fields with legitimate persistent-config use cases).
+
+**Process:** Wrote `evidence/config-architecture-framework.md` capturing P1-P33 + decision tree + per-scope tolerance matrix + output format. Dispatched 4 parallel general-purpose subagents to apply the framework to natural/semantic groups via /eng:explore tracing:
+- Group A (`content.*`, `folders[]`) → `evidence/eval-group-A-content-folders.md`
+- Group B (`server.*`, `preview.baseUrl`) → `evidence/eval-group-B-server-preview.md`
+- Group C (`mcp.*`) → `evidence/eval-group-C-mcp.md`
+- Group D (`appearance.*` NEW) → `evidence/eval-group-D-appearance.md`
+
+**Key /explore findings (verified by user follow-up):**
+- Multi-project model: each OK project has its own `.open-knowledge/server.lock`; `port: 0` (default) → kernel-allocated unique ports → multi-project concurrency works. Setting fixed port at user-global = collisions across projects (CONFIRMED via `boot.ts:430-438`).
+- `preview.baseUrl` priority chain: `electron-protocol → env → ui.lock → config` per `preview-url.ts:1-19`. Config value is the team's deployed-wiki URL (workspace-canonical); ui.lock supersedes for local-UI-running case.
+- `mcp.autoStart` consumer `commands/mcp.ts:11-18` confirms per-installation-preference semantics with rare per-project opt-out for non-git projects.
+
+**Decisions locked this iteration:**
+
+1. **D29 LOCKED — Schema cleanup.** Drop `sync.*` (7 fields — engine opinionated about full sync lifecycle), `persistence.*` (2 fields — engine opinionated about CRDT-disk debounce), `server.port` (per-machine only; env+CLI is the natural override path). Add `appearance.{theme, editorModeDefault}` per D20. Net: 7 sections, ~12 leaf fields. P31 (no half-implemented) + P32 (opinionated for 90% case).
+2. **D27 REVISED — DEFER `.local.yml` to Future Work.** After D29, every retained field has a clean 2-tier home (user-global + workspace) per the `defaultScope` mapping. No current field forces a 3rd tier. Adding later when a real per-machine field arrives is purely additive.
+3. **D25 UPDATED — 2-tier inference algorithm.** `inspectConfig(path).workspace ?? .user ?? schema.meta.defaultScope ?? 'user'`. Per-field `defaultScope` (verified by all 4 eval files): workspace — `folders[]`, `content.*`, `preview.baseUrl`; user — `github.oauthAppClientId`, `server.host`, `server.openOnAgentEdit`, `mcp.autoStart`, `mcp.tools.*`, `appearance.*`.
+
+**FRs:**
+- **FR-9c REPLACED** — was "wire all sync.* fields"; now "schema cleanup: drop 10 fields, add 2." Captures the D29 implementation work.
+- **FR-3b retained** — base modified-at-current-scope indicator (foundational UX).
+- **Q9 confirmed deferred** — cross-scope override badge (`Modified elsewhere` VS Code pattern) is post-v0 polish; relevant only after `.local.yml` ships.
+
+**Q resolutions this iteration:**
+- Q4 → D20 LOCKED (with `appearance` rename from `userPrefs`)
+- Q10 → D27 REVISED — DEFERRED
+- Q12 → D26 (already resolved prior iteration)
+
+**Future Work expanded** to capture every additive re-introduction path: `.local.yml` 3rd tier, `sync.*` re-add when engine gains skip-modes + templates, `persistence.*` re-add on slow-disk evidence, `server.port` re-add paired with `.local.yml`, per-rule folder MCP tools (Q6 follow-up), cross-scope override badge (Q9), per-field scope read-side enforcement, settings-vs-state full migration (D28 paired with `.local.yml`).
+
+**Architectural framework captured.** `evidence/config-architecture-framework.md` is the durable artifact establishing P1-P33 + per-field/per-scope decision tree + tolerance matrix. Will be cited from future schema-additions PRs as the precedent set; consumers reference it before adding/removing/moving config fields.
+
+**Open after this iteration:** Q1 (recommended additive — confirm), Q6 (deferred for follow-up), Q7 (silent file create — confirm), Q8 (inline + toast — confirm), Q11 (per-array semantic — confirm), Q9 (deferred to post-v0).
+
+**Process discipline note:** Three over-corrections in one iteration. (a) "wire every speculative knob" too eager; (b) "drop everything to env" too aggressive; (c) framework-aligned "ship .local.yml + hybrid for server.port" came back from subagents but was over-correct given the simplification path. Final position threads the needle: opinionated drops where 90%+ won't tune AND no clean home exists; keeps in config where field has real persistent-record value with team-shared or user-pref scope. The 4-subagent independent verification + user's per-field "global vs project" probe provided the grounding.
