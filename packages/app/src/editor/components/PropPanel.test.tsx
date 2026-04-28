@@ -23,21 +23,28 @@ import type { PropDef } from '@inkeep/open-knowledge-core';
 import { renderToString } from 'react-dom/server';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 
-// Absorb stray unhandled-rejection events from the runUpload-error tests
-// below. Those tests mock `uploadFile` to reject (with `new Error(...)`); the
-// catch arm in `runUpload` does observe the rejection through the await
-// chain, but on Linux Bun the JSC unhandled-rejection observer fires for
-// any synchronously-constructed rejected promise *before* the await's
-// continuation attaches its handler. The resulting event then bleeds into
-// the next test file's `##[group]` boundary and reports every test there as
-// failed — observed deterministically on adjacent `image-upload/
-// upload-file.test.ts` (lexical neighbor by directory load order). A
-// process-level no-op handler on this file marks any rejection as
-// "handled" from Bun's perspective without affecting the actual await/
-// catch semantics. Macos doesn't surface the timing race so the handler
-// is a no-op in practice on dev workstations.
-if (typeof process !== 'undefined' && typeof process.on === 'function') {
-  process.on('unhandledRejection', () => {});
+/**
+ * Mock factory that pre-attaches a no-op `.catch()` handler to the rejected
+ * promise BEFORE returning it. This synchronously flags the promise as
+ * "has at least one rejection handler" so Bun's Linux unhandled-rejection
+ * observer never fires its bleed-into-next-test-file event. The await in
+ * the caller (`runUpload`) attaches its own continuation handler — both
+ * fire, the no-op resolves with undefined, the await observes the original
+ * rejection through its continuation. End behavior is identical to
+ * `Promise.reject(reason)` directly; only the observer is silenced.
+ *
+ * Required because three earlier fix attempts didn't work:
+ * - throw-inside-async-body: bun fires observer before await attaches
+ * - non-string-rejection-shape: observer fires for any non-Error value
+ * - process.on('unhandledRejection'): bun's test runner uses an internal
+ *   observer that's not gated by the public process listener
+ */
+function rejectingMock<T>(reason: unknown): () => Promise<T> {
+  return () => {
+    const p = Promise.reject<T>(reason);
+    p.catch(() => {});
+    return p;
+  };
 }
 
 const uploadFileMock = mock(
@@ -445,7 +452,7 @@ describe('runUpload', () => {
   });
 
   test('(d) error: surfaces toast.error with the prefix and does NOT call onUploaded', async () => {
-    uploadFileMock.mockImplementation(() => Promise.reject(new Error('Unsupported file type')));
+    uploadFileMock.mockImplementation(rejectingMock(new Error('Unsupported file type')));
     const onUploaded = mock((_url: string): void => {});
     const file = new File(['x'], 'x.pdf', { type: 'application/pdf' });
 
@@ -459,13 +466,10 @@ describe('runUpload', () => {
 
   test('(d) error path tolerates non-Error rejections', async () => {
     // Reject with a non-Error value to exercise the `String(err)` fallback
-    // in runUpload's catch arm. The file-level `process.on('unhandledRejection')`
-    // handler at the top of this file absorbs Bun's Linux unhandled-rejection
-    // observer event so the rejection doesn't bleed into the next test
-    // file's group boundary.
-    uploadFileMock.mockImplementation(async (): Promise<{ url: string }> => {
-      throw { toString: () => 'non-error rejection' };
-    });
+    // in runUpload's catch arm. `rejectingMock` pre-attaches a no-op .catch
+    // so the rejection doesn't bleed into the next test file's group on
+    // Linux Bun (see the helper's own JSDoc above).
+    uploadFileMock.mockImplementation(rejectingMock({ toString: () => 'non-error rejection' }));
     const onUploaded = mock((_url: string): void => {});
     const file = new File(['x'], 'x.png', { type: 'image/png' });
 
