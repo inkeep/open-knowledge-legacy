@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, ListPlus, Pin, PinOff, Save } from 'lucide-react';
+import { FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -8,7 +8,6 @@ import {
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import { usePageList } from '@/components/PageListContext';
-import { useHasFrontmatter } from '@/components/PropertyPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -92,7 +91,6 @@ export function EditorHeader({
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
   const syncStatus = useSyncStatus(activeProvider);
-  const hasFrontmatter = useHasFrontmatter(activeProvider);
   // Build the handoff input once per render — the menu's trigger disables when
   // `input === null` (no active doc, or workspace fetch still pending on web
   // host). Surfaces own input construction so AC9's single-dispatch contract
@@ -126,30 +124,6 @@ export function EditorHeader({
     if (isPinned) unpin();
     else pin(activeDocName);
   }
-
-  async function initializeFrontmatter() {
-    if (!activeDocName) return;
-    try {
-      const res = await fetch('/api/frontmatter-patch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          docName: activeDocName,
-          patch: { title: '' },
-          source: 'form',
-          op: 'add',
-        }),
-      });
-      if (!res.ok) {
-        console.warn('[EditorHeader] failed to initialize frontmatter', { status: res.status });
-      }
-    } catch (err) {
-      console.warn('[EditorHeader] network error initializing frontmatter', { err });
-    }
-  }
-
-  const showAddPropertiesButton =
-    !isFolderTarget && !!activeDocName && !hasFrontmatter;
 
 
   // --- Inline rename state ---
@@ -353,23 +327,6 @@ export function EditorHeader({
             {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
           </TooltipContent>
         </Tooltip>
-        {showAddPropertiesButton && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Add properties"
-                onClick={initializeFrontmatter}
-                className="h-7 w-7 shrink-0 p-0 text-muted-foreground"
-                data-testid="add-properties-button"
-              >
-                <ListPlus className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Add properties</TooltipContent>
-          </Tooltip>
-        )}
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         {isFolderTarget ? (
           <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">

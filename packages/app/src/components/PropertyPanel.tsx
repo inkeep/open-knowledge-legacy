@@ -6,7 +6,7 @@ import {
   getFrontmatterMap,
   inferType,
 } from '@inkeep/open-knowledge-core';
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   BooleanWidget,
@@ -18,6 +18,8 @@ import {
   TextWidget,
   TypeIconButton,
 } from '@/components/PropertyWidgets';
+import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 
 interface PropertyPanelProps {
@@ -31,6 +33,12 @@ const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
   date: '',
   list: [],
 };
+
+/** Cross-tree signal: the EditorArea ListPlus button dispatches this to open
+ * the AddPropertyRow form (whose name input is auto-focused on mount). The two
+ * components live in separate subtrees, so a window event avoids prop-drilling
+ * through EditorActivityPool. */
+export const BEGIN_ADD_EVENT = 'ok:property-panel:begin-add';
 
 export function PropertyPanel({ provider }: PropertyPanelProps) {
   const map = useFrontmatterMap(provider);
@@ -138,7 +146,17 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
 
   function beginAdd() {
     setAdding({ name: '', type: 'text', value: '', error: null });
+    setCollapsed(false);
   }
+
+  useEffect(() => {
+    const handler = () => {
+      setAdding({ name: '', type: 'text', value: '', error: null });
+      setCollapsed(false);
+    };
+    window.addEventListener(BEGIN_ADD_EVENT, handler);
+    return () => window.removeEventListener(BEGIN_ADD_EVENT, handler);
+  }, []);
 
   function changeAddType(nextType: FrontmatterType) {
     setAdding((prev) => {
@@ -234,22 +252,25 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   if (keys.length === 0 && !adding) return null;
 
   return (
-    <div className="property-panel border-b bg-muted/20 text-sm" data-testid="property-panel">
-      <button
-        type="button"
-        aria-expanded={!collapsed}
-        onClick={() => setCollapsed((c) => !c)}
-        className="flex w-full items-center gap-1.5 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
-      >
-        {collapsed ? (
-          <ChevronRight className="size-3.5 shrink-0" />
-        ) : (
-          <ChevronDown className="size-3.5 shrink-0" />
-        )}
-        <span>{`Properties (${keys.length})`}</span>
-      </button>
-      {!collapsed && (
-        <div className="px-4 pb-2">
+    <div
+      className="property-panel editor-content-aligned pt-4 pb-4 text-sm"
+      data-testid="property-panel"
+    >
+      <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            className="mb-1.5 flex h-auto w-fit bg-transparent! items-center gap-1 px-1 py-0.5 text-base font-medium text-foreground hover:bg-transparent hover:text-foreground"
+          >
+            <ChevronRight
+              data-expanded={!collapsed}
+              className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out data-[expanded=true]:rotate-90"
+            />
+            <span>Properties</span>
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="overflow-hidden data-[state=open]:animate-[collapsible-down_150ms_ease-out] data-[state=closed]:animate-[collapsible-up_150ms_ease-in]">
           {keys.map((key) => {
             const value = map[key];
             if (value === undefined) return null;
@@ -294,8 +315,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
               <span>Add property</span>
             </button>
           )}
-        </div>
-      )}
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
@@ -375,15 +396,17 @@ function PropertyRow({
               onCancel={onCancelRename}
             />
           ) : (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               data-testid="property-name-button"
               data-key={keyName}
               onClick={onBeginRename}
-              className="block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
+              className="block h-auto w-full truncate px-1 py-0.5 text-left text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
             >
               {keyName}
-            </button>
+            </Button>
           )}
         </div>
         <div className="flex-1">
@@ -395,16 +418,18 @@ function PropertyRow({
             onCommit={onCommit}
           />
         </div>
-        <button
+        <Button
           type="button"
           data-testid="property-remove-button"
           data-key={keyName}
           aria-label={`Remove ${keyName}`}
           onClick={onRemove}
+          variant="ghost"
+          size="sm"
           className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground focus-visible:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-muted-foreground"
         >
           <Trash2 className="size-3.5" />
-        </button>
+        </Button>
       </div>
       {error ? (
         <div
@@ -456,7 +481,7 @@ function RenameInput({
             onCancel();
           }
         }}
-        className="h-6 px-1 py-0 text-xs"
+        className="h-6 px-1 py-0"
       />
       {error ? (
         <div data-testid="property-name-rename-error" className="text-[10px] text-destructive">
@@ -496,7 +521,7 @@ function AddPropertyRow({
           type="text"
           value={draft.name}
           autoFocus
-          placeholder="property name"
+          placeholder="Property name"
           aria-invalid={draft.error ? true : undefined}
           onChange={(e) => onChangeName(e.target.value)}
           onKeyDown={(e) => {
@@ -508,7 +533,7 @@ function AddPropertyRow({
               onCancel();
             }
           }}
-          className="h-6 w-32 px-1 py-0 text-xs"
+          className="h-6 w-32 px-1 py-0"
         />
         <div className="flex-1">
           <Widget
@@ -518,22 +543,24 @@ function AddPropertyRow({
             onCommit={onChangeValue}
           />
         </div>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           data-testid="add-property-cancel"
           onClick={onCancel}
           className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           data-testid="add-property-commit"
           onClick={onCommit}
           className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground hover:bg-primary/90"
         >
           Add
-        </button>
+        </Button>
       </div>
       {draft.error ? (
         <div data-testid="add-property-error" className="mt-0.5 pl-7 text-[10px] text-destructive">
@@ -591,27 +618,4 @@ function useFrontmatterMap(provider: HocuspocusProvider): FrontmatterMap {
     return () => metaMap.unobserveDeep(update);
   }, [provider]);
   return map;
-}
-
-export function useHasFrontmatter(provider: HocuspocusProvider | null): boolean {
-  const [has, setHas] = useState<boolean>(() => (provider ? hasAnyFrontmatter(provider) : false));
-  useEffect(() => {
-    if (!provider) {
-      setHas(false);
-      return;
-    }
-    const metaMap = provider.document.getMap('metadata');
-    const update = () => setHas(hasAnyFrontmatter(provider));
-    update();
-    metaMap.observeDeep(update);
-    return () => metaMap.unobserveDeep(update);
-  }, [provider]);
-  return has;
-}
-
-function hasAnyFrontmatter(provider: HocuspocusProvider): boolean {
-  const map = getFrontmatterMap(provider.document);
-  if (Object.keys(map).length > 0) return true;
-  const legacy = provider.document.getMap('metadata').get('frontmatter');
-  return typeof legacy === 'string' && legacy.length > 0;
 }

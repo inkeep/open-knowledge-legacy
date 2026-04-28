@@ -267,6 +267,20 @@
   }
 }
 
+/* Radix Collapsible content height + opacity. Height drives the reflow of
+   surrounding content; opacity hides children early so the eye never lingers
+   on partially-laid-out widgets. Closing easing front-loaded (ease-in) so the
+   fade leads the height collapse — content reads as "gone" before the gap
+   finishes closing. */
+@keyframes collapsible-down {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
 /* Base styles */
 @layer base {
   *,
@@ -699,6 +713,25 @@
     [content-start] minmax(0, min(var(--content-max-width), 100%))
     [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
     [full-end];
+}
+
+/* Same content-column grid as .tiptap-editor — applied to siblings (e.g., the
+   property panel) so they horizontally align with the editor body. Variables
+   redeclared here so this class doesn't depend on living inside .tiptap-editor. */
+.editor-content-aligned {
+  --content-max-width: 1024px;
+  --margin-width: 4rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] minmax(var(--margin-left-width, var(--margin-width)), 1fr)
+    [content-start] minmax(0, min(var(--content-max-width), 100%))
+    [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
+    [full-end];
+}
+
+.editor-content-aligned > * {
+  grid-column: content;
 }
 
 /* Content-column children. The `.tiptap-editor` wrapper is a 3-column named

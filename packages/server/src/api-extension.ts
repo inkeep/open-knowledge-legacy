@@ -2661,14 +2661,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                     metaMap.set(FRONTMATTER_PATCH_FM_KEY, fenced);
                   }
 
-                  // Activity flash side-channel — same shape as agent-write paths.
-                  const activityMap = document.getMap('agent-flash');
-                  activityMap.set(agentId, {
-                    agentId,
-                    timestamp: Date.now(),
-                    type: 'insert',
-                    description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
-                  });
+                  // Activity flash side-channel — same shape as agent-write
+                  // paths. Skipped for form writes: the user is the local
+                  // principal editing their own properties, so flashing the
+                  // body text in agent colors would be misleading.
+                  if (!isFormWrite) {
+                    const activityMap = document.getMap('agent-flash');
+                    activityMap.set(agentId, {
+                      agentId,
+                      timestamp: Date.now(),
+                      type: 'insert',
+                      description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
+                    });
+                  }
                 }, session.formOrigin);
               };
               if (formOp) {

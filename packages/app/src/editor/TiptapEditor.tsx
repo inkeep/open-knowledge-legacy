@@ -243,7 +243,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
             },
             editorProps: {
               attributes: {
-                class: 'pt-10 pb-16 h-full',
+                class: 'pt-4 pb-4 h-full',
               },
               clipboardTextParser: (text, _context, _plain, view) => {
                 const json = clipboard.mdManager.parse(text);

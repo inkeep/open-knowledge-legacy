@@ -17,8 +17,12 @@
  */
 
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
-import { Calendar, Hash, List, ToggleLeft, Type, X } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { Calendar as CalendarIcon, Hash, List, SquareCheck, Type, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface CommonWidgetProps<T extends FrontmatterValue> {
   keyName: string;
@@ -51,6 +55,7 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       data-key={keyName}
       type="text"
       value={draft}
+      placeholder="Empty"
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => {
         focusedRef.current = true;
@@ -70,7 +75,7 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
           (e.currentTarget as HTMLInputElement).blur();
         }
       }}
-      className="h-7 border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/50 focus-visible:bg-background"
+      className="h-7 border-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 hover:bg-muted/50 focus-visible:bg-background"
     />
   );
 }
@@ -116,50 +121,139 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
 export function BooleanWidget({ keyName, value, onCommit }: CommonWidgetProps<boolean>) {
   return (
     <div className="flex h-7 items-center px-2">
-      <Switch
+      <Checkbox
         data-testid="boolean-widget"
         data-key={keyName}
         checked={value}
-        onCheckedChange={(next) => onCommit(next)}
+        onCheckedChange={(next) => onCommit(next === true)}
         aria-label={`${keyName} value`}
+        className="size-5 rounded-full"
       />
     </div>
   );
 }
 
 export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<string>) {
-  const [draft, setDraft] = useState(value);
+  const date = parseDate(value);
+  const [inputValue, setInputValue] = useState(formatDateForInput(date));
+  const [month, setMonth] = useState<Date | undefined>(date);
+  const [open, setOpen] = useState(false);
   const focusedRef = useRef(false);
+
+  // Re-sync input display from external value when not focused (remote edits / commits).
   useEffect(() => {
-    if (!focusedRef.current) setDraft(value);
+    if (!focusedRef.current) {
+      const next = parseDate(value);
+      setInputValue(formatDateForInput(next));
+      setMonth(next);
+    }
   }, [value]);
+
+  function commitInput() {
+    const parsed = parseFromInput(inputValue);
+    if (parsed) {
+      const iso = format(parsed, 'yyyy-MM-dd');
+      if (iso !== value) onCommit(iso);
+      setInputValue(formatDateForInput(parsed));
+      setMonth(parsed);
+    } else {
+      // Invalid or empty input — revert to last committed value.
+      setInputValue(formatDateForInput(date));
+      setMonth(date);
+    }
+  }
+
+  function handleCalendarSelect(selected: Date | undefined) {
+    if (!selected) return;
+    const iso = format(selected, 'yyyy-MM-dd');
+    if (iso !== value) onCommit(iso);
+    setInputValue(formatDateForInput(selected));
+    setMonth(selected);
+    setOpen(false);
+  }
+
   return (
-    <Input
-      data-testid="date-widget"
-      data-key={keyName}
-      type="date"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onFocus={() => {
-        focusedRef.current = true;
-      }}
-      onBlur={() => {
-        focusedRef.current = false;
-        if (draft !== value) onCommit(draft);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          (e.currentTarget as HTMLInputElement).blur();
-        } else if (e.key === 'Escape') {
-          e.preventDefault();
-          setDraft(value);
-          (e.currentTarget as HTMLInputElement).blur();
-        }
-      }}
-      className="h-7 border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/50 focus-visible:bg-background"
-    />
+    <div data-testid="date-widget" data-key={keyName} className="relative flex h-7 items-center">
+      <Input
+        type="text"
+        value={inputValue}
+        placeholder="Empty"
+        onChange={(e) => {
+          setInputValue(e.target.value);
+          const parsed = parseFromInput(e.target.value);
+          if (parsed) setMonth(parsed);
+        }}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onBlur={() => {
+          focusedRef.current = false;
+          commitInput();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commitInput();
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setInputValue(formatDateForInput(date));
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
+        className="h-7 border-transparent bg-transparent pr-7 pl-2 text-sm shadow-none placeholder:text-muted-foreground/60 hover:bg-muted/50 focus-visible:bg-background"
+      />
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={`Open date picker for ${keyName}`}
+            className="absolute right-0 size-6 p-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <CalendarIcon className="size-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto overflow-hidden p-0" align="end">
+          <Calendar
+            mode="single"
+            selected={date}
+            month={month}
+            onMonthChange={setMonth}
+            onSelect={handleCalendarSelect}
+            captionLayout="dropdown"
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
   );
+}
+
+const INPUT_DATE_FORMAT = 'MMM d, yyyy';
+
+function parseDate(value: string): Date | undefined {
+  if (!value) return undefined;
+  const d = parseISO(value);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+function formatDateForInput(date: Date | undefined): string {
+  return date ? format(date, INPUT_DATE_FORMAT) : '';
+}
+
+function parseFromInput(input: string): Date | undefined {
+  const trimmed = input.trim();
+  if (!trimmed) return undefined;
+  // `new Date(string)` handles common human-typed formats (e.g. "Apr 24, 2026",
+  // "April 24, 2026", "4/24/2026", "2026-04-24"). Browser-level parsing — good
+  // enough for a free-text date field where the calendar picker is the primary
+  // affordance.
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
 export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<string[]>) {
@@ -187,7 +281,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
           key={`${i}-${chip}`}
           data-testid="list-chip"
           data-index={i}
-          className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs"
+          className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-sm"
         >
           <span>{chip}</span>
           <button
@@ -204,7 +298,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         data-testid="list-chip-input"
         type="text"
         value={draft}
-        placeholder={value.length === 0 ? 'add value' : ''}
+        placeholder={value.length === 0 ? 'Empty' : ''}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
@@ -222,7 +316,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         onBlur={() => {
           if (draft) addChip(draft);
         }}
-        className="min-w-16 flex-1 bg-transparent text-sm outline-none"
+        className="min-w-16 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
       />
     </div>
   );
@@ -231,8 +325,8 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
 const TYPE_ICON: Record<FrontmatterType, typeof Type> = {
   text: Type,
   number: Hash,
-  boolean: ToggleLeft,
-  date: Calendar,
+  boolean: SquareCheck,
+  date: CalendarIcon,
   list: List,
 };
 

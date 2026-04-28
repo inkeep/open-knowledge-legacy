@@ -1110,6 +1110,11 @@ Homepage: https://github.com/codemirror/view
 
 Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
+### `@date-fns/tz@1.4.1`
+Homepage: https://github.com/date-fns/tz#readme
+
+_(LICENSE file present but no auto-extractable copyright line; refer to the package source for canonical attribution.)_
+
 ### `@ecies/ciphers@0.2.6`
 Homepage: https://github.com/ecies/js-ciphers
 
@@ -1820,6 +1825,10 @@ Homepage: https://github.com/sindresorhus/merge-streams
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
 
+### `@tabby_ai/hijri-converter@1.0.5`
+
+Copyright (c) 2023 Tabby FZ-LLC
+
 ### `@tanstack/query-core@5.99.0`
 Homepage: https://tanstack.com/query
 
@@ -2510,6 +2519,16 @@ Copyright (c) 2017 Vasco Asturiano
 Homepage: https://github.com/TooTallNate/node-data-uri-to-buffer
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
+
+### `date-fns@4.1.0`
+Homepage: https://github.com/date-fns/date-fns
+
+Copyright (c) 2021 Sasha Koss and Lesha Koss https://kossnocorp.mit-license.org
+
+### `date-fns-jalali@4.1.0-0`
+Homepage: https://github.com/date-fns-jalali/date-fns-jalali
+
+Copyright (c) 2021 Sasha Koss and Lesha Koss https://kossnocorp.mit-license.org
 
 ### `dateformat@4.6.3`
 Homepage: https://github.com/felixge/node-dateformat
@@ -4137,6 +4156,11 @@ Copyright (c) 2023 Alexey Vasiliev
 Homepage: https://react.dev/
 
 Copyright (c) Meta Platforms, Inc. and affiliates.
+
+### `react-day-picker@9.14.0`
+Homepage: https://daypicker.dev
+
+Copyright (c) 2014-2025 Giampaolo Bellavite <io@gpbl.dev> and contributors
 
 ### `react-diff-view@3.3.3`
 Homepage: https://github.com/otakustay/react-diff-view#readme

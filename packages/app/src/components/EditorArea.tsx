@@ -1,10 +1,11 @@
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ListPlus, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
+import { BEGIN_ADD_EVENT } from '@/components/PropertyPanel';
 
 // Lazy-load Settings — pulls ToggleGroup + the schema-driven form which add
 // ~330kB gzipped to the main bundle. Settings is opened on demand via Cmd-,
@@ -162,8 +163,30 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
 
   const showPanelOpen = isSheetMode ? !sheetOpen : isCollapsed;
 
+  function openAddPropertyForm() {
+    if (!activeDocName) return;
+    window.dispatchEvent(new CustomEvent(BEGIN_ADD_EVENT));
+  }
+
   const toggleButton = (
-    <div className="absolute top-2 right-2 z-10">
+    <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+      {showAddPropertiesButton && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Add properties"
+              onClick={openAddPropertyForm}
+              data-testid="add-properties-button"
+              className="text-muted-foreground"
+            >
+              <ListPlus className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">Add properties</TooltipContent>
+        </Tooltip>
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

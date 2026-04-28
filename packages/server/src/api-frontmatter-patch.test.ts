@@ -443,6 +443,61 @@ describe('POST /api/frontmatter-patch — origin + bridge propagation', () => {
     }
   });
 
+  test('form-source writes do not drop an agent-flash entry (no phantom-agent body flash)', async () => {
+    // The agent-flash Y.Map is the side-channel the editor reads to animate
+    // body text in agent colors. Form writes are the local human principal
+    // editing their own properties — flashing the body in agent colors would
+    // mis-attribute the write. The handler skips the activityMap.set when
+    // `source: 'form'` is supplied.
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+      const session = await sessionManager.getSession('test-doc');
+      const flashMap = session.dc.document.getMap('agent-flash');
+      expect(flashMap.size).toBe(0);
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', source: 'form', op: 'set', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(200);
+      // Form write completed but no agent-flash entry was dropped.
+      expect(flashMap.size).toBe(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('MCP-source writes still drop an agent-flash entry (control)', async () => {
+    // Companion to the form-source test above: the agent-flash drop is
+    // gated on `!isFormWrite`, so the absence of `source: 'form'` (the MCP
+    // path) must continue to populate the side-channel.
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+      const session = await sessionManager.getSession('test-doc');
+      const flashMap = session.dc.document.getMap('agent-flash');
+      expect(flashMap.size).toBe(0);
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(200);
+      expect(flashMap.size).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test('deleting all keys clears the legacy frontmatter slot', async () => {
     const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
     try {

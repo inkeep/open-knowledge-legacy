@@ -694,7 +694,7 @@ function ActivityEntry({
                   the MAX intrinsic size across children, stretching the
                   visible editor to 8000px and creating bottom whitespace on
                   short docs — see globals.css §.ok-mode-hidden). */}
-                  <div className="flex h-full flex-col">
+                  <div className={`flex h-full flex-col ${!isSourceMode ? 'pt-6' : ''}`}>
                     {/* PropertyPanel: top-of-doc frontmatter table, sibling to the
                         dual-editor stack inside DocumentBoundary so it shares the
                         same suspend/error scope and remounts cleanly on doc switch.

@@ -33,6 +33,7 @@
  */
 import type { Hocuspocus } from '@hocuspocus/server';
 import { type AgentPresenceEntry, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
+import { isPresenceEligibleAgentId } from './agent-id.ts';
 import { getLogger } from './logger.ts';
 import { incrementAgentPresenceMutationError } from './metrics.ts';
 
@@ -65,6 +66,7 @@ export class AgentPresenceBroadcaster {
    * bound map growth under ungraceful disconnects.
    */
   setPresence(agentId: string, entry: AgentPresenceEntry): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     let evictedCount = 0;
     const mutated = this.mutateAgentPresence((current) => {
       // Amortized eviction: scan once per setPresence. Cost is O(N) where N
@@ -110,6 +112,7 @@ export class AgentPresenceBroadcaster {
    * has taken over; this method fires unconditionally when called.
    */
   clearPresence(agentId: string): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     let removed = false;
     const mutated = this.mutateAgentPresence((current) => {
       const existing = current[agentId];
@@ -136,6 +139,7 @@ export class AgentPresenceBroadcaster {
    * fires so "why is the badge stuck?" has a diagnostic breadcrumb.
    */
   touchMode(agentId: string, mode: AgentPresenceEntry['mode']): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     const touched: { currentDoc: string | null; ts: number }[] = [];
     let existed = false;
     const mutated = this.mutateAgentPresence((current) => {
@@ -189,6 +193,7 @@ export class AgentPresenceBroadcaster {
    * visual client-side until its own `touchMode('idle')` arrives.
    */
   bumpPresenceTs(agentId: string): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     let touchedTs: number | null = null;
     this.mutateAgentPresence((current) => {
       const existing = current[agentId];

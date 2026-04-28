@@ -39,11 +39,11 @@ describe('PropertyPanel', () => {
     expect(html).toBe('');
   });
 
-  test('renders Properties (N) header + one row per per-key entry', () => {
+  test('renders Properties header + one row per per-key entry', () => {
     const provider = makeProvider('populated-doc');
     seedMetaMap(provider, { title: 'Hello', draft: false, version: 3 });
     const html = renderToString(<PropertyPanel provider={provider} />);
-    expect(html).toContain('Properties (3)');
+    expect(html).toContain('>Properties<');
     expect(html).toContain('data-testid="property-panel"');
     expect(html).toContain('data-key="title"');
     expect(html).toContain('data-key="draft"');
@@ -57,7 +57,7 @@ describe('PropertyPanel', () => {
       frontmatter: '---\ntitle: Just title\n---\n',
     });
     const html = renderToString(<PropertyPanel provider={provider} />);
-    expect(html).toContain('Properties (1)');
+    expect(html).toContain('>Properties<');
     expect(html).toContain('data-key="title"');
     expect(html).not.toContain('data-key="frontmatter"');
   });
@@ -117,8 +117,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
     const html = renderToString(<PropertyPanel provider={provider} />);
     expect(html).toContain('data-widget-type="date"');
     expect(html).toContain('data-testid="date-widget"');
-    expect(html).toContain('type="date"');
-    expect(html).toContain('value="2026-04-24"');
+    expect(html).toContain('Apr 24, 2026');
   });
 
   test('list-shape value renders ListWidget with chips', () => {
