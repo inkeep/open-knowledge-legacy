@@ -6,7 +6,14 @@
  *   'checkpoint:' → checkpoint
  *   'import:'     → upstream  (canonical since D53/FR-13)
  *   'upstream:'   → upstream  (legacy fallback for pre-D53 commits)
+ *   'park:'       → park      (branch-switch infrastructure; never returned)
  *   else          → wip
+ *
+ * Park commits store blobs at extension-less docName paths so
+ * `restoreBranchWIP` can three-way merge against disk. The per-version fetch
+ * (`/api/history/:sha`) reads at `${contentRoot}/${docName}.md` and cannot
+ * resolve them — clicking a park row would yield "Diff unavailable". Park
+ * is internal state, not user history, so it is excluded unconditionally.
  */
 
 import { existsSync } from 'node:fs';
@@ -49,6 +56,7 @@ const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
 function classifyType(subject: string): EntryType {
   if (subject.startsWith('checkpoint:')) return 'checkpoint';
   if (subject.startsWith('import:') || subject.startsWith('upstream:')) return 'upstream';
+  if (subject.startsWith('park:')) return 'park';
   return 'wip';
 }
 
@@ -388,6 +396,10 @@ export async function getDocumentHistory(
 
     // Apply filters
     let filtered = unique;
+
+    // Park commits are branch-switch infrastructure (extension-less docName
+    // tree paths), not user history — never expose them through the timeline.
+    filtered = filtered.filter((e) => e.type !== 'park');
 
     if (typeFilter.length > 0) {
       filtered = filtered.filter((e) => typeFilter.includes(e.type));
