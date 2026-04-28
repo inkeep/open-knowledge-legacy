@@ -48,7 +48,35 @@ export type OkMenuAction =
   | 'save-version'
   | 'version-history'
   | 'focus-search'
-  | 'focus-command-palette';
+  | 'focus-command-palette'
+  | 'find-in-page';
+
+/**
+ * Options accepted by `webContents.findInPage` — mirrors the desktop
+ * package's `OkFindInPageOptions`. Re-declared here so the app package can
+ * import this shape without depending on `electron`.
+ */
+export interface OkFindInPageOptions {
+  readonly forward?: boolean;
+  readonly matchCase?: boolean;
+  readonly findNext?: boolean;
+}
+
+/**
+ * Mirror of Electron's `Result` payload of `webContents.on('found-in-page')`.
+ * Drift across the three bridge-contract copies is caught by the M1
+ * invariant test (member-name walker).
+ */
+export interface OkFindInPageResult {
+  readonly requestId: number;
+  readonly activeMatchOrdinal: number;
+  readonly matches: number;
+  readonly finalUpdate: boolean;
+}
+
+/** `webContents.stopFindInPage` action — clears, keeps, or activates the
+ *  highlighted selection when find ends. */
+export type OkFindStopAction = 'clearSelection' | 'keepSelection' | 'activateSelection';
 
 /**
  * Unsubscribe closure returned from `onProjectSwitched` / `onMenuAction`.
@@ -414,6 +442,22 @@ export interface OkDesktopBridge {
    */
   update: {
     relaunchNow(): Promise<void>;
+  };
+
+  /**
+   * Cmd/Ctrl+F find-in-page surface. Renderer mounts a find bar (opened by
+   * the `'find-in-page'` menu action), drives `start` / `stop` against the
+   * window's webContents, and renders the match counter from `onResult`.
+   * Maps directly onto Electron's `webContents.findInPage` /
+   * `stopFindInPage` / `'found-in-page'` triplet.
+   */
+  find: {
+    /** Start or advance a search. Empty `text` is a no-op. */
+    start(text: string, options?: OkFindInPageOptions): Promise<void>;
+    /** End the session. Default `'clearSelection'` matches "close the bar". */
+    stop(action?: OkFindStopAction): Promise<void>;
+    /** Subscribe to match-count updates from `webContents.on('found-in-page')`. */
+    onResult(cb: (result: OkFindInPageResult) => void): OkUnsubscribe;
   };
 
   /**

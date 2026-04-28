@@ -18,7 +18,9 @@ import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
-import type { OkDesktopConfig } from './bridge-contract.ts';
+import type { OkDesktopConfig, OkFindInPageOptions, OkFindStopAction } from './bridge-contract.ts';
+
+export type { OkFindInPageOptions, OkFindStopAction } from './bridge-contract.ts';
 
 /** Recent-project row as surfaced to the Navigator. */
 export interface RecentProject {
@@ -267,4 +269,27 @@ export interface RequestChannels {
    * SPEC 2026-04-24 Ship 1e / 1j (local-build simplification).
    */
   'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
+
+  /**
+   * Cmd/Ctrl+F find-in-page — starts or advances a search within the caller
+   * window's webContents. Maps directly onto Electron's
+   * `webContents.findInPage(text, options)`. The promise resolves once the
+   * native call returns; match counts arrive asynchronously via the
+   * `ok:find:result` event (forwarded from `found-in-page`).
+   *
+   * Empty `text` is treated as a no-op so the renderer can clear its input
+   * without inadvertently triggering a fresh search; the renderer should
+   * call `ok:find:stop` separately when it wants to dismiss highlights.
+   */
+  'ok:find:start': {
+    args: [text: string, options: OkFindInPageOptions];
+    result: undefined;
+  };
+  /**
+   * End the active find-in-page session for the caller window. `action`
+   * mirrors the Chromium contract: `clearSelection` (default for "close
+   * the bar"), `keepSelection`, or `activateSelection` (acts like a click
+   * on the active match — fires anchor navigation if applicable).
+   */
+  'ok:find:stop': { args: [action: OkFindStopAction]; result: undefined };
 }

@@ -136,6 +136,25 @@ function probeWsUpgrade(url: string, timeoutMs: number): Promise<boolean> {
 }
 
 /**
+ * Wire `webContents.on('found-in-page')` → `ok:find:result` IPC event.
+ * Registered once per BrowserWindow at creation time so the renderer's
+ * find bar can render the X/Y match counter without a new round-trip
+ * per match. Result struct fields are copied explicitly so we forward
+ * exactly the contract documented in `OkFindInPageResult` — and never
+ * accidentally include the non-serialisable `selectionArea: Rectangle`.
+ */
+function attachFindInPageForwarder(win: BrowserWindow): void {
+  win.webContents.on('found-in-page', (_event, result) => {
+    sendToRenderer(win.webContents, 'ok:find:result', {
+      requestId: result.requestId,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+      finalUpdate: result.finalUpdate,
+    });
+  });
+}
+
+/**
  * Quarantine a corrupt `state.json` to a timestamped sibling and log so
  * operations can correlate "recents disappeared" reports to the corruption
  * event. Pure I/O — the return value is `emptyState()` either way; the
@@ -311,6 +330,7 @@ function ensureWindowManager() {
       win.on('page-title-updated', (e) => {
         e.preventDefault();
       });
+      attachFindInPageForwarder(win);
       return win as unknown as BrowserWindowLike;
     },
     forkUtility: (entry, opts) => {
@@ -374,6 +394,7 @@ function openNavigator() {
       win.on('closed', () => {
         navigatorWindow = null;
       });
+      attachFindInPageForwarder(win);
       return win as unknown as BrowserWindowLike;
     },
     rendererEntryPath: app.isPackaged
@@ -526,6 +547,15 @@ function refreshApplicationMenu() {
       target.webContents.executeJavaScript(
         "window.location.hash = '#install-claude-desktop'; undefined",
       );
+    },
+    // Edit → Find… (Cmd/Ctrl+F) — sends the menu action to the focused
+    // window so its renderer mounts the find bar overlay. Falls back to
+    // the first open window when none is focused (e.g., menu invoked from
+    // the Dock with no front window). Bails when no window is open.
+    showFindInPage: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      sendToRenderer(target.webContents, 'ok:menu-action', 'find-in-page');
     },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
@@ -694,6 +724,21 @@ function registerIpcHandlers() {
 
   handle('ok:clipboard:write-text', async (_event, text) => {
     clipboard.writeText(text);
+    return undefined;
+  });
+
+  handle('ok:find:start', async (event, text, options) => {
+    if (text.length === 0) return undefined;
+    event.sender.findInPage(text, {
+      forward: options.forward,
+      matchCase: options.matchCase,
+      findNext: options.findNext,
+    });
+    return undefined;
+  });
+
+  handle('ok:find:stop', async (event, action) => {
+    event.sender.stopFindInPage(action);
     return undefined;
   });
 

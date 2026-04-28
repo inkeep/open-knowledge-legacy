@@ -15,7 +15,7 @@
  * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */
 
-import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
+import type { OkDesktopConfig, OkFindInPageResult, OkMenuAction } from './bridge-contract.ts';
 import type { McpWiringEditorDetection } from './ipc-channels.ts';
 
 export interface EventChannels {
@@ -67,4 +67,11 @@ export interface EventChannels {
   'ok:mcp-wiring:show': {
     payload: { detectedEditors: readonly McpWiringEditorDetection[] };
   };
+  /**
+   * `webContents.on('found-in-page')` fan-out for the find bar's match
+   * counter. Fires multiple times per search — `finalUpdate: true` marks
+   * the last update for that requestId. Listener registered once per
+   * BrowserWindow at creation time.
+   */
+  'ok:find:result': { payload: OkFindInPageResult };
 }

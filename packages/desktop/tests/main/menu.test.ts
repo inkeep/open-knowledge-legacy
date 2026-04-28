@@ -258,6 +258,35 @@ describe('buildMenuTemplate', () => {
     });
   });
 
+  describe('Edit → Find… (Cmd/Ctrl+F)', () => {
+    test('Find item exists under Edit with the platform-portable accelerator', () => {
+      const template = buildMenuTemplate(makeDeps());
+      const find = findByLabel(template, 'Find…');
+      expect(find).toBeDefined();
+      expect(find?.accelerator).toBe('CmdOrCtrl+F');
+    });
+
+    test('Find click dispatches deps.showFindInPage()', () => {
+      const showFindInPage = mock(() => {});
+      const deps = makeDeps({ showFindInPage });
+      const template = buildMenuTemplate(deps);
+      const find = findByLabel(template, 'Find…');
+      (find?.click as (() => void) | undefined)?.();
+      expect(showFindInPage).toHaveBeenCalledTimes(1);
+    });
+
+    test('omitting showFindInPage still renders the menu item without crashing on click', () => {
+      // Optional dep — non-Electron contexts (unit tests, embedded harnesses)
+      // can render the menu without wiring the find surface and the click
+      // becomes a no-op rather than a TypeError.
+      const deps = makeDeps();
+      const template = buildMenuTemplate(deps);
+      const find = findByLabel(template, 'Find…');
+      expect(find).toBeDefined();
+      expect(() => (find?.click as (() => void) | undefined)?.()).not.toThrow();
+    });
+  });
+
   test('macOS-branch behavior for the current test host', () => {
     // `buildMenuTemplate` reads `process.platform` directly — we can assert
     // the consistent cross-shape pairing rather than stubbing the platform.

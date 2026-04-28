@@ -90,6 +90,13 @@ export interface MenuDeps {
    * menu renders even in contexts that don't wire it (unit tests).
    */
   openInstallSkillDialog?(): void;
+  /**
+   * Edit → Find… click handler (Cmd/Ctrl+F). Dispatches a `'find-in-page'`
+   * menu action to the focused window's renderer; the renderer mounts the
+   * find bar overlay. Optional so unit tests that don't exercise the find
+   * surface can omit it.
+   */
+  showFindInPage?(): void;
 }
 
 /**
@@ -223,6 +230,12 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
         { role: 'copy' },
         { role: 'paste' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find…',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => deps.showFindInPage?.(),
+        },
       ],
     },
 

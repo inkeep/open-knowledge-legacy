@@ -86,7 +86,26 @@ export type OkMenuAction =
   | 'save-version'
   | 'version-history'
   | 'focus-search'
-  | 'focus-command-palette';
+  | 'focus-command-palette'
+  | 'find-in-page';
+
+/** Mirrors `OkFindInPageOptions` in the desktop / core copies. */
+export interface OkFindInPageOptions {
+  readonly forward?: boolean;
+  readonly matchCase?: boolean;
+  readonly findNext?: boolean;
+}
+
+/** Mirrors `OkFindInPageResult` in the desktop / core copies. */
+export interface OkFindInPageResult {
+  readonly requestId: number;
+  readonly activeMatchOrdinal: number;
+  readonly matches: number;
+  readonly finalUpdate: boolean;
+}
+
+/** Mirrors `OkFindStopAction` in the desktop / core copies. */
+export type OkFindStopAction = 'clearSelection' | 'keepSelection' | 'activateSelection';
 
 export type OkUnsubscribe = () => void;
 
@@ -240,6 +259,11 @@ export interface OkDesktopBridge {
   };
   update: {
     relaunchNow(): Promise<void>;
+  };
+  find: {
+    start(text: string, options?: OkFindInPageOptions): Promise<void>;
+    stop(action?: OkFindStopAction): Promise<void>;
+    onResult(cb: (result: OkFindInPageResult) => void): OkUnsubscribe;
   };
   mcpWiring: {
     onShow(cb: (payload: OkMcpWiringShowPayload) => void): OkUnsubscribe;

@@ -3,6 +3,7 @@ import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
+import { FindBar } from '@/components/FindBar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { McpConsentDialog } from '@/components/McpConsentDialog';
@@ -159,6 +160,7 @@ export function App() {
               identically in NavigatorApp. */}
           <McpConsentDialog />
           {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+          {desktopBridge ? <FindBar bridge={desktopBridge} /> : null}
           <SidebarProvider className="h-screen overflow-hidden">
             <FileSidebar />
             <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">

@@ -24,6 +24,35 @@ import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 
 export type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
 
+/**
+ * Options accepted by `webContents.findInPage` — narrowed to the fields the
+ * renderer actually sets. `findNext` controls whether a new search starts
+ * fresh (`false`, default) or advances within the existing matches (`true`).
+ */
+export interface OkFindInPageOptions {
+  readonly forward?: boolean;
+  readonly matchCase?: boolean;
+  readonly findNext?: boolean;
+}
+
+/**
+ * Mirrors Electron's `Result` payload of `webContents.on('found-in-page')`.
+ * Re-declared here so renderer / app types don't depend on `electron` (which
+ * is main-process-only and would break Bun typecheck under
+ * `verbatimModuleSyntax: true`). Kept in sync by hand — the contract is
+ * dictated by Chromium and unlikely to drift.
+ */
+export interface OkFindInPageResult {
+  readonly requestId: number;
+  readonly activeMatchOrdinal: number;
+  readonly matches: number;
+  readonly finalUpdate: boolean;
+}
+
+/** `webContents.stopFindInPage` action — controls what happens to the
+ *  highlighted selection when the find session ends. */
+export type OkFindStopAction = 'clearSelection' | 'keepSelection' | 'activateSelection';
+
 /** Renderer-facing result of `okDesktop.seed.plan()`. Mirrors `SeedPlanResult` in main. */
 export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
@@ -66,7 +95,8 @@ export type OkMenuAction =
   | 'save-version'
   | 'version-history'
   | 'focus-search'
-  | 'focus-command-palette';
+  | 'focus-command-palette'
+  | 'find-in-page';
 
 /** Returned by `onProjectSwitched` / `onMenuAction`. Call to detach the listener. */
 export type OkUnsubscribe = () => void;
@@ -266,6 +296,22 @@ export interface OkDesktopBridge {
   update: {
     /** Invokes `autoUpdater.quitAndInstall()` in main. Triggered by Toast A's "Relaunch now" action. */
     relaunchNow(): Promise<void>;
+  };
+
+  /**
+   * Cmd/Ctrl+F find-in-page surface. Renderer mounts a find bar (opened by
+   * the `'find-in-page'` menu action), drives `start` / `stop` against the
+   * window's webContents, and renders the match counter from `onResult`.
+   * Maps directly onto Electron's `webContents.findInPage` /
+   * `stopFindInPage` / `'found-in-page'` triplet.
+   */
+  find: {
+    /** Start or advance a search. Empty `text` is a no-op (bar still open). */
+    start(text: string, options?: OkFindInPageOptions): Promise<void>;
+    /** End the session. Default `'clearSelection'` matches "close the bar". */
+    stop(action?: OkFindStopAction): Promise<void>;
+    /** Subscribe to match-count updates fired by `webContents.on('found-in-page')`. */
+    onResult(cb: (result: OkFindInPageResult) => void): OkUnsubscribe;
   };
 
   /**

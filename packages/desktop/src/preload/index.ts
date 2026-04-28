@@ -23,6 +23,7 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
   OkDesktopBridge,
   OkDesktopConfig,
+  OkFindInPageResult,
   OkMcpWiringShowPayload,
   OkMenuAction,
   OkUpdateDownloadedInfo,
@@ -142,6 +143,16 @@ const bridge: OkDesktopBridge = {
 
   update: {
     relaunchNow: () => invoke('ok:update:relaunch-now'),
+  },
+
+  find: {
+    start: (text, options) => invoke('ok:find:start', text, options ?? {}),
+    stop: (action) => invoke('ok:find:stop', action ?? 'clearSelection'),
+    onResult(cb: (result: OkFindInPageResult) => void) {
+      const listener = (_event: IpcRendererEvent, result: OkFindInPageResult) => cb(result);
+      ipcRenderer.on('ok:find:result', listener);
+      return () => ipcRenderer.removeListener('ok:find:result', listener);
+    },
   },
 
   mcpWiring: {

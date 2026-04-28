@@ -20,6 +20,7 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { FindBar } from './FindBar';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
@@ -194,6 +195,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           `mcpConsentStore` snapshot, renders nothing until main fires
           `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
       <McpConsentDialog />
+      <FindBar bridge={bridge} />
     </div>
   );
 }
