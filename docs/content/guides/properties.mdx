@@ -1,0 +1,53 @@
+---
+title: Properties
+description: Edit document frontmatter inline in the WYSIWYG editor — typed widgets for the five common YAML scalar shapes, with per-property CRDT merge.
+---
+
+Every Open Knowledge document is a markdown file with optional YAML frontmatter at the top. Frontmatter carries first-class structure — `title`, dates, `tags`, `status`, owners, cross-links — and it's what the rest of the system (search, the link graph, the Timeline, agents) reads to make sense of the doc.
+
+The Properties panel is the inline editor for that frontmatter. It renders at the top of the document above the body in WYSIWYG mode, so you can change a tag or flip a status without dropping into source mode and writing raw YAML.
+
+## What's in a row
+
+Each property shows three things, left to right: a type icon, the property name, and the value cell. Click the value to edit. Click the name to rename. Click the type icon to change the type.
+
+The five widget types map to the YAML shapes you already use:
+
+- **Text** — a plain string. The default for anything that doesn't look like a number, boolean, date, or list.
+- **Number** — integers and floats. Inline numeric input.
+- **Boolean** — a checkbox. Persists as `true` / `false` in YAML.
+- **Date** — ISO 8601 calendar date (`2026-04-27`). Calendar picker on click.
+- **List** — an array of strings. Renders as chips: type and press Enter to add, click `✕` to remove, Backspace on empty input removes the last chip.
+
+URLs are stored as Text — there's no separate URL type, since YAML doesn't have one.
+
+## Adding, removing, renaming
+
+- **Add a property.** Click `+ Add property` at the bottom of the panel. Type the name, pick a type from the icon dropdown, enter the initial value, press Enter.
+- **Remove a property.** Hover the row; a trash icon appears on the right. Click to delete. The property disappears from the panel and the file's YAML.
+- **Rename a property.** Click the name. The label switches to an inline input. Type the new name, press Enter to commit or Escape to revert.
+
+If a doc has no frontmatter yet, the panel doesn't render. Use the **Add Properties** button in the editor toolbar to seed the first property — the panel appears once a property exists.
+
+You can collapse the panel as a whole with the chevron next to `PROPERTIES (N)`. Body-content scroll position doesn't move when you do.
+
+## Concurrent edits merge per-property
+
+Frontmatter is stored as one CRDT entry per property, so two writers editing different properties of the same document at the same time both land cleanly. A common case: you adjust `title` in the property panel while an agent updates `tags` through the MCP `frontmatter_patch` tool — both edits stick, no last-write-wins overwrite.
+
+Two writers editing the *same* property at the same time resolve last-writer-wins on that one key. Other properties are unaffected.
+
+## Source mode still works
+
+Source mode (the YAML-and-markdown view) still edits frontmatter as plain text. Edits there propagate back into the property panel via the same per-property CRDT path, so the two views stay in sync. Comments and blank lines you write in source mode round-trip through the form: editing one property in the panel doesn't reflow the rest of the YAML.
+
+The supported widget types cover YAML's core scalar shapes (string, number, boolean, ISO date, flat string list). Frontmatter that uses constructs outside those shapes — nested maps, custom YAML tags, anchors — round-trips through source mode unchanged but is not editable from the panel.
+
+## Agents
+
+Agents edit frontmatter through the [`frontmatter_patch`](/guides/mcp-integration#frontmatter_patch--typed-property-edits) MCP tool, which targets the same per-property CRDT entries the panel writes to. `edit_document`'s find-and-replace is body-only — it rejects edits that would land in the frontmatter region with an HTTP 400 and a hint pointing at `frontmatter_patch`.
+
+## See also
+
+- [[mcp-integration]] — `frontmatter_patch` reference and the agent-side surface.
+- [[timeline]] — frontmatter changes are recorded in the Timeline alongside body edits, with the same per-contributor `summary` bullets when the writer attached one.

@@ -64,7 +64,8 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
 | `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
-| `edit_document`                               | Connected | Find-and-replace on a document through the CRDT                                              |
+| `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
+| `frontmatter_patch`                           | Connected | Set / create / delete frontmatter properties via JSON Merge Patch (RFC 7396)                 |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
 | `get_history`                                 | Connected | Query the shadow-repo version timeline                                                       |
@@ -78,9 +79,31 @@ All 21 docName-producing tools emit `previewUrl` in their result (single-doc too
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
 
+### `frontmatter_patch` — typed property edits
+
+Frontmatter is stored per-property in the CRDT — concurrent edits to *different* keys (a human editing `title` in the property panel while an agent updates `tags`) merge cleanly at the field level, no last-write-wins overwrite. Use `frontmatter_patch` to set, create, or delete properties via JSON Merge Patch (RFC 7396):
+
+```json
+{
+  "docName": "specs/foo/SPEC",
+  "patch": {
+    "title": "New title",
+    "tags": ["alpha", "beta"],
+    "draft": null
+  },
+  "summary": "Marked as approved"
+}
+```
+
+A key with a value sets or creates; a key with `null` deletes; missing keys are unchanged. Atomicity is reject-or-commit — if any value fails schema validation the whole patch rejects with a per-key error report.
+
+Type inference picks the widget class from value shape (ISO 8601 string → date, boolean → boolean, number → number, `string[]` → list, else text). Pass an optional `types` map to override per key — useful when an ISO 8601 string should stay as plain text instead of becoming a date.
+
+`edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `frontmatter_patch`. Body edits stay on `edit_document`; frontmatter edits route through `frontmatter_patch`. Mixing the two in one batch — body edit via `edit_document`, FM edit via `frontmatter_patch` — is the supported pattern.
+
 ### `summary` on write tools
 
-The four write tools — `write_document`, `edit_document`, `rename_document`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
+The five write tools — `write_document`, `edit_document`, `frontmatter_patch`, `rename_document`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
 
 - **Cap.** 80 characters at the API boundary (49 visible + `…` suffix when truncated). The Zod schema caps input at 200 characters as a transport-safety bound; summaries longer than 80 are truncated server-side and the tool response includes `truncatedFrom: <original-length>` so the agent can adjust.
 - **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document` and `edit_document` produce a bulletless row in that case.

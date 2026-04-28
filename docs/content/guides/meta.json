@@ -11,6 +11,7 @@
     "install-claude-cowork",
     "open-in-agent-desktop",
     "content-filtering",
+    "properties",
     "timeline",
     "agent-activity-panel",
     "collaboration-recovery"
