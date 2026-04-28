@@ -125,7 +125,7 @@ export function getAutoFocusedPropName(props: PropDef[]): string | null {
  * component below wraps this with the in-flight `uploading` state and the
  * file-input value reset.
  */
-export async function runUpload(
+async function runUpload(
   file: File,
   accept: readonly string[],
   onUploaded: (url: string) => void,
