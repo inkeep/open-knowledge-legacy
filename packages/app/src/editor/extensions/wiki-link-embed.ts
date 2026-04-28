@@ -258,6 +258,10 @@ export const WikiLinkEmbed = BaseWikiLinkEmbed.extend({
           dom.setAttribute('href', newHref);
           dom.setAttribute('aria-label', `Embed: ${newTarget}${newAnchor ? `#${newAnchor}` : ''}`);
           const newLabel = newAlias ?? `${newTarget}${newAnchor ? `#${newAnchor}` : ''}`;
+          // Chips own only a text node today — `textContent =` is safe. If a
+          // future change adds child elements (icon, spinner, status dot),
+          // switch this to a dedicated label `<span>` child so the icon
+          // doesn't get nuked on every label update.
           dom.textContent = newLabel;
           return true;
         },

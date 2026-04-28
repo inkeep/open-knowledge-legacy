@@ -492,7 +492,15 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      bb = busboy({ headers: req.headers, limits: { files: 1 } });
+      // `files: 1` caps the file part; `fields` + `fieldSize` cap non-file
+      // surface so a flooded multipart can't buffer thousands of fields or a
+      // multi-MB string field in memory before the upload body resolves. The
+      // legitimate schema (agentId / docName / position / summary) is bounded
+      // — short identifiers, never approaching 2 KB or 10 entries.
+      bb = busboy({
+        headers: req.headers,
+        limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
+      });
     } catch (err) {
       reject(new UploadWriteError('malformed-upload', err));
       return;
@@ -4668,7 +4676,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // <img>, never inline DOM. Do not remove without a compensating guard.
     if (!detectedMime) {
       const head = readTempFileHead(tempPath, 256);
-      const headText = head.toString('utf-8').trimStart();
+      // Strip a leading UTF-8 BOM (U+FEFF) before the pattern match.
+      // `trimStart()` removes ECMAScript whitespace but not the BOM, so a
+      // file starting with `\xEF\xBB\xBF<svg ...>` would otherwise evade the
+      // head check the comment above documents as the SVG-disguised-as-PNG
+      // sniff fallback.
+      const headText = head.toString('utf-8').replace(/^﻿/, '').trimStart();
       if (
         headText.startsWith('<svg') ||
         (headText.startsWith('<?xml') && headText.includes('<svg'))
