@@ -1556,6 +1556,56 @@ export function createServer(options: ServerOptions): ServerInstance {
             switchReconciledBaseScope(newBranch);
             backlinkIndex.switchBranch(newBranch);
 
+            // Reseed `basenameIndex` BEFORE the doc-reset loop. The reset
+            // calls `applyToDoc` → `applyExternalChange` → mdast→PM with
+            // `resolveEmbed`, which resolves `![[photo.png]]` against the
+            // basename index. With the previous (stale) branch's paths
+            // still in the index, the PM image `src` carries the
+            // pre-switch resolution until the next user edit — disk
+            // markdown round-trips fine, but the rendered preview is
+            // wrong. The reseed has to land before the reset for the
+            // PM image src to reflect the new branch.
+            //
+            // Asset DiskEvents from the switch itself are discarded
+            // (`eventBuffer.splice` above) and `basenameIndex` is a flat
+            // Map without branch scope, so the explicit walk is the only
+            // mechanism by which post-switch paths enter the index.
+            // Mirror backlinkIndex's branch-scoped reset: drop the index,
+            // walk the new branch's disk, re-seed.
+            //
+            // `onSkip` wiring is symmetric with the boot path — a mid-
+            // session permission flip (EACCES), fd exhaustion (EMFILE),
+            // or root-scope read failure during the reseed walk surfaces
+            // the same `basename-index-partial` degraded indicator the
+            // boot path uses.
+            try {
+              let reseedSkipCount = 0;
+              basenameIndex.clear();
+              seedBasenameIndex({
+                contentDir,
+                contentFilter,
+                basenameIndex,
+                onSkip: (reason, code, path) => {
+                  reseedSkipCount++;
+                  log.warn(
+                    { reason, code, path, branch: newBranch },
+                    `[basename-index] skipped entry during branch-switch reseed (${reason}${code ? ` ${code}` : ''})`,
+                  );
+                },
+              });
+              if (reseedSkipCount > 0) {
+                log.warn(
+                  { count: reseedSkipCount, branch: newBranch },
+                  `[basename-index] branch-switch reseed completed with ${reseedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve on this branch`,
+                );
+                if (!degraded.includes('basename-index-partial')) {
+                  degraded.push('basename-index-partial');
+                }
+              }
+            } catch (err) {
+              log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
+            }
+
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName)) continue;
@@ -1623,50 +1673,6 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk(newBranch).catch((err) => {
               console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
             });
-
-            // SPEC §6 FR-3b cross-branch: asset DiskEvents from the switch
-            // itself are discarded (eventBuffer.splice above), and
-            // `basenameIndex` is a flat Map without branch scope — it
-            // still holds the previous branch's paths. A user opening a
-            // doc with `![[photo.png]]` after `git checkout <other>`
-            // would resolve to the old branch's path (or a path that no
-            // longer exists). Mirror backlinkIndex's branch-scoped reset:
-            // drop the index, walk the new branch's disk, re-seed.
-            //
-            // `onSkip` wiring is symmetric with the boot path — a mid-
-            // session permission flip (EACCES), fd exhaustion (EMFILE),
-            // or root-scope read failure during the reseed walk surfaces
-            // the same `basename-index-partial` degraded indicator the
-            // boot path uses. Without this, the exact silent-truncation
-            // failure mode that Major #8 patches at boot would reappear
-            // mid-session one `git checkout` later.
-            try {
-              let reseedSkipCount = 0;
-              basenameIndex.clear();
-              seedBasenameIndex({
-                contentDir,
-                contentFilter,
-                basenameIndex,
-                onSkip: (reason, code, path) => {
-                  reseedSkipCount++;
-                  log.warn(
-                    { reason, code, path, branch: newBranch },
-                    `[basename-index] skipped entry during branch-switch reseed (${reason}${code ? ` ${code}` : ''})`,
-                  );
-                },
-              });
-              if (reseedSkipCount > 0) {
-                log.warn(
-                  { count: reseedSkipCount, branch: newBranch },
-                  `[basename-index] branch-switch reseed completed with ${reseedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve on this branch`,
-                );
-                if (!degraded.includes('basename-index-partial')) {
-                  degraded.push('basename-index-partial');
-                }
-              }
-            } catch (err) {
-              log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
-            }
 
             // Restore parked WIP if exists (three-way merge parked state against current disk)
             if (shadowRef.current && info.batchKind === 'cross-branch') {
