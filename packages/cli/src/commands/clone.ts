@@ -1,5 +1,5 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import simpleGit, { type SimpleGitOptions } from 'simple-git';
 import { resolveAuth } from '../auth/resolve-auth.ts';
@@ -116,21 +116,57 @@ async function runClone(
 
   if (!opts.json) process.stderr.write('\n');
 
-  // Auto-init: scaffold .open-knowledge/ if missing. Per-machine OK runtime
-  // state self-ignores via the .gitignore inside .open-knowledge/ (written
-  // by initContent); we deliberately never mutate the cloned project's root
-  // .gitignore.
-  const okDir = resolve(targetDir, OK_DIR);
-  if (!existsSync(okDir)) {
-    try {
-      const { runInit } = await import('./init.ts');
-      await runInit({ cwd: targetDir, mcp: false });
-    } catch {
-      // Non-fatal
-    }
+  // Auto-init: scaffold .open-knowledge/ unconditionally. `runInit` is idempotent
+  // via per-file `writeIfMissing`, so it backfills a missing `.gitignore` even
+  // when upstream committed `.open-knowledge/config.yml` without one.
+  try {
+    const { runInit } = await import('./init.ts');
+    await runInit({ cwd: targetDir, mcp: false });
+  } catch {
+    // Non-fatal
+  }
+
+  // Per-clone protection from upstream pollution: append `.open-knowledge/` to
+  // the cloned repo's `.git/info/exclude`. That file is per-clone and never
+  // committed, so OK state can't accidentally land in someone else's tree from
+  // a stray `git add .`. Symmetric with `ok init`'s stance — `init` is the
+  // user's own project (config.yml is meant to be tracked, no exclude needed).
+  try {
+    ensureOkExcludedFromGit(targetDir);
+  } catch {
+    // Non-fatal — best-effort
   }
 
   return targetDir;
+}
+
+/**
+ * Append `${OK_DIR}/` to `<projectDir>/.git/info/exclude` so the cloned repo's
+ * outer git ignores OK state without mutating any tracked file.
+ *
+ * Idempotent: recognizes the common variants (`.open-knowledge`,
+ * `.open-knowledge/`, leading-slash rooted forms) and only appends when none
+ * are present. Returns `'no-exclude'` when the file is absent (e.g., not a git
+ * repo, or a bare repo with no `info/` dir) — the caller treats that case as
+ * a no-op.
+ */
+export function ensureOkExcludedFromGit(
+  projectDir: string,
+): 'appended' | 'already-present' | 'no-exclude' {
+  const excludePath = join(projectDir, '.git', 'info', 'exclude');
+  if (!existsSync(excludePath)) return 'no-exclude';
+
+  const existing = readFileSync(excludePath, 'utf-8');
+  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
+  const alreadyPresent = existing
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => variants.has(line));
+  if (alreadyPresent) return 'already-present';
+
+  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  writeFileSync(excludePath, `${existing}${separator}${OK_DIR}/\n`, 'utf-8');
+  return 'appended';
 }
 
 // ---------------------------------------------------------------------------

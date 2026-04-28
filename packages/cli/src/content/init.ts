@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CACHE_DIR, CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 
@@ -123,6 +123,37 @@ function writeIfMissing(filePath: string, content: string): boolean {
 }
 
 /**
+ * Append missing scaffold entries to an existing `.gitignore`, or create the
+ * file from scratch when absent. User customizations are preserved — only
+ * entries that aren't already present (via trim-equality) get appended.
+ *
+ * Required entries are derived from `scaffoldContent`'s non-comment, non-empty
+ * lines. This is the upgrade path: workspaces that ran `ok init` before this
+ * scaffold gained `principal.json` / `last-spawn-error.log` would otherwise
+ * never see the new entries because `writeIfMissing` short-circuits.
+ */
+function ensureGitignoreEntries(
+  filePath: string,
+  scaffoldContent: string,
+): 'created' | 'updated' | 'unchanged' {
+  if (!existsSync(filePath)) {
+    writeFileSync(filePath, scaffoldContent, 'utf-8');
+    return 'created';
+  }
+  const required = scaffoldContent
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('#'));
+  const existing = readFileSync(filePath, 'utf-8');
+  const present = new Set(existing.split('\n').map((l) => l.trim()));
+  const missing = required.filter((l) => !present.has(l));
+  if (missing.length === 0) return 'unchanged';
+  const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  writeFileSync(filePath, `${existing}${sep}${missing.join('\n')}\n`, 'utf-8');
+  return 'updated';
+}
+
+/**
  * Single source of truth for `.open-knowledge/.gitignore`.
  *
  * Every per-machine OK runtime path lives here so the project root
@@ -147,12 +178,6 @@ principal.json
 last-spawn-error.log
 `;
 
-/** Static files scaffolded into the open-knowledge directory. */
-const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
-  { name: '.gitignore', content: OK_GITIGNORE_CONTENT },
-  { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
-];
-
 export function initContent(projectDir: string): { created: string[]; skipped: string[] } {
   const okDir = resolve(projectDir, OK_DIR);
   const created: string[] = [];
@@ -163,13 +188,22 @@ export function initContent(projectDir: string): { created: string[]; skipped: s
   mkdirSync(okDir, { recursive: true });
   mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
 
-  // Write scaffold files (skip if already exist)
-  for (const file of SCAFFOLD_FILES) {
-    if (writeIfMissing(join(okDir, file.name), file.content)) {
-      created.push(file.name);
-    } else {
-      skipped.push(file.name);
-    }
+  // .gitignore: merge-on-upgrade — append missing scaffold entries to an
+  // existing file rather than skipping outright. Keeps the SSoT contract for
+  // workspaces created before new entries (`principal.json`,
+  // `last-spawn-error.log`) joined the scaffold.
+  const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
+  if (gitignoreAction === 'unchanged') {
+    skipped.push('.gitignore');
+  } else {
+    created.push('.gitignore');
+  }
+
+  // config.yml: writeIfMissing — user customizations win.
+  if (writeIfMissing(join(okDir, CONFIG_FILENAME), CONFIG_YML_CONTENT)) {
+    created.push(CONFIG_FILENAME);
+  } else {
+    skipped.push(CONFIG_FILENAME);
   }
 
   return { created, skipped };
