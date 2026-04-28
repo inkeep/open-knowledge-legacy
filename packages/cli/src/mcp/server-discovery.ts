@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   isProcessAlive as defaultIsProcessAlive,
   readServerLock,
@@ -157,7 +158,7 @@ export async function ensureServerRunning(
 ): Promise<EnsureServerRunningResult> {
   const readLock = opts.readLock ?? (() => readServerLock(opts.lockDir));
   const isAlive = opts.isAlive ?? defaultIsProcessAlive;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((res) => setTimeout(res, ms)));
+  const sleep = opts.sleep ?? ((ms: number) => wait(ms));
   const spawnFn = opts.spawn ?? nativeSpawn;
   const readErrorLog =
     opts.readErrorLog ??

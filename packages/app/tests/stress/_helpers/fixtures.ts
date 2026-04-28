@@ -186,7 +186,7 @@ async function killGracefully(proc: ChildProcess, timeoutMs = 5000): Promise<voi
     proc.once('exit', () => resolve());
   });
   proc.kill('SIGTERM');
-  const timer = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+  const timer = wait(timeoutMs);
   await Promise.race([exited, timer]);
   if (proc.exitCode === null && proc.signalCode === null) {
     proc.kill('SIGKILL');

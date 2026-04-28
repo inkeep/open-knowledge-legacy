@@ -23,6 +23,7 @@ import {
 import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { BootedServer, PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
@@ -193,7 +194,7 @@ export function buildIdleShutdownHandler(
 ): () => Promise<void> {
   const graceMs = input.sigtermGraceMs ?? DEFAULT_SIGTERM_GRACE_MS;
   const pollMs = input.sigtermPollIntervalMs ?? DEFAULT_SIGTERM_POLL_MS;
-  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep = input.sleep ?? ((ms: number) => wait(ms));
 
   return async () => {
     try {
