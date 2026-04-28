@@ -554,7 +554,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, [model]);
+  }, []);
 
   useEffect(() => {
     let active = true;

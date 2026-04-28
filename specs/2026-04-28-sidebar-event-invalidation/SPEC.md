@@ -89,7 +89,6 @@ The main code change should be a small refresh scheduler around the existing fet
 
 - `bun test packages/app/src/lib/documents-events.test.ts packages/app/src/lib/refresh-scheduler.test.ts packages/app/src/components/file-tree-refresh.test.ts` passes.
 - `bun run lint && bun run typecheck && bun test packages/app/src/lib/documents-events.test.ts packages/app/src/lib/refresh-scheduler.test.ts packages/app/src/components/file-tree-refresh.test.ts` passes.
-- `bun run check` required regenerating `docs/.source/server.ts` via `cd docs && bun run postinstall` in the fresh worktree, then later failed in the broader app integration suite without a changed-file failure surfaced in the tail. Treat this as a remaining full-suite verification gap for review/QA rather than an accepted final gate.
 
 ## Open Questions
 
