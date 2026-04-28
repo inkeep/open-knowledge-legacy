@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -161,131 +162,133 @@ export function InstallInClaudeDesktopDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3 py-2">
-          {/* --------- ELECTRON IDLE: pre-install walkthrough --------- */}
-          {phase.kind === 'idle' && isElectron && (
-            <div className="flex flex-col gap-3 text-sm">
-              <p className="font-medium">Here's what will happen when you click Install:</p>
-              <ol className="ml-4 list-decimal space-y-1.5">
-                <li>
-                  We build <code>openknowledge.skill</code> from the bundled skill content.
-                </li>
-                <li>
-                  The file saves to <code>~/Downloads/openknowledge.skill</code>.
-                </li>
-                <li>
-                  We open the <strong>Claude Desktop App</strong> for you.
-                </li>
-              </ol>
-              <UploadSteps />
-            </div>
-          )}
+        <DialogBody>
+          <div className="flex flex-col gap-3 py-2">
+            {/* --------- ELECTRON IDLE: pre-install walkthrough --------- */}
+            {phase.kind === 'idle' && isElectron && (
+              <div className="flex flex-col gap-3 text-sm">
+                <p className="font-medium">Here's what will happen when you click Install:</p>
+                <ol className="ml-4 list-decimal space-y-1.5">
+                  <li>
+                    We build <code>openknowledge.skill</code> from the bundled skill content.
+                  </li>
+                  <li>
+                    The file saves to <code>~/Downloads/openknowledge.skill</code>.
+                  </li>
+                  <li>
+                    We open the <strong>Claude Desktop App</strong> for you.
+                  </li>
+                </ol>
+                <UploadSteps />
+              </div>
+            )}
 
-          {/* --------- WEB IDLE: terminal command walkthrough --------- */}
-          {phase.kind === 'idle' && !isElectron && (
-            <div className="flex flex-col gap-3 text-sm">
-              <p className="font-medium">Here's what to do:</p>
-              <ol className="ml-4 list-decimal space-y-2">
-                <li>
-                  <span>Copy this command:</span>
-                  <div className="mt-1 flex items-center gap-2 rounded-md border bg-muted/40 p-2">
-                    <code className="flex-1 font-mono text-xs">{INSTALL_COMMAND}</code>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleCopyCommand}
-                      aria-label="Copy command"
-                      className="h-7 gap-1"
-                    >
-                      {commandCopied ? (
-                        <>
-                          <CheckCircle2 aria-hidden="true" className="h-3 w-3" />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <Copy aria-hidden="true" className="h-3 w-3" />
-                          Copy
-                        </>
-                      )}
-                    </Button>
+            {/* --------- WEB IDLE: terminal command walkthrough --------- */}
+            {phase.kind === 'idle' && !isElectron && (
+              <div className="flex flex-col gap-3 text-sm">
+                <p className="font-medium">Here's what to do:</p>
+                <ol className="ml-4 list-decimal space-y-2">
+                  <li>
+                    <span>Copy this command:</span>
+                    <div className="mt-1 flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+                      <code className="flex-1 font-mono text-xs">{INSTALL_COMMAND}</code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCopyCommand}
+                        aria-label="Copy command"
+                        className="h-7 gap-1"
+                      >
+                        {commandCopied ? (
+                          <>
+                            <CheckCircle2 aria-hidden="true" className="h-3 w-3" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy aria-hidden="true" className="h-3 w-3" />
+                            Copy
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </li>
+                  <li>
+                    Paste + run it in your terminal. You'll see{' '}
+                    <code>Built ~/Downloads/openknowledge.skill</code> — that means the file is
+                    ready. The <strong>Claude Desktop App</strong> opens automatically.
+                  </li>
+                </ol>
+                <UploadSteps />
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Requires:</strong> Node.js or Bun on your
+                  PATH. <code>npx</code> fetches and runs the CLI — no separate install.
+                </p>
+              </div>
+            )}
+
+            {/* --------- DOWNLOADING (Electron only) --------- */}
+            {phase.kind === 'downloading' && (
+              <div className="flex items-center gap-2 text-sm">
+                <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                Building <code>openknowledge.skill</code> and opening the Claude Desktop App…
+              </div>
+            )}
+
+            {/* --------- HANDED-OFF (Electron) --------- */}
+            {phase.kind === 'handed-off' && isElectron && (
+              <div className="flex flex-col gap-3 text-sm">
+                <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+                  <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-foreground">
+                      File saved & Claude Desktop App opened
+                    </span>
+                    {phase.path ? (
+                      <code className="text-xs text-muted-foreground">{phase.path}</code>
+                    ) : (
+                      <code className="text-xs text-muted-foreground">
+                        ~/Downloads/openknowledge.skill
+                      </code>
+                    )}
                   </div>
-                </li>
-                <li>
-                  Paste + run it in your terminal. You'll see{' '}
-                  <code>Built ~/Downloads/openknowledge.skill</code> — that means the file is ready.
-                  The <strong>Claude Desktop App</strong> opens automatically.
-                </li>
-              </ol>
-              <UploadSteps />
-              <p className="text-xs text-muted-foreground">
-                <strong className="text-foreground">Requires:</strong> Node.js or Bun on your PATH.{' '}
-                <code>npx</code> fetches and runs the CLI — no separate install.
-              </p>
-            </div>
-          )}
-
-          {/* --------- DOWNLOADING (Electron only) --------- */}
-          {phase.kind === 'downloading' && (
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Building <code>openknowledge.skill</code> and opening the Claude Desktop App…
-            </div>
-          )}
-
-          {/* --------- HANDED-OFF (Electron) --------- */}
-          {phase.kind === 'handed-off' && isElectron && (
-            <div className="flex flex-col gap-3 text-sm">
-              <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-                <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-foreground">
-                    File saved & Claude Desktop App opened
-                  </span>
-                  {phase.path ? (
-                    <code className="text-xs text-muted-foreground">{phase.path}</code>
-                  ) : (
-                    <code className="text-xs text-muted-foreground">
-                      ~/Downloads/openknowledge.skill
-                    </code>
-                  )}
                 </div>
+                <UploadSteps />
               </div>
-              <UploadSteps />
-            </div>
-          )}
+            )}
 
-          {/* --------- HANDED-OFF (web — user ran CLI themselves) --------- */}
-          {phase.kind === 'handed-off' && !isElectron && (
-            <div className="flex flex-col gap-3 text-sm">
-              <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-                <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium text-foreground">Download started</span>
-                  <span className="text-xs text-muted-foreground">
-                    File saves to <code>~/Downloads/openknowledge.skill</code>.
-                  </span>
+            {/* --------- HANDED-OFF (web — user ran CLI themselves) --------- */}
+            {phase.kind === 'handed-off' && !isElectron && (
+              <div className="flex flex-col gap-3 text-sm">
+                <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+                  <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 text-primary" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-foreground">Download started</span>
+                    <span className="text-xs text-muted-foreground">
+                      File saves to <code>~/Downloads/openknowledge.skill</code>.
+                    </span>
+                  </div>
                 </div>
+                <UploadSteps />
               </div>
-              <UploadSteps />
-            </div>
-          )}
+            )}
 
-          {/* --------- ERROR --------- */}
-          {phase.kind === 'error' && (
-            <div className="flex flex-col gap-2 text-sm">
-              <span className="text-destructive">{phase.message}</span>
-              <a
-                href={DOCS_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs underline"
-              >
-                See the full install guide
-              </a>
-            </div>
-          )}
-        </div>
+            {/* --------- ERROR --------- */}
+            {phase.kind === 'error' && (
+              <div className="flex flex-col gap-2 text-sm">
+                <span className="text-destructive">{phase.message}</span>
+                <a
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs underline"
+                >
+                  See the full install guide
+                </a>
+              </div>
+            )}
+          </div>
+        </DialogBody>
 
         <DialogFooter>
           {phase.kind === 'idle' && isElectron && (
