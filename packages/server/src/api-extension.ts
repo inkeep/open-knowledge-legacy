@@ -860,9 +860,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const doc = hocuspocus.documents.get(docName);
       if (doc) {
-        const metaMap = doc.getMap('metadata');
-        const fm = metaMap.get('frontmatter');
-        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+        const map = getFrontmatterMap(doc);
+        if (Object.keys(map).length > 0) {
+          const cluster = typeof map.cluster === 'string' ? map.cluster : undefined;
+          const category = typeof map.category === 'string' ? map.category : undefined;
+          let tags: string[] | undefined;
+          if (Array.isArray(map.tags)) {
+            tags = map.tags.length > 0 ? map.tags : undefined;
+          } else if (typeof map.tags === 'string' && map.tags) {
+            tags = [map.tags];
+          }
+          return { cluster, category, tags };
+        }
       }
     } catch {
       /* fall through to disk */

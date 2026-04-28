@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Document, Hocuspocus } from '@hocuspocus/server';
 import {
+  getFrontmatter,
   prependFrontmatter,
   resolveInternalHref,
   stripFrontmatter,
@@ -499,9 +500,7 @@ function scanMarkdownForMentions(
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
   const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const metaMap = document.getMap('metadata');
-  const frontmatter = metaMap.get('frontmatter');
-  return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);
+  return prependFrontmatter(getFrontmatter(document), body);
 }
 
 async function readDocumentMarkdown(

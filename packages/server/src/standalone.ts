@@ -7,6 +7,7 @@ import {
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
+  getFrontmatter,
   type Principal,
   prependFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -620,10 +621,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     const xmlFragment = document.getXmlFragment('default');
     const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
-    const metaMap = document.getMap('metadata');
-    const fm = metaMap.get('frontmatter');
-    const frontmatter = typeof fm === 'string' ? fm : '';
-    return prependFrontmatter(frontmatter, body);
+    return prependFrontmatter(getFrontmatter(document), body);
   }
 
   /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
