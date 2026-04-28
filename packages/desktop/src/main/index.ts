@@ -23,8 +23,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
@@ -92,8 +91,6 @@ import {
   type UtilityProcessLike,
   WindowManager,
 } from './window-manager.ts';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_WIN_OPTS = {
   width: 1280,
