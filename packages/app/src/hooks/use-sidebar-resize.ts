@@ -144,6 +144,14 @@ export function useSidebarResize({
   const lastToggleTime = useRef(0);
   const dragDistanceFromToggle = useRef(0);
   const railRect = useRef<DOMRect | null>(null);
+  const currentWidthRef = useRef(currentWidth);
+  const isCollapsedRef = useRef(isCollapsed);
+  useEffect(() => {
+    currentWidthRef.current = currentWidth;
+  }, [currentWidth]);
+  useEffect(() => {
+    isCollapsedRef.current = isCollapsed;
+  }, [isCollapsed]);
 
   // Refs for auto-collapse threshold
   const autoCollapseThresholdPx = useRef(0);
@@ -166,7 +174,7 @@ export function useSidebarResize({
     }
 
     // Store initial state
-    const currentWidthPx = isCollapsed ? 0 : toPx(currentWidth);
+    const currentWidthPx = isCollapsedRef.current ? 0 : toPx(currentWidthRef.current);
     startWidth.current = currentWidthPx;
     startX.current = e.clientX;
     lastWidth.current = currentWidthPx;
@@ -236,7 +244,7 @@ export function useSidebarResize({
 
       if (isDragging.current) {
         // Get unit for width calculations
-        const { unit } = parseWidth(currentWidth);
+        const { unit } = parseWidth(currentWidthRef.current);
 
         // Get current rail position for ultra-precise tracking
         let currentRailRect = railRect.current;
@@ -266,7 +274,7 @@ export function useSidebarResize({
         // Handle toggling between collapsed and expanded states
         if (!toggleCooldown.current) {
           // Handle collapsing when expanded
-          if (enableAutoCollapse && onToggle && !isCollapsed) {
+          if (enableAutoCollapse && onToggle && !isCollapsedRef.current) {
             // Calculate precise width based on mouse position
             const currentDragWidth = calculateWidth(
               e,
@@ -306,7 +314,7 @@ export function useSidebarResize({
           // Handle expanding when collapsed
           if (
             onToggle &&
-            isCollapsed &&
+            isCollapsedRef.current &&
             currentDragDirection === 'expand' &&
             dragDistanceFromToggle.current > minWidthPx * expandThreshold
           ) {
@@ -339,7 +347,7 @@ export function useSidebarResize({
         }
 
         // Skip width calculations if panel is collapsed
-        if (isCollapsed) {
+        if (isCollapsedRef.current) {
           return;
         }
 
@@ -393,8 +401,6 @@ export function useSidebarResize({
   }, [
     onResize,
     onToggle,
-    isCollapsed,
-    currentWidth,
     setIsDraggingRail,
     minWidthPx,
     maxWidthPx,
