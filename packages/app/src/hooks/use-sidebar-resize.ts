@@ -1,7 +1,7 @@
 /**
  * Copied from https://github.com/lumpinif/shadcn-resizable-sidebar
  */
-import { useEffect, useRef } from 'react';
+import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from 'react';
 
 export interface UseSidebarResizeProps {
   /**
@@ -10,42 +10,34 @@ export interface UseSidebarResizeProps {
    * - 'right': Handle is on right side (for left-positioned panels)
    */
   direction?: 'left' | 'right';
-
   /**
    * Current width of the panel
    */
   currentWidth: string;
-
   /**
    * Callback to update width when resizing
    */
   onResize: (width: string) => void;
-
   /**
    * Callback to toggle panel visibility
    */
   onToggle?: () => void;
-
   /**
    * Whether the panel is currently collapsed
    */
   isCollapsed?: boolean;
-
   /**
    * Minimum resize width
    */
   minResizeWidth?: string;
-
   /**
    * Maximum resize width
    */
   maxResizeWidth?: string;
-
   /**
    * Whether to enable auto-collapse when dragged below threshold
    */
   enableAutoCollapse?: boolean;
-
   /**
    * Auto-collapse threshold as percentage of minResizeWidth
    * A value of 1.0 means the panel will collapse when dragged to minResizeWidth
@@ -54,38 +46,31 @@ export interface UseSidebarResizeProps {
    * Can be any positive number, not limited to the range 0.0-1.0
    */
   autoCollapseThreshold?: number;
-
   /**
    * Threshold to expand when dragging in opposite direction (0.0-1.0)
    * Percentage of distance needed to drag back to expand
    */
   expandThreshold?: number;
-
   /**
    * Whether to enable drag functionality
    */
   enableDrag?: boolean;
-
   /**
    * Callback to update dragging rail state
    */
   setIsDraggingRail?: (isDragging: boolean) => void;
-
   /**
    * Cookie name for persisting width
    */
   widthCookieName?: string;
-
   /**
    * Cookie max age in seconds
    */
   widthCookieMaxAge?: number;
-
   /**
    * Whether this is a nested sidebar (not at the edge of the screen)
    */
   isNested?: boolean;
-
   /**
    * Whether to enable toggle functionality
    */
@@ -172,19 +157,19 @@ export function useSidebarResize({
   const maxWidthPx = toPx(maxResizeWidth);
 
   // Helper function to determine if width is increasing based on direction and mouse movement
-  const isIncreasingWidth = (currentX: number, referenceX: number): boolean => {
+  function isIncreasingWidth(currentX: number, referenceX: number): boolean {
     return direction === 'left'
       ? currentX < referenceX // For left-positioned handle, moving left increases width
       : currentX > referenceX; // For right-positioned handle, moving right increases width
-  };
+  }
 
   // Helper function to calculate width based on mouse position and direction
-  const calculateWidth = (
+  function calculateWidth(
     e: MouseEvent,
     initialX: number,
     initialWidth: number,
     currentRailRect: DOMRect | null,
-  ): number => {
+  ): number {
     if (isNested && currentRailRect) {
       // For nested sidebars, use the delta from start position for precise tracking
       const deltaX = e.clientX - initialX;
@@ -205,7 +190,7 @@ export function useSidebarResize({
     }
     // For right-positioned handle (left panel)
     return e.clientX;
-  };
+  }
 
   // Update auto-collapse threshold when dependencies change
   useEffect(() => {
@@ -213,15 +198,15 @@ export function useSidebarResize({
   }, [minWidthPx, enableAutoCollapse, autoCollapseThreshold]);
 
   // Persist width to cookie if cookie name is provided
-  const persistWidth = (width: string) => {
+  function persistWidth(width: string) {
     if (widthCookieName) {
       // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
       document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
     }
-  };
+  }
 
   // Handle mouse down on resize handle
-  const handleMouseDown = (e: MouseEvent) => {
+  function handleMouseDown(e: ReactMouseEvent) {
     isInteractingWithRail.current = true;
 
     if (!enableDrag) {
@@ -253,11 +238,11 @@ export function useSidebarResize({
     }
 
     e.preventDefault();
-  };
+  }
 
   // Handle mouse movement and resizing
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    function handleMouseMove(e: MouseEvent) {
       if (!isInteractingWithRail.current) return;
 
       const deltaX = Math.abs(e.clientX - startX.current);
@@ -394,9 +379,9 @@ export function useSidebarResize({
         // Update last width
         lastWidth.current = clampedWidthPx;
       }
-    };
+    }
 
-    const handleMouseUp = () => {
+    function handleMouseUp() {
       if (!isInteractingWithRail.current) return;
 
       // Handle click (not drag) behavior
@@ -418,7 +403,7 @@ export function useSidebarResize({
       dragOffset.current = 0;
       railRect.current = null;
       setIsDraggingRail(false);
-    };
+    }
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
