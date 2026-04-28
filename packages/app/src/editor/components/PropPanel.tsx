@@ -9,13 +9,18 @@
  *   number → numeric input
  *   reactnode → hidden (content hole is the edit surface)
  *   hidden flag → suppressed
+ *   advanced flag → moved into a collapsible "Advanced" section
  *
  * Panel suppressed when no editable props exist (FR-11 / ES01).
  * Change handlers call updateAttributes with sourceDirty:true.
  */
 
 import type { PropDef } from '@inkeep/open-knowledge-core';
+import { ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
@@ -37,6 +42,63 @@ function humanizePropName(name: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+/**
+ * Per-descriptor localStorage key for persisting the Advanced section's
+ * open/closed state. Opening Advanced on `<img>` does not auto-open it on
+ * `<Callout>` — each descriptor has independent state.
+ */
+function advancedOpenStateKey(descriptorName: string): string {
+  return `ok.propPanel.advanced.${descriptorName}`;
+}
+
+/**
+ * Read the persisted Advanced-section open state for a descriptor. Returns
+ * `false` when no entry exists, when storage is unavailable (privacy mode,
+ * SSR), or when the stored value is malformed. Throws are swallowed — the
+ * panel still works without persistence.
+ */
+export function readAdvancedOpenState(descriptorName: string): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(advancedOpenStateKey(descriptorName)) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persist the Advanced-section open state for a descriptor. Throws are
+ * swallowed (storage quota / privacy mode); the in-memory React state still
+ * reflects the user's intent for the lifetime of the panel.
+ */
+export function persistAdvancedOpenState(descriptorName: string, open: boolean): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(advancedOpenStateKey(descriptorName), open ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Count the number of advanced props whose current value differs from the
+ * declared `defaultValue`. A prop with no `defaultValue` counts as "set"
+ * when its current value is anything other than `undefined`. Drives the
+ * Advanced trigger's count badge.
+ */
+export function countAdvancedSet(
+  advancedProps: PropDef[],
+  values: Record<string, unknown>,
+): number {
+  let count = 0;
+  for (const p of advancedProps) {
+    const current = values[p.name];
+    const declaredDefault = 'defaultValue' in p ? p.defaultValue : undefined;
+    if (current !== undefined && current !== declaredDefault) count += 1;
+  }
+  return count;
+}
+
 interface PropPanelProps {
   /**
    * Active descriptor — drives both the prop controls (form-scoped to the
@@ -53,12 +115,30 @@ interface PropPanelProps {
    * renders the affordance.
    */
   onConvert?: () => void;
+  /**
+   * Human-readable label for the Convert button, sourced from the target
+   * descriptor's `displayName`. Required when `onConvert` is set so the
+   * button reads "Convert to Image" even when the target descriptor name is
+   * the lowercase HTML tag (`'img'`). Falls back to the raw descriptor name
+   * if the host can't resolve a label.
+   */
+  convertTargetLabel?: string;
 }
 
-export function PropPanel({ descriptor, values, onChange, onConvert }: PropPanelProps) {
+export function PropPanel({
+  descriptor,
+  values,
+  onChange,
+  onConvert,
+  convertTargetLabel,
+}: PropPanelProps) {
   const editableProps = descriptor.props.filter(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
+
+  const commonProps = editableProps.filter((p) => !('advanced' in p && p.advanced));
+  const advancedProps = editableProps.filter((p) => 'advanced' in p && p.advanced);
+  const advancedSetCount = countAdvancedSet(advancedProps, values);
 
   // Convert affordance is only meaningful for compat descriptors that declare
   // a target. Narrowing on `surface` exposes `convertibleTo`.
@@ -67,11 +147,16 @@ export function PropPanel({ descriptor, values, onChange, onConvert }: PropPanel
     descriptor.convertibleTo !== undefined &&
     onConvert !== undefined;
 
+  // Read persisted state once at mount; the controlled `open` lets us call
+  // `persistAdvancedOpenState` on every change. React Compiler memoizes this
+  // useState initializer.
+  const [advancedOpen, setAdvancedOpen] = useState(() => readAdvancedOpenState(descriptor.name));
+
   if (editableProps.length === 0 && !showConvert) return null;
 
   return (
     <div data-prop-panel="" className="flex flex-col gap-2 p-3 text-sm">
-      {editableProps.map((propDef) => (
+      {commonProps.map((propDef) => (
         <PropControl
           key={propDef.name}
           propDef={propDef}
@@ -79,6 +164,43 @@ export function PropPanel({ descriptor, values, onChange, onConvert }: PropPanel
           onChange={(v) => onChange(propDef.name, v)}
         />
       ))}
+      {advancedProps.length > 0 && (
+        <>
+          <div className="my-1 border-t border-border" />
+          <Collapsible
+            open={advancedOpen}
+            onOpenChange={(o) => {
+              setAdvancedOpen(o);
+              persistAdvancedOpenState(descriptor.name, o);
+            }}
+          >
+            <CollapsibleTrigger
+              data-prop-panel-advanced-trigger=""
+              className="group flex w-full items-center justify-between rounded px-1 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <span className="flex items-center gap-1.5">
+                <ChevronDown className="size-3 transition-transform group-data-[state=closed]:-rotate-90" />
+                Advanced
+              </span>
+              {advancedSetCount > 0 && (
+                <Badge variant="secondary" data-prop-panel-advanced-count="">
+                  {advancedSetCount}
+                </Badge>
+              )}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="flex flex-col gap-2 pt-2">
+              {advancedProps.map((propDef) => (
+                <PropControl
+                  key={propDef.name}
+                  propDef={propDef}
+                  value={values[propDef.name]}
+                  onChange={(v) => onChange(propDef.name, v)}
+                />
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        </>
+      )}
       {showConvert && descriptor.surface === 'compat' && descriptor.convertibleTo && (
         <>
           <div className="my-1 border-t border-border" />
@@ -89,7 +211,7 @@ export function PropPanel({ descriptor, values, onChange, onConvert }: PropPanel
             onClick={onConvert}
             className="h-7 text-xs"
           >
-            Convert to {descriptor.convertibleTo.target}
+            Convert to {convertTargetLabel ?? descriptor.convertibleTo.target}
           </Button>
         </>
       )}

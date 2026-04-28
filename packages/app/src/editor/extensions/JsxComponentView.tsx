@@ -883,6 +883,12 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               <PropPanel
                 descriptor={descriptor}
                 values={primitiveProps}
+                convertTargetLabel={
+                  descriptor.surface === 'compat' && descriptor.convertibleTo
+                    ? (getDescriptor(descriptor.convertibleTo.target).displayName ??
+                      descriptor.convertibleTo.target)
+                    : undefined
+                }
                 onConvert={
                   descriptor.surface === 'compat' && descriptor.convertibleTo
                     ? (() => {
