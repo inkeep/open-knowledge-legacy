@@ -42,6 +42,7 @@ import {
   session,
   shell,
   utilityProcess,
+  globalShortcut
 } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
@@ -300,6 +301,11 @@ function ensureWindowManager() {
           preload: join(__dirname, '../preload/index.js'),
         },
       });
+      if (process.env.NODE_ENV === 'development') {
+        globalShortcut.register('CommandOrControl+Shift+I', () => {
+          win.webContents.toggleDevTools()
+        });
+      }
       // Electron defaults to updating the window title from the renderer's
       // `<title>` tag after page load — that would clobber our per-project
       // title with `packages/app/index.html`'s static "Open Knowledge" on
@@ -309,7 +315,7 @@ function ensureWindowManager() {
       win.on('page-title-updated', (e) => {
         e.preventDefault();
       });
-      return win as unknown as BrowserWindowLike;
+      return win;
     },
     forkUtility: (entry, opts) => {
       // Inject OK_ELECTRON_PROTOCOL_HOST=1 so the `preview-url.ts` helper
@@ -372,7 +378,7 @@ function openNavigator() {
       win.on('closed', () => {
         navigatorWindow = null;
       });
-      return win as unknown as BrowserWindowLike;
+      return win;
     },
     rendererEntryPath: app.isPackaged
       ? join(process.resourcesPath, 'app', 'index.html')
@@ -445,6 +451,11 @@ function refreshApplicationMenu() {
       appState = { ...appState, recentProjects: [] };
       saveAppState(appState);
       refreshApplicationMenu();
+    },
+    sendMenuAction: (action) => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      sendToRenderer(target.webContents, 'ok:menu-action', action);
     },
     // D47 scheme allowlist is enforced in the renderer IPC path (shell-allowlist.ts).
     // Help-menu URLs are hardcoded in menu.ts (always `https://github.com/inkeep/…`),
@@ -721,6 +732,53 @@ function registerIpcHandlers() {
     return undefined;
   });
 
+  handle('ok:find:in-page', async (event, request) => {
+    const query = request.query;
+    if (!query) {
+      event.sender.stopFindInPage('clearSelection');
+      return { activeMatchOrdinal: 0, matches: 0 };
+    }
+
+    return new Promise<{ activeMatchOrdinal: number; matches: number }>((resolve) => {
+      let requestId = 0;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        event.sender.removeListener('found-in-page', onFound);
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve({ activeMatchOrdinal: 0, matches: 0 });
+      }, 2000);
+      const onFound = (
+        _event: Electron.Event,
+        result: {
+          requestId: number;
+          activeMatchOrdinal: number;
+          matches: number;
+        },
+      ) => {
+        if (requestId !== 0 && result.requestId !== requestId) return;
+        cleanup();
+        resolve({
+          activeMatchOrdinal: result.activeMatchOrdinal,
+          matches: result.matches,
+        });
+      };
+
+      event.sender.on('found-in-page', onFound);
+      requestId = event.sender.findInPage(query, {
+        forward: request.forward ?? true,
+        findNext: request.findNext ?? false,
+        matchCase: request.matchCase ?? false,
+      });
+    });
+  });
+
+  handle('ok:find:stop', async (event, action) => {
+    event.sender.stopFindInPage(action);
+    return undefined;
+  });
+
   handle('ok:project:get-info', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) throw new Error('webContents has no parent BrowserWindow');
@@ -952,7 +1010,7 @@ function bootPrimaryInstance(): void {
     },
     getAnyReadyWindow: () => {
       const first = BrowserWindow.getAllWindows()[0];
-      return first ? (first as unknown as object) : null;
+      return first ? first : null;
     },
     getInitialArgv: () => process.argv,
     log: {
