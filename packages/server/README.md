@@ -73,6 +73,20 @@ Cross-CRDT sync between `Y.XmlFragment('default')` (TipTap) and `Y.Text('source'
 
 Origins that atomically mutate BOTH `Y.XmlFragment` and `Y.Text` inside a single `doc.transact(..., ORIGIN)` block declare `context.paired: true` in their literal definition. `isPairedWriteOrigin(transaction.origin)` matches structurally (`origin.context.paired === true`) — no hardcoded registry. Observer A AND Observer B both detect the marker, refresh their shared baseline synchronously inside the observer callback, and decline to flag dirty state — the settlement handler then has nothing to dispatch for the drain. The four paired origins today: `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`.
 
+The per-session form-write origin (`session.formOrigin`, `origin: 'form-write'`) is intentionally **not** paired. Form writes and `frontmatter_patch` calls touch only `Y.Map('metadata')` — Observer A's metaMap deep-observer must fire normally to recompose `prependFrontmatter(getFrontmatter(doc), body)` and propagate the new YAML to `Y.Text`. Adding the paired marker would short-circuit Observer A and leave `Y.Text` stale.
+
+### Per-key frontmatter storage
+
+`Y.Map('metadata')` holds one entry per frontmatter property (`Y.Text` for editable strings, `Y.Array<Y.Text>` for lists, primitives for atomics) — see `packages/core/src/bridge/README.md` § "Frontmatter storage shape". Five server-side surfaces participate:
+
+- **`onLoadDocument`** (`persistence.ts`) — eager-on-load migration: parses YAML and materializes per-key entries during the load transaction, so the doc is never observable in mixed shape.
+- **`applyExternalChange`** (`external-change.ts`) — file-watcher path. Uses per-key diff via `setFrontmatterFromYaml` so undoing a single property reverts only that property.
+- **Observer B reconciliation** (`server-observers.ts`) — per-key diff when source-mode YAML edits land. Same-key concurrent edits resolve LWW per key; different-key edits merge cleanly.
+- **`handleFrontmatterPatch`** (`api-extension.ts`) — applies each key in the validated `FrontmatterPatch` via `setFrontmatterProperty`. Atomic reject-or-commit at the Zod boundary; per-key UM granularity inside the transaction.
+- **`applyAgentMarkdownWrite` / `applyAgentUndo`** (`agent-sessions.ts`) — body-write path now writes the FM via per-key helpers as well, but the call signature and contract are unchanged.
+
+`onStoreDocument` calls `composeFrontmatterForStore` to round-trip cleanly: when the per-key map matches the legacy mirror's parse, the original byte string is written verbatim (preserving comments + blank lines + scalar styles); otherwise canonical synthesis from the per-key map.
+
 ### Content-preservation post-condition + silent recovery (Notion-style)
 
 Observer A's Path B (used when local Y.Text has diverged from the last-synced XmlFragment baseline) wraps `mergeThreeWay` (`@inkeep/open-knowledge-core/bridge`) with `assertContentPreservation` — a maximal-unique-line-substring + relative-order side-check that throws `BridgeMergeContentLossError` when the merge drops content from either side.
@@ -105,7 +119,8 @@ Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this
 |---|---|---|
 | `POST /api/agent-write-md` | fires under `session.origin` via `applyAgentMarkdownWrite` (precedent #10) | XmlFragment-authoritative composition; mirrors Y.Text via `applyFastDiff` |
 | `POST /api/agent-write` | fires under `session.origin` | raw Y.XmlElement append (V3 validation surface) |
-| `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text |
+| `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text. Frontmatter-intersecting patches return HTTP 400 with `error: "FM patches forbidden; use frontmatter_patch MCP tool instead"` — route those through `/api/frontmatter-patch` instead |
+| `POST /api/frontmatter-patch` | fires under per-session `session.formOrigin` (single-root, **not** paired) | per-key JSON Merge Patch (RFC 7396) over `Y.Map('metadata')`. Atomic reject-or-commit; Zod-validated against the shared `FrontmatterPatchSchema` from `@inkeep/open-knowledge-core`. Observer A's metaMap deep-observer recomposes YAML+body and propagates to `Y.Text` after settlement. The browser property panel and the `frontmatter_patch` MCP tool both target this endpoint; the panel additionally sends `source: 'form'` for telemetry-label routing |
 | `POST /api/agent-undo` | fires under per-session `session.undoOrigin` (distinct from `session.origin`) via `applyAgentUndo(session, scope)` — V0-14 landed surface | body: `{ connectionId, scope: 'last' \| 'session' }`. `session.um.undo()` runs inside the outer `doc.transact(..., session.undoOrigin)` so Observer A/B short-circuit; post-undo composes via `updateYFragment` + `applyFastDiff` |
 
 `POST /api/save-version` uses `Author: <principal_display_name>` + `Co-Authored-By: <agent>` trailers (FR-9, D12) on the project-git commit; gracefully skips when the project dir is absent / not a git repo (D45). The history checkpoint always lands regardless of project-git state.

@@ -19,8 +19,20 @@ Architectural governance:
 | `assertContentPreservation(baseline, userText, agentText, result)` | Post-condition: every maximal unique non-whitespace line from `(userText \ baseline)` and `(agentText \ baseline)` appears in `result`, and each side's lines retain their relative order. O(n log n) per side plus greedy order walk; sub-millisecond on ~10 KB markdown in practice. |
 | `BridgeMergeContentLossError` | Thrown error carrying `{ baseline, userText, agentText, result, lostSubstrings, which: 'substring' \| 'order', side: 'user' \| 'agent' }`. Call `err.toLog()` for the `BridgeMergeContentLossLogPayload` shape consumed by the `bridge-merge-content-loss` structured log. |
 | `diffLinesFast(a, b)` | Line-level diff helper used by `applyIncrementalDiff`. |
-| `getFrontmatter(doc)` / frontmatter helpers | Read the frontmatter cache from `Y.Map('metadata')` so bridge writes serialize/deserialize against the same canonical prefix on both sides. |
+| `getFrontmatter(doc)` | Return the fenced YAML string for body composition. Synthesized from per-key `Y.Map('metadata')` entries when any exist; falls back to the legacy single-string slot otherwise. Used by both observers to compose `prependFrontmatter(getFrontmatter(doc), body)` against the same canonical prefix. |
+| `getFrontmatterMap(doc)` | Return the structured per-key map (`Record<string, FrontmatterValue>`). Unwraps `Y.Text` → string, `Y.Array<Y.Text>` → `string[]`, primitives as-is. Empty object when the doc is in legacy single-string shape. |
+| `setFrontmatterFromYaml(doc, yaml)` | Apply a YAML body as per-key entries via per-key diff (delete missing, insert new, set changed). Used by `onLoadDocument`'s eager-on-load migration, `applyExternalChange` (file watcher), and Observer B reconciliation. Per-key (not bulk `clear()+setAll()`) preserves `Y.UndoManager` attribution so undoing one property reverts only that property. Returns `false` on malformed YAML — caller keeps last valid state. Caller wraps in `doc.transact(fn, origin)`. |
+| `setFrontmatterProperty(doc, key, value)` | Set or delete a single property (`null` deletes). The atomic write helper called by `handleFrontmatterPatch` for each key in a Merge Patch. Caller wraps in `doc.transact(fn, origin)`. |
+| `composeFrontmatterForStore(doc)` | Compose the fenced YAML for `onStoreDocument` to write to disk. Prefers the legacy single-string slot verbatim when its parsed value still matches the per-key map — keeps comments, blank lines, and scalar styles intact for `doc-load → no-op-form-edit → doc-save` round-trips. Falls back to canonical synthesis from the per-key map when the two have diverged. |
 | `normalizeBridge(text)` | Strip bridge-internal whitespace variance (trailing newline, etc.) when comparing raw Y.Text bytes to serialized XmlFragment markdown. The bridge invariant is stated against `normalizeBridge`, not raw equality. |
+
+## Frontmatter storage shape
+
+`Y.Map('metadata')` carries one Y entry per frontmatter property — `Y.Text` for editable strings (`title`, `description`), `Y.Array<Y.Text>` for lists (`tags`, `topics`), primitives for atomics (`Number` / `Boolean` / ISO-date strings). Field-level CRDT merge: concurrent writes to different keys (a human form edit + an MCP `frontmatter_patch` call, two agents on different fields) merge cleanly; same-key concurrent writes resolve last-writer-wins per key.
+
+A legacy single-string slot at `metaMap.get('frontmatter')` is kept transitionally as a byte-identical mirror so `composeFrontmatterForStore` can preserve YAML comments, blank lines, and scalar styles on `doc-load → no-op-edit → doc-save` round-trips. Don't read it directly — `getFrontmatter(doc)` already prefers per-key entries when present.
+
+The companion module `packages/core/src/frontmatter/` exports the boundary schemas (`FrontmatterValueSchema`, `FrontmatterPatchSchema`, `FRONTMATTER_TYPES`) and the YAML codec (`parseFrontmatterYaml` + `serializeFrontmatterMap` over `yaml@2.x`'s `parseDocument` so comments survive round-trip). All four boundaries — `frontmatter_patch` payload validation, `/api/frontmatter-patch` request, Observer B per-key diff, file-watcher `applyExternalChange` — share these schemas (Zod-at-boundaries, repo convention).
 
 ## Post-condition policy
 
