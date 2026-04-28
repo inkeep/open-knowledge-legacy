@@ -1,3 +1,4 @@
+import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -87,6 +88,50 @@ async function seedAndSyncSingleClient(
 }
 
 describe('ProviderPool reconnects', () => {
+  test('browser reload against same server keeps server Y.Doc loaded and avoids IDB duplication', async () => {
+    const server = await createRestartableServer();
+    cleanups.push(() => server.shutdown());
+
+    const docName = 'reload-doc';
+    writeFileSync(join(server.contentDir, `${docName}.md`), SMALL_FIXTURE, 'utf-8');
+
+    const firstPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
+    cleanups.push(() => firstPool.dispose());
+    await seedPoolServerInstanceId(server, firstPool);
+    await seedAndSyncSingleClient(server, firstPool, docName);
+    await wait(300);
+
+    const baseline = readFileSync(join(server.contentDir, `${docName}.md`), 'utf-8');
+    const baselineHeadings = (baseline.match(/# Test Document/g) ?? []).length;
+    const baselineLinks = (baseline.match(/\[\[test-doc\]\]/g) ?? []).length;
+    expect(baselineHeadings).toBe(2);
+    expect(baselineLinks).toBe(1);
+
+    // Simulate a browser reload: the old provider is destroyed, but its
+    // y-indexeddb state remains available to the next page load.
+    firstPool.dispose();
+    await wait(100);
+
+    expect(server.instance.hocuspocus.documents.has(docName)).toBe(true);
+
+    const secondPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
+    cleanups.push(() => secondPool.dispose());
+    await seedPoolServerInstanceId(server, secondPool);
+    secondPool.open(docName);
+    secondPool.setActive(docName);
+    await pollUntil(() => secondPool.getActive()?.provider.isSynced === true, 10_000, 50);
+    await wait(300);
+
+    const afterReload = await pollDiskContentStable(
+      join(server.contentDir, `${docName}.md`),
+      (content) => content.includes('# Test Document') && content.includes('[[test-doc]]'),
+      { timeoutMs: 5000, settleMs: 400 },
+    );
+
+    expect((afterReload.match(/# Test Document/g) ?? []).length).toBe(baselineHeadings);
+    expect((afterReload.match(/\[\[test-doc\]\]/g) ?? []).length).toBe(baselineLinks);
+  }, 20_000);
+
   // T3 — Slow restart >4s: pool.RECYCLE_DEBOUNCE_MS fires, provider is rebuilt,
   //      fresh Y.Doc replaces the stale one, and sync with the fresh server
   //      produces canonical on-disk content.

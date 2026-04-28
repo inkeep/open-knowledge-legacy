@@ -24,7 +24,7 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
   ALLOWED_IMAGE_MIME_TYPES,
@@ -637,6 +637,12 @@ export interface ApiExtensionOptions {
    * fake so the endpoint doesn't shell out.
    */
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
+  /**
+   * Explicit document unload hook. `createServer()` suppresses Hocuspocus's
+   * automatic unload-on-disconnect to avoid reload + IDB duplication, so API
+   * paths that intentionally retire a document must opt into unload here.
+   */
+  forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -752,6 +758,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     projectDir,
     getPrincipal,
     installedAgentsProbe,
+    forceUnloadDocument,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
@@ -987,7 +994,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       deleteReconciledBase(docName);
       if (!document) continue;
       hocuspocus.closeConnections(docName);
-      await hocuspocus.unloadDocument(document);
+      await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(document);
     }
 
     return liveContents;
@@ -2537,7 +2544,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const doc = hocuspocus.documents.get(docName);
-      if (doc) await hocuspocus.unloadDocument(doc);
+      if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
       writeFileSync(filePath, '', 'utf-8');
       if (backlinkIndex) {
         backlinkIndex.deleteDocument(docName);

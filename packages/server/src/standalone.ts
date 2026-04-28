@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Extension } from '@hocuspocus/server';
+import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -514,6 +514,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       localOpCliArgs,
       projectDir,
       getPrincipal: () => loadedPrincipal,
+      forceUnloadDocument,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -530,6 +531,28 @@ export function createServer(options: ServerOptions): ServerInstance {
     releaseServerLock(lockDir);
     throw err;
   }
+
+  // Hocuspocus unloads documents as soon as the last WebSocket disconnects.
+  // That is unsafe with client-side y-indexeddb: a browser refresh leaves a
+  // durable client copy of the same Yjs items, while the server rebuilds a
+  // fresh Y.Doc from markdown. The next sync union-merges both item sets and
+  // duplicates the document. Keep normal user docs resident for the server
+  // lifetime; explicit lifecycle paths below opt into unload.
+  const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
+  let forceUnloadDepth = 0;
+  let shutdownAllowsUnload = false;
+  hocuspocus.shouldUnloadDocument = (document) =>
+    (shutdownAllowsUnload || forceUnloadDepth > 0) && defaultShouldUnloadDocument(document);
+
+  async function forceUnloadDocument(document: Document): Promise<void> {
+    forceUnloadDepth += 1;
+    try {
+      await hocuspocus.unloadDocument(document);
+    } finally {
+      forceUnloadDepth -= 1;
+    }
+  }
+
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
@@ -755,7 +778,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
-          await hocuspocus.unloadDocument(document);
+          await forceUnloadDocument(document);
           signalChannel('files');
           signalChannel('backlinks');
           signalChannel('graph');
@@ -961,6 +984,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     inflightDestroy = (async () => {
       const t0 = Date.now();
       const phaseErrors: Array<{ phase: string; error: string }> = [];
+      shutdownAllowsUnload = true;
 
       // Wait for async init to complete before cleanup — prevents leaked watcher
       // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
