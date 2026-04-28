@@ -44,6 +44,11 @@
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * for the un-deferral framework.
  */
+import {
+  ALLOWED_AUDIO_MIME_TYPES,
+  ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_VIDEO_MIME_TYPES,
+} from '../constants/upload.ts';
 import { emitMdxJsx } from '../markdown/serialize-helpers.ts';
 import type { JsxComponentMeta, PropDef } from './types.ts';
 
@@ -156,7 +161,14 @@ const calloutProps: PropDef[] = [
 //   [3] height      [7] title           [11] referrerpolicy
 const htmlImgProps: PropDef[] = [
   // common
-  { name: 'src', type: 'string', required: true, description: 'Image source URL' },
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    description: 'Image source URL',
+    accept: ALLOWED_IMAGE_MIME_TYPES,
+    autoFocus: true,
+  },
   {
     name: 'alt',
     type: 'string',
@@ -241,7 +253,14 @@ const htmlImgProps: PropDef[] = [
 // React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
 const htmlVideoProps: PropDef[] = [
   // common
-  { name: 'src', type: 'string', required: true, description: 'Video source URL' },
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    description: 'Video source URL',
+    accept: ALLOWED_VIDEO_MIME_TYPES,
+    autoFocus: true,
+  },
   {
     name: 'controls',
     type: 'boolean',
@@ -311,7 +330,14 @@ const htmlVideoProps: PropDef[] = [
 // `controls={false}` instead of escaping to raw HTML.
 const htmlAudioProps: PropDef[] = [
   // common
-  { name: 'src', type: 'string', required: true, description: 'Audio source URL' },
+  {
+    name: 'src',
+    type: 'string',
+    required: true,
+    description: 'Audio source URL',
+    accept: ALLOWED_AUDIO_MIME_TYPES,
+    autoFocus: true,
+  },
   {
     name: 'controls',
     type: 'boolean',
