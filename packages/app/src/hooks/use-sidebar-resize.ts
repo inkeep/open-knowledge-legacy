@@ -1,4 +1,4 @@
-import React from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface UseSidebarResizeProps {
   /**
@@ -118,7 +118,7 @@ function formatWidth(value: number, unit: 'rem' | 'px'): string {
   return `${unit === 'rem' ? value.toFixed(1) : Math.round(value)}${unit}`;
 }
 
-const WIDTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
+const WIDTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 
 /**
  * A versatile hook for handling resizable sidebar (or inset) panels
@@ -144,127 +144,116 @@ export function useSidebarResize({
   isNested = false,
 }: UseSidebarResizeProps) {
   // Refs for tracking drag state
-  const dragRef = React.useRef<HTMLButtonElement>(null);
-  const startWidth = React.useRef(0);
-  const startX = React.useRef(0);
-  const isDragging = React.useRef(false);
-  const isInteractingWithRail = React.useRef(false);
-  const lastWidth = React.useRef(0);
-  const lastLoggedWidth = React.useRef(0);
-  const dragStartPoint = React.useRef(0);
-  const lastDragDirection = React.useRef<'expand' | 'collapse' | null>(null);
-  const lastTogglePoint = React.useRef(0);
-  const lastToggleWidth = React.useRef(0);
-  const toggleCooldown = React.useRef(false);
-  const lastToggleTime = React.useRef(0);
-  const dragDistanceFromToggle = React.useRef(0);
-  const dragOffset = React.useRef(0);
-  const railRect = React.useRef<DOMRect | null>(null);
+  const dragRef = useRef<HTMLButtonElement>(null);
+  const startWidth = useRef(0);
+  const startX = useRef(0);
+  const isDragging = useRef(false);
+  const isInteractingWithRail = useRef(false);
+  const lastWidth = useRef(0);
+  const lastLoggedWidth = useRef(0);
+  const dragStartPoint = useRef(0);
+  const lastDragDirection = useRef<'expand' | 'collapse' | null>(null);
+  const lastTogglePoint = useRef(0);
+  const lastToggleWidth = useRef(0);
+  const toggleCooldown = useRef(false);
+  const lastToggleTime = useRef(0);
+  const dragDistanceFromToggle = useRef(0);
+  const dragOffset = useRef(0);
+  const railRect = useRef<DOMRect | null>(null);
 
   // Refs for auto-collapse threshold
-  const autoCollapseThresholdPx = React.useRef(0);
+  const autoCollapseThresholdPx = useRef(0);
 
   // Memoize min/max width calculations for performance
-  const minWidthPx = React.useMemo(() => toPx(minResizeWidth), [minResizeWidth]);
-  const maxWidthPx = React.useMemo(() => toPx(maxResizeWidth), [maxResizeWidth]);
+  const minWidthPx = toPx(minResizeWidth);
+  const maxWidthPx = toPx(maxResizeWidth);
 
   // Helper function to determine if width is increasing based on direction and mouse movement
-  const isIncreasingWidth = React.useCallback(
-    (currentX: number, referenceX: number): boolean => {
-      return direction === 'left'
-        ? currentX < referenceX // For left-positioned handle, moving left increases width
-        : currentX > referenceX; // For right-positioned handle, moving right increases width
-    },
-    [direction],
-  );
+  const isIncreasingWidth = (currentX: number, referenceX: number): boolean => {
+    return direction === 'left'
+      ? currentX < referenceX // For left-positioned handle, moving left increases width
+      : currentX > referenceX; // For right-positioned handle, moving right increases width
+  };
 
   // Helper function to calculate width based on mouse position and direction
-  const calculateWidth = React.useCallback(
-    (
-      e: MouseEvent,
-      initialX: number,
-      initialWidth: number,
-      currentRailRect: DOMRect | null,
-    ): number => {
-      if (isNested && currentRailRect) {
-        // For nested sidebars, use the delta from start position for precise tracking
-        const deltaX = e.clientX - initialX;
+  const calculateWidth = (
+    e: MouseEvent,
+    initialX: number,
+    initialWidth: number,
+    currentRailRect: DOMRect | null,
+  ): number => {
+    if (isNested && currentRailRect) {
+      // For nested sidebars, use the delta from start position for precise tracking
+      const deltaX = e.clientX - initialX;
 
-        if (direction === 'left') {
-          // For left-positioned handle (right panel)
-          // Width increases as mouse moves left (negative deltaX)
-          return initialWidth - deltaX;
-        }
-        // For right-positioned handle (left panel)
-        // Width increases as mouse moves right (positive deltaX)
-        return initialWidth + deltaX;
-      }
-      // For standard sidebars at window edges
       if (direction === 'left') {
         // For left-positioned handle (right panel)
-        return window.innerWidth - e.clientX;
+        // Width increases as mouse moves left (negative deltaX)
+        return initialWidth - deltaX;
       }
       // For right-positioned handle (left panel)
-      return e.clientX;
-    },
-    [direction, isNested],
-  );
+      // Width increases as mouse moves right (positive deltaX)
+      return initialWidth + deltaX;
+    }
+    // For standard sidebars at window edges
+    if (direction === 'left') {
+      // For left-positioned handle (right panel)
+      return window.innerWidth - e.clientX;
+    }
+    // For right-positioned handle (left panel)
+    return e.clientX;
+  };
 
   // Update auto-collapse threshold when dependencies change
-  React.useEffect(() => {
+  useEffect(() => {
     autoCollapseThresholdPx.current = enableAutoCollapse ? minWidthPx * autoCollapseThreshold : 0;
   }, [minWidthPx, enableAutoCollapse, autoCollapseThreshold]);
 
   // Persist width to cookie if cookie name is provided
-  const persistWidth = React.useCallback(
-    (width: string) => {
-      if (widthCookieName) {
-        document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
-      }
-    },
-    [widthCookieName, widthCookieMaxAge],
-  );
+  const persistWidth = (width: string) => {
+    if (widthCookieName) {
+      // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
+      document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
+    }
+  };
 
   // Handle mouse down on resize handle
-  const handleMouseDown = React.useCallback(
-    (e: React.MouseEvent) => {
-      isInteractingWithRail.current = true;
+  const handleMouseDown = (e: MouseEvent) => {
+    isInteractingWithRail.current = true;
 
-      if (!enableDrag) {
-        return;
-      }
+    if (!enableDrag) {
+      return;
+    }
 
-      // Store initial state
-      const currentWidthPx = isCollapsed ? 0 : toPx(currentWidth);
-      startWidth.current = currentWidthPx;
-      startX.current = e.clientX;
-      dragStartPoint.current = e.clientX;
-      lastWidth.current = currentWidthPx;
-      lastLoggedWidth.current = currentWidthPx;
-      lastTogglePoint.current = e.clientX;
-      lastToggleWidth.current = currentWidthPx;
-      lastDragDirection.current = null;
-      toggleCooldown.current = false;
-      lastToggleTime.current = 0;
-      dragDistanceFromToggle.current = 0;
+    // Store initial state
+    const currentWidthPx = isCollapsed ? 0 : toPx(currentWidth);
+    startWidth.current = currentWidthPx;
+    startX.current = e.clientX;
+    dragStartPoint.current = e.clientX;
+    lastWidth.current = currentWidthPx;
+    lastLoggedWidth.current = currentWidthPx;
+    lastTogglePoint.current = e.clientX;
+    lastToggleWidth.current = currentWidthPx;
+    lastDragDirection.current = null;
+    toggleCooldown.current = false;
+    lastToggleTime.current = 0;
+    dragDistanceFromToggle.current = 0;
 
-      // Reset drag offset
-      dragOffset.current = 0;
+    // Reset drag offset
+    dragOffset.current = 0;
 
-      // Store the rail element's position for nested sidebars
-      if (isNested && dragRef.current) {
-        railRect.current = dragRef.current.getBoundingClientRect();
-      } else {
-        railRect.current = null;
-      }
+    // Store the rail element's position for nested sidebars
+    if (isNested && dragRef.current) {
+      railRect.current = dragRef.current.getBoundingClientRect();
+    } else {
+      railRect.current = null;
+    }
 
-      e.preventDefault();
-    },
-    [enableDrag, isCollapsed, currentWidth, isNested],
-  );
+    e.preventDefault();
+  };
 
   // Handle mouse movement and resizing
-  React.useEffect(() => {
+  useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isInteractingWithRail.current) return;
 
@@ -440,11 +429,14 @@ export function useSidebarResize({
     onToggle,
     isCollapsed,
     currentWidth,
+    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
     persistWidth,
     setIsDraggingRail,
     minWidthPx,
     maxWidthPx,
+    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
     isIncreasingWidth,
+    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
     calculateWidth,
     isNested,
     enableAutoCollapse,
