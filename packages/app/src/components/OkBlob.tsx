@@ -22,13 +22,7 @@ interface OkBlobProps {
    * instead of greeting the user.
    */
   variant?: 'default' | 'sleeping';
-  /**
-   * Monotonic counter that, when incremented, fires a level-3 happy bounce +
-   * firework burst — the same payload as a rage-click, but triggered
-   * imperatively by the parent. Used for "earned" celebration moments
-   * (e.g. completing onboarding) where the joy isn't user-driven on the
-   * blob itself. Initial 0 → 0 transition (mount) is a no-op.
-   */
+  /** Increment to fire a level-3 burst imperatively; 0→0 mount is a no-op. */
   celebrateSignal?: number;
 }
 

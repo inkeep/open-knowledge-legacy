@@ -7,33 +7,15 @@ import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 type SeedStatus = 'loading' | 'has-work' | 'seeded' | 'error';
 
-/**
- * Landing state when no document is selected. Branches on file count:
- * - **Onboarding** (zero files): warm welcome + primary CTA to set up the
- *   three-layer starter structure
- * - **No selection** (files exist): "select a document to edit" with a
- *   subtle CTA only if the starter scaffold hasn't been applied yet
- *
- * The CTA is hidden once `/api/seed/plan` reports nothing left to do — the
- * signal is filesystem-derived, so it survives refreshes and respects
- * scaffolding done via the CLI or another window. Initial loading hides the
- * CTA until both fetches resolve, avoiding the flicker of seeing the button
- * pop in and immediately disappear on an already-seeded workspace.
- *
- * Works in both the Electron desktop app and the web editor — the SeedDialog
- * internally routes to IPC when `window.okDesktop` is present, otherwise to
- * the `/api/seed/*` HTTP endpoints.
- */
 export function EmptyEditorState() {
   const [seedDialogOpen, setSeedDialogOpen] = useState(false);
   const [documentCount, setDocumentCount] = useState<number | null>(null);
   const [seedStatus, setSeedStatus] = useState<SeedStatus>('loading');
   const [celebrateSignal, setCelebrateSignal] = useState(0);
-  // Tracks whether we've successfully resolved the document count at least
-  // once. On fetch failure the fallback below pitches the "has files" copy,
-  // but only on the *first* load — subsequent transient failures shouldn't
-  // overwrite a previously-good count.
+  // Sticky once true — fetch failures after first success keep the prior count.
   const documentCountResolvedRef = useRef(false);
+  // Cleared on unmount so a late burst doesn't fire on a stale component.
+  const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,9 +32,7 @@ export function EmptyEditorState() {
             setDocumentCount(data.documents.length);
             documentCountResolvedRef.current = true;
           } else if (!documentCountResolvedRef.current) {
-            // Fall back to "files exist" copy on fetch failure — safer than
-            // pitching onboarding to a workspace whose contents we couldn't
-            // read.
+            // Fallback on initial fetch failure — safer than pitching onboarding blind.
             setDocumentCount(1);
             documentCountResolvedRef.current = true;
           }
@@ -93,18 +73,16 @@ export function EmptyEditorState() {
     return () => {
       cancelled = true;
       unsubscribe();
+      clearTimeout(celebrateTimerRef.current);
     };
   }, []);
 
   function handleSeedApplied() {
-    // Delay the burst so the dialog's close animation + toast settle before
-    // the blob bursts — without this gap the celebration starts while
-    // attention is still on the dismissing modal and the moment is missed.
-    setTimeout(() => setCelebrateSignal((prev) => prev + 1), 250);
+    // Delayed so the dialog close + toast settle before attention shifts to the blob.
+    clearTimeout(celebrateTimerRef.current);
+    celebrateTimerRef.current = setTimeout(() => setCelebrateSignal((prev) => prev + 1), 250);
     setSeedStatus('seeded');
-    // The apply also creates log.md, so the doc count will tick up — refetch
-    // so the empty-state copy transitions to the "has files" branch in sync
-    // with the celebration.
+    // Apply also creates log.md — refetch so the empty-state copy switches branches in sync.
     fetch('/api/documents')
       .then(async (res) => {
         const data = (await res.json().catch(() => null)) as {
@@ -116,14 +94,12 @@ export function EmptyEditorState() {
         }
       })
       .catch(() => {
-        /* swallow — celebration is the priority, count refresh is best-effort */
+        /* best-effort — celebration is the priority */
       });
   }
 
   const showCta = seedStatus === 'has-work';
-  // Hide message text until we know which branch to render — keeps the empty
-  // state from flashing the wrong copy on slow networks. The blob alone is a
-  // friendly placeholder for the brief loading window.
+  // Gate the copy until we know which branch to render — avoids flashing the wrong text.
   const messageReady = documentCount !== null && seedStatus !== 'loading';
   const isOnboarding = documentCount === 0;
 
