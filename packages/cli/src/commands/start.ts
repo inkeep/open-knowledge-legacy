@@ -468,7 +468,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     resolvedUiPort = await awaitUiSiblingPort({
       readUiLock: () => readUiLock(booted.lockDir),
       now: Date.now,
-      sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
+      sleep: (ms) => wait(ms),
       timeoutMs: uiBindTimeoutMs,
       pollIntervalMs: 50,
     });

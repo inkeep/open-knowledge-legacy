@@ -164,7 +164,7 @@ export async function ensureServerRunning(
     opts.readErrorLog ??
     ((path: string) => (existsSync(path) ? readFileSync(path, 'utf-8').trim() : ''));
   const openErrorLog = opts.openErrorLog ?? ((path: string) => openSync(path, 'w'));
-  const closeFd = opts.closeFd ?? ((fd: number) => closeSync(fd));
+  const closeFd = opts.closeFd ?? closeSync;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
   const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
