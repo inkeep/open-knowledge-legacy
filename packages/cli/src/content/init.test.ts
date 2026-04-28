@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
 import { initContent } from './init.ts';
 
@@ -66,11 +66,16 @@ describe('initContent', () => {
 
     const okDir = join(testDir, OK_DIR);
 
-    // .gitignore excludes cache/ and the per-process lock files
+    // .gitignore is the single source of truth for OK-internal ignores —
+    // every per-machine runtime path lives here so the project root
+    // .gitignore stays free of OK-internal entries.
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
     expect(gitignore).toContain('server.lock');
     expect(gitignore).toContain('ui.lock');
+    expect(gitignore).toContain('sync-state.json');
+    expect(gitignore).toContain('principal.json');
+    expect(gitignore).toContain('last-spawn-error.log');
 
     // config.yml is the fully-commented starter — every section header
     // present, every key commented out so the file parses to a no-op.
@@ -114,5 +119,101 @@ describe('initContent', () => {
     expect(configYml).toContain('external-sources');
     expect(configYml).toContain('research');
     expect(configYml).toContain('articles');
+  });
+
+  it('appends missing scaffold entries to a stale .gitignore (upgrade path)', () => {
+    // Simulate a workspace that ran `ok init` before the consolidation —
+    // its .open-knowledge/.gitignore lacks principal.json + last-spawn-error.log.
+    const okDir = join(testDir, OK_DIR);
+    mkdirSync(okDir, { recursive: true });
+    const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
+    writeFileSync(join(okDir, '.gitignore'), stale, 'utf-8');
+
+    const result = initContent(testDir);
+
+    // Byte-exact: any regression that re-wrote the full scaffold would
+    // duplicate the four pre-existing entries, and substring-only assertions
+    // wouldn't catch it. The contract under test is "append only what's
+    // missing" — pin every byte.
+    const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
+    expect(after).toBe(
+      `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nlast-spawn-error.log\n`,
+    );
+    // The merge path classifies as 'updated', not 'created' — surfaces a
+    // distinct banner at the CLI ('Updated: .gitignore' vs 'Created: ...').
+    expect(result.updated).toContain('.gitignore');
+    expect(result.created).not.toContain('.gitignore');
+  });
+
+  it('preserves user-added .gitignore entries during scaffold merge', () => {
+    const okDir = join(testDir, OK_DIR);
+    mkdirSync(okDir, { recursive: true });
+    const userCustomized = `cache/\nserver.lock\nmy-custom-ignore.tmp\n`;
+    writeFileSync(join(okDir, '.gitignore'), userCustomized, 'utf-8');
+
+    initContent(testDir);
+
+    const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
+    // User customization preserved
+    expect(after).toContain('my-custom-ignore.tmp');
+    // Scaffold entries appended
+    expect(after).toContain('principal.json');
+    expect(after).toContain('last-spawn-error.log');
+  });
+
+  it('does not duplicate .gitignore entries on repeated initContent calls', () => {
+    initContent(testDir);
+    initContent(testDir);
+    initContent(testDir);
+
+    const gitignore = readFileSync(join(testDir, OK_DIR, '.gitignore'), 'utf-8');
+    // Each scaffold entry should appear exactly once
+    for (const entry of [
+      'cache/',
+      'server.lock',
+      'ui.lock',
+      'sync-state.json',
+      'principal.json',
+      'last-spawn-error.log',
+    ]) {
+      const matches = gitignore.split('\n').filter((l) => l.trim() === entry).length;
+      expect(matches).toBe(1);
+    }
+  });
+});
+
+// Drift guard: the committed `.open-knowledge/.gitignore` in this repo MUST stay
+// in sync with what `ok init` writes. The PR that consolidated ignores fixed a
+// prior drift between these two surfaces; this test prevents the next drift.
+describe('committed .open-knowledge/.gitignore matches scaffold output', () => {
+  it('matches OK_GITIGNORE_CONTENT byte-for-byte', () => {
+    const tmp = resolve(
+      tmpdir(),
+      `gitignore-mirror-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmp, { recursive: true });
+    try {
+      initContent(tmp);
+      const scaffolded = readFileSync(join(tmp, OK_DIR, '.gitignore'), 'utf-8');
+
+      // Walk up from this test file (which lives in packages/cli/src/content/)
+      // to the repo root. Avoid hard-coded relative paths that break when the
+      // test file moves.
+      let dir = dirname(import.meta.path);
+      while (dir !== '/' && !existsSync(join(dir, '.open-knowledge', '.gitignore'))) {
+        dir = dirname(dir);
+      }
+      if (dir === '/') {
+        throw new Error(
+          `drift-guard: could not locate .open-knowledge/.gitignore by walking up from ${import.meta.path}`,
+        );
+      }
+      const committedPath = join(dir, '.open-knowledge', '.gitignore');
+      const committed = readFileSync(committedPath, 'utf-8');
+
+      expect(committed).toBe(scaffolded);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

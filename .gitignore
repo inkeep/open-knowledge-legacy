@@ -65,15 +65,5 @@ packages/core/tests/perf/results.*.json
 
 /test-doc.md
 
-# Open Knowledge per-machine runtime state — tokens never live here, but
-# sync state, server locks, and derived caches are local-only.
-.open-knowledge/sync-state.json
-.open-knowledge/server.lock
-.open-knowledge/cache/
-# Per-machine principal identity (US-005 / D9 / B1) — never commit.
-.open-knowledge/principal.json
-
-# Legacy shadow-repo path (pre-#244 rename to .git/open-knowledge/). Some
-# boot paths still create this directory; it's per-workspace runtime state
-# and must never be committed.
-.openknowledge/
+# Open Knowledge per-machine runtime state self-ignores via
+# .open-knowledge/.gitignore. No OK-internal paths belong here.

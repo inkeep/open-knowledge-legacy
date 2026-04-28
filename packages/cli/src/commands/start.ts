@@ -349,7 +349,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         try {
           const { initContent } = await import('../content/init.ts');
           const result = initContent(cwd);
-          return needsScaffold || result.created.length > 0;
+          return needsScaffold || result.created.length > 0 || result.updated.length > 0;
         } catch (err) {
           console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
           return false;
