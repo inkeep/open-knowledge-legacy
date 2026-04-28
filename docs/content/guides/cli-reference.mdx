@@ -238,3 +238,26 @@ npx @inkeep/open-knowledge preview
 ```
 
 Prints the file count, applied include/exclude patterns, and a sample of matched paths.
+
+## `publish`
+
+Export the configured markdown scope to static HTML for hosting (GitHub Pages, Netlify, any static file host).
+
+### `publish build`
+
+```bash
+npx @inkeep/open-knowledge publish build [options]
+```
+
+Reads `content.dir`, `content.include`, and `content.exclude` from `.open-knowledge/config.yml` (same scope as the collab server). Optional settings live in `.open-knowledge/publish.yml`:
+
+| Key           | Description                                                                 |
+| ------------- | ----------------------------------------------------------------------------- |
+| `siteTitle`   | Site name shown in the header and `<title>` suffix                            |
+| `basePath`    | URL prefix when the site is not served at the domain root (e.g. `/docs`)      |
+| `outputDir`   | Directory under the project root to write (default: `.open-knowledge/site`)   |
+| `exclude`     | Additional glob patterns (picomatch) to omit from the export                  |
+
+CLI overrides (highest precedence): `--output-dir`, `--site-title`, `--base-path`. Pass `--no-clean` to merge into an existing output directory instead of deleting it first. `--json` prints the build result as JSON (pages, assets, warnings).
+
+The build warns on broken internal links and missing targets excluded from the export, but still writes pages unless configuration is invalid.

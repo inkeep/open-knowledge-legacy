@@ -72,6 +72,13 @@ export {
   detectClaudeDesktopPresence,
 } from './detect-claude-desktop.ts';
 export {
+  type DocExtension,
+  getDocExtension,
+  isSupportedDocFile,
+  SUPPORTED_DOC_EXTENSIONS,
+  stripDocExtension,
+} from './doc-extensions.ts';
+export {
   applyExternalChange,
   createExternalChangeHandler,
   FILE_WATCHER_ORIGIN,

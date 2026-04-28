@@ -28,6 +28,7 @@ import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
+import { publishCommand } from './commands/publish/index.ts';
 import { pullCommand } from './commands/pull.ts';
 import { pushCommand } from './commands/push.ts';
 import { seedCommand } from './commands/seed.ts';
@@ -107,6 +108,9 @@ program.addCommand(installSkillCommand());
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);
 program.addCommand(preview);
+
+const publish = publishCommand(() => resolvedConfig);
+program.addCommand(publish);
 
 // ui command — serves the React editor (sibling of `start`).
 const ui = uiCommand(() => resolvedConfig);
