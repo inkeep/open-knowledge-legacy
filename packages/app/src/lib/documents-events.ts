@@ -1,13 +1,8 @@
+import { DerivedViewChannelSchema } from '@inkeep/open-knowledge-core';
 import type { DerivedViewChannel } from '@/lib/cc1';
 
 const DOCUMENTS_CHANGED_EVENT = 'open-knowledge:documents-changed';
-const DERIVED_VIEW_CHANNELS = new Set<DerivedViewChannel>([
-  'files',
-  'backlinks',
-  'graph',
-  'sync-status',
-  'session-activity',
-]);
+const DERIVED_VIEW_CHANNELS = new Set(DerivedViewChannelSchema.options);
 
 interface DocumentsChangedDetail {
   channels: DerivedViewChannel[];
