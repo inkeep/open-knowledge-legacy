@@ -129,15 +129,20 @@ describe('initContent', () => {
     const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
     writeFileSync(join(okDir, '.gitignore'), stale, 'utf-8');
 
-    initContent(testDir);
+    const result = initContent(testDir);
 
+    // Byte-exact: any regression that re-wrote the full scaffold would
+    // duplicate the four pre-existing entries, and substring-only assertions
+    // wouldn't catch it. The contract under test is "append only what's
+    // missing" — pin every byte.
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
-    expect(after).toContain('cache/');
-    expect(after).toContain('server.lock');
-    expect(after).toContain('ui.lock');
-    expect(after).toContain('sync-state.json');
-    expect(after).toContain('principal.json');
-    expect(after).toContain('last-spawn-error.log');
+    expect(after).toBe(
+      `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nlast-spawn-error.log\n`,
+    );
+    // The merge path classifies as 'updated', not 'created' — surfaces a
+    // distinct banner at the CLI ('Updated: .gitignore' vs 'Created: ...').
+    expect(result.updated).toContain('.gitignore');
+    expect(result.created).not.toContain('.gitignore');
   });
 
   it('preserves user-added .gitignore entries during scaffold merge', () => {
@@ -198,8 +203,12 @@ describe('committed .open-knowledge/.gitignore matches scaffold output', () => {
       while (dir !== '/' && !existsSync(join(dir, '.open-knowledge', '.gitignore'))) {
         dir = dirname(dir);
       }
+      if (dir === '/') {
+        throw new Error(
+          `drift-guard: could not locate .open-knowledge/.gitignore by walking up from ${import.meta.path}`,
+        );
+      }
       const committedPath = join(dir, '.open-knowledge', '.gitignore');
-      expect(existsSync(committedPath)).toBe(true);
       const committed = readFileSync(committedPath, 'utf-8');
 
       expect(committed).toBe(scaffolded);

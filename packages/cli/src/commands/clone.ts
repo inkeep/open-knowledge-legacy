@@ -122,8 +122,12 @@ async function runClone(
   try {
     const { runInit } = await import('./init.ts');
     await runInit({ cwd: targetDir, mcp: false });
-  } catch {
-    // Non-fatal
+  } catch (err) {
+    // Non-fatal — surface a warning so silent failures don't hide behind
+    // the ✓ Cloned banner. Same posture as start.ts auto-init.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts.json) emit(true, { type: 'warning', message: `auto-init: ${msg}` });
+    else process.stderr.write(`  auto-init: ${msg}\n`);
   }
 
   // Per-clone protection from upstream pollution: append `.open-knowledge/` to
@@ -133,8 +137,11 @@ async function runClone(
   // user's own project (config.yml is meant to be tracked, no exclude needed).
   try {
     ensureOkExcludedFromGit(targetDir);
-  } catch {
+  } catch (err) {
     // Non-fatal — best-effort
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts.json) emit(true, { type: 'warning', message: `git-exclude: ${msg}` });
+    else process.stderr.write(`  git-exclude: ${msg}\n`);
   }
 
   return targetDir;

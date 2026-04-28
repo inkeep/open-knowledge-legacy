@@ -178,9 +178,14 @@ principal.json
 last-spawn-error.log
 `;
 
-export function initContent(projectDir: string): { created: string[]; skipped: string[] } {
+export function initContent(projectDir: string): {
+  created: string[];
+  updated: string[];
+  skipped: string[];
+} {
   const okDir = resolve(projectDir, OK_DIR);
   const created: string[] = [];
+  const updated: string[] = [];
   const skipped: string[] = [];
 
   // Create .open-knowledge/ itself + the cache/ subdir. No scaffold content dirs —
@@ -193,10 +198,12 @@ export function initContent(projectDir: string): { created: string[]; skipped: s
   // workspaces created before new entries (`principal.json`,
   // `last-spawn-error.log`) joined the scaffold.
   const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
-  if (gitignoreAction === 'unchanged') {
-    skipped.push('.gitignore');
-  } else {
+  if (gitignoreAction === 'created') {
     created.push('.gitignore');
+  } else if (gitignoreAction === 'updated') {
+    updated.push('.gitignore');
+  } else {
+    skipped.push('.gitignore');
   }
 
   // config.yml: writeIfMissing — user customizations win.
@@ -206,5 +213,5 @@ export function initContent(projectDir: string): { created: string[]; skipped: s
     skipped.push(CONFIG_FILENAME);
   }
 
-  return { created, skipped };
+  return { created, updated, skipped };
 }
