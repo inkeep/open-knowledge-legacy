@@ -219,6 +219,16 @@ export async function ensureServerRunning(
         detached: true,
         stdio: ['ignore', 'ignore', stderrFd],
         cwd: opts.contentDir,
+        // The spawn detaches (so process.ppid in the child becomes 1 once
+        // we exit). Threading the parent pid + kind through env lets the
+        // child's parent-death poll target THIS process specifically and
+        // lets the desktop's attach validation refuse to bind to an
+        // mcp-spawned server.
+        env: {
+          ...process.env,
+          OK_LOCK_KIND: 'mcp-spawned',
+          OK_PARENT_PID: String(process.pid),
+        },
       });
       child.on('error', (err) => {
         asyncSpawnError = err instanceof Error ? err.message : String(err);

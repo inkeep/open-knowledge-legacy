@@ -16,6 +16,7 @@
 
 import {
   acquireProcessLock,
+  type LockKind,
   ProcessLockCollisionError,
   type ProcessLockMetadata,
   readProcessLock,
@@ -34,7 +35,13 @@ export class ServerLockCollisionError extends ProcessLockCollisionError {
 
 export function acquireServerLock(
   lockDir: string,
-  init: { port: number; worktreeRoot: string },
+  init: {
+    port: number;
+    worktreeRoot: string;
+    kind?: LockKind;
+    parentPid?: number;
+    capabilities?: string[];
+  },
 ): string {
   try {
     const handle = acquireProcessLock({ lockName: 'server', lockDir, metadata: init });

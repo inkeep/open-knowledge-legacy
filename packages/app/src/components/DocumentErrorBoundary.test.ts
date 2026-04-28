@@ -13,6 +13,7 @@ import {
   BridgeSetupError,
   DocumentNotFoundError,
   PreSyncDisconnectError,
+  ServerCapabilityMismatchError,
   SyncTimeoutError,
 } from '@/editor/sync-promise';
 import { errorCopy } from './DocumentErrorBoundary';
@@ -42,6 +43,13 @@ describe('errorCopy', () => {
     const copy = errorCopy(new BridgeSetupError('docs/troubled', new Error('observer wiring')));
     expect(copy.title).toBe("Couldn't open document");
     expect(copy.summary).toContain('docs/troubled');
+  });
+
+  test('ServerCapabilityMismatchError → "Server can\'t open documents" + restart hint', () => {
+    const copy = errorCopy(new ServerCapabilityMismatchError('docs/lost', 'ws'));
+    expect(copy.title).toBe("Server can't open documents");
+    expect(copy.summary).toMatch(/restart/i);
+    expect(copy.summary).not.toMatch(/\bsync/i);
   });
 
   test('unknown Error subclass → "Unknown error" + surfaced message', () => {

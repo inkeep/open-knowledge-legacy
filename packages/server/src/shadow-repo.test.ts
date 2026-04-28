@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { parseCheckpoint, parseOkActor } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
+  buildWipTree,
   commitUpstreamImport,
   commitWip,
   type InMemoryCheckpointParams,
@@ -151,6 +152,27 @@ describe('initShadowRepo', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe('buildWipTree contentRoot pathspec', () => {
+  test("'.' pathspec succeeds when content lives at the project root", async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(resolve(projectRoot, 'AGENTS.md'), '# hello\n');
+    const shadow = await initShadowRepo(projectRoot);
+
+    const sha = await buildWipTree(shadow, '.');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("literal 'content' pathspec fails when no such subfolder exists", async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(resolve(projectRoot, 'AGENTS.md'), '# hello\n');
+    const shadow = await initShadowRepo(projectRoot);
+
+    expect(buildWipTree(shadow, 'content')).rejects.toThrow(/pathspec 'content'/);
   });
 });
 
