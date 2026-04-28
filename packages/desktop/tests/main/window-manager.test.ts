@@ -45,10 +45,12 @@ function makeUtility(pid: number): MockUtility {
 function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
   fireClose: () => void;
   fireDomReady: () => void;
+  markDestroyed: () => void;
 } {
   let closeHandler: (() => void) | null = null;
   let domReadyHandler: (() => void) | null = null;
   let minimized = opts?.minimized ?? false;
+  let destroyed = false;
   return {
     focus: mock(() => {}),
     show: mock(() => {}),
@@ -56,6 +58,7 @@ function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
       minimized = false;
     }),
     isMinimized: mock(() => minimized),
+    isDestroyed: mock(() => destroyed),
     on: mock((_event: 'closed', cb: () => void) => {
       closeHandler = cb;
     }) as BrowserWindowLike['on'],
@@ -68,6 +71,9 @@ function makeWindow(opts?: { minimized?: boolean }): BrowserWindowLike & {
     loadFile: mock(() => Promise.resolve()),
     loadURL: mock(() => Promise.resolve()),
     fireClose: () => closeHandler?.(),
+    markDestroyed: () => {
+      destroyed = true;
+    },
     fireDomReady: () => domReadyHandler?.(),
   };
 }
@@ -177,6 +183,32 @@ describe('WindowManager', () => {
     expect(env.windows.length).toBe(1);
     expect(ctx2).toBe(ctx1);
     expect(ctx1.window.focus).toHaveBeenCalled();
+  });
+
+  test('stale destroyed-window entry does NOT throw; spawns fresh', async () => {
+    // Repro: a project window's `closed` event fires (BrowserWindow native
+    // object destroyed) but the utility's `exit` hasn't run yet, so the
+    // `windowsByPath` entry still references the destroyed window. A new
+    // open click in this gap previously called `focus()` on the destroyed
+    // object and threw "TypeError: Object has been destroyed".
+    const wm = new WindowManager(env.deps);
+    const p1 = wm.createProjectWindow({ projectPath: '/tmp/destroyable' });
+    env.utilities[0]?.fire({ type: 'ready', port: 51100, apiOrigin: 'http://localhost:51100' });
+    await p1;
+
+    // Window destroyed; utility exit hasn't fired yet (so windowsByPath
+    // still has the entry).
+    env.windows[0]?.markDestroyed();
+
+    const p2 = wm.createProjectWindow({ projectPath: '/tmp/destroyable' });
+    // Should fall through to spawn-fresh (new utility) instead of throwing.
+    expect(env.utilities.length).toBe(2);
+    env.utilities[1]?.fire({ type: 'ready', port: 51101, apiOrigin: 'http://localhost:51101' });
+    const ctx2 = await p2;
+    expect(env.windows.length).toBe(2);
+    expect(ctx2.port).toBe(51101);
+    // The destroyed window's focus must NOT have been called on this path.
+    expect(env.windows[0]?.focus).not.toHaveBeenCalled();
   });
 
   test('utility error message rejects createProjectWindow', async () => {
@@ -437,21 +469,29 @@ describe('WindowManager', () => {
       port: 59534,
       startedAt: '2026-04-17T20:23:20.713Z',
       worktreeRoot: '/tmp/dragon',
+      // New contract — same-version interactive server with full collab.
+      kind: 'interactive',
+      parentPid: 65000,
+      capabilities: ['http', 'ws'],
     };
 
     /**
      * Wire attach-mode deps on top of the base env so a single probe path is
      * active. Individual tests override `readServerLock` / `isProcessAlive`
-     * to exercise the fall-through criteria.
+     * to exercise the fall-through criteria. The WS probe defaults to
+     * "always succeed" so happy-path tests don't have to wire it manually;
+     * the rejection-branch tests override per case.
      */
     function enableAttachProbe(overrides?: {
       readServerLock?: WindowManagerDeps['readServerLock'];
       isProcessAlive?: WindowManagerDeps['isProcessAlive'];
       hostname?: WindowManagerDeps['hostname'];
+      probeWsUpgrade?: WindowManagerDeps['probeWsUpgrade'];
     }) {
       env.deps.readServerLock = overrides?.readServerLock ?? (() => liveLock);
       env.deps.isProcessAlive = overrides?.isProcessAlive ?? (() => true);
       env.deps.hostname = overrides?.hostname ?? (() => 'my-host');
+      env.deps.probeWsUpgrade = overrides?.probeWsUpgrade ?? (() => Promise.resolve(true));
     }
 
     test('attaches to live same-host lock — no utility forked', async () => {
@@ -497,6 +537,8 @@ describe('WindowManager', () => {
 
       const wm = new WindowManager(env.deps);
       const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      // tryAttachExistingServer is async — drain microtasks before asserting.
+      await new Promise((r) => setTimeout(r, 5));
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40002, apiOrigin: 'http://localhost:40002' });
       await p;
@@ -507,6 +549,7 @@ describe('WindowManager', () => {
 
       const wm = new WindowManager(env.deps);
       const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40003, apiOrigin: 'http://localhost:40003' });
       await p;
@@ -517,6 +560,7 @@ describe('WindowManager', () => {
 
       const wm = new WindowManager(env.deps);
       const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40004, apiOrigin: 'http://localhost:40004' });
       await p;
@@ -559,9 +603,231 @@ describe('WindowManager', () => {
       // Explicitly: not calling enableAttachProbe. No readServerLock in deps.
       const wm = new WindowManager(env.deps);
       const p = wm.createProjectWindow({ projectPath: '/tmp/no-probe' });
+      await new Promise((r) => setTimeout(r, 5));
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40005, apiOrigin: 'http://localhost:40005' });
       await p;
+    });
+
+    test('mcp-spawned lock falls through to spawn mode', async () => {
+      enableAttachProbe({
+        readServerLock: () => ({ ...liveLock, kind: 'mcp-spawned' }),
+      });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      // tryAttachExistingServer + runClean are async — drain microtasks
+      // before asserting the utility fork.
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40010, apiOrigin: 'http://localhost:40010' });
+      await p;
+    });
+
+    test('legacy lock (kind undefined) is conservatively refused', async () => {
+      enableAttachProbe({
+        readServerLock: () => {
+          const { kind: _kind, ...rest } = liveLock;
+          return rest;
+        },
+      });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40011, apiOrigin: 'http://localhost:40011' });
+      await p;
+    });
+
+    test('lock with capabilities missing "ws" falls through', async () => {
+      enableAttachProbe({
+        readServerLock: () => ({ ...liveLock, capabilities: ['http'] }),
+      });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40012, apiOrigin: 'http://localhost:40012' });
+      await p;
+    });
+
+    test('parentPid dead falls through (stranded server defense)', async () => {
+      const isAlive = mock((pid: number) => pid !== liveLock.parentPid);
+      enableAttachProbe({ isProcessAlive: isAlive });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40013, apiOrigin: 'http://localhost:40013' });
+      await p;
+    });
+
+    test('WS-upgrade probe failure falls through to spawn mode', async () => {
+      const probe = mock(() => Promise.resolve(false));
+      enableAttachProbe({ probeWsUpgrade: probe });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      // The probe runs before utility fork; let microtasks drain.
+      await new Promise((r) => setTimeout(r, 5));
+      expect(probe).toHaveBeenCalled();
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40014, apiOrigin: 'http://localhost:40014' });
+      await p;
+    });
+
+    test('WS-upgrade probe rejection (thrown error) falls through to spawn mode', async () => {
+      const probe = mock(() => Promise.reject(new Error('socket refused')));
+      enableAttachProbe({ probeWsUpgrade: probe });
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({ type: 'ready', port: 40015, apiOrigin: 'http://localhost:40015' });
+      await p;
+    });
+
+    test('WS probe undefined → final gate skipped (back-compat for tests)', async () => {
+      // Explicitly do NOT wire probeWsUpgrade — same liveLock, alive pid + parentPid.
+      env.deps.readServerLock = () => liveLock;
+      env.deps.isProcessAlive = () => true;
+      env.deps.hostname = () => 'my-host';
+      // probeWsUpgrade intentionally absent.
+      const wm = new WindowManager(env.deps);
+      const ctx = await wm.createProjectWindow({ projectPath: '/tmp/dragon' });
+      expect(env.utilities.length).toBe(0);
+      expect(ctx.ownsServer).toBe(false);
+    });
+  });
+
+  describe('lock-collision auto-kill', () => {
+    const collisionExisting: ServerLockMetadataLike = {
+      pid: 41420,
+      hostname: 'my-host',
+      port: 60000,
+      startedAt: '2026-04-27T22:00:00.000Z',
+      worktreeRoot: '/tmp/collision',
+      kind: 'mcp-spawned',
+      parentPid: 4040,
+      capabilities: ['http', 'ws'],
+    };
+
+    test('mcp-spawned collision → SIGTERM + retry + recovery', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+
+      // First fork emits the collision error; the wrapper SIGTERMs the
+      // holder, waits for the lock to release, and forks a second time.
+      await new Promise((r) => setTimeout(r, 5));
+      expect(env.utilities.length).toBe(1);
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: `Open Knowledge server already running on port ${collisionExisting.port}`,
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+
+      // Drain microtasks so the kill + wait + retry-fork sequence runs.
+      await new Promise((r) => setTimeout(r, 10));
+      expect(kill).toHaveBeenCalledWith(collisionExisting.pid, 'SIGTERM');
+      expect(waitReleased).toHaveBeenCalled();
+      expect(env.utilities.length).toBe(2);
+
+      // The second utility succeeds.
+      env.utilities[1]?.fire({ type: 'ready', port: 60001, apiOrigin: 'http://localhost:60001' });
+      const ctx = await p;
+      expect(ctx.ownsServer).toBe(true);
+      expect(ctx.port).toBe(60001);
+    });
+
+    test('mcp-spawned collision → second collision propagates as mcp-server-stuck', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      // First retry sees the lock release; the second utility hits the
+      // same collision (the holder already respawned) — the wrapper does
+      // NOT auto-kill twice in a row, so the original LockCollisionError
+      // propagates.
+      const waitReleased = mock(() => Promise.resolve(true));
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(env.utilities.length).toBe(2);
+      env.utilities[1]?.fire({
+        type: 'error',
+        message: 'collision again',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await expect(p).rejects.toThrow(/collision again/);
+      // No third fork — only one auto-kill is allowed per createProjectWindow.
+      expect(env.utilities.length).toBe(2);
+      expect(kill).toHaveBeenCalledTimes(1);
+    });
+
+    test('lock fails to release → mcp-server-stuck error', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      const waitReleased = mock(() => Promise.resolve(false)); // never released
+      env.deps.killProcess = kill;
+      env.deps.waitForLockReleased = waitReleased;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'collision',
+        kind: 'lock-collision',
+        existingLock: collisionExisting,
+      });
+      await expect(p).rejects.toThrow(/still holding the server lock/);
+      // Holder was SIGTERM'd but the lock never freed, so no retry fork.
+      expect(env.utilities.length).toBe(1);
+    });
+
+    test('interactive collision → no auto-kill, error propagates', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      env.deps.killProcess = kill;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'Open Knowledge already running for this project',
+        kind: 'lock-collision',
+        existingLock: { ...collisionExisting, kind: 'interactive' },
+      });
+      await expect(p).rejects.toThrow(/Open Knowledge already running/);
+      expect(kill).not.toHaveBeenCalled();
+      expect(env.utilities.length).toBe(1);
+    });
+
+    test('non-collision error propagates without retry', async () => {
+      const kill = mock((_pid: number, _signal: NodeJS.Signals) => undefined);
+      env.deps.killProcess = kill;
+
+      const wm = new WindowManager(env.deps);
+      const p = wm.createProjectWindow({ projectPath: '/tmp/collision' });
+      await new Promise((r) => setTimeout(r, 5));
+      env.utilities[0]?.fire({
+        type: 'error',
+        message: 'something else broke',
+      });
+      await expect(p).rejects.toThrow(/something else broke/);
+      expect(kill).not.toHaveBeenCalled();
+      expect(env.utilities.length).toBe(1);
     });
   });
 
@@ -854,10 +1120,14 @@ describe('WindowManager — pendingDeepLinkDoc dom-ready gate (M4 US-007 / Findi
       port: 59600,
       startedAt: '2026-04-21T10:00:00.000Z',
       worktreeRoot: '/tmp/attach-deep-link',
+      kind: 'interactive',
+      parentPid: 65000,
+      capabilities: ['http', 'ws'],
     };
     env.deps.readServerLock = () => liveLock;
     env.deps.isProcessAlive = () => true;
     env.deps.hostname = () => 'my-host';
+    env.deps.probeWsUpgrade = () => Promise.resolve(true);
 
     const wm = new WindowManager(env.deps);
     const ctx = await wm.createProjectWindow({

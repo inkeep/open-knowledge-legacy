@@ -232,6 +232,7 @@ describe('M1 smoke', () => {
       'shell.openAsset', // 2026-04-23 FR-A6 (asset-click dispatcher)
       'shell.revealAsset', // 2026-04-23 FR-A6 (asset-click dispatcher)
       'shell.showAssetMenu', // 2026-04-23 FR-A8 (right-click context menu)
+      'shell.showItemInFolder', // 2026-04-27 file-tree reveal-in-finder
     ] as const;
     for (const [label, members] of [
       ['core', coreMembers],

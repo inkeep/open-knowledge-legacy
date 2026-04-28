@@ -44,6 +44,7 @@ import {
   DocumentNotFoundError,
   invalidateSyncPromise,
   PreSyncDisconnectError,
+  ServerCapabilityMismatchError,
   SyncTimeoutError,
 } from '@/editor/sync-promise';
 
@@ -69,7 +70,8 @@ function errorDocName(error: unknown): string | null {
     error instanceof SyncTimeoutError ||
     error instanceof PreSyncDisconnectError ||
     error instanceof DocumentNotFoundError ||
-    error instanceof BridgeSetupError
+    error instanceof BridgeSetupError ||
+    error instanceof ServerCapabilityMismatchError
   ) {
     return error.docName;
   }
@@ -109,6 +111,12 @@ export function errorCopy(error: unknown): ErrorCopy {
     return {
       title: "Couldn't open document",
       summary: `Something went wrong opening "${error.docName}".`,
+    };
+  }
+  if (error instanceof ServerCapabilityMismatchError) {
+    return {
+      title: "Server can't open documents",
+      summary: `This project's running server doesn't support live editing. Restart Open Knowledge to fix.`,
     };
   }
   const message =

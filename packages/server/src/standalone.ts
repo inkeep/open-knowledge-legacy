@@ -9,6 +9,7 @@ import {
   type Principal,
   prependFrontmatter,
 } from '@inkeep/open-knowledge-core';
+import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -78,6 +79,7 @@ import {
   saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 import { cleanupOrphanUploadTempfiles } from './upload-streaming.ts';
@@ -129,6 +131,32 @@ export interface ServerOptions {
    * runtime that launched this server — necessary in dev (bun + .ts entry).
    */
   localOpCliArgs?: string[];
+  /**
+   * Server kind written into the lock metadata. `interactive` (default) for
+   * user-facing boots; `mcp-spawned` for the MCP detach-spawn path. Desktop
+   * attach validation refuses to attach to non-interactive locks.
+   */
+  lockKind?: 'interactive' | 'mcp-spawned';
+  /**
+   * Pid of the spawning process, written into the lock metadata. For
+   * `mcp-spawned`: the MCP server's pid. For `interactive`: the user-facing
+   * host pid. Optional — desktop's parent-liveness gate skips when absent.
+   */
+  parentPid?: number;
+  /**
+   * Skip the durable state-manifest pre-flight gate
+   * (`assertCompatibleStateManifest` from `state-manifest.ts`). Default `false`.
+   *
+   * Production paths (CLI `ok start`, Electron utility, Vite dev plugin) leave
+   * this `false` so an incompatible cold start fails loud before the server
+   * touches the shadow repo.
+   *
+   * The integration test harness passes `true` because each test allocates a
+   * fresh tmpdir, so the manifest gate has nothing meaningful to assert and
+   * the writes would just generate noise across thousands of tmpdirs.
+   * (Resolves SPEC Q3 under D14.)
+   */
+  skipStateManifestCheck?: boolean;
 }
 
 export interface ServerInstance {
@@ -210,6 +238,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
     localOpCliArgs,
+    skipStateManifestCheck = false,
   } = options;
 
   const log = getLogger('server');
@@ -234,20 +263,50 @@ export function createServer(options: ServerOptions): ServerInstance {
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
+    kind: options.lockKind ?? 'interactive',
+    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
+    // Every server booted through `createServer` wires Hocuspocus + WS
+    // upgrade in `boot.ts`. The capability flag lets future variants
+    // (e.g. an HTTP-only relay) advertise differently.
+    capabilities: ['http', 'ws'],
   });
 
-  // SPEC §6 FR-3b + FR-6 / D-D LOCKED: in-memory basename index for asset
-  // embed resolution. Populated from disk at boot, kept in sync via the
-  // asset-event arms of handleDiskEvent. Plain Map under the hood; rebuilds
-  // are cheap so no disk persistence.
+  // Durable state-manifest gate. Runs AFTER lock acquisition so two
+  // cold-starting binaries serialize through the lock first, then the loser
+  // fails fast on ProcessLockCollisionError before reaching the manifest
+  // check. Runs BEFORE any shadow-repo or persistence side effect so an
+  // incompatible cold start refuses to boot before any durable mutation.
+  //
+  // Skipped when the caller passes `skipStateManifestCheck: true` — used by
+  // the integration test harness, which allocates a fresh tmpdir per test
+  // (no pre-existing state to gate on; writes would just generate noise
+  // across thousands of throwaway content dirs).
+  //
+  // On throw, release the lock before propagating so other processes can
+  // proceed (matches the cleanup path below for synchronous-init failures).
+  if (!skipStateManifestCheck) {
+    try {
+      assertCompatibleStateManifest({
+        lockDir,
+        shadowRepoDir: resolveShadowDir(projectDir),
+      });
+    } catch (err) {
+      releaseServerLock(lockDir);
+      throw err;
+    }
+  }
+
+  // In-memory basename index for asset embed resolution. Populated from disk
+  // at boot, kept in sync via the asset-event arms of handleDiskEvent. Plain
+  // Map under the hood; rebuilds are cheap so no disk persistence.
   const basenameIndex: BasenameIndex = createBasenameIndex();
 
-  // US-013 FR-3b: `![[photo.png]]` embed refs resolve via the basename index.
-  // Shared by persistence (onLoadDocument), server Observer B (Y.Text →
-  // XmlFragment), the agent-write path, and external-change (disk → CRDT),
-  // so wherever markdown is parsed into the Y.Doc the embed's PM src/href
-  // reflects the current vault state. Returns null on unknown basename —
-  // the PM dispatch falls back to the literal target (broken-ref placeholder).
+  // `![[photo.png]]` embed refs resolve via the basename index. Shared by
+  // persistence (onLoadDocument), server Observer B (Y.Text → XmlFragment),
+  // the agent-write path, and external-change (disk → CRDT), so wherever
+  // markdown is parsed into the Y.Doc the embed's PM src/href reflects the
+  // current vault state. Returns null on unknown basename — the PM dispatch
+  // falls back to the literal target (broken-ref placeholder).
   const resolveEmbed = (basename: string, sourcePath: string): string | null =>
     basenameIndex.resolveEmbed(basename, sourcePath);
 
@@ -1706,7 +1765,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           // `git rebase`, or `git checkout` produce buffered file-watcher events, so
           // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
           if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
-            const contentRootForShadow = contentRoot ?? 'content';
+            const contentRootForShadow = contentRoot ?? '.';
             try {
               const sha = await commitUpstreamImport(
                 shadowRef.current,

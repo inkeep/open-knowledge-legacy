@@ -148,7 +148,9 @@ export {
   ProcessLockCollisionError,
   type ProcessLockHandle,
   type ProcessLockMetadata,
+  type ReadProcessLockResult,
   readProcessLock,
+  readProcessLockDetailed,
   releaseProcessLock,
   updateProcessLockPort,
 } from './process-lock.ts';
@@ -242,6 +244,18 @@ export {
 } from './skill-install.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
+  assertCompatibleStateManifest,
+  detectProjectShape,
+  type ProjectShape,
+  type ReadStateManifestResult,
+  readStateManifest,
+  STATE_MANIFEST_FILENAME,
+  StateManifestError,
+  type StateManifestRecord,
+  type StateManifestWriter,
+  writeStateManifest,
+} from './state-manifest.ts';
+export {
   getMeter,
   getTracer,
   initTelemetry,
@@ -258,3 +272,4 @@ export {
   type UiLockMetadata,
   updateUiLockPort,
 } from './ui-lock.ts';
+export { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';

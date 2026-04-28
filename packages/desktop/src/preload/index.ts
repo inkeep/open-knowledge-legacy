@@ -117,6 +117,7 @@ const bridge: OkDesktopBridge = {
     openAsset: (relPath: string) => invoke('ok:shell:open-asset', relPath),
     revealAsset: (relPath: string) => invoke('ok:shell:reveal-asset', relPath),
     showAssetMenu: (params) => invoke('ok:shell:show-asset-menu', params),
+    showItemInFolder: (path: string) => invoke('ok:shell:show-item-in-folder', path),
   },
 
   clipboard: {

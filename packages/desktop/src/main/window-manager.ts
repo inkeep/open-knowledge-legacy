@@ -25,9 +25,70 @@
  * Electron runtime.
  */
 
-import { realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+
+/**
+ * Default poll after SIGTERMing an `mcp-spawned` lock holder. Loops at
+ * 25 ms until either:
+ *   (a) the lock file is gone (clean release), OR
+ *   (b) the recorded `pid` is no longer alive (process died but didn't
+ *       release — `acquireServerLock` will treat it as stale + replace).
+ *
+ * Considering the holder's pid liveness is load-bearing: bun does not
+ * always release the lock cleanly on SIGTERM (the bootServer destroy
+ * chain races signal-exit), but the dead pid + stale lock state is
+ * fully reclaimable by the next `acquireServerLock` call.
+ *
+ * Returns `true` when the lock is reclaimable, `false` on deadline.
+ * Tests inject `WindowManagerDeps.waitForLockReleased` to return
+ * synchronously.
+ */
+async function pollLockReleasedDefault(lockDir: string, deadlineMs: number): Promise<boolean> {
+  const lockPath = resolve(lockDir, 'server.lock');
+  const tickMs = 25;
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
+    if (!existsSync(lockPath)) return true;
+    try {
+      const raw = readFileSync(lockPath, 'utf-8');
+      const parsed = JSON.parse(raw) as { pid?: number };
+      if (typeof parsed.pid === 'number' && !isProcessAliveLocal(parsed.pid)) {
+        return true;
+      }
+    } catch {
+      // Corrupt / unreadable lock — treat as reclaimable; the next
+      // `acquireServerLock` call will unlink + replace it.
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, tickMs));
+  }
+  return !existsSync(lockPath);
+}
+
+/**
+ * Local mirror of `isProcessAlive` — kept inline here instead of importing
+ * from `@inkeep/open-knowledge-server` so this module's runtime surface
+ * stays as small as it was before the auto-kill path landed (single-pid
+ * `process.kill(pid, 0)` semantics: EPERM still implies alive).
+ */
+function isProcessAliveLocal(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'code' in err &&
+      (err as { code?: string }).code === 'EPERM'
+    ) {
+      return true;
+    }
+    return false;
+  }
+}
 
 /**
  * Editor window title format — `<projectName> — Open Knowledge`. The em dash
@@ -54,6 +115,13 @@ export interface BrowserWindowLike {
   show?(): void;
   restore?(): void;
   isMinimized?(): boolean;
+  /**
+   * `true` when the underlying Electron native window has been destroyed.
+   * Optional for tests — when omitted, we assume the window is alive and
+   * skip the destroyed-guard. Production wiring uses Electron's
+   * `BrowserWindow.isDestroyed()`.
+   */
+  isDestroyed?(): boolean;
   on(event: 'closed', cb: () => void): void;
   webContents: {
     send(channel: string, ...args: unknown[]): void;
@@ -91,6 +159,11 @@ export interface UtilityProcessLike {
  * Intentionally structural (not imported from `@inkeep/open-knowledge-server`)
  * to keep this module runtime-independent of the server package — the real
  * shape is `ServerLockMetadata` from process-lock.ts and is type-compatible.
+ *
+ * `kind`, `parentPid`, and `capabilities` are optional for legacy-lock
+ * tolerance — locks written by older binaries omit them, and the desktop
+ * conservatively refuses to attach when any are absent (forces a fresh
+ * spawn rather than risk attaching to a server with unknown semantics).
  */
 export interface ServerLockMetadataLike {
   pid: number;
@@ -98,6 +171,9 @@ export interface ServerLockMetadataLike {
   port: number;
   startedAt: string;
   worktreeRoot: string;
+  kind?: 'interactive' | 'mcp-spawned';
+  parentPid?: number;
+  capabilities?: string[];
 }
 
 interface ProjectContext {
@@ -214,6 +290,34 @@ export interface WindowManagerDeps {
    * foreign-host locks fall through to spawn-mode.
    */
   hostname?(): string;
+  /**
+   * Probe `ws://localhost:<port>/collab/...` for a healthy WebSocket
+   * upgrade. Resolves `true` on the `open` event, `false` on `close` or
+   * timeout. Used as the final attach gate so a server claiming
+   * `capabilities: ["ws"]` but actually hanging WS upgrades (the live
+   * symptom that motivated this validation) is caught before any document
+   * load is attempted.
+   *
+   * Production wiring uses the platform `WebSocket`. Tests inject a stub
+   * that resolves true/false synchronously (no real socket). When omitted,
+   * the probe is skipped — back-compat path for tests that don't care
+   * about this gate.
+   */
+  probeWsUpgrade?(url: string, timeoutMs: number): Promise<boolean>;
+  /**
+   * Send a signal to a process. Defaults to `process.kill` in production.
+   * Used by the auto-kill collision handler to SIGTERM an `mcp-spawned`
+   * server that lost the spawn race, before the desktop retries lock
+   * acquisition. Tests inject a mock to count invocations.
+   */
+  killProcess?(pid: number, signal: NodeJS.Signals): void;
+  /**
+   * Returns `true` once `<lockDir>/server.lock` is gone, polling at the
+   * tick interval until the deadline. Defaults to a polling implementation
+   * that uses `existsSync` over the lock path. Test injections short-
+   * circuit so the polling loop completes synchronously.
+   */
+  waitForLockReleased?(lockDir: string, deadlineMs: number): Promise<boolean>;
   /**
    * Upper bound (ms) on waiting for the utility to post `ready` or `error`
    * after `init`. Default 15s — enough margin for `bootServer` to run shadow-
@@ -334,9 +438,23 @@ export class WindowManager {
     const canonicalKey = this.canonicalizeKey(projectPath);
     const existing = this.windowsByPath.get(canonicalKey);
     if (existing) {
-      // Focus existing rather than spawn a duplicate.
-      existing.window.focus();
-      return existing;
+      // Focus existing rather than spawn a duplicate. Guard against a
+      // destroyed BrowserWindow: there's a window of ~seconds between
+      // `window.on('closed')` firing (which destroys the native object)
+      // and `utility.on('exit')` firing (which clears the map entry,
+      // gated by `windowLifecycleBound` shutdown completing). A click in
+      // that gap would call `.focus()` on a destroyed object and throw
+      // `TypeError: Object has been destroyed`. Treat destroyed entries
+      // as stale and proceed to spawn-fresh.
+      if (existing.window.isDestroyed?.() !== true) {
+        existing.window.focus();
+        return existing;
+      }
+      this.deps.log?.warn(
+        { canonicalKey },
+        '[window-manager] stale destroyed-window entry — clearing and re-creating',
+      );
+      this.windowsByPath.delete(canonicalKey);
     }
     const projectName = basename(projectPath);
 
@@ -347,7 +465,14 @@ export class WindowManager {
     // want to share with, etc.), skip the utility spawn entirely and just
     // point the renderer at the existing collab URL. `runClean` is also
     // skipped here because an attachable lock is by definition NOT stale.
-    const attached = this.tryAttachExistingServer(lockDir);
+    // Two-step: synchronous metadata gates first, then an async WS probe
+    // only when the metadata gates passed. Keeping the no-lock fall-
+    // through purely synchronous matters — an unconditional `await` here
+    // would inject a microtask that re-orders the existing spawn-path
+    // tests' synchronous `fire('ready')` against the utility fork.
+    const candidate = this.tryAttachExistingServer(lockDir);
+    const attached =
+      candidate !== null && (await this.probeAttachableLock(candidate)) ? candidate : null;
     if (attached) {
       return this.attachToExistingServer({
         projectPath,
@@ -369,10 +494,6 @@ export class WindowManager {
       }
     }
 
-    const utility = this.deps.forkUtility(this.deps.utilityEntryPath, {
-      windowLifecycleBound: true,
-    });
-
     // Init timeout: if utility has not posted `ready` or `error` within this
     // window, reject so `createProjectWindow` doesn't hang forever. A spawn-
     // phase hang is observable in the wild (bootServer throws synchronously
@@ -381,63 +502,151 @@ export class WindowManager {
     // implementation's lack of this guard as a Major issue.
     const INIT_TIMEOUT_MS = this.deps.utilityInitTimeoutMs ?? 15_000;
 
-    const ready = new Promise<{ port: number; apiOrigin: string; didGitInit: boolean }>(
-      (resolveReady, reject) => {
-        let settled = false;
-        const settle = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          // Detach BOTH listeners so no dead code fires after ready — the post-
-          // await lifecycle handler (see below) is the sole exit subscriber
-          // once the window is up.
-          utility.removeListener?.('message', onMessage);
-          utility.removeListener?.('exit', onExit);
-          fn();
-        };
-        const onMessage = (msg: unknown) => {
-          const m = msg as {
-            type?: string;
-            port?: number;
-            apiOrigin?: string;
-            message?: string;
-            didGitInit?: boolean;
+    // Retry loop. Outer iteration only re-runs when an `mcp-spawned`
+    // server raced us to the lock between `runClean` and the utility's
+    // `acquireServerLock`. For that case we SIGTERM the holder, wait for
+    // the lock to release, then re-fork. Any other init failure (or a
+    // second collision after a kill) propagates unchanged.
+    let utility!: UtilityProcessLike;
+    let port = 0;
+    let apiOrigin = '';
+    let didGitInit = false;
+    for (let attempt = 1; ; attempt++) {
+      utility = this.deps.forkUtility(this.deps.utilityEntryPath, {
+        windowLifecycleBound: true,
+      });
+      const utilityRef = utility;
+      const ready = new Promise<{ port: number; apiOrigin: string; didGitInit: boolean }>(
+        (resolveReady, reject) => {
+          let settled = false;
+          const settle = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            utilityRef.removeListener?.('message', onMessage);
+            utilityRef.removeListener?.('exit', onExit);
+            fn();
           };
-          if (m.type === 'ready' && typeof m.port === 'number' && typeof m.apiOrigin === 'string') {
-            const port = m.port;
-            const apiOrigin = m.apiOrigin;
-            const didGitInit = m.didGitInit === true;
-            settle(() => resolveReady({ port, apiOrigin, didGitInit }));
-          } else if (m.type === 'error') {
-            settle(() => reject(new Error(m.message ?? 'utility init failed')));
+          const onMessage = (msg: unknown) => {
+            const m = msg as {
+              type?: string;
+              port?: number;
+              apiOrigin?: string;
+              message?: string;
+              didGitInit?: boolean;
+              kind?: string;
+              existingLock?: ServerLockMetadataLike;
+            };
+            if (
+              m.type === 'ready' &&
+              typeof m.port === 'number' &&
+              typeof m.apiOrigin === 'string'
+            ) {
+              const p = m.port;
+              const o = m.apiOrigin;
+              const g = m.didGitInit === true;
+              settle(() => resolveReady({ port: p, apiOrigin: o, didGitInit: g }));
+            } else if (m.type === 'error') {
+              // Carry the structured error fields onto the thrown Error
+              // so the retry catch can decide whether to auto-kill an
+              // mcp-spawned holder vs. propagate.
+              const richError = Object.assign(new Error(m.message ?? 'utility init failed'), {
+                name: m.kind === 'lock-collision' ? 'LockCollisionError' : 'UtilityInitError',
+                kind: m.kind,
+                existingLock: m.existingLock,
+              });
+              settle(() => reject(richError));
+            }
+          };
+          const onExit = (code: number | null) => {
+            settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
+          };
+          utilityRef.on('message', onMessage);
+          utilityRef.on('exit', onExit);
+
+          this.deps.setTimeout(() => {
+            settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
+          }, INIT_TIMEOUT_MS);
+        },
+      );
+
+      utility.postMessage({
+        type: 'init',
+        opts: {
+          contentDir: projectPath,
+          projectDir: projectPath,
+          port: 0,
+          host: 'localhost',
+        },
+      });
+
+      try {
+        ({ port, apiOrigin, didGitInit } = await ready);
+        break;
+      } catch (err) {
+        const richErr = err as Error & {
+          kind?: string;
+          existingLock?: ServerLockMetadataLike;
+        };
+        const collidedWithMcp =
+          attempt === 1 &&
+          richErr.name === 'LockCollisionError' &&
+          richErr.existingLock?.kind === 'mcp-spawned' &&
+          typeof richErr.existingLock.pid === 'number';
+        if (!collidedWithMcp) throw err;
+        const holderPid = (richErr.existingLock as ServerLockMetadataLike).pid;
+        this.deps.log?.warn(
+          { event: 'desktop-attach-refused', reason: 'collision-mcp-spawned', holderPid, lockDir },
+          '[window-manager] mcp-spawned holder collided — sending SIGTERM and retrying',
+        );
+        const kill =
+          this.deps.killProcess ??
+          ((pid: number, signal: NodeJS.Signals) => {
+            process.kill(pid, signal);
+          });
+        try {
+          kill(holderPid, 'SIGTERM');
+        } catch {
+          // Holder already gone — the lock might be stale; the wait below
+          // catches up either way.
+        }
+        // SIGTERM grace: bun + Hocuspocus + telemetry-shutdown chain takes
+        // 3-5s in practice. Empirical observation in dev showed bun
+        // sometimes ignores SIGTERM entirely (process stays alive past
+        // any reasonable grace). After 5s, escalate to SIGKILL — the
+        // holder is `mcp-spawned`, transient by design (the agent's MCP
+        // will re-spawn on next tool call), so a hard kill costs nothing.
+        const SIGTERM_GRACE_MS = 5_000;
+        const released = await (this.deps.waitForLockReleased
+          ? this.deps.waitForLockReleased(lockDir, SIGTERM_GRACE_MS)
+          : pollLockReleasedDefault(lockDir, SIGTERM_GRACE_MS));
+        let finalReleased = released;
+        if (!released) {
+          this.deps.log?.warn(
+            { holderPid },
+            '[window-manager] SIGTERM did not take within grace — escalating to SIGKILL',
+          );
+          try {
+            kill(holderPid, 'SIGKILL');
+          } catch {
+            // Already dead — fine.
           }
-        };
-        // Reject on early utility exit (utility died before posting ready/error).
-        const onExit = (code: number | null) => {
-          settle(() => reject(new Error(`utility exited before ready (code=${code})`)));
-        };
-        utility.on('message', onMessage);
-        utility.on('exit', onExit);
-
-        // Timeout guard — final defense against spawn-phase hangs. The scheduled
-        // callback calls `settle(...)` which no-ops if ready/error/exit already
-        // settled the promise, so late-firing timers are harmless.
-        this.deps.setTimeout(() => {
-          settle(() => reject(new Error(`utility init timed out after ${INIT_TIMEOUT_MS}ms`)));
-        }, INIT_TIMEOUT_MS);
-      },
-    );
-
-    utility.postMessage({
-      type: 'init',
-      opts: {
-        contentDir: projectPath,
-        projectDir: projectPath,
-        port: 0,
-        host: 'localhost',
-      },
-    });
-
-    const { port, apiOrigin, didGitInit } = await ready;
+          // Brief follow-up wait — SIGKILL is unmaskable so this is fast.
+          finalReleased = await (this.deps.waitForLockReleased
+            ? this.deps.waitForLockReleased(lockDir, 2_000)
+            : pollLockReleasedDefault(lockDir, 2_000));
+        }
+        if (!finalReleased) {
+          const stuck = Object.assign(
+            new Error(
+              `Open Knowledge could not start: pid ${holderPid} is still holding the server lock at ${lockDir}.`,
+            ),
+            { kind: 'mcp-server-stuck' as const, holderPid },
+          );
+          throw stuck;
+        }
+        // Loop continues — fresh fork on next iteration.
+      }
+    }
 
     // Persistent post-init message listener. The init-phase listener above was
     // detached by `settle()` once `ready`/`error` resolved; this observes every
@@ -574,9 +783,9 @@ export class WindowManager {
   }
 
   /**
-   * Probe `<lockDir>/server.lock` for an attachable same-host server.
+   * Synchronous metadata gates for `<lockDir>/server.lock`.
    *
-   * Returns the lock metadata when all of the following hold:
+   * Returns the lock when all of the following hold:
    *   - lock file exists and parses as valid JSON
    *   - `hostname` matches this host (foreign locks fall through to spawn
    *     mode, which surfaces the collision via `ServerLockCollisionError`
@@ -585,9 +794,23 @@ export class WindowManager {
    *     will prune them before we spawn)
    *   - `port > 0` (port 0 means the holder is still starting — racing it
    *     risks connecting before the listener is bound, so fall through)
+   *   - `kind === 'interactive'` (or absent → legacy lock, refused as the
+   *     conservative case). MCP-spawned servers are refused even when
+   *     alive: they exist for the agent's convenience and the desktop is
+   *     the user-facing surface that takes precedence on cold start.
+   *   - `capabilities` includes `"ws"` when the field is present.
+   *   - `parentPid` is alive when present (stranded servers whose spawning
+   *     process has died are refused even though their own pid is still
+   *     up; the parent-death poll in `bootServer` should reap these but
+   *     the desktop guards belt-and-suspenders).
    *
-   * Returns `null` otherwise (including when the deps are not wired — tests
-   * that don't inject `readServerLock` get pure spawn behavior).
+   * The async WS-upgrade probe is deliberately a separate step
+   * (`probeAttachableLock`) so this function stays synchronous — the
+   * synchronous fall-through must not inject a microtask that reorders
+   * subsequent fork-utility calls in the caller.
+   *
+   * Refusals emit a structured warn so operators can grep for
+   * `desktop-attach-refused` in the wild.
    */
   private tryAttachExistingServer(lockDir: string): ServerLockMetadataLike | null {
     const read = this.deps.readServerLock;
@@ -596,10 +819,55 @@ export class WindowManager {
     if (!read || !alive || !getHost) return null;
     const lock = read(lockDir);
     if (!lock) return null;
-    if (lock.hostname !== getHost()) return null;
-    if (!alive(lock.pid)) return null;
-    if (lock.port <= 0) return null;
+    const refuse = (reason: string): null => {
+      this.deps.log?.warn(
+        { event: 'desktop-attach-refused', reason, lockDir, lockPid: lock.pid },
+        '[window-manager] refusing attach',
+      );
+      return null;
+    };
+    if (lock.hostname !== getHost()) return refuse('foreign-hostname');
+    if (!alive(lock.pid)) return refuse('lock-pid-dead');
+    if (lock.port <= 0) return refuse('lock-port-zero');
+    if (lock.kind === undefined) return refuse('legacy-lock-no-kind');
+    if (lock.kind === 'mcp-spawned') return refuse('kind-mcp-spawned');
+    if (lock.capabilities !== undefined && !lock.capabilities.includes('ws')) {
+      return refuse('capabilities-missing-ws');
+    }
+    if (lock.parentPid !== undefined && !alive(lock.parentPid)) {
+      return refuse('parent-pid-dead');
+    }
     return lock;
+  }
+
+  /**
+   * Final defensive gate against a server that lies about WS capability or
+   * has a hung upgrade path (the live symptom that motivated all of this:
+   * HTTP up, `/collab` hangs, every doc 30 s timeouts). Skipped when
+   * `probeWsUpgrade` is not injected — back-compat path for the existing
+   * test suite that did not exercise the probe.
+   *
+   * Returns `true` when attaching is safe; `false` otherwise. Errors from
+   * the probe (thrown rejections) are treated as failures — defensive
+   * stance, since we cannot prove the server is healthy.
+   */
+  private async probeAttachableLock(lock: ServerLockMetadataLike): Promise<boolean> {
+    const probe = this.deps.probeWsUpgrade;
+    if (!probe) return true;
+    const url = `ws://localhost:${lock.port}/collab/__attach_probe__`;
+    let upgradeOk = false;
+    try {
+      upgradeOk = await probe(url, 500);
+    } catch {
+      upgradeOk = false;
+    }
+    if (!upgradeOk) {
+      this.deps.log?.warn(
+        { event: 'desktop-attach-refused', reason: 'ws-upgrade-failed', lockPid: lock.pid },
+        '[window-manager] refusing attach',
+      );
+    }
+    return upgradeOk;
   }
 
   /**

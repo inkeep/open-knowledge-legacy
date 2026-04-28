@@ -300,7 +300,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
-  const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
+  // `relative(a, a) === ''` (falsy), so workspaces with content.dir at the
+  // project root must fall back to '.' — using the literal pathspec would
+  // make `git add <fallback>` look for a non-existent subfolder.
+  const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || '.');
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;

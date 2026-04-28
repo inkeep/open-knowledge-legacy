@@ -230,6 +230,11 @@ export interface OkDesktopBridge {
       readonly title: string;
       readonly kind: 'asset' | 'wiki-link' | 'image';
     }): Promise<void>;
+    /**
+     * Reveal a file or folder in the OS file manager. See canonical JSDoc
+     * in `packages/desktop/src/shared/bridge-contract.ts`.
+     */
+    showItemInFolder(path: string): Promise<void>;
   };
   clipboard: {
     writeText(text: string): Promise<void>;

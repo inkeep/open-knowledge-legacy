@@ -192,6 +192,10 @@ export function validateSpawnPath(path: string, platform: NodeJS.Platform): bool
  * Windows inputs resolve correctly on a POSIX dev runner under test, and
  * production behavior follows the caller's platform regardless of Node's
  * runtime `path` module.
+ *
+ * Lexical comparison only — does not resolve symlinks. A symlink inside
+ * `projectPath` that targets a path outside (e.g. `<proj>/notes -> /etc`)
+ * passes this check; the OS will follow it at use time.
  */
 export function isPathWithinProject(
   userPath: string,
@@ -248,6 +252,8 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   if (!validateSpawnPath(path, deps.platform)) {
     return { ok: false, reason: 'invalid-path' };
   }
+  // Skip-on-undefined `projectPath`. Sibling `showItemInFolder` refuses on
+  // undefined (its safer default) — the divergence is intentional.
   if (
     deps.projectPath !== undefined &&
     !isPathWithinProject(path, deps.projectPath, deps.platform)
@@ -281,6 +287,54 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
 
   const { exec, args } = resolveSpawnInvocation(binaryPath, path, deps.platform);
   return deps.spawn(exec, args, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
+}
+
+/**
+ * Outcome of a `showItemInFolder` invocation — observable in main logs / tests.
+ * The wire shape collapses every refusal to `undefined` (silent-by-design — see
+ * the handler in `main/index.ts`). This internal type widens the refusal so the
+ * main-side breadcrumb log distinguishes the three branches: format failure,
+ * no project bound, escape from project. `SpawnOutcome`'s collapsed shape is
+ * forced because its reason IS exposed on the wire; this one is not.
+ */
+type ShowItemInFolderOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'invalid-format' | 'no-project-bound' | 'out-of-project' };
+
+/** Injected deps for `showItemInFolder` — the electron `shell.showItemInFolder` and platform/projectPath. */
+interface ShowItemInFolderDeps {
+  readonly platform: NodeJS.Platform;
+  /** Caller window's project directory; if omitted, validation refuses any path. */
+  readonly projectPath: string | undefined;
+  /** Wraps `electron.shell.showItemInFolder`. Replaceable in tests. */
+  readonly showItemInFolder: (path: string) => void;
+}
+
+/**
+ * Reveal the given path in the OS file manager. The path must be absolute,
+ * free of null bytes, and lie at or under `deps.projectPath` — otherwise the
+ * call is refused. Bounds a renderer compromise from steering the OS file
+ * manager at arbitrary filesystem locations. Same defense pattern as
+ * `spawnCursor`.
+ *
+ * When `projectPath` is undefined (e.g. Navigator window with no bound
+ * project), refuses every path — the only safe default.
+ */
+export function showItemInFolder(
+  deps: ShowItemInFolderDeps,
+  path: string,
+): ShowItemInFolderOutcome {
+  if (!validateSpawnPath(path, deps.platform)) {
+    return { ok: false, reason: 'invalid-format' };
+  }
+  if (deps.projectPath === undefined) {
+    return { ok: false, reason: 'no-project-bound' };
+  }
+  if (!isPathWithinProject(path, deps.projectPath, deps.platform)) {
+    return { ok: false, reason: 'out-of-project' };
+  }
+  deps.showItemInFolder(path);
+  return { ok: true };
 }
 
 /**

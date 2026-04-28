@@ -18,9 +18,26 @@ const aliveLock: ServerLockMetadata = {
   port: 5173,
   startedAt: '2026-04-16T10:00:00Z',
   worktreeRoot: '/tmp/test',
+  protocolVersion: 1,
+  runtimeVersion: '0.2.0',
 };
 
 const bootingLock: ServerLockMetadata = { ...aliveLock, port: 0 };
+
+/** Pre-version-field lock — simulates a v0.x binary that wrote a lock without protocolVersion. */
+const versionlessLock: ServerLockMetadata = {
+  pid: 4242,
+  hostname: 'test-host',
+  port: 5173,
+  startedAt: '2026-04-16T10:00:00Z',
+  worktreeRoot: '/tmp/test',
+};
+
+/** Lock owner running an older protocol — simulates DMG vN+1 driving CLI vN's lock. */
+const olderProtocolLock: ServerLockMetadata = {
+  ...aliveLock,
+  protocolVersion: 0,
+};
 
 const BASE_CONFIG: Config = {
   content: {
@@ -220,6 +237,53 @@ describe('server-discovery', () => {
         isAlive: () => false,
       });
       expect(result.action).toBe('spawn');
+    });
+
+    test('protocol mismatch → incompatible (older lock owner)', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => olderProtocolLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+      });
+      expect(result.action).toBe('incompatible');
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.expectedProtocolVersion).toBe(1);
+      expect(result.actualProtocolVersion).toBe(0);
+      expect(result.message).toContain('protocol v0');
+      expect(result.message).toContain('protocol v1');
+    });
+
+    test('lock missing protocolVersion → incompatible (pre-version-field lock)', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => versionlessLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+      });
+      expect(result.action).toBe('incompatible');
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.actualProtocolVersion).toBeUndefined();
+      expect(result.message).toContain('unknown');
+    });
+
+    test('matching protocol → connect', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => aliveLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+      });
+      expect(result.action).toBe('connect');
     });
   });
 

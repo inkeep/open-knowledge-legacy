@@ -11,6 +11,7 @@ import {
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
   Copy,
+  FolderOpen,
   FolderPlus,
   FoldVertical,
   Pencil,
@@ -194,6 +195,65 @@ interface PendingCreate {
   renamePath: string;
 }
 
+/**
+ * Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy.
+ * Linux verb asymmetry (Open vs Reveal) is intentional — no stable Linux file-manager
+ * brand to "Reveal in"; a normalizing fix to "Reveal in Files" would be incorrect on
+ * most distros.
+ */
+function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
+  if (platform === 'darwin') return 'Reveal in Finder';
+  if (platform === 'win32') return 'Reveal in File Explorer';
+  return 'Open Containing Folder';
+}
+
+/**
+ * File-tree menu row that opens the OS file manager with the target file/folder
+ * selected. Hidden entirely on the web variant (no useful no-op without a host
+ * filesystem) — the disabled-with-hint pattern used by `OpenInAgentContextSubmenu`
+ * doesn't apply here because reveal has no cross-host fallback. When present but
+ * the workspace metadata hasn't resolved yet, renders disabled with a "No workspace"
+ * affordance mirroring the handoff submenu's pattern.
+ */
+function RevealInFileManagerMenuItem({
+  item,
+  workspace,
+  onClose,
+}: {
+  item: ContextMenuItem;
+  workspace: WorkspaceInfo | null;
+  onClose: () => void;
+}) {
+  const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
+  if (!bridge) return null;
+  const label = revealInFileManagerLabel(bridge.platform);
+  const hint = !workspace ? 'No workspace' : null;
+  return (
+    <DropdownMenuItem
+      disabled={!workspace}
+      onSelect={() => {
+        if (!workspace) return;
+        onClose();
+        const full = joinWorkspacePath(
+          workspace.contentDir,
+          relativePathForTreeItem(item),
+          workspace.pathSeparator,
+        );
+        void bridge.shell.showItemInFolder(full);
+      }}
+      aria-label={hint ? `${label}, ${hint}` : label}
+    >
+      <FolderOpen aria-hidden="true" />
+      <span className="flex-1">{label}</span>
+      {hint ? (
+        <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+          {hint}
+        </span>
+      ) : null}
+    </DropdownMenuItem>
+  );
+}
+
 interface FileTreeMenuProps {
   item: ContextMenuItem;
   context: ContextMenuOpenContext;
@@ -350,6 +410,8 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
         {!isFolder && (
           <OpenInAgentContextSubmenu
             input={handoffInput}
