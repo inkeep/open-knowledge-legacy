@@ -9,6 +9,13 @@ export interface FileTreeTarget {
   kind: 'folder' | 'file';
   path: string;
   name: string;
+  /**
+   * On-disk extension for files (`.md` / `.mdx`); undefined for folders. The
+   * adapter detects the actual extension when building targets so display
+   * sites (delete-confirmation dialog, rename hints, drag previews) render
+   * the truth instead of a hardcoded `.md`. Folders carry no extension.
+   */
+  docExt?: string;
 }
 
 export function normalizeRenameValue(_kind: FileTreeTarget['kind'], value: string): string {
