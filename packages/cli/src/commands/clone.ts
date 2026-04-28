@@ -121,7 +121,14 @@ async function runClone(
   // when upstream committed `.open-knowledge/config.yml` without one.
   try {
     const { runInit } = await import('./init.ts');
-    await runInit({ cwd: targetDir, mcp: false });
+    const initResult = await runInit({ cwd: targetDir, mcp: false });
+    // Surface the `updated` classification so silent mutation of an
+    // upstream-tracked .open-knowledge/.gitignore doesn't hide behind ✓ Cloned.
+    if (initResult.contentUpdated.length > 0) {
+      const msg = `auto-init: updated ${initResult.contentUpdated.join(', ')}`;
+      if (opts.json) emit(true, { type: 'warning', message: msg });
+      else process.stderr.write(`  ${msg}\n`);
+    }
   } catch (err) {
     // Non-fatal — surface a warning so silent failures don't hide behind
     // the ✓ Cloned banner. Same posture as start.ts auto-init.
