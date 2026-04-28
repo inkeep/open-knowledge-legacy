@@ -23,3 +23,5 @@ Breaking changes:
 
 - New slash-menu inserts emit lowercase `<img>` / `<video>` / `<audio>` to disk. Any pre-existing content written with capitalized `<Image>` / `<Video>` / `<Audio>` falls through to the wildcard fallback (`UnknownComponent` chrome) since those descriptor names are no longer registered. Greenfield posture: rename in place to recover the registered descriptor.
 - `caption` and `zoom` props removed from the Image descriptor. Pre-existing `<Image caption="…" zoom={false} />` content keeps the props as wildcard attributes (preserved verbatim, no longer interpreted) until renamed to `<img>` and rewritten through Frame v2.
+
+Bundle size: the all-JS-chunks ceiling raises from 1.15 MB → 1.2 MB to absorb the post-merge composition (this PR's lowercase pivot + PropPanel Advanced + Collapsible primitive on top of main's #311 client-side y-indexeddb buffer-and-replay, agent-activity-panel, statistics-footer). Main app bundle stays well under its 280 kB ceiling. Delivered via on-demand chunk loading — first-paint cost is unchanged.
