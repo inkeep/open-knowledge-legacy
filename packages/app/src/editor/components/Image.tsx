@@ -1,36 +1,17 @@
 /**
- * Image — DIY renderer for the 5-pack foundation (SPEC 2026-04-23-cb-v2-md-foundation,
- * FR-2 + FR-6 + FR-18 + D-MF2 + D-MF3).
+ * Image — DIY renderer for the lowercase `img` canonical (CB-v2-MF lowercase
+ * media pivot).
  *
- * Renders the descriptor's 8-prop surface: `src`, `alt`, `width`, `height`,
- * `caption`, `title`, `loading`, and `zoom`. Uses `react-medium-image-zoom`'s
- * `Zoom` wrapper for click-to-zoom + native `<dialog>` modal (the library
- * handles `prefers-reduced-motion` internally via its styles.css — imported
- * once in `main.tsx`).
+ * Renders the descriptor's 12-prop surface — 4 common (src + alt + width +
+ * height) + 8 advanced (srcset + sizes + loading + title + decoding +
+ * fetchpriority + crossorigin + referrerpolicy) — wrapped in
+ * `react-medium-image-zoom`'s `Zoom` always-on (no descriptor prop). When
+ * Frame v2 lands as a compositional wrapper, `<Frame zoom={false}>` will be
+ * the opt-out path; today there is no opt-out.
  *
- * Render branches:
- *
- *   1. `caption` set + `zoom !== false` (default):
- *        <figure>
- *          <Zoom wrapElement="span" zoomMargin={20} zoomImg={{sizes: undefined}}>
- *            <img ...>
- *          </Zoom>
- *          <figcaption>{caption}</figcaption>
- *        </figure>
- *
- *   2. `caption` unset + `zoom !== false`:
- *        <Zoom wrapElement="span" ...>
- *          <img ...>
- *        </Zoom>
- *
- *   3. `zoom === false` (bare <img>, optionally inside <figure> + <figcaption>):
- *        <figure><img ...><figcaption>{caption}</figcaption></figure>
- *        OR just <img ...>
- *
- * `wrapElement="span"` is load-bearing (FR-18): HTML spec forbids `<div>`
- * inside `<p>`, and MDX parsing often lands `<Image>` inside a paragraph
- * (tight image links, markdown `![alt](src)` post-US-024 consolidation).
- * Fumadocs-ui ships the same pattern.
+ * `wrapElement="span"` is load-bearing: HTML spec forbids `<div>` inside
+ * `<p>`, and MDX parsing often lands `<img>` inside a paragraph (tight image
+ * links, markdown `![alt](src)` after autolink/CommonMark promotion).
  *
  * `zoomMargin={20}` matches the upstream-docs-lib default — the zoom-modal's
  * padding from the viewport edge when expanded. `zoomImg={{ sizes: undefined }}`
@@ -39,19 +20,19 @@
  *
  * `loading` defaults to `'lazy'` when undefined — matches browser-default
  * behavior for images below the fold but avoids silently loading any image
- * eagerly on mount. Authors who need above-the-fold LCP-critical images set
- * `loading="eager"` explicitly.
+ * eagerly on mount.
  *
- * Zero upstream-docs-lib React imports (D-MF2 / FR-6) — only
- * `react-medium-image-zoom` (the library the upstream docs lib wraps
- * internally; now our direct dep per US-001 / FR-16).
+ * `caption` is NOT a prop on this descriptor — Frame v2 (compositional
+ * wrapper) is the canonical home for caption + border + decorations.
  *
- * Precedent #30 (all user content visible): there is no children slot — the
- * descriptor is `isSelfClosing: true`. The caption round-trips as a typed
- * string prop, not a reactnode, so γ preserves it byte-identical through
- * PropPanel edits.
+ * HTML-attr lowercase ↔ React camelCase translation happens here at the JSX
+ * boundary: `srcset → srcSet`, `fetchpriority → fetchPriority`,
+ * `crossorigin → crossOrigin`, `referrerpolicy → referrerPolicy`. The
+ * descriptor stores the HTML-spec spelling so emitted MDX matches the spec
+ * exactly; React's intrinsic `<img>` type expects camelCase.
  */
 
+import type { ImgHTMLAttributes } from 'react';
 import Zoom from 'react-medium-image-zoom';
 
 interface ImageProps {
@@ -59,31 +40,24 @@ interface ImageProps {
   alt?: string;
   width?: number | string;
   height?: number | string;
-  caption?: string;
   title?: string;
   loading?: 'eager' | 'lazy';
-  zoom?: boolean;
+  // advanced — HTML-native attrs, lowercase per the HTML spec
+  srcset?: string;
+  sizes?: string;
+  decoding?: 'sync' | 'async' | 'auto';
+  fetchpriority?: 'high' | 'low' | 'auto';
+  crossorigin?: '' | 'anonymous' | 'use-credentials';
+  referrerpolicy?: ImgHTMLAttributes<HTMLImageElement>['referrerPolicy'];
 }
 
-/**
- * Resolve the `zoom` prop's effective boolean. Descriptor's default is `true`
- * (via defaultValue on the enum), but defensive: treat `undefined` as true so
- * callers that bypass the descriptor still get zoom by default.
- */
-function resolveZoom(zoom: boolean | undefined): boolean {
-  return zoom !== false;
-}
-
-/**
- * Resolve the `loading` attribute with a `'lazy'` default.
- */
 function resolveLoading(loading: 'eager' | 'lazy' | undefined): 'eager' | 'lazy' {
   return loading ?? 'lazy';
 }
 
 /**
- * Bare `<img>` — used both by the zoom-wrapped path (as the <Zoom> child)
- * and by the `zoom={false}` path (as the leaf inside or outside <figure>).
+ * Bare `<img>` — the leaf rendered inside `<Zoom>`. Translates lowercase
+ * HTML-attr names to React's camelCase at this JSX boundary.
  */
 function BareImg(props: ImageProps) {
   return (
@@ -94,41 +68,27 @@ function BareImg(props: ImageProps) {
       height={props.height}
       title={props.title}
       loading={resolveLoading(props.loading)}
+      srcSet={props.srcset}
+      sizes={props.sizes}
+      decoding={props.decoding}
+      fetchPriority={props.fetchpriority}
+      crossOrigin={props.crossorigin}
+      referrerPolicy={props.referrerpolicy}
     />
   );
 }
 
 /**
- * DIY Image. Descriptor-dispatched via `componentMap['Image']`.
+ * DIY Image. Descriptor-dispatched via `componentMap['img']`.
  *
- * The `Zoom` wrapper accepts a React child element; when the child is an
- * `<img>` the library reads its `src` to build the zoom-view. No manual
- * `zoomImg.src` plumbing needed — the library reflects the child `<img>`
- * src by default; we only override `sizes` to `undefined` so the zoom-view
- * doesn't inherit a thumbnail-scoped sizes attribute (see FR-18 pattern).
+ * The `Zoom` wrapper reads its child `<img>`'s `src` to build the zoom-view;
+ * no manual `zoomImg.src` plumbing needed. We override `sizes` to `undefined`
+ * so the zoom-view doesn't inherit a thumbnail-scoped sizes attribute.
  */
 export function Image(props: ImageProps) {
-  const zoomEnabled = resolveZoom(props.zoom);
-  const hasCaption = typeof props.caption === 'string' && props.caption.length > 0;
-
-  const img = <BareImg {...props} />;
-
-  const content = zoomEnabled ? (
+  return (
     <Zoom wrapElement="span" zoomMargin={20} zoomImg={{ sizes: undefined }}>
-      {img}
+      <BareImg {...props} />
     </Zoom>
-  ) : (
-    img
   );
-
-  if (hasCaption) {
-    return (
-      <figure className="ok-image">
-        {content}
-        <figcaption className="ok-image-caption">{props.caption}</figcaption>
-      </figure>
-    );
-  }
-
-  return content;
 }
