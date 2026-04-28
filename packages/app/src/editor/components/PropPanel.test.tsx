@@ -17,16 +17,30 @@
  *     (A11Y01 Tab cycle, A11Y03 Esc close) exercises the panel end-to-end.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { PropDef } from '@inkeep/open-knowledge-core';
 import { renderToString } from 'react-dom/server';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
-import {
+
+const uploadFileMock = mock(
+  (_file: File, _accept: readonly string[]): Promise<{ url: string }> =>
+    Promise.resolve({ url: 'mocked.png' }),
+);
+const toastErrorMock = mock((_msg: string): void => {});
+
+mock.module('../image-upload/upload-file.ts', () => ({
+  uploadFile: uploadFileMock,
+}));
+mock.module('sonner', () => ({ toast: { error: toastErrorMock } }));
+
+const {
   countAdvancedSet,
+  getAutoFocusedPropName,
   PropPanel,
   persistAdvancedOpenState,
   readAdvancedOpenState,
-} from './PropPanel.tsx';
+  runUpload,
+} = await import('./PropPanel.tsx');
 
 // ---------------------------------------------------------------------------
 // localStorage fake — the read/write helpers swallow throws and treat
@@ -284,6 +298,158 @@ describe('PropPanel — Advanced collapsible section', () => {
       return renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />);
     });
     expect(html).toContain('data-state="open"');
+  });
+});
+
+describe('getAutoFocusedPropName', () => {
+  test('returns null when no prop has autoFocus', () => {
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'alt', type: 'string', required: false },
+    ];
+    expect(getAutoFocusedPropName(props)).toBeNull();
+  });
+
+  test('returns the first PropDefString with autoFocus: true', () => {
+    const props: PropDef[] = [
+      { name: 'alt', type: 'string', required: false },
+      { name: 'src', type: 'string', required: true, autoFocus: true },
+      { name: 'title', type: 'string', required: false, autoFocus: true },
+    ];
+    expect(getAutoFocusedPropName(props)).toBe('src');
+  });
+
+  test('skips hidden props', () => {
+    const props: PropDef[] = [
+      { name: 'internal', type: 'string', required: false, autoFocus: true, hidden: true },
+      { name: 'src', type: 'string', required: true, autoFocus: true },
+    ];
+    expect(getAutoFocusedPropName(props)).toBe('src');
+  });
+
+  test('only matches PropDefString — number/enum/boolean autoFocus is not honored', () => {
+    // PropDefBoolean does not declare an autoFocus field per D3 LOCKED. The
+    // helper deliberately checks `type === 'string'` to avoid TS escape
+    // hatches accidentally surfacing a non-string focus target.
+    const props: PropDef[] = [
+      // biome-ignore lint/suspicious/noExplicitAny: synthetic shape — autoFocus only valid on string in the type
+      { name: 'count', type: 'number', required: false, autoFocus: true } as any,
+      { name: 'src', type: 'string', required: true, autoFocus: true },
+    ];
+    expect(getAutoFocusedPropName(props)).toBe('src');
+  });
+});
+
+describe('PropPanel — upload button affordance', () => {
+  test('(a) renders upload button when prop has accept set', () => {
+    const d = makeCanonicalDescriptor('img', [
+      {
+        name: 'src',
+        type: 'string',
+        required: true,
+        accept: ['image/png', 'image/jpeg'],
+      },
+    ]);
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('data-prop-upload-trigger');
+    expect(html).toContain('data-prop-upload-input');
+    expect(html).toContain('accept="image/png,image/jpeg"');
+  });
+
+  test('(a) does NOT render upload button when prop has no accept', () => {
+    const d = makeCanonicalDescriptor('Callout', [
+      { name: 'title', type: 'string', required: false },
+    ]);
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).not.toContain('data-prop-upload-trigger');
+    expect(html).not.toContain('data-prop-upload-input');
+  });
+
+  test('upload button uses aria-label="Upload file"', () => {
+    const d = makeCanonicalDescriptor('img', [
+      { name: 'src', type: 'string', required: true, accept: ['image/png'] },
+    ]);
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toMatch(/aria-label="Upload file"/);
+  });
+});
+
+describe('PropPanel — autoFocus marker on string Input', () => {
+  test('(e) descriptor with autoFocus prop renders data-prop-autofocus on its Input', () => {
+    const d = makeCanonicalDescriptor('img', [
+      { name: 'src', type: 'string', required: true, autoFocus: true },
+      { name: 'alt', type: 'string', required: false },
+    ]);
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    // Marker is rendered for the first matching prop only.
+    const matches = html.match(/data-prop-autofocus=""/g) ?? [];
+    expect(matches.length).toBe(1);
+  });
+
+  test('(f) descriptor without autoFocus renders no autofocus marker', () => {
+    const d = makeCanonicalDescriptor('Callout', [
+      { name: 'title', type: 'string', required: false },
+      { name: 'icon', type: 'string', required: false },
+    ]);
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).not.toContain('data-prop-autofocus');
+  });
+});
+
+describe('runUpload', () => {
+  beforeEach(() => {
+    uploadFileMock.mockReset();
+    toastErrorMock.mockReset();
+  });
+
+  test('(b/c) success: calls uploadFile, then onUploaded with the returned URL', async () => {
+    uploadFileMock.mockImplementation(() => Promise.resolve({ url: 'returned-url.png' }));
+    const onUploaded = mock((_url: string): void => {});
+    const file = new File(['x'], 'x.png', { type: 'image/png' });
+
+    await runUpload(file, ['image/png'], onUploaded);
+
+    expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    expect(uploadFileMock.mock.calls[0]?.[0]).toBe(file);
+    expect(uploadFileMock.mock.calls[0]?.[1]).toEqual(['image/png']);
+    expect(onUploaded).toHaveBeenCalledTimes(1);
+    expect(onUploaded.mock.calls[0]?.[0]).toBe('returned-url.png');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  test('(d) error: surfaces toast.error with the prefix and does NOT call onUploaded', async () => {
+    uploadFileMock.mockImplementation(() => Promise.reject(new Error('Unsupported file type')));
+    const onUploaded = mock((_url: string): void => {});
+    const file = new File(['x'], 'x.pdf', { type: 'application/pdf' });
+
+    await runUpload(file, ['image/png'], onUploaded);
+
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    const message = toastErrorMock.mock.calls[0]?.[0];
+    expect(message).toBe('Upload failed: Unsupported file type');
+    expect(onUploaded).not.toHaveBeenCalled();
+  });
+
+  test('(d) error path tolerates non-Error rejections', async () => {
+    uploadFileMock.mockImplementation(() => Promise.reject('string-rejection'));
+    const onUploaded = mock((_url: string): void => {});
+    const file = new File(['x'], 'x.png', { type: 'image/png' });
+
+    await runUpload(file, ['image/png'], onUploaded);
+
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock.mock.calls[0]?.[0]).toBe('Upload failed: string-rejection');
+    expect(onUploaded).not.toHaveBeenCalled();
   });
 });
 

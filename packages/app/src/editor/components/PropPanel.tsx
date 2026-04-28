@@ -16,13 +16,15 @@
  */
 
 import type { PropDef } from '@inkeep/open-knowledge-core';
-import { ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, Loader2, Upload } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
 
 /**
@@ -99,6 +101,41 @@ export function countAdvancedSet(
   return count;
 }
 
+/**
+ * Pick the prop whose Input should receive `autoFocus={true}` on PropPanel
+ * mount: the first PropDefString in declared order with `autoFocus: true`
+ * and not `hidden`. Other Inputs render with `autoFocus={false}`. Returns
+ * `null` when no prop opts in. Pure; safe to call inside render.
+ */
+export function getAutoFocusedPropName(props: PropDef[]): string | null {
+  for (const p of props) {
+    if (p.type !== 'string') continue;
+    if (p.hidden === true) continue;
+    if (p.autoFocus === true) return p.name;
+  }
+  return null;
+}
+
+/**
+ * Behavioral half of the PropPanel upload affordance — exported so the unit
+ * test can drive the success/error semantics without a real DOM. The button
+ * component below wraps this with the in-flight `uploading` state and the
+ * file-input value reset.
+ */
+export async function runUpload(
+  file: File,
+  accept: readonly string[],
+  onUploaded: (url: string) => void,
+): Promise<void> {
+  try {
+    const { url } = await uploadFile(file, accept);
+    onUploaded(url);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    toast.error(`Upload failed: ${message}`);
+  }
+}
+
 interface PropPanelProps {
   /**
    * Active descriptor — drives both the prop controls (form-scoped to the
@@ -139,6 +176,7 @@ export function PropPanel({
   const commonProps = editableProps.filter((p) => !('advanced' in p && p.advanced));
   const advancedProps = editableProps.filter((p) => 'advanced' in p && p.advanced);
   const advancedSetCount = countAdvancedSet(advancedProps, values);
+  const autoFocusedPropName = getAutoFocusedPropName(descriptor.props);
 
   // Convert affordance is only meaningful for compat descriptors that declare
   // a target. Narrowing on `surface` exposes `convertibleTo`.
@@ -162,6 +200,7 @@ export function PropPanel({
           propDef={propDef}
           value={values[propDef.name]}
           onChange={(v) => onChange(propDef.name, v)}
+          isAutoFocused={propDef.name === autoFocusedPropName}
         />
       ))}
       {advancedProps.length > 0 && (
@@ -195,6 +234,7 @@ export function PropPanel({
                   propDef={propDef}
                   value={values[propDef.name]}
                   onChange={(v) => onChange(propDef.name, v)}
+                  isAutoFocused={propDef.name === autoFocusedPropName}
                 />
               ))}
             </CollapsibleContent>
@@ -234,10 +274,12 @@ function PropControl({
   propDef,
   value,
   onChange,
+  isAutoFocused,
 }: {
   propDef: PropDef;
   value: unknown;
   onChange: (value: unknown) => void;
+  isAutoFocused: boolean;
 }) {
   switch (propDef.type) {
     case 'reactnode':
@@ -247,18 +289,25 @@ function PropControl({
       return null;
     case 'string': {
       const stringId = `prop-${propDef.name}`;
+      const accept = propDef.accept;
+      const showUpload = accept !== undefined && accept.length > 0;
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={stringId} className="text-xs text-muted-foreground">
             {humanizePropName(propDef.name)}
           </label>
-          <Input
-            id={stringId}
-            type="text"
-            value={(value as string) ?? ''}
-            onChange={(e) => onChange(e.target.value)}
-            className="h-7 text-sm"
-          />
+          <div className="flex gap-1">
+            <Input
+              id={stringId}
+              type="text"
+              value={(value as string) ?? ''}
+              onChange={(e) => onChange(e.target.value)}
+              autoFocus={isAutoFocused}
+              data-prop-autofocus={isAutoFocused ? '' : undefined}
+              className="h-7 text-sm"
+            />
+            {showUpload && <PropUploadButton accept={accept} onUploaded={(url) => onChange(url)} />}
+          </div>
         </div>
       );
     }
@@ -340,4 +389,64 @@ function PropControl({
     default:
       return assertUnreachable(propDef);
   }
+}
+
+/**
+ * Upload affordance rendered next to a PropDefString input when the prop
+ * declares `accept`. Owns its own in-flight state — the loading spinner +
+ * disabled button — so PropControl stays a pure render of the prop value.
+ * Clicking the button triggers a programmatic click on the hidden file
+ * input; the file input's `onChange` runs the upload and pipes the
+ * resolved URL into the prop's `onChange`.
+ */
+function PropUploadButton({
+  accept,
+  onUploaded,
+}: {
+  accept: readonly string[];
+  onUploaded: (url: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept.join(',')}
+        className="hidden"
+        data-prop-upload-input=""
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setUploading(true);
+          try {
+            await runUpload(file, accept, onUploaded);
+          } catch {
+            // runUpload owns its own toast; the empty catch keeps cleanup
+            // running on the (theoretical) unhandled rejection path.
+          }
+          setUploading(false);
+          // Reset so re-selecting the same file still fires onChange.
+          if (inputRef.current) inputRef.current.value = '';
+        }}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={uploading}
+        aria-label="Upload file"
+        data-prop-upload-trigger=""
+        className="h-7 px-2"
+        onClick={() => inputRef.current?.click()}
+      >
+        {uploading ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <Upload className="size-3.5" />
+        )}
+      </Button>
+    </>
+  );
 }
