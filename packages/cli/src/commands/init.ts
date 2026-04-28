@@ -127,7 +127,14 @@ const writesProject = (s: McpScope) => s !== 'user';
  */
 async function promptMcpScope(): Promise<McpScope | null> {
   const choices = await checkbox({
-    message: 'Where should the MCP server be configured?',
+    message: 'Where should the MCP server be configured?\n',
+    required: false,
+    theme: {
+      icon: {
+        checked: '[x]',
+        unchecked: '[ ]',
+      },
+    },
     choices: [
       {
         name: 'User-level  (~/.claude.json, ~/.cursor/mcp.json, …)',
@@ -141,6 +148,7 @@ async function promptMcpScope(): Promise<McpScope | null> {
       },
     ],
   });
+
   if (choices.includes('user') && choices.includes('project')) return 'both';
   if (choices.includes('user')) return 'user';
   if (choices.includes('project')) return 'project';
