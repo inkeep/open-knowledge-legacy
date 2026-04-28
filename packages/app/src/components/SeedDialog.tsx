@@ -189,8 +189,8 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
             Initialize LLM brain
           </DialogTitle>
           <DialogDescription>
-            Three layers designed for working with AI agents: raw evidence, in-progress thinking,
-            and decisions you trust.
+            Three layers designed so AI agents can navigate naturally: raw sources, working drafts,
+            and canonical articles.
           </DialogDescription>
         </DialogHeader>
 
