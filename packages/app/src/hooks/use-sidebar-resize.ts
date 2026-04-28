@@ -138,15 +138,12 @@ export function useSidebarResize({
   const isDragging = useRef(false);
   const isInteractingWithRail = useRef(false);
   const lastWidth = useRef(0);
-  const lastLoggedWidth = useRef(0);
   const dragStartPoint = useRef(0);
   const lastDragDirection = useRef<'expand' | 'collapse' | null>(null);
   const lastTogglePoint = useRef(0);
-  const lastToggleWidth = useRef(0);
   const toggleCooldown = useRef(false);
   const lastToggleTime = useRef(0);
   const dragDistanceFromToggle = useRef(0);
-  const dragOffset = useRef(0);
   const railRect = useRef<DOMRect | null>(null);
 
   // Refs for auto-collapse threshold
@@ -175,16 +172,11 @@ export function useSidebarResize({
     startX.current = e.clientX;
     dragStartPoint.current = e.clientX;
     lastWidth.current = currentWidthPx;
-    lastLoggedWidth.current = currentWidthPx;
     lastTogglePoint.current = e.clientX;
-    lastToggleWidth.current = currentWidthPx;
     lastDragDirection.current = null;
     toggleCooldown.current = false;
     lastToggleTime.current = 0;
     dragDistanceFromToggle.current = 0;
-
-    // Reset drag offset
-    dragOffset.current = 0;
 
     // Store the rail element's position for nested sidebars
     if (isNested && dragRef.current) {
@@ -311,7 +303,6 @@ export function useSidebarResize({
             if (currentDragDirection === 'collapse' && shouldCollapse) {
               onToggle(); // Collapse
               lastTogglePoint.current = e.clientX;
-              lastToggleWidth.current = 0; // Width is 0 when collapsed
               toggleCooldown.current = true;
               lastToggleTime.current = now;
               return;
@@ -347,7 +338,6 @@ export function useSidebarResize({
             persistWidth(formattedWidth);
 
             lastTogglePoint.current = e.clientX;
-            lastToggleWidth.current = clampedWidth;
             toggleCooldown.current = true;
             lastToggleTime.current = now;
             return;
@@ -390,14 +380,11 @@ export function useSidebarResize({
       isDragging.current = false;
       isInteractingWithRail.current = false;
       lastWidth.current = 0;
-      lastLoggedWidth.current = 0;
       lastDragDirection.current = null;
       lastTogglePoint.current = 0;
-      lastToggleWidth.current = 0;
       toggleCooldown.current = false;
       lastToggleTime.current = 0;
       dragDistanceFromToggle.current = 0;
-      dragOffset.current = 0;
       railRect.current = null;
       setIsDraggingRail(false);
     }
