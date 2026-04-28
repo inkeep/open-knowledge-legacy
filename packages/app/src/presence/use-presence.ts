@@ -17,12 +17,17 @@ import type { AwarenessState, AwarenessUser } from './identity.ts';
  * A human participant — publishes per-doc awareness (name, color, icon,
  * cursor position, mode). Cursors are rendered by `@tiptap/extension-
  * collaboration-cursor`.
+ *
+ * `tabCount` is 1 for non-deduped entries and ≥2 when multiple clientIds
+ * share the same `principalId` (FR4 multi-tab dedupe). The tooltip in
+ * PresenceBar uses this to show "Name · N tabs" when N > 1.
  */
 export interface HumanParticipant {
   kind: 'human';
   clientId: number;
   user: AwarenessUser;
   mode: AwarenessState['mode'];
+  tabCount: number;
 }
 
 /**
@@ -74,7 +79,7 @@ function participantsEqual(a: Participant[], b: Participant[]): boolean {
     const y = b[i];
     if (x.kind !== y.kind) return false;
     if (x.kind === 'human' && y.kind === 'human') {
-      if (x.clientId !== y.clientId || x.mode !== y.mode) return false;
+      if (x.clientId !== y.clientId || x.mode !== y.mode || x.tabCount !== y.tabCount) return false;
       const u = x.user;
       const v = y.user;
       if (u.name !== v.name || u.color !== v.color || u.icon !== v.icon) return false;
@@ -94,6 +99,55 @@ function participantsEqual(a: Participant[], b: Participant[]): boolean {
     }
   }
   return true;
+}
+
+/**
+ * Dedupe `HumanParticipant[]` by `principalId`, collapsing multiple entries
+ * that share the same eligible principalId into one with `tabCount` set to
+ * the group size. Eligible means `typeof principalId === 'string' && principalId.length > 0`.
+ *
+ * Tie-break: the entry with the lowest `clientId` is the representative.
+ * Output order matches the first occurrence of each principalId in the input.
+ * Ineligible entries (no principalId or empty string) pass through as-is with
+ * `tabCount === 1`.
+ *
+ * Exported for unit testing — pure function over plain arrays.
+ */
+export function dedupeHumansByPrincipalId(humans: HumanParticipant[]): HumanParticipant[] {
+  // First pass: group eligible entries by principalId
+  const groups = new Map<string, HumanParticipant[]>();
+  for (const h of humans) {
+    const pid = h.user.principalId;
+    if (typeof pid === 'string' && pid.length > 0) {
+      const g = groups.get(pid);
+      if (g) g.push(h);
+      else groups.set(pid, [h]);
+    }
+  }
+
+  // For each eligible group, identify the representative (lowest clientId)
+  const reps = new Map<string, { repClientId: number; count: number }>();
+  for (const [pid, group] of groups) {
+    const repClientId = group.reduce((min, h) => Math.min(min, h.clientId), Infinity);
+    reps.set(pid, { repClientId, count: group.length });
+  }
+
+  // Second pass: rebuild in original input order, skipping non-representative eligible entries
+  const result: HumanParticipant[] = [];
+  for (const h of humans) {
+    const pid = h.user.principalId;
+    if (typeof pid === 'string' && pid.length > 0) {
+      const info = reps.get(pid);
+      if (info && info.repClientId === h.clientId) {
+        result.push({ ...h, tabCount: info.count });
+      }
+      // else: non-representative — skipped (deduped)
+    } else {
+      result.push({ ...h, tabCount: 1 });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -167,9 +221,11 @@ export function usePresence(
             clientId,
             user,
             mode: (s.mode as HumanParticipant['mode']) ?? 'wysiwyg',
+            tabCount: 1,
           });
         }
       }
+      const deduped = dedupeHumansByPrincipalId(humans);
 
       const now = Date.now();
       const { current: currentAgents, crossDoc: crossDocAgents } = systemAwareness
@@ -190,7 +246,7 @@ export function usePresence(
       const currentAgentParticipants: AgentParticipant[] = currentAgents.map(toParticipant);
       const crossDocAgentParticipants: AgentParticipant[] = crossDocAgents.map(toParticipant);
 
-      const nextCurrent: Participant[] = [...humans, ...currentAgentParticipants];
+      const nextCurrent: Participant[] = [...deduped, ...currentAgentParticipants];
       const nextCrossDoc: Participant[] = crossDocAgentParticipants;
       // Functional updater so the equality check compares against the
       // LATEST committed state, not a stale closure capture. When both
