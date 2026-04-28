@@ -25,6 +25,14 @@ import { isProcessAlive } from './process-alive.ts';
 
 export type LockName = 'server' | 'ui';
 
+/**
+ * Who started this server. `interactive` means a user-facing CLI/Electron
+ * boot; `mcp-spawned` means an MCP-driven detach-spawn (see
+ * `packages/cli/src/mcp/server-discovery.ts`). Desktop attach validation
+ * uses this to refuse non-collab-capable peers.
+ */
+export type LockKind = 'interactive' | 'mcp-spawned';
+
 export interface ProcessLockMetadata {
   pid: number;
   hostname: string;
@@ -32,6 +40,25 @@ export interface ProcessLockMetadata {
   port: number;
   startedAt: string;
   worktreeRoot: string;
+  /**
+   * Optional — absent on locks written by older binaries. Readers MUST
+   * tolerate `undefined` and fall through to conservative paths
+   * (e.g., the desktop refuses to attach when kind is missing).
+   */
+  kind?: LockKind;
+  /**
+   * Pid of the *spawner* — not `process.ppid` (which gets reparented to
+   * launchd when the spawn is detached). For `mcp-spawned`: the MCP server's
+   * pid. For `interactive`: the user-facing host (CLI shell, Electron main).
+   * Optional for legacy-lock tolerance.
+   */
+  parentPid?: number;
+  /**
+   * Protocol/feature surfaces this server exposes. v1: `["http", "ws"]`
+   * for any server booted via `bootServer`. Forward-compat for variants
+   * that lack one or the other.
+   */
+  capabilities?: string[];
 }
 
 export interface ProcessLockHandle {
@@ -144,7 +171,13 @@ function parseLock(lockPath: string, logPrefix: string): ProcessLockMetadata | n
 export function acquireProcessLock(opts: {
   lockName: LockName;
   lockDir: string;
-  metadata: { port: number; worktreeRoot: string };
+  metadata: {
+    port: number;
+    worktreeRoot: string;
+    kind?: LockKind;
+    parentPid?: number;
+    capabilities?: string[];
+  };
 }): ProcessLockHandle {
   const { lockName, lockDir, metadata: init } = opts;
   const logPrefix = `[${lockName}-lock]`;
@@ -158,6 +191,9 @@ export function acquireProcessLock(opts: {
     port: init.port,
     startedAt: new Date().toISOString(),
     worktreeRoot: init.worktreeRoot,
+    ...(init.kind !== undefined && { kind: init.kind }),
+    ...(init.parentPid !== undefined && { parentPid: init.parentPid }),
+    ...(init.capabilities !== undefined && { capabilities: init.capabilities }),
   };
   const payload = JSON.stringify(record, null, 2);
 

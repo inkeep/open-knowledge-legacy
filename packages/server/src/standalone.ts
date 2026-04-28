@@ -116,6 +116,18 @@ export interface ServerOptions {
    * runtime that launched this server — necessary in dev (bun + .ts entry).
    */
   localOpCliArgs?: string[];
+  /**
+   * Server kind written into the lock metadata. `interactive` (default) for
+   * user-facing boots; `mcp-spawned` for the MCP detach-spawn path. Desktop
+   * attach validation refuses to attach to non-interactive locks.
+   */
+  lockKind?: 'interactive' | 'mcp-spawned';
+  /**
+   * Pid of the spawning process, written into the lock metadata. For
+   * `mcp-spawned`: the MCP server's pid. For `interactive`: the user-facing
+   * host pid. Optional — desktop's parent-liveness gate skips when absent.
+   */
+  parentPid?: number;
 }
 
 export interface ServerInstance {
@@ -216,6 +228,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
+    kind: options.lockKind ?? 'interactive',
+    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
+    // Every server booted through `createServer` wires Hocuspocus + WS
+    // upgrade in `boot.ts`. The capability flag lets future variants
+    // (e.g. an HTTP-only relay) advertise differently.
+    capabilities: ['http', 'ws'],
   });
 
   // Synchronous init — if any constructor throws, release the lock before propagating.
@@ -1534,7 +1552,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           // `git rebase`, or `git checkout` produce buffered file-watcher events, so
           // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
           if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
-            const contentRootForShadow = contentRoot ?? 'content';
+            const contentRootForShadow = contentRoot ?? '.';
             try {
               const sha = await commitUpstreamImport(
                 shadowRef.current,

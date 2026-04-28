@@ -66,6 +66,29 @@ export interface UtilityErrorMessage {
   type: 'error';
   message: string;
   stack?: string;
+  /**
+   * Distinguishes recoverable failure modes from generic errors so the
+   * main process can pick a remediation path (auto-kill an MCP-spawned
+   * lock holder vs. show a user dialog vs. log-only). Absent for the
+   * default "something else went wrong" case — main treats it as the
+   * existing showErrorBox path.
+   */
+  kind?: 'lock-collision' | 'mcp-server-stuck' | 'mcp-server-killed';
+  /**
+   * Present only on `kind: 'lock-collision'`. Lets the main process
+   * inspect the colliding lock's `kind` / `parentPid` / `port` and decide
+   * whether to auto-kill (mcp-spawned) or surface a dialog (interactive).
+   */
+  existingLock?: {
+    pid: number;
+    hostname: string;
+    port: number;
+    startedAt: string;
+    worktreeRoot: string;
+    kind?: 'interactive' | 'mcp-spawned';
+    parentPid?: number;
+    capabilities?: string[];
+  };
 }
 export interface UtilityDegradedMessage {
   type: 'degraded';
@@ -258,6 +281,18 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
         message: (err as Error).message,
         stack: (err as Error).stack,
       };
+      // Surface lock-collision metadata to the main process so it can
+      // decide whether to auto-kill an MCP-spawned holder vs. show a
+      // user-blocking dialog. We compare on `name` (not instanceof)
+      // because `bootServer` is dynamically imported and the class
+      // identity may differ across module-realm boundaries.
+      if (err && typeof err === 'object' && (err as Error).name === 'ServerLockCollisionError') {
+        const existing = (err as { existing?: UtilityErrorMessage['existingLock'] }).existing;
+        if (existing) {
+          errMsg.kind = 'lock-collision';
+          errMsg.existingLock = existing;
+        }
+      }
       deps.parentPort?.postMessage(errMsg);
       rejectReady(err as Error);
       deps.exit(1);
