@@ -72,7 +72,7 @@ let warnedOnMalformedAwareness = false;
  * tick's `setState` when no peer actually changed — React Compiler cannot
  * elide this because every tick produces a fresh object reference.
  */
-function participantsEqual(a: Participant[], b: Participant[]): boolean {
+export function participantsEqual(a: Participant[], b: Participant[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i];
@@ -107,9 +107,11 @@ function participantsEqual(a: Participant[], b: Participant[]): boolean {
  * the group size. Eligible means `typeof principalId === 'string' && principalId.length > 0`.
  *
  * Tie-break: the entry with the lowest `clientId` is the representative.
- * Output order matches the first occurrence of each principalId in the input.
- * Ineligible entries (no principalId or empty string) pass through as-is with
- * `tabCount === 1`.
+ * Output order matches the position of each group's representative (lowest-clientId
+ * entry) in the input. When the representative is NOT the first-occurring entry for
+ * that principalId, earlier non-representative entries are skipped and the group
+ * appears at the representative's position. Ineligible entries (no principalId or
+ * empty string) pass through as-is with `tabCount === 1`.
  *
  * Exported for unit testing — pure function over plain arrays.
  */

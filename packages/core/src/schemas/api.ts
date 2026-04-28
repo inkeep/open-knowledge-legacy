@@ -62,21 +62,30 @@ export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;
  * `z.infer<typeof PrincipalResponseSchema>`. Schema-first eliminates the
  * "two parallel declarations + cast at trust boundary" failure class.
  *
- * `display_name` and `display_email` are `.min(1)` so an empty git-config
- * value (template-rendered configs, mis-quoted setup scripts) routes
- * through the `safeParse` failure path to the random-identity fallback
- * rather than rendering an empty initial / blank tooltip / blank cursor
- * label downstream.
+ * `display_name` is `.min(1)` so an empty git-config user.name
+ * (template-rendered configs, mis-quoted setup scripts) routes through the
+ * `safeParse` failure path to the random-identity fallback rather than
+ * rendering an empty initial / blank tooltip / blank cursor label downstream.
+ * `display_email` has no length constraint because it is never rendered in
+ * awareness — it is used only server-side (shadow-repo authoring,
+ * Co-Authored-By). Rejecting an otherwise-valid principal because its email
+ * is absent would discard a usable `display_name` and `id` unnecessarily.
  *
  * `.loose()` preserves unknown fields for forward-compat — new server
  * fields don't break older clients. Parse failures fall back silently to
  * the random-identity fallback; presence remains functional.
+ *
+ * Note: this schema uses a bare object shape (no `ok: true` discriminator),
+ * unlike `ServerInfoResponseSchema`. `handlePrincipal` returns the raw
+ * `principal` record directly; `handleMetricsAgentPresence` follows the same
+ * pattern. The `ok: true` envelope applies to endpoints that synthesize their
+ * own response objects (`handleServerInfo`, `handleWorkspace`).
  */
 export const PrincipalResponseSchema = z
   .object({
     id: z.string().min(1),
     display_name: z.string().min(1),
-    display_email: z.string().min(1),
+    display_email: z.string(),
     source: z.enum(['git-config', 'synthesized']),
     created_at: z.string().min(1),
   })

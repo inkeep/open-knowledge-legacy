@@ -4,6 +4,11 @@ Append-only process history. Latest entry on top.
 
 ---
 
+## 2026-04-28 — Post-ship repair: scope exception recorded
+
+- **`api-extension.ts` touched despite §16 EXCLUDE.** Commit `2ebb3ff8` added a loopback + Host-header gate to `handlePrincipal`, mirroring the identical gate already present on `handleWorkspace` and `handleMetricsAgentPresence`. The §16 rationale ("server side already correct; no changes") assumed the gate was already in place — it was not. The change is correct and low-risk (17 lines, established pattern), so it was accepted rather than reverted.
+- **Coverage added.** `packages/app/tests/integration/principal-endpoint.test.ts` adds integration tests for the security gates: happy-path schema round-trip, DNS-rebinding Host-header rejection (403), and auth-before-method ordering (POST with bad Host → 403, not 405). Mirrors `workspace-endpoint.test.ts` precedent.
+
 ## 2026-04-27 — Session 1: Intake + scaffold
 
 - **Seed received:** Use principal git identity (`display_name` from `principal.json`) for client-side presence entries instead of random animal-adjective names. User raised five open questions: transport, color, privacy/opt-out, localStorage precedence, refresh semantics.
@@ -11,7 +16,7 @@ Append-only process history. Latest entry on top.
 - **Decisions locked from user (5 + 2):**
   - D1 (Avatar visual): real-name humans render as initials; animals reserved for `source: 'synthesized'`. LOCKED.
   - D2 (localStorage migration): pre-launch state allows overwrite/ignore. LOCKED.
-  - D3 (Color derivation): deterministic via `colorFromSeed(principal.id)` against HUMAN_COLORS palette. LOCKED.
+  - D3 (Color derivation): deterministic via `colorFromSeed(principal.id)` against HUMAN\_COLORS palette. LOCKED.
   - D4 (Fetch failure): silent fallback with warn-log. LOCKED.
   - D5 (Mid-session git config change): stale-until-reload, no client-side refresh. LOCKED.
   - D6 (Multi-tab UX): single avatar, tooltip "Name · 2 tabs", no badge. LOCKED.
@@ -55,10 +60,10 @@ Append-only process history. Latest entry on top.
 - **DC7 (Complication framing mentions pair-coding but Resolution doesn't deliver) — ACCEPTED.** §1 Complication trimmed: "multi-tab correlation for solo dev" instead of "pair-coding sessions." Multi-machine peering caveat added.
 - **DC8 (initials computation produces "m" for `miles-kt-inkeep`) — ACCEPTED.** New FR13: `computeInitials(name)` helper handles common git-config formats. Caps at 2 chars uppercase.
 - **AUD F7 (FR12 acceptance criterion too loose) — ACCEPTED.** FR12 now requires test asserting `user.coeditor` preserved under all three FR3 states.
-- **AUD F8 (§16 EXCLUDE missing tab-identity.ts/provider-pool.ts) — ACCEPTED.** Both files explicitly excluded; matches STOP_IF list.
+- **AUD F8 (§16 EXCLUDE missing tab-identity.ts/provider-pool.ts) — ACCEPTED.** Both files explicitly excluded; matches STOP\_IF list.
 - **AUD F9 (FR4 empty-string vs undefined principalId) — ACCEPTED.** Eligibility rule made explicit: `typeof principalId === 'string' && principalId.length > 0`.
 - **AUD F10 (A4 confidence label vs verification plan) — ACCEPTED.** A4 verification plan rewritten — the prose IS the verification (no Yjs awareness debounce); status now "Verified."
-- **AUD F11 (HumanAvatar second-word matches ANIMAL_ICON_MAP key) — ACCEPTED.** D1 made explicit: animal icons gated on `source === 'synthesized'`, not name-pattern matching. Real human "John Bird" with git config never gets the bird icon.
+- **AUD F11 (HumanAvatar second-word matches ANIMAL\_ICON\_MAP key) — ACCEPTED.** D1 made explicit: animal icons gated on `source === 'synthesized'`, not name-pattern matching. Real human "John Bird" with git config never gets the bird icon.
 - **Cascade — new requirements / decisions:**
   - FR13 (`computeInitials` helper)
   - D10 (wire-format door classification)
