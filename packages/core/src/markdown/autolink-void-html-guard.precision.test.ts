@@ -108,6 +108,14 @@ describe('Guard precision: valid MDX survives protectFromMdx() unchanged', () =>
       '<Widget\n  title="hello"\n  data="https://api.com/v1"\n/>',
       '<Callout type="warning">\n\nContent here\n\n</Callout>',
       '<Accordion title="First">\n\nContent\n\n</Accordion>',
+      // Lowercase canonical JSX descriptors — exempted via
+      // LOWERCASE_JSX_CANONICAL_TAGS in autolink-void-html-guard.ts. The
+      // exemption gates on the self-closing `/>` suffix; bare HTML void
+      // form (`<img src="x">`, no slash) stays guarded and is covered by
+      // the sibling `autolink-void-html-guard.test.ts:44, 90` cases.
+      '<img src="x.png" alt="test" />',
+      '<video src="v.mp4" controls />',
+      '<audio src="a.mp3" controls />',
     ];
 
     for (const mdx of valid) {
