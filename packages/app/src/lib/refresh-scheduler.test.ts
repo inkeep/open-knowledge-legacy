@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { setImmediate } from 'node:timers/promises'
+import { setImmediate } from 'node:timers/promises';
 import { createRefreshScheduler } from './refresh-scheduler';
 
 describe('createRefreshScheduler', () => {
@@ -27,7 +27,7 @@ describe('createRefreshScheduler', () => {
     expect(started).toEqual([1]);
 
     first.resolve();
-    await setImmediate()
+    await setImmediate();
 
     expect(started).toEqual([1, 2]);
   });
@@ -46,13 +46,13 @@ describe('createRefreshScheduler', () => {
     scheduler.request();
     scheduler.request();
     first.resolve();
-    await setImmediate()
+    await setImmediate();
     scheduler.request();
     scheduler.request();
     expect(calls).toBe(2);
 
     second.resolve();
-    await setImmediate()
+    await setImmediate();
 
     expect(calls).toBe(3);
   });
