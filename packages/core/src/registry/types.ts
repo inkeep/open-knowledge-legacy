@@ -39,6 +39,24 @@ export interface PropDefBase {
 export interface PropDefString extends PropDefBase {
   type: 'string';
   defaultValue?: string;
+  /**
+   * Allowed file types for an optional upload affordance on this prop. When
+   * set, the auto-rendered PropPanel input renders an upload icon-button next
+   * to the URL field that opens a native file picker constrained to these
+   * types. Each entry is either a MIME type (`image/png`), a MIME wildcard
+   * (`image/*`), or a `.ext` shortcut (`.svg`) — all three forms are valid per
+   * MDN Web/HTML/Element/input#accept. The array is joined to a comma-string
+   * at the `<input accept>` boundary; clients are still expected to validate
+   * server-side (the `accept` value is a UX hint, not a security control).
+   */
+  accept?: readonly string[];
+  /**
+   * When the PropPanel mounts, focus this prop's input first. Mirrors the
+   * React DOM `autoFocus` convention. If multiple props on a descriptor set
+   * `autoFocus: true`, the first match (in declared `props[]` order) wins —
+   * deterministic and avoids a separate ordering field.
+   */
+  autoFocus?: boolean;
 }
 
 export interface PropDefBoolean extends PropDefBase {
