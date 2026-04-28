@@ -8,6 +8,9 @@ import {
   commitUpstreamImport,
   commitWip,
   initShadowRepo,
+  type ParkableDoc,
+  parkBranch,
+  SERVICE_WRITER,
   saveVersion,
   type WriterIdentity,
 } from './shadow-repo';
@@ -251,6 +254,27 @@ describe('getDocumentHistory', () => {
     expect(result.entries).toHaveLength(0);
     expect(result.total).toBe(0);
     expect(result.hasMore).toBe(false);
+  });
+
+  test('hides park commits even when their tree-deletion shadows the doc path', async () => {
+    const { contentDir, shadow } = await setup();
+
+    // Seed a service-writer WIP commit on refs/wip/main/openknowledge-service —
+    // its tree contains content/docs/intro.md, so the next park (whose tree
+    // omits that path) registers a "deletion" diff and would surface via
+    // git log pathspec without explicit filtering.
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Service edit\n');
+    await commitWip(shadow, SERVICE_WRITER, 'content/docs', 'wip: service edit');
+
+    const docs: ParkableDoc[] = [
+      { docName: 'intro', markdown: '# Parked\n', diskSnapshot: '# Service edit\n' },
+    ];
+    const parkSha = await parkBranch(shadow, 'main', SERVICE_WRITER.id, docs, 'feature');
+    expect(parkSha).toHaveLength(40);
+
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
+    expect(result.entries.some((e) => e.sha === parkSha)).toBe(false);
+    expect(result.entries.every((e) => e.type !== 'park')).toBe(true);
   });
 
   test('deduplicates entries that appear in multiple ref walks', async () => {
