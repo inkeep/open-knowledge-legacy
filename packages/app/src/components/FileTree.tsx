@@ -519,9 +519,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         const data = await res.json().catch(() => null);
         if (!active) return;
         if (res.ok && data?.ok) {
-          model.resetPaths(documentsToTreePaths(data.documents), {
-            initialExpandedPaths: activeAncestorTreePathsRef.current,
-          });
           setDocuments(data.documents);
           setError(null);
         } else {

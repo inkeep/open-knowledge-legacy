@@ -8,7 +8,6 @@ describe('file tree document-list freshness wiring', () => {
       "import { createRefreshScheduler } from '@/lib/refresh-scheduler'",
     );
     expect(FILE_TREE_SOURCE).toContain('const scheduler = createRefreshScheduler(refreshDocs)');
-    expect(FILE_TREE_SOURCE).toContain('model.resetPaths(documentsToTreePaths(data.documents)');
     expect(FILE_TREE_SOURCE).toContain('subscribeToDocumentsChanged');
   });
 
