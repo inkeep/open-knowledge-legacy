@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
@@ -143,8 +143,6 @@ export function App() {
   // outside Electron. Mounted at the App root so Cmd+K works regardless
   // of which surface has focus (editor, sidebar, timeline, etc.).
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
-
-  const _ref = useRef<HTMLDivElement>(null);
 
   return (
     <ProfilerBoundary name="app">
