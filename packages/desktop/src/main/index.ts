@@ -66,6 +66,7 @@ import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
+  showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
 import {
@@ -689,6 +690,32 @@ function registerIpcHandlers() {
       },
       line,
     );
+    return undefined;
+  });
+
+  handle('ok:shell:show-item-in-folder', async (event, path) => {
+    // Resolve caller window's project directory (undefined for Navigator).
+    // Validation, refusal, and security rationale live in `showItemInFolderImpl`.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    const result = showItemInFolderImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        showItemInFolder: (p) => shell.showItemInFolder(p),
+      },
+      path,
+    );
+    // Channel result is `undefined` (silent-by-design — don't leak validation
+    // signal back to a potentially-compromised renderer), but a refusal is
+    // worth a main-side breadcrumb: a renderer bug constructing a wrong path
+    // otherwise produces a "nothing happened" UX with no debug trail.
+    if (!result.ok) {
+      console.warn('[main] show-item-in-folder refused', { reason: result.reason });
+    }
     return undefined;
   });
 
