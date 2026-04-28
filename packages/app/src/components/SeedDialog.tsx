@@ -1,13 +1,4 @@
-import {
-  BookMarked,
-  FileCog,
-  FileText,
-  FlaskConical,
-  Folder,
-  Library,
-  Loader2,
-  Sparkles,
-} from 'lucide-react';
+import { FileCog, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -20,7 +11,15 @@ import {
   Dialog as DialogRoot,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+  FieldTitle,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type {
   OkScaffoldPlan,
   OkSeedApplyResult,
@@ -191,14 +190,13 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
           </DialogDescription>
         </DialogHeader>
 
-        <DialogBody>
+        <DialogBody className="space-y-6">
           <RootPicker
             choice={rootChoice}
             subfolder={subfolder}
             onChoiceChange={setRootChoice}
             onSubfolderChange={setSubfolder}
           />
-
           <SeedDialogBody phase={phase} />
         </DialogBody>
 
@@ -238,55 +236,55 @@ function RootPicker({
   onSubfolderChange: (next: string) => void;
 }) {
   return (
-    <div className="space-y-2 border-y py-3">
-      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Where should the brain live?
-      </p>
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="radio"
-          name="seed-root-choice"
-          checked={choice === 'project-root'}
-          onChange={() => onChoiceChange('project-root')}
-          className="mt-1"
-        />
-        <span>
-          <span className="font-medium">Project root</span>
-          <span className="block text-xs text-muted-foreground">
-            Scaffold the three folders directly under this project.
-          </span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="radio"
-          name="seed-root-choice"
-          checked={choice === 'subfolder'}
-          onChange={() => onChoiceChange('subfolder')}
-          className="mt-1"
-        />
-        <span className="flex-1">
-          <span className="font-medium">In a subfolder</span>
-          <span className="block text-xs text-muted-foreground">
-            Created if missing. Reuses the folder if it already exists.
-          </span>
-          {/*
-           * No `disabled` here: clicking the input promotes the radio via
-           * onFocus, so the user can switch to subfolder mode and start
-           * typing in one click. With `disabled` set, focus would never fire.
-           */}
-          <Input
-            value={subfolder}
-            onChange={(e) => onSubfolderChange(e.target.value)}
-            onFocus={() => onChoiceChange('subfolder')}
-            placeholder="brain"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            className="mt-1.5 font-mono text-xs"
-          />
-        </span>
-      </label>
+    <div className="space-y-2 py-1">
+      <p className="text-sm font-medium">Where should the brain live?</p>
+      <RadioGroup
+        className="sm:flex"
+        value={choice}
+        onValueChange={(next) => onChoiceChange(next as RootChoice)}
+      >
+        <FieldLabel htmlFor="seed-root-project-root">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldTitle>Project root</FieldTitle>
+              <FieldDescription>
+                Scaffold the three folders directly under this project.
+              </FieldDescription>
+            </FieldContent>
+            <RadioGroupItem value="project-root" id="seed-root-project-root" />
+          </Field>
+        </FieldLabel>
+        <FieldLabel htmlFor="seed-root-subfolder">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldTitle>In a subfolder</FieldTitle>
+              {/* Override FieldDescription's `nth-last-2:-mt-1` rule, which
+                 tightens description-to-title spacing whenever a sibling
+                 (the Input below) follows. We want the title-to-description
+                 gap to match the project-root card visually. */}
+              <FieldDescription className="nth-last-2:mt-0">
+                Created if missing. Reuses the folder if it already exists.
+              </FieldDescription>
+              {/*
+               * No `disabled` here: focusing the input promotes the radio via
+               * onFocus, so the user can switch to subfolder mode and start
+               * typing in one click. With `disabled` set, focus would never fire.
+               */}
+              <Input
+                value={subfolder}
+                onChange={(e) => onSubfolderChange(e.target.value)}
+                onFocus={() => onChoiceChange('subfolder')}
+                placeholder="brain"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="mt-1.5 font-mono text-xs bg-background"
+              />
+            </FieldContent>
+            <RadioGroupItem value="subfolder" id="seed-root-subfolder" />
+          </Field>
+        </FieldLabel>
+      </RadioGroup>
     </div>
   );
 }
@@ -324,8 +322,6 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
 
   return (
     <div className="space-y-6 py-1 text-sm">
-      <LayerPreview />
-
       <CreatedItemsList plan={plan} />
 
       {plan.warnings.length > 0 ? (
@@ -339,57 +335,42 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
   );
 }
 
-interface LayerCard {
-  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: 'true' }>;
+interface Layer {
   name: string;
   blurb: string;
 }
 
-const LAYERS: readonly LayerCard[] = [
+/** Short description per starter folder (≤2 lines) — used by
+    `CreatedItemsList` to annotate each folder row in the "what gets created"
+    list. */
+const LAYERS: readonly Layer[] = [
   {
-    icon: Library,
     name: 'external-sources',
-    blurb: 'Raw sources saved verbatim',
+    blurb:
+      'Raw sources saved verbatim — full text of URLs and PDFs, not just citations. Every claim traces back to preserved evidence.',
   },
   {
-    icon: FlaskConical,
     name: 'research',
-    blurb: 'Provisional analysis with citations',
+    blurb:
+      'Provisional analysis synthesizing sources. Every claim cites a doc; promotes to articles/ once the team trusts the findings.',
   },
   {
-    icon: BookMarked,
     name: 'articles',
-    blurb: 'Canonical decisions you trust',
+    blurb:
+      'Canonical decisions. Each links back through research/ to its sources — no dead links, full evidence chain in repo.',
   },
 ] as const;
 
-/**
- * Horizontal three-card preview of the layer mental model. Order conveys flow
- * (sources → drafts → canon).
- */
-function LayerPreview() {
-  return (
-    <div className="flex items-stretch gap-3">
-      {LAYERS.map((layer) => (
-        <div key={layer.name} className="flex flex-1 items-center gap-1.5">
-          <div className="flex flex-1 flex-col gap-1.5 rounded-md border border-border/60 bg-muted/30 p-3">
-            <div className="flex items-center gap-1.5">
-              <layer.icon aria-hidden="true" className="h-4 w-4 text-muted-foreground opacity-70" />
-              <code className="font-mono leading-tight">{layer.name}</code>
-            </div>
-            <p className="leading-snug text-muted-foreground">{layer.blurb}</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Hand-written 1-line descriptions for files outside the layer set. Folders
-    inherit their description from `LAYERS` so cards + rows stay in sync. */
+/** Hand-written 1-line descriptions for files outside the layer set. */
 const FILE_DESCRIPTIONS: Record<string, string> = {
   'log.md': 'Append-only timeline',
 };
+
+/** Last path segment so descriptions still attach in subfolder mode — e.g.
+    `brain/external-sources` resolves to the `external-sources` layer blurb. */
+function basename(path: string): string {
+  return path.split('/').pop() ?? path;
+}
 
 interface CreatedItem {
   kind: 'folder' | 'file' | 'config';
@@ -404,14 +385,14 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
     .map((e) => ({
       kind: 'folder',
       name: `${e.path}/`,
-      description: folderBlurbs.get(e.path) ?? '',
+      description: folderBlurbs.get(basename(e.path)) ?? '',
     }));
   const files: CreatedItem[] = plan.created
     .filter((e) => e.kind === 'file')
     .map((e) => ({
       kind: 'file',
       name: e.path,
-      description: FILE_DESCRIPTIONS[e.path] ?? '',
+      description: FILE_DESCRIPTIONS[basename(e.path)] ?? '',
     }));
   // One synthetic row representing the config.yml side of the apply — either
   // created from scratch (if absent) or appended to (if present). One row,
