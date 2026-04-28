@@ -17,6 +17,7 @@ import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
@@ -72,6 +73,14 @@ export function applyExternalChange(
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
+  // Capture the prior FM string before the transact so we can attribute the
+  // edit_surface counter only to events that actually changed the FM. The
+  // legacy slot is mirrored on every FM-touching write site, so reading it
+  // here gives us the post-load state. `setFrontmatterFromYaml` is per-key
+  // and skips equal slots, but the counter must reflect "FM was edited from
+  // disk," not "applyExternalChange ran" — body-only edits should not count.
+  const priorFm = (document.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
+
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
@@ -91,6 +100,10 @@ export function applyExternalChange(
       applyFastDiff(ytext, currentText, content);
     }
   }, FILE_WATCHER_ORIGIN);
+
+  if (priorFm !== frontmatter) {
+    recordFrontmatterEditSurface('file-watcher');
+  }
 
   // Attribute this disk-originated write to the file-system classified writer (D41).
   // FILE_WATCHER_ORIGIN has skipStoreHooks:true so persistence.ts:onStoreDocument

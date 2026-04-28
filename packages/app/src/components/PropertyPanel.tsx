@@ -42,12 +42,15 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
-  async function commitPatch(patch: Record<string, FrontmatterValue | null>): Promise<PatchResult> {
+  async function commitPatch(
+    patch: Record<string, FrontmatterValue | null>,
+    op: FormOp,
+  ): Promise<PatchResult> {
     try {
       const res = await fetch('/api/frontmatter-patch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName, patch }),
+        body: JSON.stringify({ docName, patch, source: 'form', op }),
       });
       if (res.ok) return { ok: true, status: res.status };
       let parsed: { error?: unknown; fieldErrors?: unknown } = {};
@@ -101,13 +104,13 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
 
   async function commitProperty(key: string, value: FrontmatterValue) {
     clearError(key);
-    const result = await commitPatch({ [key]: value });
+    const result = await commitPatch({ [key]: value }, 'set');
     setErrorForKeys(result, [key]);
   }
 
   async function removeProperty(key: string) {
     clearError(key);
-    const result = await commitPatch({ [key]: null });
+    const result = await commitPatch({ [key]: null }, 'remove');
     setErrorForKeys(result, [key]);
   }
 
@@ -120,7 +123,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     if (value === undefined) {
       return { ok: false, status: 0, error: `Property "${oldKey}" not found` };
     }
-    return commitPatch({ [oldKey]: null, [newKey]: value });
+    return commitPatch({ [oldKey]: null, [newKey]: value }, 'rename');
   }
 
   function setType(key: string, nextType: FrontmatterType) {
@@ -167,7 +170,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setAdding({ ...adding, error: `Property "${trimmed}" already exists` });
       return;
     }
-    const result = await commitPatch({ [trimmed]: adding.value });
+    const result = await commitPatch({ [trimmed]: adding.value }, 'add');
     if (result.ok) {
       setAdding(null);
       return;
@@ -297,6 +300,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     </div>
   );
 }
+
+type FormOp = 'set' | 'add' | 'remove' | 'rename';
 
 interface PatchResult {
   ok: boolean;

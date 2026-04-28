@@ -136,6 +136,8 @@ export function EditorHeader({
         body: JSON.stringify({
           docName: activeDocName,
           patch: { title: '' },
+          source: 'form',
+          op: 'add',
         }),
       });
       if (!res.ok) {

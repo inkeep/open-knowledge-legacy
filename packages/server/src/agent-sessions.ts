@@ -36,6 +36,7 @@ export { colorFromSeed } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
@@ -179,6 +180,7 @@ function applyAgentMarkdownWriteInner(
     if (finalFm !== existingFm) {
       setFrontmatterFromYaml(document, unwrapFrontmatterFences(finalFm));
       metaMap.set('frontmatter', finalFm);
+      recordFrontmatterEditSurface('mcp-write');
     }
 
     // 6. Mirror Y.Text with minimal mutation. Only the changed region is

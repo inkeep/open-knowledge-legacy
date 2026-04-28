@@ -41,6 +41,7 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import {
   incrementBridgeMergeCheckpointCreated,
   incrementBridgeMergeContentLoss,
@@ -575,6 +576,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
             setFrontmatterFromYaml(doc, unwrapFrontmatterFences(frontmatter));
             metaMap.set('frontmatter', frontmatter);
           }, OBSERVER_SYNC_ORIGIN);
+          recordFrontmatterEditSurface('source-mode');
         }
         return;
       }
@@ -596,6 +598,11 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
       const pmNode = opts.schema.nodeFromJSON(parsedJson);
 
+      // Capture prior FM string so we can attribute the edit_surface counter
+      // only to events where source-mode actually changed FM. Body-only edits
+      // pass through Observer B every keystroke and should not count.
+      const priorFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);
@@ -607,6 +614,10 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         setFrontmatterFromYaml(doc, unwrapFrontmatterFences(frontmatter));
         metaMap.set('frontmatter', frontmatter);
       }, OBSERVER_SYNC_ORIGIN);
+
+      if (priorFm !== frontmatter) {
+        recordFrontmatterEditSurface('source-mode');
+      }
 
       incrementServerObserverFire('b');
 

@@ -113,6 +113,13 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import {
+  type FrontmatterEditSource,
+  type FrontmatterFormOp,
+  recordFrontmatterEditSurface,
+  recordFrontmatterPatchDuration,
+  withFormWriteSpan,
+} from './frontmatter-telemetry.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -168,7 +175,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer } from './telemetry.ts';
+import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 // Cache the HTTP duration histogram at module scope — lazy-init at first use
@@ -237,6 +244,19 @@ function findLooksLikeFrontmatter(find: string): boolean {
   if (find.includes('---')) return true;
   if (/^\s*[\w-]+:/.test(find)) return true;
   return false;
+}
+
+const FORM_OPS: ReadonlySet<FrontmatterFormOp> = new Set([
+  'set',
+  'add',
+  'remove',
+  'rename',
+  'reorder',
+]);
+
+function coerceFormOp(raw: unknown): FrontmatterFormOp | null {
+  if (typeof raw !== 'string') return null;
+  return FORM_OPS.has(raw as FrontmatterFormOp) ? (raw as FrontmatterFormOp) : null;
 }
 
 /**
@@ -2489,6 +2509,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      // Optional form-source hint. The browser property panel sends
+      // `source: 'form'` and an `op` describing the user-facing operation;
+      // MCP `frontmatter_patch` callers omit both. Only used for telemetry —
+      // the patch logic itself is identical regardless of source.
+      const isFormWrite = bodyObj.source === 'form';
+      const editSurfaceLabel: FrontmatterEditSource = isFormWrite ? 'form' : 'mcp-patch';
+      const formOp = isFormWrite ? coerceFormOp(bodyObj.op) : null;
+
       const session = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed,
@@ -2496,6 +2524,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
+      const patchKeysCount = Object.keys(validatedPatch).length;
+      let opsSetCount = 0;
+      let opsDeleteCount = 0;
+      for (const value of Object.values(validatedPatch)) {
+        if (value === null) opsDeleteCount += 1;
+        else opsSetCount += 1;
+      }
+
+      const patchStartMs = performance.now();
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -2508,45 +2545,66 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           ts: Date.now(),
         });
 
-        // Apply patch under session.formOrigin — NOT paired. Observer A's
-        // metaMap deep observer (US-004) re-composes YAML+body and propagates
-        // to Y.Text under OBSERVER_SYNC_ORIGIN after the transaction settles.
-        session.dc.document.transact(() => {
-          const document = session.dc.document;
-          const metaMap = document.getMap('metadata');
+        await withSpan(
+          'frontmatter.patch',
+          {
+            attributes: {
+              'doc.name': docName,
+              'patch.keys_count': patchKeysCount,
+              'patch.ops_set': opsSetCount,
+              'patch.ops_delete': opsDeleteCount,
+              'frontmatter.source': editSurfaceLabel,
+            },
+          },
+          async () => {
+            // Apply patch under session.formOrigin — NOT paired. Observer A's
+            // metaMap deep observer (US-004) re-composes YAML+body and propagates
+            // to Y.Text under OBSERVER_SYNC_ORIGIN after the transaction settles.
+            const applyTransaction = () => {
+              session.dc.document.transact(() => {
+                const document = session.dc.document;
+                const metaMap = document.getMap('metadata');
 
-          // Per-key Merge Patch application. Each setFrontmatterProperty call
-          // writes a single slot — UM tracks per-property granularity.
-          for (const [key, value] of Object.entries(validatedPatch)) {
-            setFrontmatterProperty(document, key, value);
-          }
+                // Per-key Merge Patch application. Each setFrontmatterProperty call
+                // writes a single slot — UM tracks per-property granularity.
+                for (const [key, value] of Object.entries(validatedPatch)) {
+                  setFrontmatterProperty(document, key, value);
+                }
 
-          // Mirror the legacy single-string slot inside the same transaction
-          // so `attachBridgeInvariantWatcher` (which reads the legacy slot
-          // directly) and any other untouched-yet readers stay consistent
-          // with per-key state. Synthesize from current per-key state — the
-          // form path treats per-key as authoritative, so we don't fall back
-          // to the legacy slot's verbatim contents (which `composeFrontmatterForStore`
-          // would do at the persistence boundary). Same transition pattern as
-          // `applyAgentMarkdownWrite` / `applyExternalChange`.
-          const map = getFrontmatterMap(document);
-          const fenced =
-            Object.keys(map).length === 0 ? '' : withFences(serializeFrontmatterMap(map));
-          if (fenced === '') {
-            metaMap.delete(FRONTMATTER_PATCH_FM_KEY);
-          } else {
-            metaMap.set(FRONTMATTER_PATCH_FM_KEY, fenced);
-          }
+                // Mirror the legacy single-string slot inside the same transaction
+                // so `attachBridgeInvariantWatcher` (which reads the legacy slot
+                // directly) and any other untouched-yet readers stay consistent
+                // with per-key state. Synthesize from current per-key state — the
+                // form path treats per-key as authoritative, so we don't fall back
+                // to the legacy slot's verbatim contents (which `composeFrontmatterForStore`
+                // would do at the persistence boundary). Same transition pattern as
+                // `applyAgentMarkdownWrite` / `applyExternalChange`.
+                const map = getFrontmatterMap(document);
+                const fenced =
+                  Object.keys(map).length === 0 ? '' : withFences(serializeFrontmatterMap(map));
+                if (fenced === '') {
+                  metaMap.delete(FRONTMATTER_PATCH_FM_KEY);
+                } else {
+                  metaMap.set(FRONTMATTER_PATCH_FM_KEY, fenced);
+                }
 
-          // Activity flash side-channel — same shape as agent-write paths.
-          const activityMap = document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
-          });
-        }, session.formOrigin);
+                // Activity flash side-channel — same shape as agent-write paths.
+                const activityMap = document.getMap('agent-flash');
+                activityMap.set(agentId, {
+                  agentId,
+                  timestamp: Date.now(),
+                  type: 'insert',
+                  description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
+                });
+              }, session.formOrigin);
+            };
+            if (formOp) {
+              withFormWriteSpan(docName, formOp, applyTransaction);
+            } else {
+              applyTransaction();
+            }
+          },
+        );
 
         const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
         recordContributor(
@@ -2560,9 +2618,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         );
         incrementAgentWriteCalls();
         countNormalizedSummary(normalizedSummary);
+        recordFrontmatterEditSurface(editSurfaceLabel);
       } finally {
         agentPresenceBroadcaster?.touchMode(agentId, 'idle');
       }
+      recordFrontmatterPatchDuration((performance.now() - patchStartMs) / 1000);
 
       flushDocToGit(docName, 'frontmatter-patch');
 
