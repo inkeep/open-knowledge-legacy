@@ -1,7 +1,8 @@
 /**
  * PropPanel — unit tests for the Advanced collapsible section, the
  * non-default-set count helper, the per-descriptor localStorage round-trip,
- * and the Convert button label resolution.
+ * the autoFocus marker (US-005), the upload affordance (US-005), and the
+ * runUpload helper.
  *
  * Repo convention (see ActivityPanelBurstRow.test.tsx, use-editor-mode.test.ts):
  * no @testing-library/react, no happy-dom. Structural cases use
@@ -96,8 +97,6 @@ function NoopComponent() {
   return null;
 }
 
-const identity = (p: Record<string, unknown>): Record<string, unknown> => p;
-
 function makeCanonicalDescriptor(name: string, props: PropDef[]): JsxComponentDescriptor {
   return {
     name,
@@ -105,26 +104,6 @@ function makeCanonicalDescriptor(name: string, props: PropDef[]): JsxComponentDe
     displayName: name.charAt(0).toUpperCase() + name.slice(1),
     hasChildren: false,
     props,
-    serialize: () => ({ type: 'paragraph', children: [] }),
-    Component: NoopComponent,
-    reactNodePropNames: new Set(),
-  };
-}
-
-function makeCompatDescriptor(
-  name: string,
-  props: PropDef[],
-  target: string,
-): JsxComponentDescriptor {
-  return {
-    name,
-    surface: 'compat',
-    displayName: name,
-    hasChildren: false,
-    props,
-    rendersAs: target,
-    translateProps: identity,
-    convertibleTo: { target, remap: identity },
     serialize: () => ({ type: 'paragraph', children: [] }),
     Component: NoopComponent,
     reactNodePropNames: new Set(),
@@ -224,7 +203,7 @@ describe('localStorage round-trip', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Static markup — Advanced section presence + count badge + Convert label
+// Static markup — Advanced section presence + count badge
 // ---------------------------------------------------------------------------
 
 describe('PropPanel — Advanced collapsible section', () => {
@@ -450,50 +429,5 @@ describe('runUpload', () => {
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock.mock.calls[0]?.[0]).toBe('Upload failed: string-rejection');
     expect(onUploaded).not.toHaveBeenCalled();
-  });
-});
-
-describe('PropPanel — Convert button label', () => {
-  test('(f) uses convertTargetLabel when provided (e.g., "Image" for target "img")', () => {
-    const d = makeCompatDescriptor(
-      'CommonMarkImage',
-      [{ name: 'src', type: 'string', required: true }],
-      'img',
-    );
-    const html = withFakeStorage(() =>
-      renderToString(
-        <PropPanel
-          descriptor={d}
-          values={{ src: 'x.png' }}
-          onChange={() => {}}
-          onConvert={() => {}}
-          convertTargetLabel="Image"
-        />,
-      ),
-    );
-    // React 18+ inserts <!-- --> between adjacent text nodes; strip it for substring asserts.
-    const stripped = html.replaceAll('<!-- -->', '');
-    expect(stripped).toContain('Convert to Image');
-    expect(stripped).not.toContain('Convert to img');
-  });
-
-  test('falls back to descriptor.convertibleTo.target when label is missing', () => {
-    const d = makeCompatDescriptor(
-      'CommonMarkImage',
-      [{ name: 'src', type: 'string', required: true }],
-      'img',
-    );
-    const html = withFakeStorage(() =>
-      renderToString(
-        <PropPanel
-          descriptor={d}
-          values={{ src: 'x.png' }}
-          onChange={() => {}}
-          onConvert={() => {}}
-        />,
-      ),
-    );
-    const stripped = html.replaceAll('<!-- -->', '');
-    expect(stripped).toContain('Convert to img');
   });
 });

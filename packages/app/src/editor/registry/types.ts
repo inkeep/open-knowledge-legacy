@@ -9,8 +9,8 @@
  *
  * Type shape: intersection over the discriminated union, so the `surface`
  * discriminator narrows naturally — `descriptor.surface === 'compat'` exposes
- * `rendersAs`/`translateProps`/`convertibleTo`. An `interface extends` clause
- * cannot extend a union, so this MUST stay a `type` alias.
+ * `rendersAs`/`translateProps`. An `interface extends` clause cannot extend a
+ * union, so this MUST stay a `type` alias.
  */
 import type { JsxComponentMeta } from '@inkeep/open-knowledge-core';
 

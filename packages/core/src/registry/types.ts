@@ -190,15 +190,6 @@ export interface CompatMeta extends JsxComponentMetaBase {
    * (their prop names already match canonical's spelling).
    */
   translateProps: TranslateProps;
-  /**
-   * Drives the "Convert to <canonical>" affordance in PropPanel. When present,
-   * the panel surfaces a button that rewrites the node to the canonical
-   * descriptor (componentName + props remap). Identity remap for v1.
-   */
-  convertibleTo?: {
-    target: string;
-    remap: (compatProps: Record<string, unknown>) => Record<string, unknown>;
-  };
 }
 
 /**

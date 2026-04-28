@@ -28,7 +28,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildConvertedAttrs, extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
+import { extractPrimitiveProps, stableHash } from './JsxComponentView.tsx';
 
 /** Test helper: build a `ReadonlySet<string>` of reactnode-typed prop names.
  *  (In production the descriptor registry pre-computes this once at build
@@ -249,124 +249,5 @@ describe('JsxComponentView kind-discriminator drift-guard (Pass 1 Minor 1)', () 
         `${JSON.stringify(offenders)}. Either add the guard or document the exemption ` +
         `with a comment containing the literal phrase '${EXEMPTION_PHRASE}'.`,
     ).toEqual([]);
-  });
-});
-
-describe('buildConvertedAttrs', () => {
-  // Locks the convert dispatch shape (componentName flip + attributes/
-  // sourceRaw clear + sourceDirty set + props remap) for the
-  // PropPanel "Convert to <canonical>" affordance on compat descriptors.
-  // The host wraps this pure helper in `editor.view.dispatch(setNodeMarkup
-  // (p, null, attrs))`; the metadata contract (target exists, remap is
-  // identity for v1) is locked by `core/src/registry/canonical-compat.test.ts`.
-
-  test('flips componentName to the convert target', () => {
-    const next = buildConvertedAttrs(
-      { componentName: 'GFMCallout', kind: 'element', props: { type: 'note' } },
-      'Callout',
-      (p) => p,
-    );
-    expect(next.componentName).toBe('Callout');
-  });
-
-  test('clears compat attributes — canonical serializer reconstructs from props', () => {
-    // Compat descriptors carry preserved mdast attrs that match their source
-    // form (e.g., GFMCallout's `data-authored-as` from the alerts plugin).
-    // Those have no meaning under the canonical's MDX-JSX serializer, so the
-    // helper drops them outright. `reconstructAttrs` will rebuild the attrs
-    // from `props` on the next save.
-    const next = buildConvertedAttrs(
-      {
-        componentName: 'GFMCallout',
-        kind: 'element',
-        props: { type: 'note' },
-        attributes: [
-          { type: 'mdxJsxAttribute', name: 'type', value: 'note' },
-          { type: 'mdxJsxAttribute', name: 'data-authored-as', value: 'NOTE' },
-        ],
-      },
-      'Callout',
-      (p) => p,
-    );
-    expect(next.attributes).toEqual([]);
-  });
-
-  test('clears sourceRaw and sets sourceDirty=true so next save emits canonical MDX JSX', () => {
-    // The compat's original source bytes (e.g., `> [!NOTE]\nbody`) are no
-    // longer the right form for the canonical. Pairing `sourceRaw: ''` with
-    // `sourceDirty: true` skips the pristine passthrough and forces the
-    // dirty branch to dispatch `descriptor.serialize(node, ctx)` — which for
-    // canonical Callout emits `<Callout type="note">…</Callout>` MDX JSX.
-    const next = buildConvertedAttrs(
-      {
-        componentName: 'GFMCallout',
-        kind: 'element',
-        props: { type: 'note' },
-        sourceRaw: '> [!NOTE]\n> body',
-        sourceDirty: false,
-      },
-      'Callout',
-      (p) => p,
-    );
-    expect(next.sourceRaw).toBe('');
-    expect(next.sourceDirty).toBe(true);
-  });
-
-  test('passes current props through the descriptor remap (identity for v1)', () => {
-    // v1's three compat descriptors (GFMCallout / CommonMarkImage /
-    // HtmlDetailsAccordion) all share canonical's prop-name spelling, so
-    // their `convertibleTo.remap` is identity. This test pins the contract
-    // and adds a non-identity probe to confirm the helper actually invokes
-    // the remap (not a hardcoded passthrough).
-    const idResult = buildConvertedAttrs(
-      { componentName: 'GFMCallout', kind: 'element', props: { type: 'tip', title: 'Heads up' } },
-      'Callout',
-      (p) => p,
-    );
-    expect(idResult.props).toEqual({ type: 'tip', title: 'Heads up' });
-
-    const renameResult = buildConvertedAttrs(
-      {
-        componentName: 'HypotheticalNoteCompat',
-        kind: 'element',
-        props: { title: 'Heads up' },
-      },
-      'Callout',
-      (p) => ({ heading: p.title }),
-    );
-    expect(renameResult.props).toEqual({ heading: 'Heads up' });
-  });
-
-  test('preserves unrelated attrs (kind, anything else upstream put there)', () => {
-    // The helper spreads `curAttrs` first, so any future PM attr the host
-    // adds (per-session origin tags, agent-write metadata, etc.) survives
-    // the convert. Only the five fields documented in the JSDoc invariants
-    // are actively rewritten.
-    const next = buildConvertedAttrs(
-      {
-        componentName: 'GFMCallout',
-        kind: 'element',
-        props: { type: 'note' },
-        // Synthetic future attr; the helper must not silently drop these.
-        someFutureAttr: 'preserved',
-      },
-      'Callout',
-      (p) => p,
-    );
-    expect(next.kind).toBe('element');
-    expect(next.someFutureAttr).toBe('preserved');
-  });
-
-  test('handles missing props gracefully (defaults to {})', () => {
-    // A freshly-spawned compat node could land with `props: undefined` if a
-    // future code path skips the parser's `destructureAttrs` step. The
-    // helper must not throw on that — it falls through to `{}` so the remap
-    // (which expects a record) sees a valid input.
-    const next = buildConvertedAttrs(
-      { componentName: 'GFMCallout', kind: 'element' },
-      'Callout',
-      (p) => p,
-    );
-    expect(next.props).toEqual({});
   });
 });

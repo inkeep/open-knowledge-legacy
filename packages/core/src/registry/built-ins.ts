@@ -632,7 +632,6 @@ export const builtInComponents: JsxComponentMeta[] = [
       'GFM blockquote alert (`> [!NOTE]`) — read-only compat. Convert to Callout for full prop access.',
     rendersAs: 'Callout',
     translateProps: (props) => props,
-    convertibleTo: { target: 'Callout', remap: (props) => props },
     serialize: (node, ctx) => {
       const props = node.attrs.props as
         | {
@@ -696,7 +695,6 @@ export const builtInComponents: JsxComponentMeta[] = [
       'CommonMark image (`![alt](src "title")`) — read-only compat. Convert to Image for the full HTML-native attribute surface.',
     rendersAs: 'img',
     translateProps: (props) => props,
-    convertibleTo: { target: 'img', remap: (props) => props },
     serialize: (node) => {
       const p = node.attrs.props as { src?: string; alt?: string; title?: string } | undefined;
       const image = {
@@ -724,7 +722,6 @@ export const builtInComponents: JsxComponentMeta[] = [
       'HTML5 `<details><summary>` collapsible — read-only compat. Convert to Accordion for icon / description props.',
     rendersAs: 'Accordion',
     translateProps: (props) => props,
-    convertibleTo: { target: 'Accordion', remap: (props) => props },
     serialize: (node, ctx) => {
       const p = node.attrs.props as
         | { title?: string; defaultOpen?: boolean; name?: string; id?: string }

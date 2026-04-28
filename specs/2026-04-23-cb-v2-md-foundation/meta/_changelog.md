@@ -260,3 +260,39 @@ instead of being PUA-protected as raw HTML.
 Authoritative implementation in this branch (cb-v2-md-foundation
 follow-up commits, US-001 through US-008).
 
+
+## 2026-04-28 — Corrigendum: Convert button + `convertibleTo` machinery trimmed
+
+Following the cb-v2-prop-file-upload spec's D8 LOCKED, the post-pivot
+authoring model treats the canonical/compat distinction as a pure
+implementation detail — never surfaced to users. The Convert button + its
+`convertibleTo` metadata are removed:
+
+- `CompatMeta.convertibleTo?: { target; remap }` field deleted from
+  `packages/core/src/registry/types.ts`.
+- The three v1 compat descriptors (`GFMCallout`, `CommonMarkImage`,
+  `HtmlDetailsAccordion`) lose their `convertibleTo: ...` lines in
+  `built-ins.ts`. They retain `surface: 'compat'`, `rendersAs`,
+  `translateProps`, and `serialize` — so source-form preservation
+  (`> [!NOTE]\nbody` round-trips byte-identically) is unchanged.
+- `buildConvertedAttrs()` exported helper in `JsxComponentView.tsx`
+  removed along with its 6 unit tests in `JsxComponentView.test.ts`.
+- `PropPanel.tsx` loses `onConvert?` / `convertTargetLabel?` props,
+  the `showConvert` computation, and the Convert button render.
+  PropPanel.test.tsx loses the Convert-button label tests.
+- `canonical-compat.test.ts` loses the `convertibleTo.target` mapping
+  tests; the canonical/compat shape, prop-subset, and identity-remap
+  tests remain.
+
+Rationale: a user authoring `> [!NOTE]\nbody` sees a styled Callout in
+WYSIWYG and would read "Convert to Callout" — *to what? It's already a
+Callout*. The Convert UX leaks the underlying registry shape to authors
+who don't have a vocabulary for it. Compat descriptors keep their
+*only* essential job — round-trip identity preservation — and lose the
+upgrade-shortcut UI. Reverse direction (canonical → compat) was already
+out of scope per §11; this trim removes the forward direction
+(compat → canonical) for symmetry and conceptual cleanliness.
+
+Net effect for users: no UI change to the happy path. A user who
+outgrows compat features deletes-and-reinserts via the slash menu —
+same friction as adding any other block.

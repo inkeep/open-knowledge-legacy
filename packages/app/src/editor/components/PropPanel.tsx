@@ -138,37 +138,15 @@ export async function runUpload(
 
 interface PropPanelProps {
   /**
-   * Active descriptor — drives both the prop controls (form-scoped to the
-   * descriptor's own `props`) and the optional Convert affordance for compat
-   * descriptors with `convertibleTo` set.
+   * Active descriptor — drives the prop controls (form-scoped to the
+   * descriptor's own `props`).
    */
   descriptor: JsxComponentDescriptor;
   values: Record<string, unknown>;
   onChange: (propName: string, value: unknown) => void;
-  /**
-   * Convert-to-canonical action. Surfaced as a button below the prop controls
-   * when `descriptor.surface === 'compat' && descriptor.convertibleTo` is set.
-   * The host (`JsxComponentView`) builds the transaction; PropPanel just
-   * renders the affordance.
-   */
-  onConvert?: () => void;
-  /**
-   * Human-readable label for the Convert button, sourced from the target
-   * descriptor's `displayName`. Required when `onConvert` is set so the
-   * button reads "Convert to Image" even when the target descriptor name is
-   * the lowercase HTML tag (`'img'`). Falls back to the raw descriptor name
-   * if the host can't resolve a label.
-   */
-  convertTargetLabel?: string;
 }
 
-export function PropPanel({
-  descriptor,
-  values,
-  onChange,
-  onConvert,
-  convertTargetLabel,
-}: PropPanelProps) {
+export function PropPanel({ descriptor, values, onChange }: PropPanelProps) {
   const editableProps = descriptor.props.filter(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
@@ -178,19 +156,12 @@ export function PropPanel({
   const advancedSetCount = countAdvancedSet(advancedProps, values);
   const autoFocusedPropName = getAutoFocusedPropName(descriptor.props);
 
-  // Convert affordance is only meaningful for compat descriptors that declare
-  // a target. Narrowing on `surface` exposes `convertibleTo`.
-  const showConvert =
-    descriptor.surface === 'compat' &&
-    descriptor.convertibleTo !== undefined &&
-    onConvert !== undefined;
-
   // Read persisted state once at mount; the controlled `open` lets us call
   // `persistAdvancedOpenState` on every change. React Compiler memoizes this
   // useState initializer.
   const [advancedOpen, setAdvancedOpen] = useState(() => readAdvancedOpenState(descriptor.name));
 
-  if (editableProps.length === 0 && !showConvert) return null;
+  if (editableProps.length === 0) return null;
 
   return (
     <div data-prop-panel="" className="flex flex-col gap-2 p-3 text-sm">
@@ -239,20 +210,6 @@ export function PropPanel({
               ))}
             </CollapsibleContent>
           </Collapsible>
-        </>
-      )}
-      {showConvert && descriptor.surface === 'compat' && descriptor.convertibleTo && (
-        <>
-          <div className="my-1 border-t border-border" />
-          <Button
-            variant="outline"
-            size="sm"
-            data-prop-panel-convert=""
-            onClick={onConvert}
-            className="h-7 text-xs"
-          >
-            Convert to {convertTargetLabel ?? descriptor.convertibleTo.target}
-          </Button>
         </>
       )}
     </div>

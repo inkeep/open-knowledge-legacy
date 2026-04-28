@@ -6,8 +6,6 @@
  *  - T4: slash menu (via `getRegisteredDescriptors` filter contract).
  *  - T7: registry build is consistent — every compat's `rendersAs` resolves
  *        to a registered canonical descriptor.
- *  - Compat-specific invariants: every compat declares `convertibleTo`, and
- *    convert remap is identity for v1 (prop names match canonical's storage).
  *
  * Round-trip tests for the source-form preservation property live in
  * `packages/app/tests/fidelity/invariant-i13.test.ts` (PBT) and `invariant-
@@ -74,39 +72,6 @@ describe('compat descriptors — contract invariants', () => {
     const probe = { type: 'note', title: 'X', src: 'foo.png', alt: 'A', collapsible: true };
     for (const meta of compatDescriptors) {
       expect(meta.translateProps(probe)).toEqual(probe);
-    }
-  });
-
-  test('every compat declares `convertibleTo` with identity remap (v1)', () => {
-    const probe = { type: 'note', title: 'X', src: 'foo.png', alt: 'A' };
-    for (const meta of compatDescriptors) {
-      expect(meta.convertibleTo).toBeDefined();
-      const target = meta.convertibleTo?.target;
-      expect(typeof target).toBe('string');
-      expect(canonicalDescriptors.some((c) => c.name === target)).toBe(true);
-      expect(meta.convertibleTo?.remap(probe)).toEqual(probe);
-    }
-  });
-
-  test('compat → canonical convert targets a sensible canonical', () => {
-    // Verifies the v1 wiring — each compat's source form has a clear canonical
-    // equivalent. These pairings are part of the public contract; a future
-    // change to one of them would require a docs update.
-    const targets = new Map(
-      compatDescriptors.map((m) => [m.name, m.convertibleTo?.target] as const),
-    );
-    expect(targets.get('GFMCallout')).toBe('Callout');
-    expect(targets.get('CommonMarkImage')).toBe('img');
-    expect(targets.get('HtmlDetailsAccordion')).toBe('Accordion');
-  });
-
-  test('compat `rendersAs` and `convertibleTo.target` align (v1 — same canonical)', () => {
-    // For v1, every compat both renders through and converts to the same
-    // canonical. v2 may diverge if a compat has multiple canonical variants
-    // it could promote to (e.g., a hypothetical `LegacyCallout` rendering
-    // through `Callout` but convertible to a future `RichCallout`).
-    for (const meta of compatDescriptors) {
-      expect(meta.rendersAs).toBe(meta.convertibleTo?.target ?? meta.rendersAs);
     }
   });
 });
