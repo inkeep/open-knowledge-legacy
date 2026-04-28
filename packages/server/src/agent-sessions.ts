@@ -196,7 +196,9 @@ function applyAgentMarkdownWriteInner(
 }
 
 /**
- * XmlFragment-authoritative agent undo (V0-14, US-009, precedent #10, D4).
+ * XmlFragment-authoritative agent undo. The only sanctioned server-side
+ * undo write surface — every other path is the deleted client-side
+ * cross-CRDT anti-pattern.
  *
  * Calls session.um.undo() INSIDE an outer doc.transact(..., session.undoOrigin)
  * so Y.js merges the UM's internal transaction into the outer. The whole
@@ -214,7 +216,25 @@ function applyAgentMarkdownWriteInner(
  * an observable effect), `false` when the stack was already empty. Callers
  * can surface this to the HTTP response so MCP clients know the no-op case.
  *
+ * Contract — every requirement is load-bearing; do not relax without re-running
+ * the bridge fuzzer + conversion-PBT suite that guards against the bug-A class:
+ *
+ *   (1) XmlFragment-authoritative composition reusing `applyAgentMarkdownWrite`
+ *       semantics. Never rebuild XmlFragment from raw Y.Text — that's the
+ *       deleted `syncTextToFragment` anti-pattern (precedent #12).
+ *   (2) Fires under per-session `session.undoOrigin`, distinct from
+ *       `session.origin`. The UM is constructed with
+ *       `captureTransaction: tr => tr.origin !== session.undoOrigin` so
+ *       undo-of-undo never lands on the stack.
+ *   (3) No client-side cross-CRDT writes. Server-authoritative observer-
+ *       bridge is the only mirror path; client observers are baseline-only
+ *       (precedent #14).
+ *   (4) Single `doc.transact()` block — no defensive mutex. The atomicity
+ *       comes from the transact, not from extra serialization.
+ *   (5) Every change here ships with fuzzer + conversion-PBT coverage.
+ *
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
+ * @see PRECEDENTS.md precedent #14 (cross-CRDT sync is single-writer, server-side)
  */
 export function applyAgentUndo(
   session: SessionRecord,
