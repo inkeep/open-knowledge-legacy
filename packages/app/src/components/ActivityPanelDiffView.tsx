@@ -1,15 +1,21 @@
 /**
- * ActivityPanelDiffView — renders a unified-diff string produced by the
- * server's `synthesizeStackItemDiffText` (SPEC FR-P9). Uses `react-diff-view`
- * per SPEC D-P15 DIRECTED.
+ * ActivityPanelDiffView — the single inline-diff renderer for the document
+ * panel side pane. Built on `react-diff-view` and used by both:
+ *   - the Agent Activity Panel — per-burst diffs lazy-fetched from
+ *     `GET /api/agent-burst-diff?agentId=<>&docName=<>&stackIndex=<>`
+ *     (server synthesizes via `synthesizeStackItemDiffText`).
+ *   - the Timeline tab — per-entry diffs computed client-side in
+ *     `useTimelineEntryDiff` via `diff.createPatch` against the live
+ *     Y.Text, so the user's unsaved WIP is part of the comparison.
  *
- * Input: a unified-diff string (the output of `diff.createPatch(...)`), lazy-
- * fetched from `GET /api/agent-burst-diff?agentId=<>&docName=<>&stackIndex=<>`.
+ * Input: a unified-diff string. Empty input renders a subtle "No changes"
+ * placeholder instead of an empty hunk — that case shows up when a burst
+ * StackItem has no net effect, or a Timeline entry is byte-identical to
+ * current after frontmatter stripping.
  *
- * When the server's `before === after` (no net change — e.g., an empty
- * StackItem or a write that was immediately overwritten), the endpoint
- * returns `diff: ""`. Render a subtle "No changes" placeholder rather than
- * an empty hunk.
+ * The `viewType` prop selects unified (default — Activity Panel hardcodes
+ * this) vs split layout (Timeline plumbs the user's split/unified preference
+ * down from the editor header).
  *
  * Diff table colours come from `react-diff-view`'s stylesheet, loaded only
  * with this lazy module.
@@ -20,6 +26,7 @@ import 'react-diff-view/style/index.css';
 
 interface ActivityPanelDiffViewProps {
   diff: string;
+  viewType?: 'split' | 'unified';
 }
 
 /**
@@ -36,7 +43,10 @@ function stripIndexHeader(diff: string): string {
   return diff;
 }
 
-export function ActivityPanelDiffView({ diff }: ActivityPanelDiffViewProps): React.JSX.Element {
+export function ActivityPanelDiffView({
+  diff,
+  viewType = 'unified',
+}: ActivityPanelDiffViewProps): React.JSX.Element {
   if (!diff.trim()) {
     return (
       <div className="activity-panel-diff px-3 py-2 text-xs text-muted-foreground italic">
@@ -58,7 +68,11 @@ export function ActivityPanelDiffView({ diff }: ActivityPanelDiffViewProps): Rea
     );
   }
 
-  if (files.length === 0) {
+  // Defense in depth: jsdiff can produce a non-empty patch header (Index/---/+++)
+  // for byte-identical inputs that still parses to one file with zero hunks.
+  // The Timeline hook short-circuits this case before it lands here, but the
+  // server-synthesized burst path could in principle hit it too.
+  if (files.length === 0 || files.every((f) => f.hunks.length === 0)) {
     return (
       <div className="activity-panel-diff px-3 py-2 text-xs text-muted-foreground italic">
         No changes
@@ -71,7 +85,7 @@ export function ActivityPanelDiffView({ diff }: ActivityPanelDiffViewProps): Rea
       {files.map((file) => (
         <Diff
           key={`${file.oldPath ?? 'a'}→${file.newPath ?? 'b'}`}
-          viewType="unified"
+          viewType={viewType}
           diffType={file.type}
           hunks={file.hunks}
         >

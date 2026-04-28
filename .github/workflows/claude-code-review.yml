@@ -688,15 +688,6 @@ jobs:
           prompt: |
             Review PR #${{ steps.pr.outputs.number }}. Begin Phase 1.
 
-      - name: Clean up progress comment
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/issues/${{ steps.pr.outputs.number }}/comments \
-            --jq '.[] | select((.user.login == "claude[bot]" or .user.login == "inkeep-internal-ci[bot]") and (.body | contains("actions/runs/${{ github.run_id }}"))) | .id' \
-          | xargs -I {} gh api -X DELETE repos/${{ github.repository }}/issues/comments/{} 2>/dev/null || true
-
       - name: Upload Debug Artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

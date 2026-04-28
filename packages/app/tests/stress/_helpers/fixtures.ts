@@ -208,6 +208,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           ...process.env,
           VITE_PORT: String(port),
           OK_TEST_CONTENT_DIR: contentDir,
+          // Opt the dev server into shadow-repo mode so /api/history and
+          // /api/save-version work. Mirrors the integration harness's
+          // gitEnabled:true path (test-harness.ts:129).
+          OK_TEST_GIT_ENABLED: '1',
           // Silence the default `bun run dev` banner noise; most of it is
           // duplicated across 4 workers and clutters CI logs.
           NO_COLOR: process.env.NO_COLOR ?? '1',

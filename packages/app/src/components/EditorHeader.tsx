@@ -1,4 +1,3 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { Columns2, FolderOpen, GitFork, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -22,6 +21,7 @@ import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
+import type { PanelTab } from './DocPanel';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
@@ -70,7 +70,7 @@ interface EditorHeaderProps {
   onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
-  previewEntry: TimelineEntry | null;
+  activeTab: PanelTab;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
@@ -84,7 +84,7 @@ export function EditorHeader({
   onModeChange,
   onSaveVersion,
   saving,
-  previewEntry,
+  activeTab,
   diffLayout,
   onDiffLayoutChange,
   onSignIn,
@@ -126,8 +126,6 @@ export function EditorHeader({
     if (isPinned) unpin();
     else pin(activeDocName);
   }
-  const isDiffMode = editorMode === 'diff';
-
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -436,8 +434,7 @@ export function EditorHeader({
         {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
-      {/* Normal editing mode: Visual/Markdown toggle */}
-      {!isDiffMode && activeDocName && (
+      {activeDocName && (
         <ToggleGroup
           type="single"
           value={editorMode === 'source' ? 'source' : 'visual'}
@@ -492,57 +489,47 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Diff mode: layout toggle (Restore/Close moved to timeline panel footer) */}
-      {isDiffMode && previewEntry && (
+      {activeTab === 'timeline' && (
         <div className="flex items-center gap-2 shrink-0">
-          <ToggleGroup
-            type="single"
-            value={diffLayout}
-            onValueChange={(v) => {
-              if (v) onDiffLayoutChange(v as DiffLayout);
-            }}
-            aria-label="Diff layout"
-            variant="segmented"
-            size="sm"
-            spacing={1}
-            className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
-          >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <ToggleGroupItem
-                    value="unified"
-                    aria-label="Unified diff"
-                    className="gap-1 text-xs px-2"
-                  >
-                    <Rows2 className="size-3.5" />
-                    <span className="hidden md:inline">Unified</span>
-                  </ToggleGroupItem>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="md:hidden">Unified</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <ToggleGroupItem
-                    value="split"
-                    aria-label="Split diff"
-                    className="gap-1 text-xs px-2"
-                  >
-                    <Columns2 className="size-3.5" />
-                    <span className="hidden md:inline">Split</span>
-                  </ToggleGroupItem>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="md:hidden">Split</TooltipContent>
-            </Tooltip>
-          </ToggleGroup>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroup
+                type="single"
+                value={diffLayout}
+                onValueChange={(v) => {
+                  if (v) onDiffLayoutChange(v as DiffLayout);
+                }}
+                aria-label="Diff layout"
+                variant="segmented"
+                size="sm"
+                spacing={1}
+                className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
+              >
+                <ToggleGroupItem
+                  value="unified"
+                  aria-label="Unified diff"
+                  className="gap-1 text-xs px-2"
+                >
+                  <Rows2 className="size-3.5" />
+                  <span className="hidden md:inline">Unified</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="split"
+                  aria-label="Split diff"
+                  className="gap-1 text-xs px-2"
+                >
+                  <Columns2 className="size-3.5" />
+                  <span className="hidden md:inline">Split</span>
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent>Layout for expanded Timeline diffs</TooltipContent>
+          </Tooltip>
         </div>
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {!isDiffMode && onOpenClone && (
+        {onOpenClone && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -558,7 +545,7 @@ export function EditorHeader({
             <TooltipContent>Clone from GitHub…</TooltipContent>
           </Tooltip>
         )}
-        {!isDiffMode && activeDocName && (
+        {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -575,7 +562,7 @@ export function EditorHeader({
             <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
           </Tooltip>
         )}
-        {!isDiffMode && activeDocName && <OpenInAgentMenu input={handoffInput} />}
+        {activeDocName && <OpenInAgentMenu input={handoffInput} />}
         <SyncStatusBadge
           onSignIn={onSignIn}
           onSetIdentity={onSetIdentity}
