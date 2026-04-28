@@ -24,6 +24,16 @@ export interface PropDefBase {
    * source prop.
    */
   hidden?: boolean;
+  /**
+   * Marks a prop as belonging to the PropPanel "Advanced" collapsible section.
+   * Closed by default; trigger reads "Advanced" with a count of non-default-valued
+   * props. Used for HTML-native attrs that experienced authors want but don't
+   * edit on every insert (srcset, sizes, decoding, fetchpriority, etc.).
+   *
+   * Mirrors the precedent of `hidden?: boolean` above: additive, non-discriminating,
+   * doesn't trip the PropPanel assertUnreachable check (which switches on `type`).
+   */
+  advanced?: boolean;
 }
 
 export interface PropDefString extends PropDefBase {
