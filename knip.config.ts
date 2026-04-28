@@ -35,6 +35,10 @@ export default {
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
+    // Landed ahead of its first consumer (PropPanel Advanced collapsible);
+    // remove this entry once a consumer imports it. Mirrors the established
+    // pattern used for files staged a step before their first use.
+    'packages/app/src/components/ui/collapsible.tsx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
