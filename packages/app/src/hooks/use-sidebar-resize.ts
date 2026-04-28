@@ -152,17 +152,9 @@ export function useSidebarResize({
     isCollapsedRef.current = isCollapsed;
   }, [isCollapsed]);
 
-  // Refs for auto-collapse threshold
-  const autoCollapseThresholdPx = useRef(0);
-
   // Memoize min/max width calculations for performance
   const minWidthPx = toPx(minResizeWidth);
   const maxWidthPx = toPx(maxResizeWidth);
-
-  // Update auto-collapse threshold when dependencies change
-  useEffect(() => {
-    autoCollapseThresholdPx.current = enableAutoCollapse ? minWidthPx * autoCollapseThreshold : 0;
-  }, [minWidthPx, enableAutoCollapse, autoCollapseThreshold]);
 
   // Handle mouse down on resize handle
   function handleMouseDown(e: ReactMouseEvent) {
