@@ -57,6 +57,32 @@ Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORI
 
 Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
 
+## Frontmatter write (`POST /api/frontmatter-patch`)
+
+Frontmatter lives in `Y.Map('metadata')` as one entry per property — `Y.Text` for editable strings, `Y.Array<Y.Text>` for lists, primitives for atomics. Concurrent writes to *different* keys (a human form edit + an MCP `frontmatter_patch` call) merge cleanly at the field level; same-key concurrent writes resolve last-writer-wins per key.
+
+The endpoint accepts a JSON Merge Patch (RFC 7396) under the document name:
+
+```json
+{
+  "docName": "specs/foo/SPEC",
+  "patch": {
+    "title": "New title",
+    "tags": ["alpha", "beta"],
+    "draft": null
+  },
+  "summary": "Marked as approved"
+}
+```
+
+A key with a value sets or creates; a key with `null` deletes; missing keys are unchanged. Atomicity is reject-or-commit: if any value fails the shared `FrontmatterPatchSchema` (Zod, `@inkeep/open-knowledge-core`), the whole patch rejects with a per-key error report. The handler applies each key via `setFrontmatterProperty` inside one `doc.transact(..., session.formOrigin)` block. `session.formOrigin` is a per-session, **not paired** origin — Observer A's `Y.Map('metadata')` deep-observer fires after settlement and recomposes `prependFrontmatter(getFrontmatter(doc), body)` to `Y.Text` so source-mode reflects the change.
+
+The browser property panel posts to the same endpoint with `source: 'form'` and an `op` describing the user-facing operation (set / add / remove / rename) for telemetry-label routing — patch logic itself is identical regardless of source.
+
+The `frontmatter_patch` MCP tool is the agent-facing surface for the same endpoint. `edit_document` (`POST /api/agent-patch`) rejects FM-intersecting patches with HTTP 400 and a migration hint pointing agents at `frontmatter_patch` — body edits stay on `edit_document`, frontmatter edits route through `frontmatter_patch`.
+
+**Telemetry.** Span `frontmatter.patch` (attributes `doc.name`, `patch.keys_count`, `patch.ops_set`, `patch.ops_delete`, `frontmatter.source: form|mcp-patch`). Counter `ok.frontmatter.edit_surface_total` labels writes by source (`form`, `mcp-patch`, `mcp-write`, `file-watcher`, `source-mode`) so the per-form adoption metric is queryable.
+
 ## Mode toggle (no merge)
 
 The WYSIWYG/source mode toggle is a UI visibility flip, not a serialize-and-merge operation. `EditorActivityPool` mounts both `TiptapEditor` and `SourceEditor` concurrently per active document and uses `display:none` to swap between them. Each editor stays bound to its Y type (`Y.XmlFragment('default')` for TipTap via `Collaboration`; `Y.Text('source')` for CodeMirror via `y-codemirror.next`) for the lifetime of the mount.
@@ -77,11 +103,11 @@ ok-contributors: {"v":1,"id":"agent-abc","name":"Claude","colorSeed":"...","docs
 
 The `summaries` field is flat (per-contributor, not per-doc) and omitted entirely when no summaries were recorded — legacy commits and summary-less writes are byte-identical to pre-feature behavior. The JSON line stays at `v: 1`; the field is purely additive (precedent #9).
 
-**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. The five API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename`, `/api/rollback`) each call it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
+**Truncation single-source-of-truth.** `normalizeSummary` in `packages/server/src/agent-write-summary.ts` is the only place summary text is validated and truncated. Each mutating handler (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/frontmatter-patch`, `/api/rename`, `/api/rollback`) calls it at the request boundary before threading the normalized value into `recordContributor`. The cap is 80 characters (79 visible + U+2026 `…`); the Zod schemas on MCP tool inputs cap at 200 as a separate transport-safety bound.
 
 **Attribution guard for rename and rollback.** `handleRename` and `handleRollback` only call `extractAgentIdentity` + `recordContributor` when the request body carries an explicit `agentId` field. The in-editor Restore button (`EditorPane.tsx`) posts with no identity and therefore stays anonymous on the timeline — the "positive externality" of MCP-driven rename/rollback attribution does not leak to human-driven UI calls. This is a LOCKED behavior contract.
 
-**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
+**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document`, `edit_document`, and `frontmatter_patch` have no default — an absent summary means an absent bullet.
 
 **Parser tolerance.** `parseContributors` in `packages/core/src/shadow-repo-layout.ts` accepts both legacy (no `summaries` field) and new commits. A malformed `summaries` value drops just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip policy applied to other optional fields, because decorative loss beats attribution loss.
 

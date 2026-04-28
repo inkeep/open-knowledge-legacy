@@ -60,7 +60,7 @@ Three layers, each with its own cadence and responsibility.
 
 The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to disk.
 
-- Y.Doc serialized to markdown (frontmatter preserved via Y.Map cache)
+- Y.Doc serialized to markdown — body composed from `Y.XmlFragment`, frontmatter recomposed from `Y.Map('metadata')` (one entry per property — `Y.Text` for editable strings, `Y.Array<Y.Text>` for lists, primitives for atomics). When the per-key map still matches a legacy single-string mirror, the original YAML bytes are written verbatim so comments, blank lines, and scalar styles round-trip losslessly
 - Atomic write: temp file then rename (symlinks preserved -- writes target the canonical path)
 - Write hash registered in writeTracker for feedback prevention
 - Symlink-escape check refuses writes that resolve outside `contentDir`
