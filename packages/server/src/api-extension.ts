@@ -285,21 +285,31 @@ export function sanitizeFilename(name: string): string {
 
   // Most filesystems cap basenames at 255 bytes (ext4, APFS, exFAT). Without a
   // ceiling, a multipart `Content-Disposition` filename approaching busboy's
-  // header size limit can sail through Unicode-letter sanitization and
-  // surface as `ENAMETOOLONG` from `linkSync`, which classifies as a generic
+  // header size can sail through Unicode-letter sanitization and surface as
+  // `ENAMETOOLONG` from `linkSync`, which classifies as a generic
   // `storage-error` → 500. Truncate the stem (preserving the extension) to
-  // stay within the portable basename ceiling. Companion defense at the wire:
-  // `defHeadersSize: 1024` in busboy bounds the entire header section.
+  // stay within the portable basename ceiling.
   const MAX_BYTES = 255;
   const encoder = new TextEncoder();
   if (encoder.encode(stripped).length > MAX_BYTES) {
     const dotIdx = stripped.lastIndexOf('.');
     const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
     let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
+    // `slice(0, -1)` removes one UTF-16 code unit. A trailing emoji is a
+    // surrogate pair, so the loop transiently produces a lone-surrogate
+    // string that `TextEncoder` re-encodes as U+FFFD (3 bytes) — harmless
+    // since the emoji is fully consumed before the loop exits and the
+    // returned string is always valid UTF-8.
     while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
       stem = stem.slice(0, -1);
     }
     stripped = (stem || 'upload') + ext;
+    // The loop drains the stem; it cannot shrink the extension itself.
+    // An adversarial 250+ byte extension (e.g. `'x.' + 'a'.repeat(300)`)
+    // would drain the stem to empty and still leave `'upload' + ext`
+    // above the ceiling. Final-pass guard: fall back to extensionless
+    // `'upload'` when even the floor exceeds MAX_BYTES.
+    if (encoder.encode(stripped).length > MAX_BYTES) stripped = 'upload';
   }
 
   return stripped;

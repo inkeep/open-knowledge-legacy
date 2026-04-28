@@ -147,6 +147,13 @@ describe('sanitizeFilename', () => {
     expect(sanitizeFilename('.')).toBe('upload');
   });
 
+  test('long adversarial extension falls back to upload', () => {
+    // ext alone = '.' + 'a'.repeat(300) > 255 bytes; while-loop drains stem to
+    // empty, then `'upload' + ext` still exceeds the ceiling. Final-pass
+    // guard kicks in and substitutes extensionless `'upload'`.
+    expect(sanitizeFilename(`x.${'a'.repeat(300)}`)).toBe('upload');
+  });
+
   test('pure unsafe-character input falls back to upload', () => {
     // '!!!' → '___' → '_' → leading underscore trimmed → '' → 'upload'
     expect(sanitizeFilename('!!!')).toBe('upload');
