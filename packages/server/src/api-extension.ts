@@ -281,7 +281,28 @@ export function sanitizeFilename(name: string): string {
   // Filesystem portability — strip trailing dots (Windows trims them too).
   stripped = stripped.replace(/\.+$/, '');
 
-  return stripped === '' ? 'upload' : stripped;
+  if (stripped === '') return 'upload';
+
+  // Most filesystems cap basenames at 255 bytes (ext4, APFS, exFAT). Without a
+  // ceiling, a multipart `Content-Disposition` filename approaching busboy's
+  // header size limit can sail through Unicode-letter sanitization and
+  // surface as `ENAMETOOLONG` from `linkSync`, which classifies as a generic
+  // `storage-error` → 500. Truncate the stem (preserving the extension) to
+  // stay within the portable basename ceiling. Companion defense at the wire:
+  // `defHeadersSize: 1024` in busboy bounds the entire header section.
+  const MAX_BYTES = 255;
+  const encoder = new TextEncoder();
+  if (encoder.encode(stripped).length > MAX_BYTES) {
+    const dotIdx = stripped.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
+    let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
+    while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
+      stem = stem.slice(0, -1);
+    }
+    stripped = (stem || 'upload') + ext;
+  }
+
+  return stripped;
 }
 
 /**
@@ -496,7 +517,11 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       // surface so a flooded multipart can't buffer thousands of fields or a
       // multi-MB string field in memory before the upload body resolves. The
       // legitimate schema (agentId / docName / position / summary) is bounded
-      // — short identifiers, never approaching 2 KB or 10 entries.
+      // — short identifiers, never approaching 2 KB or 10 entries. The
+      // ENAMETOOLONG-via-crafted-filename DoS path is closed by the 255-byte
+      // ceiling in `sanitizeFilename` (the filesystem-portability layer);
+      // busboy does not expose a header-section-size limit (only headerPairs
+      // count), so the parsed-value cap is the right place.
       bb = busboy({
         headers: req.headers,
         limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
