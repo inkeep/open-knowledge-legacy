@@ -4,7 +4,7 @@ import {
   type HumanParticipant,
   type Participant,
   participantsEqual,
-} from './use-presence';
+} from './participant-model.ts';
 
 function makeHuman(
   clientId: number,
