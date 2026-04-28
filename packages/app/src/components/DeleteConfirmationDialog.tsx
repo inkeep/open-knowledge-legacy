@@ -2,6 +2,7 @@ import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
+  DialogBody,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -36,7 +37,7 @@ export function DeleteConfirmationDialog({
         {customDescription ??
           `Are you sure you want to delete ${itemName}? This action cannot be undone.`}
       </DialogDescription>
-      {children}
+      {children ? <DialogBody>{children}</DialogBody> : null}
       <DialogFooter>
         <DialogClose asChild>
           <Button variant="outline" disabled={isSubmitting}>

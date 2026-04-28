@@ -1,8 +1,9 @@
-import { BrainCircuit, ChevronRight, FileText, Folder, Loader2 } from 'lucide-react';
+import { FileCog, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -10,7 +11,15 @@ import {
   Dialog as DialogRoot,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+  FieldTitle,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type {
   OkScaffoldPlan,
   OkSeedApplyResult,
@@ -20,6 +29,9 @@ import type {
 interface SeedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Fired after a successful apply — used by the empty state to trigger the
+      OkBlob celebration burst. The dialog still owns the toast + dismissal. */
+  onSeedApplied?: () => void;
 }
 
 type DialogPhase =
@@ -63,14 +75,15 @@ function seedClient() {
 }
 
 /**
- * Dialog that renders the `ok seed` scaffold plan and lets the user apply it
- * with one click. Mirrors the CLI flow: fetch plan → show what will change →
- * confirm → apply. Optional per SPEC — users can ignore this and keep any
- * folder layout they already use.
+ * Dialog that explains the three-layer starter structure and lets the user
+ * apply it with one click. Default body is a visual three-card preview of
+ * what the layers mean; the full file/folder/config diff lives behind a
+ * collapsible disclosure for power users. Mirrors the CLI flow: fetch plan →
+ * show what will change → confirm → apply. Optional per SPEC.
  *
  * Runs in both desktop (via IPC) and web (via HTTP) distributions.
  */
-export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
+export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
   // 'project-root' scaffolds at `.`; 'subfolder' uses the typed `subfolder` value.
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
@@ -148,13 +161,18 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
   }, [open, rootChoice, trimmedSubfolder, subfolderInvalid]);
 
   async function handleApply() {
-    if (phase.kind !== 'plan' || subfolderInvalid) return;
+    // `phase.kind !== 'plan'` already covers subfolderInvalid — when invalid,
+    // the planning effect parks phase at 'error' before this can fire. The
+    // Initialize button is also disabled in that state. Triple-redundant
+    // guard simplified to the one that's actually load-bearing.
+    if (phase.kind !== 'plan') return;
     setPhase({ kind: 'applying', plan: phase.plan });
     const result = await seedClient().apply(phase.plan);
     if (result.ok) {
       toast.success(
         `LLM brain initialized (${result.result.applied} ${result.result.applied === 1 ? 'entry' : 'entries'})`,
       );
+      onSeedApplied?.();
       onOpenChange(false);
     } else {
       toast.error(`Initialize failed: ${result.error.message}`);
@@ -164,32 +182,34 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
 
   return (
     <DialogRoot open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" data-ok-layer-spawned="">
+      <DialogContent className="sm:max-w-2xl" data-ok-layer-spawned="">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <BrainCircuit aria-hidden="true" className="h-4 w-4" />
+            <Sparkles aria-hidden="true" className="h-4 w-4 text-foreground opacity-70" />
             Initialize LLM brain
           </DialogTitle>
           <DialogDescription>
-            Optional starter structure — creates the Karpathy three-layer folders (
-            <code>external-sources</code>, <code>research</code>, <code>articles</code>), an
-            append-only <code>log.md</code>, and matching <code>config.yml</code>{' '}
-            <code>folders:</code> entries so agents see layer descriptions at every <code>ls</code>.
-            You can skip this and keep any folder layout you already use.
+            Three layers designed so AI agents can navigate naturally: raw sources, working drafts,
+            and canonical articles.
           </DialogDescription>
         </DialogHeader>
 
-        <RootPicker
-          choice={rootChoice}
-          subfolder={subfolder}
-          onChoiceChange={setRootChoice}
-          onSubfolderChange={setSubfolder}
-        />
-
-        <SeedDialogBody phase={phase} />
+        <DialogBody className="space-y-6">
+          <RootPicker
+            choice={rootChoice}
+            subfolder={subfolder}
+            onChoiceChange={setRootChoice}
+            onSubfolderChange={setSubfolder}
+          />
+          <SeedDialogBody phase={phase} />
+        </DialogBody>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button
+            className="uppercase font-mono"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+          >
             {phase.kind === 'already-seeded' || phase.kind === 'error' ? 'Close' : 'Cancel'}
           </Button>
           {phase.kind === 'plan' ? (
@@ -199,7 +219,7 @@ export function SeedDialog({ open, onOpenChange }: SeedDialogProps) {
           ) : phase.kind === 'applying' ? (
             <Button disabled>
               <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
-              Initializing…
+              Setting up…
             </Button>
           ) : null}
         </DialogFooter>
@@ -220,55 +240,55 @@ function RootPicker({
   onSubfolderChange: (next: string) => void;
 }) {
   return (
-    <div className="space-y-2 border-y py-3">
-      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Where should the brain live?
-      </p>
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="radio"
-          name="seed-root-choice"
-          checked={choice === 'project-root'}
-          onChange={() => onChoiceChange('project-root')}
-          className="mt-1"
-        />
-        <span>
-          <span className="font-medium">Project root</span>
-          <span className="block text-xs text-muted-foreground">
-            Scaffold the three folders directly under this project.
-          </span>
-        </span>
-      </label>
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="radio"
-          name="seed-root-choice"
-          checked={choice === 'subfolder'}
-          onChange={() => onChoiceChange('subfolder')}
-          className="mt-1"
-        />
-        <span className="flex-1">
-          <span className="font-medium">In a subfolder</span>
-          <span className="block text-xs text-muted-foreground">
-            Created if missing. Reuses the folder if it already exists.
-          </span>
-          {/*
-           * No `disabled` here: clicking the input promotes the radio via
-           * onFocus, so the user can switch to subfolder mode and start
-           * typing in one click. With `disabled` set, focus would never fire.
-           */}
-          <Input
-            value={subfolder}
-            onChange={(e) => onSubfolderChange(e.target.value)}
-            onFocus={() => onChoiceChange('subfolder')}
-            placeholder="brain"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            className="mt-1.5 font-mono text-xs"
-          />
-        </span>
-      </label>
+    <div className="space-y-2 py-1">
+      <p className="text-sm font-medium">Where should the brain live?</p>
+      <RadioGroup
+        className="sm:flex"
+        value={choice}
+        onValueChange={(next) => onChoiceChange(next as RootChoice)}
+      >
+        <FieldLabel htmlFor="seed-root-project-root">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldTitle>Project root</FieldTitle>
+              <FieldDescription>
+                Scaffold the three folders directly under this project.
+              </FieldDescription>
+            </FieldContent>
+            <RadioGroupItem value="project-root" id="seed-root-project-root" />
+          </Field>
+        </FieldLabel>
+        <FieldLabel htmlFor="seed-root-subfolder">
+          <Field orientation="horizontal">
+            <FieldContent>
+              <FieldTitle>In a subfolder</FieldTitle>
+              {/* Override FieldDescription's `nth-last-2:-mt-1` rule, which
+                 tightens description-to-title spacing whenever a sibling
+                 (the Input below) follows. We want the title-to-description
+                 gap to match the project-root card visually. */}
+              <FieldDescription className="nth-last-2:mt-0">
+                Created if missing. Reuses the folder if it already exists.
+              </FieldDescription>
+              {/*
+               * No `disabled` here: focusing the input promotes the radio via
+               * onFocus, so the user can switch to subfolder mode and start
+               * typing in one click. With `disabled` set, focus would never fire.
+               */}
+              <Input
+                value={subfolder}
+                onChange={(e) => onSubfolderChange(e.target.value)}
+                onFocus={() => onChoiceChange('subfolder')}
+                placeholder="brain"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="mt-1.5 font-mono text-xs bg-background"
+              />
+            </FieldContent>
+            <RadioGroupItem value="subfolder" id="seed-root-subfolder" />
+          </Field>
+        </FieldLabel>
+      </RadioGroup>
     </div>
   );
 }
@@ -294,57 +314,22 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
   if (phase.kind === 'already-seeded') {
     return (
       <div className="py-2 text-sm">
-        <p className="font-medium">This knowledge base is already initialized.</p>
+        <p className="font-medium">This LLM brain is already set up.</p>
         <p className="text-muted-foreground">
-          Nothing to do — the scaffolder has already been applied. Re-running would produce zero
-          changes.
+          The three-layer structure is in place — there's nothing left to scaffold.
         </p>
       </div>
     );
   }
 
   const plan = phase.plan;
-  const folderEntries = plan.created.filter((e) => e.kind === 'folder');
-  const fileEntries = plan.created.filter((e) => e.kind === 'file');
 
   return (
-    <div className="space-y-3 py-2 text-sm">
-      {folderEntries.length > 0 ? (
-        <SeedDialogSection
-          title="Folders"
-          items={folderEntries.map((entry) => ({
-            key: entry.path,
-            leading: <Folder aria-hidden="true" className="h-4 w-4 text-muted-foreground" />,
-            label: `${entry.path}/`,
-          }))}
-        />
-      ) : null}
-
-      {fileEntries.length > 0 ? (
-        <SeedDialogSection
-          title="Files"
-          items={fileEntries.map((entry) => ({
-            key: entry.path,
-            leading: <FileText aria-hidden="true" className="h-4 w-4 text-muted-foreground" />,
-            label: entry.path,
-          }))}
-        />
-      ) : null}
-
-      {plan.configEdits.length > 0 ? (
-        <SeedDialogSection
-          title="config.yml folders: entries"
-          items={plan.configEdits.map((edit) => ({
-            key: edit.folderMatch,
-            leading: <ChevronRight aria-hidden="true" className="h-4 w-4 text-muted-foreground" />,
-            label: edit.folderMatch,
-            detail: edit.entry.frontmatter.description,
-          }))}
-        />
-      ) : null}
+    <div className="space-y-6 py-1 text-sm">
+      <CreatedItemsList plan={plan} />
 
       {plan.warnings.length > 0 ? (
-        <div className="rounded-md bg-warning/10 p-3 text-sm text-warning-foreground">
+        <div className="rounded-md bg-warning/10 p-3 text-xs text-warning-foreground">
           {plan.warnings.map((w) => (
             <p key={w}>{w}</p>
           ))}
@@ -354,29 +339,132 @@ function SeedDialogBody({ phase }: { phase: DialogPhase }) {
   );
 }
 
-interface SeedDialogItem {
-  key: string;
-  leading: React.ReactNode;
-  label: string;
-  detail?: string;
+interface Layer {
+  name: string;
+  blurb: string;
 }
 
-function SeedDialogSection({ title, items }: { title: string; items: SeedDialogItem[] }) {
+/** Short description per starter folder (≤2 lines) — used by
+    `CreatedItemsList` to annotate each folder row in the "what gets created"
+    list. */
+const LAYERS: readonly Layer[] = [
+  {
+    name: 'external-sources',
+    blurb:
+      'Raw sources saved verbatim — full text of URLs and PDFs, not just citations. Every claim traces back to preserved evidence.',
+  },
+  {
+    name: 'research',
+    blurb:
+      'Provisional analysis synthesizing sources. Every claim cites a doc; promotes to articles/ once the team trusts the findings.',
+  },
+  {
+    name: 'articles',
+    blurb:
+      'Canonical decisions. Each links back through research/ to its sources — no dead links, full evidence chain in repo.',
+  },
+] as const;
+
+/** Hand-written 1-line descriptions for files outside the layer set. */
+const FILE_DESCRIPTIONS: Record<string, string> = {
+  'log.md': 'Append-only timeline',
+};
+
+/** Last path segment so descriptions still attach in subfolder mode — e.g.
+    `brain/external-sources` resolves to the `external-sources` layer blurb. */
+function basename(path: string): string {
+  return path.split('/').pop() ?? path;
+}
+
+interface CreatedItem {
+  kind: 'folder' | 'file' | 'config';
+  name: string;
+  description: string;
+}
+
+function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
+  const folderBlurbs = new Map(LAYERS.map((l) => [l.name, l.blurb]));
+  const folders: CreatedItem[] = plan.created
+    .filter((e) => e.kind === 'folder')
+    .map((e) => ({
+      kind: 'folder',
+      name: `${e.path}/`,
+      description: folderBlurbs.get(basename(e.path)) ?? '',
+    }));
+  const files: CreatedItem[] = plan.created
+    .filter((e) => e.kind === 'file')
+    .map((e) => ({
+      kind: 'file',
+      name: e.path,
+      description: FILE_DESCRIPTIONS[basename(e.path)] ?? '',
+    }));
+  // One synthetic row representing the config.yml side of the apply — either
+  // created from scratch (if absent) or appended to (if present). One row,
+  // not three, so the list doesn't double its size for an effectively-single
+  // file change. The folder rows above already convey the layer descriptions
+  // that get written into it.
+  const configRow: CreatedItem[] =
+    plan.configEdits.length > 0
+      ? [
+          {
+            kind: 'config',
+            name: '.open-knowledge/config.yml',
+            description: 'Folder descriptions for AI agents',
+          },
+        ]
+      : [];
+  return [...folders, ...files, ...configRow];
+}
+
+/**
+ * Always-expanded list of the artifacts the apply will create. Each row is a
+ * soft-bordered card with a checkbox-style icon, mono-font name, and 1-line
+ * description. Config.yml entries are intentionally omitted — they're
+ * implementation detail of the folder layers, surfaced via the layer
+ * descriptions above.
+ */
+function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
+  const items = describeCreatedItems(plan);
+
   return (
-    <section>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
+    <section className="space-y-3">
+      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase font-mono tracking-wider text-primary">
+        <span aria-hidden="true" className="flex items-center justify-center">
+          ◇
+        </span>
+        What gets created
       </h3>
-      <ul className="space-y-1">
+      <ul className="space-y-3 overflow-y-auto subtle-scrollbar max-h-full">
         {items.map((item) => (
-          <li key={item.key} className="space-y-0.5">
-            <div className="flex items-center gap-2">
-              {item.leading}
-              <code className="text-xs">{item.label}</code>
+          <li
+            key={item.name}
+            className="flex items-start gap-3 rounded-md border border-border/60 bg-muted/20 p-3"
+          >
+            {item.kind === 'folder' ? (
+              <Folder
+                aria-hidden="true"
+                className="mt-1 h-4 w-4 shrink-0 text-muted-foreground"
+                strokeWidth={1.5}
+              />
+            ) : item.kind === 'config' ? (
+              <FileCog
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                strokeWidth={1.5}
+              />
+            ) : (
+              <FileText
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                strokeWidth={1.5}
+              />
+            )}
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <code className="font-mono text-1sm">{item.name}</code>
+              {item.description ? (
+                <p className="text-1sm text-muted-foreground">{item.description}</p>
+              ) : null}
             </div>
-            {item.detail ? (
-              <p className="pl-6 text-xs text-muted-foreground">{item.detail}</p>
-            ) : null}
           </li>
         ))}
       </ul>

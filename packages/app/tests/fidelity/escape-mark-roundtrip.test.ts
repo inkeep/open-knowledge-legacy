@@ -68,13 +68,11 @@ describe('escapeMark — cross-mark composition', () => {
   });
 });
 
-describe('escapeMark — end-of-line trailing escape (documented NG)', () => {
-  test('trailing backslash at end of line drops (NG rule)', () => {
-    // `foo\` at end-of-line → backslash drops per documented NG
-    // Actually a trailing \ creates a hard break in CommonMark
-    const input = 'foo\\\n';
-    // Don't crash
-    expect(() => mdRoundTrip(input)).not.toThrow();
+describe('escapeMark — end-of-line trailing literal backslash', () => {
+  test('trailing backslash runs at end of line round-trip', () => {
+    const triple = '\\'.repeat(3);
+    assertRoundTrip('foo\\\n');
+    assertRoundTrip(`foo${triple}\n`);
   });
 });
 

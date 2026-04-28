@@ -12,7 +12,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 import { Input } from './ui/input';
 import { Skeleton } from './ui/skeleton';
 
@@ -295,104 +302,106 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
           <DialogTitle>Clone from GitHub</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
-          {/* URL input */}
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="clone-url" className="text-sm font-medium">
-              Repository URL or owner/repo
-            </label>
-            <Input
-              id="clone-url"
-              placeholder="https://github.com/owner/repo or owner/repo"
-              value={urlInput}
-              onChange={(e) => handleUrlChange(e.target.value)}
-              disabled={cloning}
-            />
-          </div>
-
-          {/* Repo browser */}
-          {isSignedIn && (
+        <DialogBody>
+          <div className="flex flex-col gap-4">
+            {/* URL input */}
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="repo-filter" className="text-sm font-medium">
-                Your repositories
+              <label htmlFor="clone-url" className="text-sm font-medium">
+                Repository URL or owner/repo
               </label>
               <Input
-                id="repo-filter"
-                aria-label="Filter repositories"
-                placeholder="Filter repositories…"
-                value={repoFilter}
-                onChange={(e) => setRepoFilter(e.target.value)}
-                disabled={cloning || (loadingRepos && repos === null)}
-              />
-              <div
-                className="border rounded-md max-h-40 overflow-y-auto subtle-scrollbar"
-                aria-busy={loadingRepos && repos === null}
-              >
-                {loadingRepos && repos === null ? (
-                  <output
-                    className="flex flex-col gap-1.5 px-3 py-2"
-                    aria-label="Loading repositories"
-                  >
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-4 w-1/2" />
-                    <Skeleton className="h-4 w-3/4" />
-                    <Skeleton className="h-4 w-2/5" />
-                    <Skeleton className="h-4 w-3/5" />
-                  </output>
-                ) : filteredRepos?.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">
-                    {repos?.length === 0 ? 'No repositories found.' : 'No matches.'}
-                  </p>
-                ) : (
-                  filteredRepos?.map((repo) => (
-                    <button
-                      key={repo.full_name}
-                      type="button"
-                      className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted flex items-center gap-2 truncate disabled:opacity-50"
-                      onClick={() => handleRepoSelect(repo)}
-                      disabled={cloning}
-                    >
-                      {repo.private && (
-                        <span className="text-xs text-muted-foreground shrink-0">🔒</span>
-                      )}
-                      {repo.full_name}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Sign-in prompt */}
-          {!isSignedIn && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>Browse your repos:</span>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0"
-                onClick={() => onSignIn?.()}
+                id="clone-url"
+                placeholder="https://github.com/owner/repo or owner/repo"
+                value={urlInput}
+                onChange={(e) => handleUrlChange(e.target.value)}
                 disabled={cloning}
-              >
-                Sign in to GitHub
-              </Button>
+              />
             </div>
-          )}
 
-          {/* Local path */}
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="clone-path" className="text-sm font-medium">
-              Local path
-            </label>
-            <Input
-              id="clone-path"
-              placeholder="~/Documents/repo-name"
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              disabled={cloning}
-            />
+            {/* Repo browser */}
+            {isSignedIn && (
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="repo-filter" className="text-sm font-medium">
+                  Your repositories
+                </label>
+                <Input
+                  id="repo-filter"
+                  aria-label="Filter repositories"
+                  placeholder="Filter repositories…"
+                  value={repoFilter}
+                  onChange={(e) => setRepoFilter(e.target.value)}
+                  disabled={cloning || (loadingRepos && repos === null)}
+                />
+                <div
+                  className="border rounded-md max-h-40 overflow-y-auto subtle-scrollbar"
+                  aria-busy={loadingRepos && repos === null}
+                >
+                  {loadingRepos && repos === null ? (
+                    <output
+                      className="flex flex-col gap-1.5 px-3 py-2"
+                      aria-label="Loading repositories"
+                    >
+                      <Skeleton className="h-4 w-2/3" />
+                      <Skeleton className="h-4 w-1/2" />
+                      <Skeleton className="h-4 w-3/4" />
+                      <Skeleton className="h-4 w-2/5" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </output>
+                  ) : filteredRepos?.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">
+                      {repos?.length === 0 ? 'No repositories found.' : 'No matches.'}
+                    </p>
+                  ) : (
+                    filteredRepos?.map((repo) => (
+                      <button
+                        key={repo.full_name}
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-sm hover:bg-muted flex items-center gap-2 truncate disabled:opacity-50"
+                        onClick={() => handleRepoSelect(repo)}
+                        disabled={cloning}
+                      >
+                        {repo.private && (
+                          <span className="text-xs text-muted-foreground shrink-0">🔒</span>
+                        )}
+                        {repo.full_name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Sign-in prompt */}
+            {!isSignedIn && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>Browse your repos:</span>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => onSignIn?.()}
+                  disabled={cloning}
+                >
+                  Sign in to GitHub
+                </Button>
+              </div>
+            )}
+
+            {/* Local path */}
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="clone-path" className="text-sm font-medium">
+                Local path
+              </label>
+              <Input
+                id="clone-path"
+                placeholder="~/Documents/repo-name"
+                value={localPath}
+                onChange={(e) => setLocalPath(e.target.value)}
+                disabled={cloning}
+              />
+            </div>
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           {cloning ? (
