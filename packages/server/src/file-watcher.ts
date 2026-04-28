@@ -288,7 +288,7 @@ export async function classifyEvents(
     for (const create of creates) {
       if (pairedCreates.has(create.path)) continue;
       const content = createContents.get(create.path);
-      if (!content) continue;
+      if (content === undefined) continue;
       const hash = contentHash(content);
       if (hash === deletedHash) {
         // Rename detected
@@ -323,7 +323,7 @@ export async function classifyEvents(
   for (const create of creates) {
     if (pairedCreates.has(create.path)) continue;
     const content = createContents.get(create.path);
-    if (!content) continue;
+    if (content === undefined) continue;
     const hash = contentHash(content);
     updateLastKnownHash(create.path, hash);
 
@@ -347,7 +347,7 @@ export async function classifyEvents(
   // Emit updates
   for (const update of updates) {
     const content = updateContents.get(update.path);
-    if (!content) continue;
+    if (content === undefined) continue;
     const hash = contentHash(content);
     updateLastKnownHash(update.path, hash);
 

@@ -210,6 +210,34 @@ describe('classifyEvents', () => {
     expect(events[0].kind).toBe('create');
   });
 
+  test('emits create event for new empty file', async () => {
+    const filePath = resolve(contentDir, 'empty.md');
+    writeFileSync(filePath, '');
+
+    const events = await classifyEvents([{ type: 'create', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('create');
+    if (events[0].kind === 'create') {
+      expect(events[0].docName).toBe('empty');
+      expect(events[0].content).toBe('');
+    }
+  });
+
+  test('emits update event when existing file becomes empty', async () => {
+    const filePath = resolve(contentDir, 'cleared.md');
+    writeFileSync(filePath, '');
+
+    const events = await classifyEvents([{ type: 'update', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('update');
+    if (events[0].kind === 'update') {
+      expect(events[0].docName).toBe('cleared');
+      expect(events[0].content).toBe('');
+    }
+  });
+
   test('emits delete event for removed file', async () => {
     const filePath = resolve(contentDir, 'gone.md');
 
