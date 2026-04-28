@@ -1,21 +1,8 @@
-# @inkeep/open-knowledge-app
+# @inkeep/open-knowledge-desktop
 
 ## 0.3.0
 
 ### Minor Changes
-
-- ddd4efc: feat(agent-writes): optional `summary` on all four MCP write tools — renders as collapsible bullets on the Timeline row so readers can scan agent intent without opening every diff.
-
-  Agents calling `write_document`, `edit_document`, `rename_document`, or `rollback_to_version` can now pass an optional one-line `summary` describing the outcome of the edit (e.g. `"Fixed token-refresh race"`). Summaries persist per-contributor to the shadow-repo `ok-contributors:` JSON line and render under the author on the [[timeline]] WIP row — first bullet inline, the rest collapsed behind a "Show N more" expander matching the existing `WipGroup` pattern. The doc-list stays visible as ground truth alongside the bullets.
-
-  - `@inkeep/open-knowledge-core` — `ShadowContributor` gains `summaries?: string[]` (flat per-contributor array, oldest-first). `parseContributors` accepts both legacy (no field) and new shapes; malformed `summaries` values drop just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip convention so decorative loss (no bullets) never escalates to attribution loss.
-  - `@inkeep/open-knowledge-server` — new `agent-write-summary.ts` exports `normalizeSummary` as the single API-boundary truncation point (80-char cap, U+2026 suffix when truncated; whitespace-only and empty strings classify as `absent`). `recordContributor` threads through the optional 5th-arg summary; `formatContributorsFrom` emits `summaries` on the `ok-contributors:` line only when non-empty so summary-less writes stay byte-identical to today. Five API handlers (`/api/agent-write`, `/api/agent-write-md`, `/api/agent-patch`, `/api/rename`, `/api/rollback`) accept the optional body field and return `summary: {value, truncatedFrom?}` + a human-readable hint when truncation fires. Three new metrics counters (`agentWriteCalls`, `summariesProvided`, `summariesTruncated`) track M1 adoption and M2 cap efficacy. `handleRename` and `handleRollback` now call `extractAgentIdentity` + `recordContributor` — **but only when the request body carries an explicit `agentId`** (D22 LOCKED), so the in-editor Restore button (which posts with no identity) stays anonymous on the timeline as it always has. MCP-driven rename and rollback calls get a server-generated default summary (`"Renamed <from> → <to>"` / `"Restored to <sha-short>"`) when the agent omits one.
-  - `@inkeep/open-knowledge` — the four write MCP tools expose `summary` in their Zod schemas (Zod hard-cap of 200 chars as a transport-safety bound separate from the 80-char rendering cap); `rename_document` and `rollback_to_version` also thread agent identity (`agentId`/`agentName`/`clientName`/`colorSeed`) matching the pattern from `write-document.ts` so summary attribution lands correctly. Tool descriptions include the cap, the rename/rollback defaults, and a no-PII/secrets hint.
-  - `@inkeep/open-knowledge-app` — `TimelinePanel` `EntryRow` renders the collapsible bullet list when any contributor on the row has `summaries`; zero regression for legacy rows without the field. The doc-list line stays as ground truth alongside the bullets.
-
-  The `ok-contributors:` JSON line stays at `v: 1` — `summaries` is purely additive (precedent #9). Legacy commits (no field) and summary-less writes (field omitted) both remain byte-identical to pre-feature behavior. `exec` / `read_document` enrichment carries the field through automatically via `history.contributors[*].summaries`.
-
-  Full spec + decision log (D1–D27, US-001–US-007): [`specs/2026-04-21-agent-write-summaries/SPEC.md`](specs/2026-04-21-agent-write-summaries/SPEC.md).
 
 - 5fdd555: feat(desktop): M5 — `@napi-rs/keyring` end-to-end verification in packaged build.
 
@@ -125,7 +112,6 @@
 
   Observability: `~/.open-knowledge/stats.jsonl` append-only per dispatch (zero phone-home per XQ3 LOCKED). Success/failure sonner toasts close the DC3/DC4/vendor-drift silent-failure gap, with a bounded retry (2–3 attempts; distinct copy on the final failure) per review M5. Full spec with decision log + test plan at `specs/2026-04-21-open-in-agent-desktop/SPEC.md`; end-user guide at `docs/content/guides/open-in-agent-desktop.mdx`.
 
-- ba88a91: feat: OpenTelemetry instrumentation — opt-in end-to-end traces + metrics + log correlation across the browser → HTTP → Hocuspocus → persistence → shadow-repo → disk chain. Zero overhead when disabled (server default: `OTEL_SDK_DISABLED=true`; frontend default: `VITE_OTEL_ENABLED` unset, SDK dynamic-import-gated out of main bundle). Ships a local Grafana LGTM docker-compose stack at `docker/otel-dev/` (Grafana + Tempo + Loki + Prometheus + OTel Collector) with auto-provisioned datasources — no third-party subscriptions required. Adds `packages/server/src/fs-traced.ts` as the sanctioned path for instrumented disk writes (hand-rolled because `@opentelemetry/instrumentation-fs` is broken under Bun). Pino log records now carry `trace_id` / `span_id` / `trace_flags` via `otelMixin` for trace↔log correlation in Grafana.
 - 6839071: feat(desktop): file-tree right-click → "Reveal in Finder" / "Reveal in File Explorer" / "Open Containing Folder".
 
   A new entry on the file-tree row context menu (Electron host only) reveals the right-clicked file or folder in the OS file manager. Label adapts per platform — "Reveal in Finder" on macOS, "Reveal in File Explorer" on Windows, "Open Containing Folder" on Linux (matching VS Code's copy; the Linux verb asymmetry is intentional because no single Linux file manager has a stable brand to "Reveal in"). Hidden on the web variant where it would have no useful no-op.
@@ -148,92 +134,35 @@
 
 ### Patch Changes
 
-- 334720f: fix(app): hold the "Connecting — waiting for collab server…" banner behind a 500 ms grace window so it no longer flashes on normal page loads. The red terminal banner still surfaces immediately. Extracted `computeBannerMode` + `describeError` as pure helpers with a full state-matrix unit test.
-- 1f2e5e4: chore(app): structured `[collab]` logs on the `bun run dev` upgrade path. Each `/collab` WebSocket upgrade now logs `upgrade received → handleUpgrade starting → handshake complete` with the request URL, `sec-websocket-protocol`, host, origin, and hocuspocus connection count. Synchronous throws from `wss.handleUpgrade` (e.g. "handleUpgrade called twice with same socket") are now caught and logged instead of escaping the listener. A `[collab] configureServer invocation=N` line is also logged so an unexpected re-run of the plugin's server-setup hook (which would orphan the previous upgrade listener) is loud in the dev console. Diagnostic-only — no behavior change on the happy path.
-- 5901e1d: fix(app): serve `/api/config` from the Vite dev plugin so `bun run dev` no longer relies on the 404 → same-origin fallback to resolve the collab URL. Matches the exact response shape served by `ok ui` in production (`{collabUrl, previewUrl, port}` with `cache-control: no-store` + `x-content-type-options: nosniff`). Eliminates the expected-but-alarming 404 in the dev Network tab and closes a timing race where an initial hash-nav could fire before `collabUrl` resolved, leaving the editor stuck at `EditorSkeleton`. Client-side 404 → absent → same-origin fallback is retained as defense-in-depth.
-- 57b5033: fix(app): route `/collab/keepalive` as a bare WS in the Vite dev plugin, mirroring `ok start`'s prod handling. `ok mcp` opens a persistent `/collab/keepalive?pid=<mcp-pid>` WebSocket to keep the collab server out of idle-shutdown (D-034). Before this fix, the Vite dev plugin's `/collab` path-prefix check also matched `/collab/keepalive` and routed it into `hocuspocus.handleConnection`, where Hocuspocus waited for a sync-step-1 message the keepalive never sends — leaving the socket in a half-initialized state in Hocuspocus's connection registry. With `ok mcp` + `bun run dev` running together (e.g., Claude Code against a local dev server), that half-open registry entry could coexist with real browser `/collab` WSs and starve them. Dev now branches on `startsWith('/collab/keepalive')` first and handles it identically to `packages/server/src/boot.ts:210-235` — bare WS handshake, 30s ping timer, no Hocuspocus routing.
-- 8d0f423: feat(app): persist the editor-mode choice (`wysiwyg` / `source`) as a user-global preference. Each tab/window is its own session for its lifetime: the persisted value is read at load (refresh, new tab, new Electron window) and the header toggle writes to localStorage immediately, so the next tab or refresh picks up the last toggle. Open tabs do not update each other live — the simpler per-tab-session model avoids the surprise of a tab flipping mode on focus. Applied on first paint via a synchronous inline FOUC script in `packages/app/index.html` so users whose persisted mode is `source` no longer see a flash of WYSIWYG before the switch. Diff mode remains ephemeral: exiting diff still restores the session pre-diff mode via `modeBeforeDiffRef`.
+- fe2ed47: chore(licensing): ship `THIRD_PARTY_NOTICES.md` in npm tarball + Electron `.app`
 
-  - New `src/editor/use-editor-mode.ts` hook owns the `localStorage` key `ok-editor-mode-v1` (matching the repo's `ok-theme-v1` / `ok-pin-v1` precedent). The hook reads localStorage once via its `useState` initializer; `setItem` failures are swallowed with a `[editor-mode]` bracket-prefix `console.warn` and the session continues in-memory.
-  - `EditorPane.tsx` seeds session-local `editorMode` from the read-once persisted value on mount.
-  - Only user-initiated header-toggle clicks persist. Tool-driven flips (`RAW_MDX_NAV_EVENT` forcing source mode to fix a broken MDX block) stay session-scoped.
-  - No new npm dependencies. Implementation is ~40 lines of TypeScript (hook + inline FOUC script).
-  - E2E coverage in `packages/app/tests/stress/editor-mode-persistence.e2e.ts` (seven tests: T1, T2, T3, T4, T6, T8, T9; wired into CI `test:e2e`).
+  Adds a reproducible attribution pipeline for the published `@inkeep/open-knowledge` CLI tarball and the `@inkeep/open-knowledge-desktop` Electron app. Both bundle source from MIT/ISC/BSD/Apache-2.0 deps and OFL-1.1 fonts; the new `THIRD_PARTY_NOTICES.md` at repo root is the committed source-of-truth and ships under each artifact:
 
-  Full spec + decision log (D1–D9, where D9 "cross-window sync rejected entirely" supersedes D7's focus-based sync per post-ship user UX feedback): [`specs/2026-04-21-editor-mode-persistence/SPEC.md`](specs/2026-04-21-editor-mode-persistence/SPEC.md).
+  - npm CLI tarball — copied to `packages/cli/dist/THIRD_PARTY_NOTICES.md` via the existing `build:assets` step (already covered by `files: ["dist", …]`).
+  - Electron desktop — `electron-builder.yml` `extraResources` places it at `Open Knowledge.app/Contents/Resources/THIRD_PARTY_NOTICES.md` (alongside electron-builder's auto-generated `LICENSE` + `LICENSES.chromium.html`).
 
-- 17d5a91: Handle final chunks from github stream buffer and bypass simple git auth check.
+  The closure walker (`scripts/generate-third-party-notices.mjs`) is deterministic (byte-stable sort, no timestamps) and the committed file is drift-checked against the resolved dep tree by `bun run check`, `bun run check:full:parallel`, and the `lint` job in `.github/workflows/ci.yml`.
+
 - Updated dependencies [ddd4efc]
 - Updated dependencies [5fdd555]
 - Updated dependencies [05c7e37]
 - Updated dependencies [39fa932]
 - Updated dependencies [3ab7ae9]
+- Updated dependencies [19b51e4]
+- Updated dependencies [3079199]
 - Updated dependencies [1f030ba]
+- Updated dependencies [9a26a27]
+- Updated dependencies [1d58475]
+- Updated dependencies [5cc3e75]
 - Updated dependencies [267c8ba]
 - Updated dependencies [ba88a91]
 - Updated dependencies [fa8f5de]
 - Updated dependencies [cb8901b]
 - Updated dependencies [48d4218]
 - Updated dependencies [5444369]
+- Updated dependencies [1451548]
+- Updated dependencies [fe2ed47]
 - Updated dependencies [17d5a91]
   - @inkeep/open-knowledge-core@0.3.0
   - @inkeep/open-knowledge-server@0.3.0
-
-## 0.0.4
-
-### Patch Changes
-
-- 7fb215b: feat(bridge): correctness guardrail, silent recovery UX, and settlement-based propagation for the dual-CRDT observer bridge (Y.XmlFragment ↔ Y.Text).
-
-  **Paired-write symmetry (Bucket 0).** Adds a typed `context.paired: true` marker to the four origins that atomically write both CRDTs inside one `doc.transact()` block — `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`. Server Observer A and Server Observer B now short-circuit symmetrically on paired-write drains via a semantic predicate (`context.paired === true`), closing the prior Observer-B asymmetry that could re-propagate RGA-level corruption under concurrent typing. `MANAGED_RENAME_ORIGIN` is now exported and included in `BRIDGE_ENFORCING_ORIGINS`.
-
-  **Loud-on-content-loss merge (Bucket A).** `mergeThreeWay` now asserts a maximal-unique-line-substring post-condition with a weak order-preservation side-check (`assertContentPreservation`). Violations throw `BridgeMergeContentLossError` in tests so regressions surface; production swallows the error, emits a structured `bridge-merge-content-loss` JSON log, and queues a silent named checkpoint via the new `saveInMemoryCheckpoint` shadow-repo primitive so the editor keeps responding. Users can recover the pre-merge state via the existing TimelinePanel — no toast, no banner. The algorithm's academic-proven limits (Khanna-Kunal-Pierce 2007) are turned into observable, recoverable events rather than silent byte loss.
-
-  **TimelinePanel kind-aware rendering.** Checkpoint rows render with distinct icon + label per kind: `Save Version` (diamond, existing), `bridge-merge-loss` (amber alert-triangle, "Before concurrent merge @ …"), `external-change-rescue` (sky file-archive, "External change recovered @ …"). Pure helpers `checkpointVariant` + `checkpointHeadlineLabel` are exported for tests.
-
-  **Rescue-buffer consolidation.** Reconcile-delete and branch-switch rescue paths now write `external-change-rescue` checkpoints to `refs/checkpoints/<branch>/*` via `saveInMemoryCheckpoint`. `/api/rescue` + `/api/rescue/:docName` merge flat-file (shutdown-flush, retained) and timeline-ref (new) sources — response rows carry a `source: 'flat' | 'timeline'` discriminator.
-
-  **Settlement-based observer dispatch (Bucket B).** Server Observer A + Observer B now run from `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B so any Y.Text write from A is visible to B. The 50 ms wall-clock debounce is gone. Client observer debounce machinery is deleted (per precedent #14, the client is baseline-only). A new grep gate (`packages/server/src/bridge-no-wallclock.test.ts`) fails CI if wall-clock `setTimeout` reappears in either bridge-observer file.
-
-  **Telemetry.** New `bridgeMergeContentLoss` and `bridgeMergeCheckpointCreated` counters exposed via the existing `GET /api/metrics/reconciliation` endpoint. Structured log events (`bridge-merge-content-loss`, `bridge-merge-checkpoint-created`) follow the existing JSON-log convention.
-
-  **Elevated fuzz coverage.** `bridge-convergence.fuzz.test.ts` now runs 200 seeds per PR (`STRESS_FUZZ_PR=1`, wired in `ci.yml`), 10 000 seeds nightly (`STRESS_FUZZ_NIGHTLY=1`, wired in `nightly.yml`), and logs the resolved seed count at startup for CI visibility. Default local runs remain 25 seeds to keep the dev loop fast.<br>_[Corrected 2026-04-19 post-ship: automated fuzz tier removed from CI and nightly per `specs/2026-04-19-ci-signal-quality/SPEC.md` (FR-2 / D-Q1 LOCKED). `STRESS_FUZZ_PR` and `STRESS_FUZZ_NIGHTLY` env wirings deleted from both workflows; the fuzz test file is preserved and invoked ad-hoc via `bun run measure:fuzz`.]_
-
-  **Fuzz structural quiescence.** Tests now use `awaitDocQuiescence(doc)` instead of `wait(ms)` around `pauseSync`/`resumeSync` — race reproduction is event-ordered, not wall-clock.
-
-  Precedents #1, #11(b), and #13(b) in `AGENTS.md` are updated to reflect the shipped behavior.
-
-- Updated dependencies [7fb215b]
-  - @inkeep/open-knowledge-core@0.2.0
-  - @inkeep/open-knowledge-server@0.2.0
-
-## 0.0.3
-
-### Patch Changes
-
-- @inkeep/open-knowledge-core@0.1.1
-- @inkeep/open-knowledge-server@0.1.1
-
-## 0.0.2
-
-### Patch Changes
-
-- 0918570: Sidebar + editor UX polish:
-
-  - File/folder rows get a Copy Path context action with Full Path + Relative Path submenu, backed by a new loopback-gated `GET /api/workspace` endpoint.
-  - Sidebar header gains an Expand All / Collapse All dropdown (click-to-open, tooltip on hover); per-folder subtree variants in the row context menu. Bulk mutations wrap in `startTransition` so the close animation stays 60fps while hundreds of rows materialize.
-  - Agent-file basename (`AGENTS.md` / `CLAUDE.md` / `SKILL.md`, case-insensitive) renders a muted `Bot` badge on the right of the row, matching the symlink `Link2` style. Tailwind v4 trailing-`!` defeats the nested-row color-override rule.
-  - Theme toggle System icon: `Contrast` (was `Monitor`). Sidebar collapse tooltip: state-aware `Hide Files` / `Show Files`. Capital Case on all menu labels.
-  - Internal refactor: `FileTreeHandle` imperative ref replaces the prior `createTrigger` seq-counter + `useEffect` pattern — React 19 ref-as-prop.
-
-- Updated dependencies [3eb50c2]
-- Updated dependencies [07161e2]
-- Updated dependencies [1f72b85]
-- Updated dependencies [e8f4dd8]
-- Updated dependencies [50a5d7f]
-- Updated dependencies [12ee3d6]
-- Updated dependencies [0918570]
-- Updated dependencies [81e2503]
-- Updated dependencies [29fc273]
-  - @inkeep/open-knowledge-core@0.1.0
-  - @inkeep/open-knowledge-server@0.1.0
+  - @inkeep/open-knowledge@0.3.0
