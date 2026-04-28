@@ -48,7 +48,9 @@ export const HelpPopover: FC = () => {
             main menu's Help submenu (SPEC 2026-04-24 Ship 1h) so web and
             Electron users share one mental model for where to find setup.
           */}
-          <p className="text-sm font-medium mb-2">Setup</p>
+          <p className="font-mono tracking-wide uppercase text-muted-foreground text-xs mb-1">
+            Setup
+          </p>
           <ul className="mb-3 space-y-0.5">
             <li>
               <button
@@ -64,7 +66,9 @@ export const HelpPopover: FC = () => {
               </button>
             </li>
           </ul>
-          <p className="text-sm font-medium mb-2">Resources</p>
+          <p className="font-mono tracking-wide uppercase text-muted-foreground text-xs mb-1">
+            Resources
+          </p>
           <nav aria-label="Help and resources">
             <ul className="space-y-0.5">
               {links.map(({ label, href, icon: Icon }) => (
