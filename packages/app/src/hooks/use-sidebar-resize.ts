@@ -138,7 +138,6 @@ export function useSidebarResize({
   const isDragging = useRef(false);
   const isInteractingWithRail = useRef(false);
   const lastWidth = useRef(0);
-  const dragStartPoint = useRef(0);
   const lastDragDirection = useRef<'expand' | 'collapse' | null>(null);
   const lastTogglePoint = useRef(0);
   const toggleCooldown = useRef(false);
@@ -170,7 +169,6 @@ export function useSidebarResize({
     const currentWidthPx = isCollapsed ? 0 : toPx(currentWidth);
     startWidth.current = currentWidthPx;
     startX.current = e.clientX;
-    dragStartPoint.current = e.clientX;
     lastWidth.current = currentWidthPx;
     lastTogglePoint.current = e.clientX;
     lastDragDirection.current = null;
