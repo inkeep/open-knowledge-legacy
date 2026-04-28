@@ -661,13 +661,6 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     };
   }
 
-  // 2. Wire MCP config per editor (unless --no-mcp)
-  const editorIds = options.editors ?? detectInstalledEditors(cwd, options.home);
-  const targets = resolveEditorTargets(editorIds as EditorId[]);
-  const availableTargets = targets.filter((target) =>
-    isEditorTargetAvailable(target, cwd, options.home),
-  );
-
   const scope = await resolveMcpScope({
     scope: options.scope,
     mcp: options.mcp,
@@ -675,13 +668,31 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     promptFn: options.promptFn,
   });
 
+  // 2. Wire MCP config per editor (unless --no-mcp). Defaults are scope-aware:
+  // user-level writes stay limited to editors detected on this machine, while
+  // project-level writes create all standardized project config files so a repo
+  // can be prepared for teammates who use different editors.
+  const userEditorIds = options.editors ?? detectInstalledEditors(cwd, options.home);
+  const projectEditorIds =
+    options.editors ??
+    ALL_EDITOR_IDS.filter((id) => EDITOR_TARGETS[id].projectConfigPath !== undefined);
+  const userTargets = resolveEditorTargets(userEditorIds as EditorId[]);
+  const projectTargets = resolveEditorTargets(projectEditorIds as EditorId[]);
+  const skipMcp = options.mcp === false || scope === null;
+  const selectedTargets = Array.from(
+    new Map(
+      [...userTargets, ...(skipMcp ? [] : projectTargets)].map((target) => [target.id, target]),
+    ).values(),
+  );
+  const availableTargets = userTargets.filter((target) =>
+    isEditorTargetAvailable(target, cwd, options.home),
+  );
+
   const editorResults: EditorMcpResult[] = [];
   // Track project-scope paths we wrote so we can suppress them from the notice.
   const writtenProjectPaths = new Set<string>();
 
-  const skipMcp = options.mcp === false || scope === null;
-
-  for (const target of targets) {
+  for (const target of selectedTargets) {
     if (skipMcp) {
       let configPath = '';
       try {
@@ -700,10 +711,10 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
       continue;
     }
 
-    if (writesUser(scope)) {
+    if (writesUser(scope) && userTargets.includes(target)) {
       editorResults.push(writeEditorMcpConfig(target, cwd, installOptions, options.home));
     }
-    if (writesProject(scope) && target.projectConfigPath) {
+    if (writesProject(scope) && projectTargets.includes(target) && target.projectConfigPath) {
       const projPath = target.projectConfigPath(cwd);
       const projResult = writeEditorMcpConfig(target, cwd, installOptions, options.home, projPath);
       editorResults.push(projResult);
@@ -716,7 +727,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   // Editors skipped for project-scope because they have no project-local config format.
   const projectScopeUnsupportedLabels =
     !skipMcp && scope !== null && writesProject(scope)
-      ? targets.filter((t) => !t.projectConfigPath).map((t) => t.label)
+      ? projectTargets.filter((t) => !t.projectConfigPath).map((t) => t.label)
       : undefined;
 
   const legacyProjectConfigs = skipMcp
@@ -840,7 +851,8 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       result.projectScopeUnsupportedLabels.length > 0
     ) {
       const names = result.projectScopeUnsupportedLabels.join(', ');
-      lines.push(`  ${names} do not support project-level config; skipped`);
+      const verb = result.projectScopeUnsupportedLabels.length === 1 ? 'does' : 'do';
+      lines.push(`  ${names} ${verb} not support project-level config; skipped`);
     } else {
       lines.push('  No supported editor config directories detected; skipped MCP registration');
     }
@@ -887,6 +899,11 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       if (editor.editorId === 'claude' && result.launchJson) {
         lines.push(formatLaunchJsonSummary(result.launchJson));
       }
+    }
+    if (result.projectScopeUnsupportedLabels && result.projectScopeUnsupportedLabels.length > 0) {
+      const names = result.projectScopeUnsupportedLabels.join(', ');
+      const verb = result.projectScopeUnsupportedLabels.length === 1 ? 'does' : 'do';
+      lines.push(`  ${names} ${verb} not support project-level config; skipped`);
     }
   }
 
