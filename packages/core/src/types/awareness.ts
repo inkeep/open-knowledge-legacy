@@ -10,6 +10,14 @@ export interface AwarenessUser {
   icon?: string;
   coeditor?: string;
   tabId: string;
+  /**
+   * Stable per-principal identifier published only by git-config users.
+   * Synthesized-source users do NOT publish this field (FR9) — avoids
+   * cross-browser-profile dedupe when two profiles share the same synthesized
+   * principal.id but have distinct localStorage random names. Wire-format
+   * door (D10): keep optional forever; never narrow to required.
+   */
+  principalId?: string;
 }
 
 export interface AwarenessState {

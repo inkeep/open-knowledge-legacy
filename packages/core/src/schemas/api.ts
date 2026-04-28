@@ -44,6 +44,25 @@ import { z } from 'zod';
  * `lastDiskAckedSV` on every `__system__` reconnect via this fetch.
  * Empty `{}` is valid (cold server with no flushed docs).
  */
+/**
+ * Response shape for `GET /api/principal`.
+ *
+ * Mirrors the `Principal` type in `packages/core/src/types/principal.ts`.
+ * `.loose()` preserves unknown fields for forward-compat — new server
+ * fields don't break older clients. Parse failures route to the silent
+ * fallback path (FR8).
+ */
+export const PrincipalSchema = z
+  .object({
+    id: z.string().min(1),
+    display_name: z.string(),
+    display_email: z.string(),
+    source: z.enum(['git-config', 'synthesized']),
+    created_at: z.string(),
+  })
+  .loose();
+export type PrincipalResponse = z.infer<typeof PrincipalSchema>;
+
 export const ServerInfoResponseSchema = z
   .object({
     ok: z.literal(true),
