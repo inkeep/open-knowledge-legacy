@@ -21,7 +21,7 @@
  * a silent fallback to the wrong WebSocket URL.
  */
 
-export interface ApiConfig {
+interface ApiConfig {
   collabUrl: string | null;
   previewUrl: string | null;
   port: number;

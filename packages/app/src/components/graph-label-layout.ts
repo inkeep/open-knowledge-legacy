@@ -6,7 +6,7 @@ export type GraphLabelLayoutNode = GraphNode & {
   y?: number;
 };
 
-export interface GraphLabelLayoutLinkRef {
+interface GraphLabelLayoutLinkRef {
   id?: string | number | null;
 }
 
@@ -20,7 +20,7 @@ interface GraphViewport {
   height: number;
 }
 
-export type GraphLabelAnchor = 'bottom' | 'top' | 'right' | 'left';
+type GraphLabelAnchor = 'bottom' | 'top' | 'right' | 'left';
 
 export interface GraphLabelPlacement {
   nodeId: string;

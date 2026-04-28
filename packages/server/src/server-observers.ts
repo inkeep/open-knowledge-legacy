@@ -163,7 +163,7 @@ export function shouldRethrowBridgeMergeLoss(env: NodeJS.ProcessEnv = process.en
  * indirectly so a not-yet-ready shadow simply skips the checkpoint
  * (logging continues regardless — telemetry still records the violation).
  */
-export type ShadowAccessor = () => ShadowHandle | undefined;
+type ShadowAccessor = () => ShadowHandle | undefined;
 
 /**
  * Accessor for the current project branch name; used in the
@@ -171,7 +171,7 @@ export type ShadowAccessor = () => ShadowHandle | undefined;
  * git HEAD resolver isn't available (e.g., standalone repos without a
  * project `.git/`).
  */
-export type BranchAccessor = () => string;
+type BranchAccessor = () => string;
 
 /**
  * Decision surfaced by the settlement handler on each drain it processes.
@@ -197,7 +197,7 @@ export type ObserverDispatchKind = 'none' | 'a' | 'b';
  * and a throw from here would propagate through Yjs's transaction machinery.
  * Tests use `expect` calls outside the hook body.
  */
-export type ObserverDispatchHook = (kind: ObserverDispatchKind) => void;
+type ObserverDispatchHook = (kind: ObserverDispatchKind) => void;
 
 export interface SetupServerObserversOpts {
   doc: Y.Doc;

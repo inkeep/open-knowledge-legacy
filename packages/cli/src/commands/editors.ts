@@ -29,7 +29,7 @@ const DEV_MCP_ENV = {
   OK_LOG_FILE: '/tmp/ok-mcp.log',
 } as const;
 
-export type McpInstallMode = 'published' | 'dev';
+type McpInstallMode = 'published' | 'dev';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;

@@ -25,7 +25,7 @@ import { resolveFolderFrontmatter } from './folder-rules.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
 
-export type { GitCommit, ProjectHistorySource } from './project-log.ts';
+export type { GitCommit } from './project-log.ts';
 
 /** Bound on recursive directory scan when computing `DirectoryMeta`. */
 const DIRECTORY_SCAN_CAP = 1000;
@@ -53,14 +53,14 @@ export interface BacklinkEntry {
   snippet?: string | null;
 }
 
-export interface DocumentForwardLinkEntry {
+interface DocumentForwardLinkEntry {
   kind: 'doc';
   docName: string;
   title?: string;
   snippet?: string | null;
 }
 
-export interface ExternalForwardLinkEntry {
+interface ExternalForwardLinkEntry {
   kind: 'external';
   url: string;
   title?: string;

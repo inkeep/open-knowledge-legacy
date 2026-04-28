@@ -30,7 +30,7 @@ export interface RecentProject {
 }
 
 /** Project-open request payload (IPC `ok:project:open`). */
-export interface ProjectOpenRequest {
+interface ProjectOpenRequest {
   path: string;
   /**
    * Per D3 revised: every project open spawns a new editor BrowserWindow.
