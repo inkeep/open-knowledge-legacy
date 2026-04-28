@@ -18,8 +18,10 @@
  * Output: `mdxJsxFlowElement` — `{ type: 'mdxJsxFlowElement', name:
  * 'CommonMarkImage', attributes: [src, alt?, title?], children: [],
  * position: <copied> }`. The compat descriptor renders through the
- * canonical `img` React component and offers a Convert affordance to
- * promote into the canonical descriptor's full HTML-attr surface.
+ * canonical `img` React component and round-trips back to CommonMark
+ * `![alt](src)` syntax on save (read-only compat — the user inserts a
+ * fresh canonical Image block via the slash menu when they need the
+ * full HTML-attr surface).
  *
  * ## Attr mapping
  *

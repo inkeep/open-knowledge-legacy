@@ -629,7 +629,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'content',
     displayName: 'GFM Callout',
     description:
-      'GFM blockquote alert (`> [!NOTE]`) — read-only compat. Convert to Callout for full prop access.',
+      'GFM blockquote alert (`> [!NOTE]`) — read-only compat. Preserves `> [!NOTE]` syntax on round-trip; insert a fresh Callout block for the full prop surface.',
     rendersAs: 'Callout',
     translateProps: (props) => props,
     serialize: (node, ctx) => {
@@ -692,7 +692,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'media',
     displayName: 'CommonMark Image',
     description:
-      'CommonMark image (`![alt](src "title")`) — read-only compat. Convert to Image for the full HTML-native attribute surface.',
+      'CommonMark image (`![alt](src "title")`) — read-only compat. Preserves `![alt](src)` syntax on round-trip; insert a fresh Image block for the full HTML-native attribute surface (srcset, sizes, decoding, etc.).',
     rendersAs: 'img',
     translateProps: (props) => props,
     serialize: (node) => {
@@ -719,7 +719,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'content',
     displayName: 'HTML5 Details',
     description:
-      'HTML5 `<details><summary>` collapsible — read-only compat. Convert to Accordion for icon / description props.',
+      'HTML5 `<details><summary>` collapsible — read-only compat. Preserves `<details>` syntax on round-trip; insert a fresh Accordion block for icon / description / group-name props.',
     rendersAs: 'Accordion',
     translateProps: (props) => props,
     serialize: (node, ctx) => {

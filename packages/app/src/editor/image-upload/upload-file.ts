@@ -30,7 +30,28 @@ function resolveEndpoint(mimeType: string): string | undefined {
   return undefined;
 }
 
-export async function uploadFile(file: File, accept: readonly string[]): Promise<UploadFileResult> {
+/**
+ * Optional dependency injection bag — production callers omit this and the
+ * helper resolves both via the global / module-singleton (see defaults). Tests
+ * pass mock implementations directly, sidestepping `globalThis.fetch =`
+ * mutation patterns that have proven flaky on Linux Bun (CI failure observed
+ * on `1f69f274` — the bare-fetch / global-mutation interaction surfaces a
+ * "string-rejection" before the first test runs).
+ */
+interface UploadFileDeps {
+  /** Fetch implementation. Defaults to `globalThis.fetch`. */
+  fetch?: typeof fetch;
+  /** Currently-open document name. Defaults to `getCurrentDocName()` from the
+   *  module singleton (set by TiptapEditor on mount). */
+  docName?: string | null;
+}
+
+export async function uploadFile(
+  file: File,
+  accept: readonly string[],
+  deps: UploadFileDeps = {},
+): Promise<UploadFileResult> {
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
   const endpoint = resolveEndpoint(file.type);
   if (!endpoint) {
     const hint = accept.length > 0 ? accept.join(', ') : 'none';
@@ -39,19 +60,22 @@ export async function uploadFile(file: File, accept: readonly string[]): Promise
     );
   }
 
-  const docName = getCurrentDocName();
+  const docName = deps.docName !== undefined ? deps.docName : getCurrentDocName();
   if (!docName) {
     throw new Error('No document is open');
   }
-  const parentDocName = `${docName}.md`;
+  // Send the bare docName (extension-less per OK's server convention). The
+  // server only uses `dirname(parentDocName)` to derive the upload directory,
+  // so the extension is irrelevant — appending a hardcoded `.md` would send
+  // the wrong literal for `.mdx` docs even though the dirname is the same.
 
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('parentDocName', parentDocName);
+  formData.append('parentDocName', docName);
 
   let res: Response;
   try {
-    res = await fetch(endpoint, { method: 'POST', body: formData });
+    res = await fetchImpl(endpoint, { method: 'POST', body: formData });
   } catch (networkError) {
     const message = networkError instanceof Error ? networkError.message : String(networkError);
     throw new Error(`Upload failed: ${message}`);

@@ -195,9 +195,10 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
  * Called lazily by the slash-command extension's itemsSources API.
  *
  * Filters to `surface: 'canonical'` — compat descriptors (GFMCallout,
- * CommonMarkImage, HtmlDetailsAccordion) are read-only and never offered for
- * fresh insertion. The user gets a Convert affordance in PropPanel if they
- * want to upgrade an existing compat-form node to its canonical.
+ * CommonMarkImage, HtmlDetailsAccordion) are read-only round-trip preservers
+ * for content authored in those source forms; never offered for fresh
+ * insertion. To get a canonical with the full prop surface, the user inserts
+ * a fresh canonical block from this menu.
  */
 export function getComponentItems(): SlashCommandItem[] {
   const descriptors = getRegisteredDescriptors().filter((desc) => desc.surface === 'canonical');

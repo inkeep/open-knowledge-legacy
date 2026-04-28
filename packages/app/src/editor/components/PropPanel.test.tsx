@@ -317,6 +317,27 @@ describe('getAutoFocusedPropName', () => {
     ];
     expect(getAutoFocusedPropName(props)).toBe('src');
   });
+
+  test('skips advanced props — would be inside collapsed CollapsibleContent on mount', () => {
+    // Defensive guard: a prop with `advanced: true` lives inside the
+    // Collapsible (closed by default), so its `<Input>` is not visible on
+    // mount. Honoring `autoFocus` on it would tell the browser to focus a
+    // hidden element. The helper skips advanced props so the next
+    // common-tier autoFocus prop wins, or null if none.
+    const props: PropDef[] = [
+      { name: 'srcset', type: 'string', required: false, autoFocus: true, advanced: true },
+      { name: 'src', type: 'string', required: true, autoFocus: true },
+    ];
+    expect(getAutoFocusedPropName(props)).toBe('src');
+  });
+
+  test('returns null when only advanced prop has autoFocus (no common-tier fallback)', () => {
+    const props: PropDef[] = [
+      { name: 'srcset', type: 'string', required: false, autoFocus: true, advanced: true },
+      { name: 'alt', type: 'string', required: false },
+    ];
+    expect(getAutoFocusedPropName(props)).toBeNull();
+  });
 });
 
 describe('PropPanel — upload button affordance', () => {

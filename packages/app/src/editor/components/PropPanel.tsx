@@ -104,13 +104,16 @@ export function countAdvancedSet(
 /**
  * Pick the prop whose Input should receive `autoFocus={true}` on PropPanel
  * mount: the first PropDefString in declared order with `autoFocus: true`
- * and not `hidden`. Other Inputs render with `autoFocus={false}`. Returns
- * `null` when no prop opts in. Pure; safe to call inside render.
+ * and not `hidden` and not `advanced` (advanced props live inside a
+ * collapsed `<CollapsibleContent>` and would not be visible on mount).
+ * Other Inputs render with `autoFocus={false}`. Returns `null` when no
+ * prop opts in. Pure; safe to call inside render.
  */
 export function getAutoFocusedPropName(props: PropDef[]): string | null {
   for (const p of props) {
     if (p.type !== 'string') continue;
     if (p.hidden === true) continue;
+    if ('advanced' in p && p.advanced === true) continue;
     if (p.autoFocus === true) return p.name;
   }
   return null;
