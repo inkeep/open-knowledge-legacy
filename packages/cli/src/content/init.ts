@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CACHE_DIR, CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 
@@ -122,47 +122,34 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
-type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
-
 /**
- * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.
+ * Single source of truth for `.open-knowledge/.gitignore`.
  *
- * Used by the `clone` auto-init path: when we scaffold OK into a repo that
- * wasn't already using it, the local `.open-knowledge/` is per-user editor
- * config and shouldn't be committed back upstream. This is deliberately NOT
- * called by `ok init` — there the user is opting into OK for their own
- * project and config.yml is meant to be tracked.
- *
- * Idempotent: recognizes the common variants (`.open-knowledge`,
- * `.open-knowledge/`, leading-slash rooted forms) and only appends when
- * none are present. Creates the file if missing.
+ * Every per-machine OK runtime path lives here so the project root
+ * `.gitignore` stays free of OK-internal entries. No `ok` command writes
+ * to the project root `.gitignore`.
  */
-export function ensureOkGitignoredAtRoot(projectDir: string): GitignoreEntryAction {
-  const gitignorePath = join(projectDir, '.gitignore');
-  const block = `# Open Knowledge — local editor config (not tracked upstream)\n${OK_DIR}/\n`;
+const OK_GITIGNORE_CONTENT = `# Per-machine runtime state — never commit. All Open Knowledge ignore rules
+# live here so the project root .gitignore stays free of OK-internal paths.
 
-  if (!existsSync(gitignorePath)) {
-    writeFileSync(gitignorePath, block, 'utf-8');
-    return 'created';
-  }
+# Derived caches
+${CACHE_DIR}/
 
-  const existing = readFileSync(gitignorePath, 'utf-8');
-  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
-  const alreadyPresent = existing
-    .split('\n')
-    .map((line) => line.trim())
-    .some((line) => variants.has(line));
-  if (alreadyPresent) return 'already-present';
+# Per-process locks
+server.lock
+ui.lock
 
-  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-  const leadingBlank = existing.length > 0 && !existing.endsWith('\n\n') ? '\n' : '';
-  writeFileSync(gitignorePath, `${existing}${separator}${leadingBlank}${block}`, 'utf-8');
-  return 'appended';
-}
+# Sync watermarks + per-machine principal identity
+sync-state.json
+principal.json
+
+# MCP spawn diagnostics
+last-spawn-error.log
+`;
 
 /** Static files scaffolded into the open-knowledge directory. */
 const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
-  { name: '.gitignore', content: `${CACHE_DIR}/\nserver.lock\nui.lock\nsync-state.json\n` },
+  { name: '.gitignore', content: OK_GITIGNORE_CONTENT },
   { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
 ];
 

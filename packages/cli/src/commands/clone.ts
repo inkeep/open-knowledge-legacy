@@ -116,23 +116,15 @@ async function runClone(
 
   if (!opts.json) process.stderr.write('\n');
 
-  // Auto-init: scaffold .open-knowledge/ if missing. The cloned repo
-  // wasn't using OK before, so the local .open-knowledge/ is per-user
-  // editor config — add it to the repo-root .gitignore so it doesn't
-  // get committed back upstream.
+  // Auto-init: scaffold .open-knowledge/ if missing. Per-machine OK runtime
+  // state self-ignores via the .gitignore inside .open-knowledge/ (written
+  // by initContent); we deliberately never mutate the cloned project's root
+  // .gitignore.
   const okDir = resolve(targetDir, OK_DIR);
   if (!existsSync(okDir)) {
     try {
-      const [{ runInit }, { ensureOkGitignoredAtRoot }] = await Promise.all([
-        import('./init.ts'),
-        import('../content/init.ts'),
-      ]);
+      const { runInit } = await import('./init.ts');
       await runInit({ cwd: targetDir, mcp: false });
-      try {
-        ensureOkGitignoredAtRoot(targetDir);
-      } catch {
-        // Non-fatal — scaffold succeeded; gitignore update is best-effort.
-      }
     } catch {
       // Non-fatal
     }

@@ -66,11 +66,16 @@ describe('initContent', () => {
 
     const okDir = join(testDir, OK_DIR);
 
-    // .gitignore excludes cache/ and the per-process lock files
+    // .gitignore is the single source of truth for OK-internal ignores —
+    // every per-machine runtime path lives here so the project root
+    // .gitignore stays free of OK-internal entries.
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
     expect(gitignore).toContain('server.lock');
     expect(gitignore).toContain('ui.lock');
+    expect(gitignore).toContain('sync-state.json');
+    expect(gitignore).toContain('principal.json');
+    expect(gitignore).toContain('last-spawn-error.log');
 
     // config.yml is the fully-commented starter — every section header
     // present, every key commented out so the file parses to a no-op.
