@@ -1,13 +1,55 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-16 by `generate-catalogue.ts`
-> 85 valid reports indexed
+> Auto-generated on 2026-04-27 by `generate-catalogue.ts`
+> 126 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
-| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-15 | 18 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
+| [GBrain vs Open Knowledge — Capability Parity Audit (20…](gbrain-vs-openknowledge-parity/REPORT.md) | 2026-04-27 | 9 files | capability parity, hybrid retrieva… | GBrain, Garry Tan, Open Knowledge,… |
+| [Knowledge Linting in the Karpathy Three-Layer Workflow](knowledge-linting-karpathy-workflow/REPORT.md) | 2026-04-27 | 5 files | knowledge linting, Karpathy LLM Wi… | Andrej Karpathy, GBrain, ByteRover… |
+| [Knowledge Lint as KB-Integrity-Over-Time: Lint, Recomp…](consolidate-and-overnight-patterns/REPORT.md) | 2026-04-27 | 2 files | knowledge linting at scale, consol… | Open Knowledge, Karpathy LLM Wiki,… |
+| [Agent Host Hooks & Auto-Research Surfaces: Cross-Host …](agent-host-hooks-cross-host/REPORT.md) | 2026-04-27 | 5 files | agent host hooks, lifecycle events… | Claude Code, Cursor, OpenAI Codex,… |
+| [Integrated Knowledge-Lint Architecture for Open Knowle…](ok-integrated-knowledge-lint-architecture/REPORT.md) | 2026-04-27 | 1 files | integrated knowledge-lint architec… | Open Knowledge, Hocuspocus, Model … |
+| [Linting Coverage and Gaps in the Open Knowledge Workfl…](linting-coverage-and-gaps/REPORT.md) | 2026-04-27 | 5 files | code linting, markdown content qua… | Biome, knip, husky, lint-staged, G… |
+| [Open Knowledge: Concrete Integration Shape for Knowled…](ok-knowledge-lint-integration/REPORT.md) | 2026-04-27 | 2 files | knowledge linting integration, hin… | Open Knowledge, Hocuspocus, Model … |
+| [Per-Scope Configuration in VS Code and Claude Code: To…](config-surfaces-vscode-and-claude-code/REPORT.md) | 2026-04-26 | 10 files | configuration topology, scope hier… | VS Code, Claude Code, settings.jso… |
+| [Config-File CRUD Architecture: YAML Round-Trip, Schema…](config-edit-paths/REPORT.md) | 2026-04-25 | 7 files | YAML round-trip, schema-driven edi… | yaml@2 (eemeli/yaml), js-yaml, Zod… |
+| [Project-Navigator Patterns in Desktop Editors and KB A…](editor-project-navigator-patterns/REPORT.md) | 2026-04-25 | 4 files | project navigator UX, welcome scre… | VSCode, Cursor, Obsidian, JetBrain… |
+| [Preview-Nav Agent Contract — From Per-Edit Mandate to …](preview-nav-agent-contract/REPORT.md) | 2026-04-24 | 5 files | agent UX contract, preview navigat… | Open Knowledge, Claude Code Deskto… |
+| [Auto-Installing an MCP Server + Agent Skill Across AI …](mcp-server-auto-install-harnesses/REPORT.md) | 2026-04-24 | 16 files | MCP server installation, agent ski… | Model Context Protocol, Agent Skil… |
+| [Agent Skills ZIP-Release UX: Packaging, Hosting, Versi…](agent-skills-zip-distribution-ux/REPORT.md) | 2026-04-24 | 4 files | agent skills packaging, skills zip… | Agent Skills, Claude Desktop, Clau… |
+| [CLI Command Naming: `ok brain` / `gbrain` / `llm-brain…](cli-command-naming-brain/REPORT.md) | 2026-04-23 | 4 files | CLI naming, trademark audit, subco… | Open Knowledge, GBrain, Garry Tan,… |
+| [CRDT Server-Restart Recovery: Implementation Architect…](crdt-server-restart-recovery/REPORT.md) | 2026-04-23 | 7 files | CRDT persistence, server-restart r… | Open Knowledge, Hocuspocus, Yjs, J… |
+| [MCP Guidance Delivery Without Project-Dir Pollution](mcp-guidance-delivery-no-project-pollution/REPORT.md) | 2026-04-22 | 11 files | MCP instructions field, cross-host… | Model Context Protocol, Agent Skil… |
+| [Running Claude Code Safely in a Local Sandbox: Options…](claude-code-local-sandbox-options/REPORT.md) | 2026-04-22 | 7 files | local sandboxing, macOS isolation,… | Claude Code, Anthropic, Apple Cont… |
+| [Open-With-Agent Deep-Link & CLI Capability Matrix](open-with-agent-deep-links/REPORT.md) | 2026-04-21 | 11 files | URL scheme handlers, CLI launch, c… | Cursor, Claude Desktop, Claude Cod… |
+| [Editor View-Mode Persistence: Prior Art Across OSS Mar…](editor-view-mode-persistence-prior-art/REPORT.md) | 2026-04-21 | 8 files | view-mode persistence, editor pref… | Obsidian, Logseq, Zettlr, SilverBu… |
+| [Bundling a CLI Inside an Electron DMG: Install Pattern…](electron-bundled-cli-install-patterns/REPORT.md) | 2026-04-21 | 12 files | bundled-CLI install patterns, macO… | Visual Studio Code, Cursor, Zed, D… |
+| [Editor Popover Lifecycle Patterns: Fused vs Split vs E…](editor-popover-lifecycle-patterns/REPORT.md) | 2026-04-21 | 4 files | editor popover lifecycle, selectio… | Lexical, BlockNote, BlockSuite, Ti… |
+| [Deep-linking into AI Desktop Chat Apps (2026)](deep-linking-ai-desktop-apps-2026/REPORT.md) | 2026-04-21 | 16 files | deep linking, URL schemes, App Int… | Claude Desktop, Codex Desktop, Cur… |
+| [How Mastra.ai and Speakeasy Recommend CLI Installation](mastra-speakeasy-cli-install-recommendations/REPORT.md) | 2026-04-20 | 9 files | CLI installation UX, distribution … | Mastra.ai, Speakeasy, npm, Homebre… |
+| [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-20 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
+| [Timeline Scope Filter Patterns: File, Folder, Project](timeline-scope-filter-patterns/REPORT.md) | 2026-04-20 | 4 files | multi-scope timelines, activity fe… | Google Drive, Notion, Figma, Obsid… |
+| [Performance Profiling Tooling Landscape for a React 19…](perf-profiling-landscape-2026/REPORT.md) | 2026-04-19 | 10 files | performance profiling, render prof… | React 19, React Compiler, Vite, Ro… |
+| [Hardening a TypeScript unified/remark md ↔ ProseMirror…](md-pm-testing-hardening-today/REPORT.md) | 2026-04-19 | 24 files | mutation testing, property-based t… | Stryker-js, fast-check, TypeScript… |
+| [E2E Test Isolation + Broadcaster Lifecycle: Dual-Track…](e2e-isolation-and-broadcaster-lifecycle/REPORT.md) | 2026-04-18 | 7 files | E2E test isolation architecture, P… | Playwright, Hocuspocus, Vite, WebS… |
+| [Apple Developer Program Enrollment Runbook for Direct-…](apple-developer-program-enrollment/REPORT.md) | 2026-04-17 | 7 files | macOS code signing procurement, Ap… | Apple Developer Program, Apple Bus… |
+| [Playwright E2E Observability + Determinism Best Practi…](playwright-e2e-observability-determinism-best-practices/REPORT.md) | 2026-04-17 | 16 files | E2E test observability, condition-… | Playwright, GitHub Actions, WebKit… |
+| [Collaborative Editor UX for Silent Content Loss: Produ…](collab-editor-silent-loss-ux-patterns/REPORT.md) | 2026-04-16 | 6 files | collaborative editor UX, silent me… | Google Docs, Notion, Figma, Linear… |
+| [Editor Asset + Embed Patterns Across the Content-Edito…](editor-asset-embed-patterns-across-universe/REPORT.md) | 2026-04-16 | 1 files | file drop handling, wiki-link embe… | AFFiNE, BlockSuite, Docmost, Outli… |
+| [Yjs Transaction Settlement Hooks: afterAllTransactions…](yjs-transaction-settlement-hooks/REPORT.md) | 2026-04-16 | 8 files | Yjs transaction lifecycle, settlem… | Yjs, Hocuspocus, y-prosemirror, y-… |
+| [Single-CRDT Collapse Alternatives: Automerge, Peritext…](single-crdt-collapse-alternatives/REPORT.md) | 2026-04-16 | 5 files | CRDT migration, single-CRDT collap… | Automerge, Peritext, Yjs 14, Loro,… |
+| [Three-Way Merge Content Preservation: Hybrid diff3+DMP…](three-way-merge-content-preservation/REPORT.md) | 2026-04-16 | 9 files | three-way merge correctness, conte… | node-diff3, diff-match-patch, Yjs,… |
+| [E2E Blocked QA Validation Options](e2e-blocked-qa-validation-options/REPORT.md) | 2026-04-16 | — | E2E test validation, WebSocket int… | Playwright, HocuspocusProvider, Y.… |
+| [Short CLI Command Name: `ok` vs `okb` vs Alternatives …](cli-command-name-ok-okb/REPORT.md) | 2026-04-16 | 5 files | CLI command naming, short-name col… | open-knowledge, CLI naming, ripgre… |
+| [Collaborative Editor Timing Best Practices — Evidence-…](collaborative-editor-timing-best-practices/REPORT.md) | 2026-04-16 | 5 files | debounce timing, collaborative edi… | Yjs, Hocuspocus, Liveblocks, CodeM… |
+| [Yjs 14 + @y/* Stack: Source-Traced Ecosystem Adoption …](yjs-14-ecosystem-adoption/REPORT.md) | 2026-04-16 | 9 files | Yjs major version migration, CRDT … | Yjs, @y/y, y-prosemirror, @y/prose… |
+| [Config-Driven Folder Frontmatter for Open Knowledge](config-driven-folder-frontmatter/REPORT.md) | 2026-04-16 | 4 files | folder metadata, config.yml extens… | Open Knowledge, Fumadocs, Docusaur… |
+| [TipTap WYSIWYG Clipboard Round-Trip with Markdown: Pri…](tiptap-clipboard-round-trip-markdown/REPORT.md) | 2026-04-15 | 9 files | clipboard serialization, markdown … | TipTap, ProseMirror, Outline, Bloc… |
+| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-15 | 25 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
+| [Electron App Development for AI Coding Agents 2026](electron-ai-coding-agent-development/REPORT.md) | 2026-04-15 | 1 files | Electron repo structure for AI age… | Electron, electron-vite, electron-… |
 | [Storybook Ecosystem Survey — Component Blocks v2 Reuse…](storybook-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 7 files | component registration patterns, p… | Storybook 8.x, argTypes, Controls … |
 | [MCP Agent Attribution — Implementation Paths](mcp-agent-attribution-implementation/REPORT.md) | 2026-04-14 | 5 files | agent attribution, MCP identity, m… | Model Context Protocol, Open Knowl… |
 | [CodeMirror Markdown Source-View Rendering: Primitives,…](codemirror-markdown-source-view-rendering/REPORT.md) | 2026-04-14 | 8 files | CodeMirror 6 primitives, line wrap… | CodeMirror 6, Obsidian, SilverBull… |
@@ -33,7 +75,6 @@
 | [How Markdown Editors Handle Paste + Raw HTML: A 15-Edi…](markdown-editor-paste-and-html-survey/REPORT.md) | 2026-04-11 | 5 files | clipboard paste behavior, HTML-in-… | TipTap, Notion, Obsidian, Typora, … |
 | [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md) | 2026-04-11 | 8 files | markdown round-trip fidelity, docu… | @tiptap/markdown, prosemirror-mark… |
 | [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
-| [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
 | [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
 | [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md) | 2026-04-11 | — | CI pipeline patterns, conditional … | n8n, Supabase, Strapi, AFFiNE, Cal… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
@@ -54,7 +95,7 @@
 | [One-Way Y.XmlFragment to Y.Text Observer Sync with y-c…](yjs-constrained-observer-sync/REPORT.md) | 2026-04-07 | 7 files | CRDT observer patterns, collaborat… | y-codemirror.next, y-prosemirror, … |
 | [Competitive Landscape for an Agent-Native Knowledge Pl…](openknowledge-competitive-landscape/REPORT.md) | 2026-04-07 | 8 files | competitive landscape, knowledge m… | Notion, Confluence, Obsidian, Mint… |
 | [MDX Text Editor + Live Preview: Architecture, Prior Ar…](mdx-text-editor-preview-approach/REPORT.md) | 2026-04-07 | 11 files | MDX editing, live preview architec… | CodeMirror 6, MDX, Yjs, y-codemirr… |
-| [Peritext-on-Yjs Feasibility: Can the Peritext Rich Tex…](peritext-on-yjs-feasibility/REPORT.md) | 2026-04-07 | 7 files | Peritext CRDT rich text, Y.Text fo… | Yjs, Peritext, ProseMirror, TipTap… |
+| [Peritext-on-Yjs Feasibility: Can the Peritext Rich Tex…](peritext-on-yjs-feasibility/REPORT.md) | 2026-04-07 | 15 files | Peritext CRDT rich text, Y.Text fo… | Yjs, Peritext, ProseMirror, TipTap… |
 | [@parcel/watcher for Bidirectional Disk-CRDT Sync: Sour…](parcel-watcher-crdt-disk-bridge/REPORT.md) | 2026-04-07 | 6 files | bidirectional file sync, CRDT disk… | @parcel/watcher, Hocuspocus, Yjs, … |
 | [Prior Art for Open-Knowledge: Eight Sources Deep Inves…](open-knowledge-prior-art-eight-sources/REPORT.md) | 2026-04-07 | 9 files | agent-native knowledge platforms, … | Graphify, ByteRover, ByteRover CLI… |
 | [Loro Ecosystem Readiness Assessment: Evaluating Loro a…](loro-ecosystem-readiness-assessment/REPORT.md) | 2026-04-07 | 9 files | CRDT ecosystem readiness, rich tex… | Loro, Yjs, Automerge, ProseMirror,… |
@@ -97,16 +138,417 @@
 
 ## Report Details
 
+### [GBrain vs Open Knowledge — Capability Parity Audit (2026-04-27)](gbrain-vs-openknowledge-parity/REPORT.md)
+
+> Two-way capability comparison between Garry Tan's GBrain (github.com/garrytan/gbrain, ~11.8k stars, v0.21+) and Open Knowledge as of 2026-04-27. Inventories what each system ships across architecture (markdown-canonical + index), retrieval (hybrid vector/keyword/graph + RRF), knowledge graph (auto-…
+
+- **Created:** 2026-04-27
+- **Topics:** capability parity, hybrid retrieval, knowledge graph, skills architecture, resolver, durable jobs, CRDT collaboration, markdown canonical
+- **Subjects:** GBrain, Garry Tan, Open Knowledge, Y.js, Hocuspocus, PGLite, pgvector, Postgres, MCP, GStack
+- **Evidence files:** 9
+
+### [Knowledge Linting in the Karpathy Three-Layer Workflow](knowledge-linting-karpathy-workflow/REPORT.md)
+
+> Factual landscape of what 'knowledge linting' means in a Karpathy-style LLM Wiki workflow — the canonical 6 checks, GBrain's 8, community implementations' 5+ slash-command lint surfaces, the convergent 16-check taxonomy across surveyed systems, the deterministic-vs-LLM-required split, the failure-m…
+
+- **Created:** 2026-04-27
+- **Topics:** knowledge linting, Karpathy LLM Wiki, three-layer workflow, lint check taxonomy, source-grounding, compiled truth, link rot, citation rot, knowledge integrity, agent-native knowledge bases
+- **Subjects:** Andrej Karpathy, GBrain, ByteRover, Obsidian, lychee, Wayback Machine, WikiSQE
+- **Evidence files:** 5
+
+### [Knowledge Lint as KB-Integrity-Over-Time: Lint, Recompile, Consolidate, and Overnight Workflows](consolidate-and-overnight-patterns/REPORT.md)
+
+> Reframes consolidate-class operations as part of the broader knowledge-lint discipline rather than a separate concern. Maps three operations on one autonomy-vs-evidence axis: lint (fully autonomous, surfaces findings), recompile (bounded autonomous, evidence-driven re-derivation, the gap OK current…
+
+- **Created:** 2026-04-27
+- **Topics:** knowledge linting at scale, consolidate workflow, recompile pattern, compiled truth and timeline, overnight workflows, independent decision streams, sleep consolidation, 5-trigger taxonomy, bounded autonomy
+- **Subjects:** Open Knowledge, Karpathy LLM Wiki, GBrain, Anthropic Claude Code Routines, eugeniughelbur obsidian-second-brain, Pratiyush llm-wiki
+- **Evidence files:** 2
+- **Warnings:** 2
+
+### [Agent Host Hooks & Auto-Research Surfaces: Cross-Host Capability Matrix (April 2026)](agent-host-hooks-cross-host/REPORT.md)
+
+> Factual landscape of hook / lifecycle / trigger surfaces across the agent hosts the Open Knowledge skill targets — Claude Code, Cursor, OpenAI Codex, Windsurf Cascade, GitHub Copilot CLI, Continue.dev, Aider, Claude Desktop, Claude Cowork. Maps which support PreToolUse/PostToolUse-pattern hooks (5 …
+
+- **Created:** 2026-04-27
+- **Topics:** agent host hooks, lifecycle events, PreToolUse PostToolUse, cross-host portability, MCP elicitation, MCP sampling, auto-research, cloud agents, GitHub Actions agents, knowledge linting infrastructure
+- **Subjects:** Claude Code, Cursor, OpenAI Codex, Windsurf Cascade, GitHub Copilot CLI, Continue.dev, Aider, Claude Desktop, Claude Cowork, Model Context Protocol
+- **Evidence files:** 5
+
+### [Integrated Knowledge-Lint Architecture for Open Knowledge](ok-integrated-knowledge-lint-architecture/REPORT.md)
+
+> Unified design doc synthesizing 6 prior reports into one concrete integration architecture for Open Knowledge. The system: 3 operations on an autonomy axis (lint / recompile / consolidate) × 5 trigger classes (per-event / session-end / daily / weekly / continuous-decay) × cross-host distribution (h…
+
+- **Created:** 2026-04-27
+- **Topics:** integrated knowledge-lint architecture, autonomy axis, 5-trigger taxonomy, cross-host distribution, stream isolation, 5-phase nightly pattern, recompile primitive, GitHub Actions auto-research
+- **Subjects:** Open Knowledge, Hocuspocus, Model Context Protocol, Claude Code Routines, GitHub Actions
+- **Evidence files:** 1
+
+### [Linting Coverage and Gaps in the Open Knowledge Workflow](linting-coverage-and-gaps/REPORT.md)
+
+> Factual inventory of what linting (code + content) is built into this repo, what each layer actually catches, where it runs (pre-commit / pre-push / CI), and what categories of content quality — staleness, frontmatter drift, hub-rot, closed-loop grounding — are not detected by anything today. Disti…
+
+- **Created:** 2026-04-27
+- **Topics:** code linting, markdown content quality, frontmatter validation, link integrity, graph health, staleness detection, enforcement surfaces, CI gating
+- **Subjects:** Biome, knip, husky, lint-staged, GitHub Actions, Open Knowledge MCP
+- **Evidence files:** 5
+
+### [Open Knowledge: Concrete Integration Shape for Knowledge Linting + Auto-Research](ok-knowledge-lint-integration/REPORT.md)
+
+> 1P investigation of OK's existing code surfaces — HTTP API, MCP tool registry, applyAgentMarkdownWrite, hints[] channel, live-derived-index extension pattern, installUserSkill distribution, research/ingest/consolidate workflow chain — mapped against the prior research's 17-check taxonomy and cross-…
+
+- **Created:** 2026-04-27
+- **Topics:** knowledge linting integration, hints channel, applyAgentMarkdownWrite, live-derived-index pattern, MCP sampling, cross-host hook distribution, auto-research GitHub Actions, installUserSkill, research workflow tool
+- **Subjects:** Open Knowledge, Hocuspocus, Model Context Protocol, Claude Code, Cursor
+- **Evidence files:** 2
+
+### [Per-Scope Configuration in VS Code and Claude Code: Topology, Surfaces, Cascades](config-surfaces-vscode-and-claude-code/REPORT.md)
+
+> Side-by-side factual landscape of how a mature GUI editor (VS Code) and a young CLI agent (Claude Code) handle per-user-global / per-project / per-user-project configuration. Covers scope hierarchy, storage, edit surface, sync, override semantics; surface-by-surface equivalence table; structural as…
+
+- **Created:** 2026-04-25
+- **Updated:** 2026-04-26
+- **Topics:** configuration topology, scope hierarchy, precedence and cascading, dual-surface editing, per-project vs per-user, admin/managed policy, agent-trust DSL
+- **Subjects:** VS Code, Claude Code, settings.json, .code-workspace, Settings Sync, Settings Profiles, CLAUDE.md, .claude/agents, .claude/skills, .mcp.json, git config, ESLint, JetBrains, npm, Cursor
+- **Evidence files:** 10
+
+### [Config-File CRUD Architecture: YAML Round-Trip, Schema Bridges, Form Libraries, MCP Tool Patterns](config-edit-paths/REPORT.md)
+
+> Factual landscape of the choices facing a developer-tool that wants to support three CRUD paths (file-like editor, MCP tools, settings form UI) over a hand-edited YAML config validated by Zod. Covers YAML AST/round-trip libraries, Zod ↔ JSON Schema bridges, JSON-Schema-driven form libraries, MCP-to…
+
+- **Created:** 2026-04-25
+- **Topics:** YAML round-trip, schema-driven editing, JSON Schema form libraries, MCP tool design, dev-tool config UX, dual-surface editing
+- **Subjects:** yaml@2 (eemeli/yaml), js-yaml, Zod v4, zod-to-json-schema, json-schema-to-zod, react-jsonschema-form, JSON Forms, react-formgen, uniforms, monaco-yaml, codemirror-json-schema, yaml-language-server, JSON Pointer (RFC 6901), JSON Patch (RFC 6902), JSON Merge Patch (RFC 7396), VS Code ConfigurationEditingService, SchemaStore, Renovate, GitLab Pipeline Editor, CircleCI in-app editor
+- **Evidence files:** 7
+- **Warnings:** 1
+
+### [Project-Navigator Patterns in Desktop Editors and KB Apps](editor-project-navigator-patterns/REPORT.md)
+
+> How VSCode, Cursor, Obsidian, JetBrains IDEs, Zed, Sublime Text, and Logseq let users return to (or live without) a project navigator from inside an open project. Pattern taxonomy with affordance inventories, window-management semantics, and trade-offs.
+
+- **Created:** 2026-04-25
+- **Topics:** project navigator UX, welcome screen patterns, window management, desktop editor conventions, return-to-launcher affordances
+- **Subjects:** VSCode, Cursor, Obsidian, JetBrains IDEs, IntelliJ IDEA, Zed, Sublime Text, Logseq
+- **Evidence files:** 4
+
+### [Preview-Nav Agent Contract — From Per-Edit Mandate to Once-Per-Session Setup](preview-nav-agent-contract/REPORT.md)
+
+> Should Open Knowledge's agent-facing contract switch from per-edit `get_preview_url` + navigate to a once-per-session 'ensure preview attached' setup? What breaks, what improves, and what are the viable shapes across MCP clients (Claude Code, Cursor, Claude Desktop, Codex, generic stdio)? Analyzes …
+
+- **Created:** 2026-04-24
+- **Topics:** agent UX contract, preview navigation, CRDT collaboration, MCP instructions design
+- **Subjects:** Open Knowledge, Claude Code Desktop, Cursor, MCP, AgentFocusBroadcaster, get_preview_url
+- **Evidence files:** 5
+
+### [Auto-Installing an MCP Server + Agent Skill Across AI Coding Harnesses: What's Programmatic, What's Not](mcp-server-auto-install-harnesses/REPORT.md)
+
+> Landscape of programmatic MCP server registration AND Agent Skills installation across 7 AI coding harnesses (Claude Code CLI + Desktop, Claude Cowork, Codex CLI + Desktop, Cursor CLI + Desktop). Covers config-file surfaces, vendor CLI install commands, deep-link URIs, stdio vs HTTP/SSE install sha…
+
+- **Created:** 2026-04-18
+- **Updated:** 2026-04-24
+- **Topics:** MCP server installation, agent skills installation, non-interactive install, harness config surfaces, deep-link URI schemes, OAuth 2.1 headless friction, cross-harness installers, CLI vs file-write trade-offs, enable-by-default behavior, cowork vm skill isolation
+- **Subjects:** Model Context Protocol, Agent Skills, Claude Code, Claude Desktop, Claude Cowork, Codex, Cursor, Smithery, install-mcp, add-mcp, mcpm.sh, npx skills, ToolHive, MCPB, DXT
+- **Evidence files:** 16
+- **Warnings:** 3
+
+### [Agent Skills ZIP-Release UX: Packaging, Hosting, Versioning, and Install Hand-off for Third-Party Publishers](agent-skills-zip-distribution-ux/REPORT.md)
+
+> How third-party publishers should package, host, version, and distribute Agent Skills for Claude Desktop + Cowork given that programmatic install is unavailable. Covers SKILL.md frontmatter allowlist (six fields; no version), Claude Desktop's zero automation hooks (no URL scheme, no file associatio…
+
+- **Created:** 2026-04-24
+- **Topics:** agent skills packaging, skills zip distribution, skills versioning, install handoff ux, cowork session reset mitigation, third-party publisher survey, trust and provenance, download-and-guide install pattern
+- **Subjects:** Agent Skills, Claude Desktop, Claude Cowork, SKILL.md, gh skill, npx skills, Vercel Labs, skills.sh, agentskills.io, MCPB, DXT, GitHub Artifact Attestations, Open Knowledge
+- **Evidence files:** 4
+- **Warnings:** 2
+
+### [CLI Command Naming: `ok brain` / `gbrain` / `llm-brain` — Landmine Audit + Architecture Shape](cli-command-naming-brain/REPORT.md)
+
+> Evidence-driven assessment of naming a re-runnable knowledge-base scaffolder subcommand for @inkeep/open-knowledge. Covers brand/trademark/registry landmines across the `brain` family (disqualifying GBrain collision with Garry Tan's 2026 launch, TheBrain Technologies trademark, Obsidian 'second bra…
+
+- **Created:** 2026-04-23
+- **Topics:** CLI naming, trademark audit, subcommand vs flag, CLI + UI shared implementation, scaffolder command, agent-readable folder instructions
+- **Subjects:** Open Knowledge, GBrain, Garry Tan, TheBrain Technologies, Obsidian, shadcn, Astro, Prisma, Supabase, clig.dev
+- **Evidence files:** 4
+- **Warnings:** 1
+
+### [CRDT Server-Restart Recovery: Implementation Architecture + Product Bar](crdt-server-restart-recovery/REPORT.md)
+
+> Deep dive into the architecture for preserving CRDT identity across Yjs server process restart when the persistent source of truth is a text format (markdown). Synthesizes production Yjs prior art (Hocuspocus SQLite, y-leveldb, y-redis, Jupyter RTC, AFFiNE/BlockSuite), Yjs binary format durability …
+
+- **Created:** 2026-04-23
+- **Topics:** CRDT persistence, server-restart recovery, dual persistence (text + binary), Yjs binary format durability, collaborative editor UX, defense-in-depth architecture
+- **Subjects:** Open Knowledge, Hocuspocus, Yjs, Jupyter Real-Time Collaboration, Notion, Linear, Figma, AFFiNE, BlockSuite
+- **Evidence files:** 7
+- **Warnings:** 2
+
+### [MCP Guidance Delivery Without Project-Dir Pollution](mcp-guidance-delivery-no-project-pollution/REPORT.md)
+
+> How should an MCP server like Open Knowledge deliver behavior-shaping agent guidance — STOP rules, tool-call prerequisites, authoring conventions — without writing to the user's project directory? Evaluates MCP `instructions` handshake, Agent Skills (cross-host SKILL.md), per-host global-rule surfa…
+
+- **Created:** 2026-04-22
+- **Topics:** MCP instructions field, cross-host agent guidance, SKILL.md distribution, user-global agent surfaces, project-directory pollution, progressive disclosure, companion-skill pattern, tool-description-embedded guidance, init command UX
+- **Subjects:** Model Context Protocol, Agent Skills, agentskills.io, Claude Code, Cursor, OpenAI Codex, Windsurf, VS Code Copilot, GitHub Copilot, Claude Desktop, XcodeBuildMCP, Figma MCP, Playwright MCP, Notion MCP, AGENTS.md, CLAUDE.md, Open Knowledge
+- **Evidence files:** 11
+
+### [Running Claude Code Safely in a Local Sandbox: Options for macOS in 2026](claude-code-local-sandbox-options/REPORT.md)
+
+> Tiered survey of local sandboxing approaches for Claude Code CLI — from Anthropic's built-in OS-level sandbox to macOS-native microVMs (Apple Container, Lima, OrbStack, ClodPod) to heavier devcontainer/Docker stacks — with threat-model-driven recommendations and explicit attention to resource cost.
+
+- **Created:** 2026-04-22
+- **Topics:** local sandboxing, macOS isolation, microVMs, kernel-level sandbox, network egress allowlist, prompt-injection defense, dangerously-skip-permissions, autonomous agents, resource overhead
+- **Subjects:** Claude Code, Anthropic, Apple Container, OrbStack, Lima, ClodPod, Tart, Docker Sandboxes, Matchlock, Trail of Bits, libkrun, krunkit, Apple Virtualization.framework, Seatbelt, bubblewrap
+- **Evidence files:** 7
+
+### [Open-With-Agent Deep-Link & CLI Capability Matrix](open-with-agent-deep-links/REPORT.md)
+
+> Capability matrix for an `openWithAgent(agentName, dir, prompt)` wrapper across 10 agents (Cursor, Claude Desktop, Claude Code CLI, OpenAI Codex CLI, Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands) plus the web-URL Open-in-Claude pattern (claude.ai/new?q=, Mintlify contextual menu)…
+
+- **Created:** 2026-04-21
+- **Topics:** URL scheme handlers, CLI launch, cross-platform shell-out, deeplink security, web URL prompt-pass, docs-site contextual menu, agent integration
+- **Subjects:** Cursor, Claude Desktop, Claude Code, OpenAI Codex, Windsurf, Aider, GitHub Copilot CLI, Cline, Continue, OpenHands, Mintlify, Inkeep, Electron, shell.openExternal
+- **Evidence files:** 11
+
+### [Editor View-Mode Persistence: Prior Art Across OSS Markdown Editors](editor-view-mode-persistence-prior-art/REPORT.md)
+
+> How Obsidian, Logseq, Zettlr, SilverBullet, HedgeDoc, VS Code, Joplin, and block-canonical neighbors (Outline, AFFiNE, BlockNote, Milkdown, TinaCMS) persist the user's view/edit mode across sessions, tabs, windows, and documents. Covers storage locations (per-vault config files, user-global JSON, r…
+
+- **Created:** 2026-04-21
+- **Topics:** view-mode persistence, editor preference storage, cross-window stickiness, per-document scope, precedence semantics, FOUC prevention, URL-based mode override, Electron preferences, cross-tab sync, storage event listener
+- **Subjects:** Obsidian, Logseq, Zettlr, SilverBullet, HedgeDoc, VS Code, Joplin, Outline, AFFiNE, Milkdown, TinaCMS, BlockNote, Notion, JupyterLab, RStudio, electron-store, next-themes, tldraw, Excalidraw, Penpot, BroadcastChannel API, CodeMirror 6, TipTap
+- **Evidence files:** 8
+
+### [Bundling a CLI Inside an Electron DMG: Install Patterns, Gotchas, and the VS Code Lineage](electron-bundled-cli-install-patterns/REPORT.md)
+
+> How VS Code, Cursor, Zed, Docker Desktop, Sublime, and Atom ship (or decline to ship) a PATH-installable CLI alongside a desktop app. Covers install mechanisms (symlink vs wrapper vs PATH append), osascript admin prompts, `ELECTRON_RUN_AS_NODE=1`, app-translocation traps, version coupling through s…
+
+- **Created:** 2026-04-21
+- **Topics:** bundled-CLI install patterns, macOS app translocation, ELECTRON_RUN_AS_NODE, osascript admin prompts, /usr/local/bin symlinks, signing and notarization of inner executables, Electron desktop app CLI-on-PATH
+- **Subjects:** Visual Studio Code, Cursor, Zed, Docker Desktop, Sublime Text, Atom, GitHub Desktop, Electron, electron-builder, Open Knowledge
+- **Evidence files:** 12
+- **Warnings:** 2
+
+### [Editor Popover Lifecycle Patterns: Fused vs Split vs Escape Hatches](editor-popover-lifecycle-patterns/REPORT.md)
+
+> How production rich-text editors model the relationship between chip/mark selection state and popover-open state. Surveys 8+ editors (Lexical, BlockNote, BlockSuite, TipTap, Plate.js, Notion, Figma, Medium), 4 design-system primitives (Radix, Ariakit, React Aria, Shadcn), WAI-ARIA constraints, and …
+
+- **Created:** 2026-04-21
+- **Topics:** editor popover lifecycle, selection-popover coupling, multi-popover UX, a11y popover patterns, design system popover primitives
+- **Subjects:** Lexical, BlockNote, BlockSuite, TipTap, Plate.js, Radix, Ariakit, React Aria, WAI-ARIA, HTML Popover
+- **Evidence files:** 4
+- **Warnings:** 1
+
+### [Deep-linking into AI Desktop Chat Apps (2026)](deep-linking-ai-desktop-apps-2026/REPORT.md)
+
+> Landscape of programmatic entry points — URL schemes, App Intents, CLI bridges, scripting, and launchers — for Claude Desktop, Codex Desktop, Cursor, ChatGPT Desktop, Perplexity, and Raycast, plus prior art on capture-and-handoff patterns (react-grab, Mintlify, bookmarklets, PopClip).
+
+- **Created:** 2026-04-16
+- **Updated:** 2026-04-21
+- **Topics:** deep linking, URL schemes, App Intents, AI chat handoff, macOS integration
+- **Subjects:** Claude Desktop, Codex Desktop, Cursor, ChatGPT Desktop, Perplexity, Raycast, react-grab, Mintlify
+- **Evidence files:** 16
+
+### [How Mastra.ai and Speakeasy Recommend CLI Installation](mastra-speakeasy-cli-install-recommendations/REPORT.md)
+
+> Factual landscape across 9 dimensions of how two TS/Go dev-tool vendors present install UX (pages, channels, dlx, pinning, scaffolding, CI, bins, postinstall-binary patterns, telemetry) — plus a 1P Conclusions section applying the findings to open-knowledge's CLI + Electron desktop direction.
+
+- **Created:** 2026-04-20
+- **Topics:** CLI installation UX, distribution channels, dlx vs permanent install, first-run scaffolding, postinstall binary distribution, CLI telemetry, Electron desktop app distribution, 1P synthesis
+- **Subjects:** Mastra.ai, Speakeasy, npm, Homebrew, goreleaser, electron-builder, CLI packaging, Open Knowledge
+- **Evidence files:** 9
+- **Warnings:** 2
+
+### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
+
+> Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, N…
+
+- **Created:** 2026-04-11
+- **Updated:** 2026-04-20
+- **Topics:** desktop app wrapping, macOS native apps, web to desktop, electron vs tauri
+- **Subjects:** Electron, Tauri, SwiftUI WebView, Claude Desktop, ChatGPT Desktop, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Warp Terminal, electron-vite, ToDesktop
+- **Evidence files:** 4
+
+### [Timeline Scope Filter Patterns: File, Folder, Project](timeline-scope-filter-patterns/REPORT.md)
+
+> Investigates how content products and developer tools let users switch between per-file, per-folder, and workspace-wide activity timelines — UI affordances, density/aggregation, query-layer mechanics, and filter composition. Maps 10 products against the design space and catalogs the current Open Kn…
+
+- **Created:** 2026-04-20
+- **Topics:** multi-scope timelines, activity feeds, filter composition, git pathspec, changed-path Bloom filters, version history UX
+- **Subjects:** Google Drive, Notion, Figma, Obsidian, Dropbox, GitHub, GitLab, VS Code, Linear, Jira, Open Knowledge
+- **Evidence files:** 4
+
+### [Performance Profiling Tooling Landscape for a React 19 + Yjs/Hocuspocus + TipTap/CodeMirror Editor — Late 2025 / Early 2026](perf-profiling-landscape-2026/REPORT.md)
+
+> Evidence-driven survey of state-of-the-art performance profiling, observability, and CI-gating tooling across 10 dimensions of a React-19-with-Compiler + Vite/Rolldown + Yjs/Hocuspocus + TipTap/ProseMirror + CodeMirror 6 collaborative editor stack. Covers React render profiling, browser main-thread…
+
+- **Created:** 2026-04-19
+- **Topics:** performance profiling, render profiling, main-thread tracing, CRDT benchmarking, Web Vitals INP, bundle analysis, CI perf regression gates, Node.js continuous profiling, memory leak detection, OpenTelemetry browser readiness
+- **Subjects:** React 19, React Compiler, Vite, Rolldown, Yjs, Hocuspocus, TipTap, ProseMirror, CodeMirror 6, Chrome DevTools, Perfetto, Playwright, web-vitals, size-limit, CodSpeed, RelativeCI, tldraw, Excalidraw, BlockSuite, Silverbullet, zed, Outline, OpenTelemetry, Pyroscope, Sentry, Datadog, Bun
+- **Evidence files:** 10
+- **Warnings:** 1
+
+### [Hardening a TypeScript unified/remark md ↔ ProseMirror Pipeline Today — Testing Techniques and Edge-Case Corpora, 2026-04](md-pm-testing-hardening-today/REPORT.md)
+
+> Factual landscape of four testing-hardening techniques available to a TypeScript markdown ↔ ProseMirror pipeline in April 2026: mutation testing via Stryker-js + fast-check, differential testing within the JS markdown parser ecosystem, whitespace/BOM/line-ending/tab edge-case coverage, and patholog…
+
+- **Created:** 2026-04-19
+- **Topics:** mutation testing, property-based testing, differential testing, markdown parser security, whitespace edge cases, round-trip idempotence, cross-parser divergence, test fixture corpus, CI cost control
+- **Subjects:** Stryker-js, fast-check, TypeScript, unified, remark, micromark, markdown-it, marked, commonmark.js, CommonMark, GFM, Babelmark3, mdast
+- **Evidence files:** 24
+
+### [E2E Test Isolation + Broadcaster Lifecycle: Dual-Track Architectural Evaluation](e2e-isolation-and-broadcaster-lifecycle/REPORT.md)
+
+> Evidence-based evaluation of two related architectural questions for projects embedding a CRDT/WebSocket backend (Hocuspocus) inside a Vite dev server: (a) Playwright test isolation across parallel workers — single shared webServer vs per-worker servers vs hybrid; (b) async broadcaster-to-closing-s…
+
+- **Created:** 2026-04-18
+- **Topics:** E2E test isolation architecture, Playwright worker-scoped fixtures, per-worker server spawning, WebSocket broadcaster lifecycle, EPIPE ECONNRESET handling, async socket error patterns, adapter-wrapper pattern
+- **Subjects:** Playwright, Hocuspocus, Vite, WebSocket, Yjs, Outline, Docmost, Next.js, SvelteKit, React Router, tldraw, websockets/ws, Node.js
+- **Evidence files:** 7
+- **Warnings:** 2
+
+### [Apple Developer Program Enrollment Runbook for Direct-DMG macOS Distribution (2026)](apple-developer-program-enrollment/REPORT.md)
+
+> Definitive procedural reference for verifying existing Apple Developer Program enrollment and enrolling if not present. Disambiguates Apple Business Manager, Apple at Work, Developer Program, and Developer Enterprise Program. Covers D-U-N-S carryover, Organization enrollment, Developer ID Applicati…
+
+- **Created:** 2026-04-17
+- **Topics:** macOS code signing procurement, Apple Developer Program enrollment, business Apple ID disambiguation, Developer ID cert creation, Apple Notary Service credentials, electron-builder mac notarize, CI secrets for macOS signing
+- **Subjects:** Apple Developer Program, Apple Business Manager, D-U-N-S, Developer ID Application cert, Apple Notary Service, electron-builder, notarytool
+- **Evidence files:** 7
+- **Warnings:** 6
+
+### [Playwright E2E Observability + Determinism Best Practices](playwright-e2e-observability-determinism-best-practices/REPORT.md)
+
+> Factual survey of Playwright community conventions for condition-based waits, failure observability (retries/video/trace/screenshot), WebKit headless quirks, cross-browser skip-vs-filter-vs-fix decisions, and helper organization, plus five deep-dive follow-ups on CRDT readiness signals (Yjs/Hocuspo…
+
+- **Created:** 2026-04-17
+- **Topics:** E2E test observability, condition-based waits, cross-browser parity, CI artifact management, test harness organization, CRDT readiness signals, React 19 concurrency, debounce testing, animation testing, editor E2E patterns
+- **Subjects:** Playwright, GitHub Actions, WebKit, eslint-plugin-playwright, Vite, React 19, Radix UI, Yjs, Hocuspocus, BlockNote, Milkdown, Lexical, Logseq, tldraw
+- **Evidence files:** 16
+
+### [Collaborative Editor UX for Silent Content Loss: Production Patterns + Integration Seam](collab-editor-silent-loss-ux-patterns/REPORT.md)
+
+> Surveys how production real-time collaborative editors (Google Docs, Notion, Figma, Linear, Obsidian, VS Code Live Share, CodeMirror+ShareDB) handle merge anomalies where content may be lost. Cross-references industry 'keep typing' philosophy against documented UX costs when silent-loss is real (Ob…
+
+- **Created:** 2026-04-16
+- **Topics:** collaborative editor UX, silent merge loss patterns, version history as recovery affordance, dual-CRDT bridge UX, local-first recovery patterns
+- **Subjects:** Google Docs, Notion, Figma, Linear, Obsidian, VS Code Live Share, CodeMirror collab, ShareDB, Replicache
+- **Evidence files:** 6
+- **Warnings:** 2
+
+### [Editor Asset + Embed Patterns Across the Content-Editor Universe](editor-asset-embed-patterns-across-universe/REPORT.md)
+
+> Cross-editor comparison of file drop, embed syntax, wiki-link parsing, dedup, vault import, basename resolution, rename rewrite, and asset folder conventions across 14 editors (AFFiNE, Docmost, Outline, Logseq, SilverBullet, Foam, Dendron, Zettlr, HedgeDoc, Fumadocs, BlockNote, TipTap, Milkdown, Pl…
+
+- **Created:** 2026-04-16
+- **Topics:** file drop handling, wiki-link embed, content-addressable storage, vault interop, basename resolution, rename refactor
+- **Subjects:** AFFiNE, BlockSuite, Docmost, Outline, Logseq, SilverBullet, Foam, Dendron, Zettlr, HedgeDoc, Fumadocs, BlockNote, TipTap, Milkdown, Plate, TinaCMS, Obsidian
+- **Evidence files:** 1
+
+### [Yjs Transaction Settlement Hooks: afterAllTransactions vs Wall-Clock Debounce](yjs-transaction-settlement-hooks/REPORT.md)
+
+> Source-traced semantics of Yjs transaction lifecycle hooks (afterAllTransactions, afterTransaction, beforeAllTransactions) and their suitability as a settlement-based replacement for setTimeout debounce in a server-authoritative CRDT bridge observer. Confirms afterAllTransactions fires synchronousl…
+
+- **Created:** 2026-04-16
+- **Topics:** Yjs transaction lifecycle, settlement-based observer composition, CRDT bridge propagation, WebSocket sync batching, test harness design
+- **Subjects:** Yjs, Hocuspocus, y-prosemirror, y-codemirror.next, lib0/observable
+- **Evidence files:** 8
+
+### [Single-CRDT Collapse Alternatives: Automerge, Peritext-on-Yjs-14, Loro, Custom PM-Native Comparison](single-crdt-collapse-alternatives/REPORT.md)
+
+> Four-way comparison of candidate paths to eliminate Open Knowledge's dual-CRDT bridge (Y.XmlFragment + Y.Text). Evaluates production readiness, migration scope, ecosystem fit, effort estimates, and risk profile for Automerge 2.2+, Peritext-on-Yjs-14, Loro, and custom PM-native CRDT. Verifies claims…
+
+- **Created:** 2026-04-16
+- **Topics:** CRDT migration, single-CRDT collapse, rich-text CRDT comparison, markdown collaborative editor architecture, dual-view editor sync
+- **Subjects:** Automerge, Peritext, Yjs 14, Loro, ProseMirror, TipTap, Hocuspocus, y-prosemirror, automerge-prosemirror, loro-prosemirror
+- **Evidence files:** 5
+- **Warnings:** 1
+
+### [Three-Way Merge Content Preservation: Hybrid diff3+DMP, CRDT-Native Alternatives, and Post-Condition Invariants](three-way-merge-content-preservation/REPORT.md)
+
+> Formal analysis of content-preservation guarantees for hybrid line-level-diff3 + character-level-DMP three-way merge under concurrent-writer interleavings. Source-traces node-diff3 + diff-match-patch + Yjs state-vector machinery. Surveys academic formal characterization (Khanna-Kunal-Pierce 2007), …
+
+- **Created:** 2026-04-16
+- **Topics:** three-way merge correctness, content preservation invariants, CRDT bridge architecture, state-based vs operation-based merge, markdown collaborative editing
+- **Subjects:** node-diff3, diff-match-patch, Yjs, Peritext, Automerge, Pijul, Darcs, Git, Operational Transformation
+- **Evidence files:** 9
+- **Warnings:** 1
+
+### [E2E Blocked QA Validation Options](e2e-blocked-qa-validation-options/REPORT.md)
+
+> Options analysis for validating 4 blocked Playwright E2E scenarios (QA-010/012/013/014) in a React 19.2 + HocuspocusProvider + Y.js CRDT editor. Covers routeWebSocket timing bugs, test-hook alternatives, Y.js awareness injection, and listener-attach race solutions.
+
+- **Created:** 2026-04-16
+- **Topics:** E2E test validation, WebSocket interception, awareness injection, transition testing
+- **Subjects:** Playwright, HocuspocusProvider, Y.js, React 19.2
+
+### [Short CLI Command Name: `ok` vs `okb` vs Alternatives for @inkeep/open-knowledge](cli-command-name-ok-okb/REPORT.md)
+
+> Collision audit and naming-convention survey to decide whether `ok`, `okb`, or a short alternative should replace the verbose `open-knowledge` binary. Covers shell/PATH/npm/Homebrew/apt conflicts, brand associations, and precedent from ripgrep, fd, bat, bun, jj, and others.
+
+- **Created:** 2026-04-16
+- **Topics:** CLI command naming, short-name collision audit, package vs binary name split
+- **Subjects:** open-knowledge, CLI naming, ripgrep, fd, bat, npm bin, OKB token, Ink.js, Federated Wiki
+- **Evidence files:** 5
+- **Warnings:** 1
+
+### [Collaborative Editor Timing Best Practices — Evidence-Based Debounce, Throttle, and Delay Values](collaborative-editor-timing-best-practices/REPORT.md)
+
+> Systematic survey of timing constants in collaborative real-time editors: human perception thresholds, CRDT sync frequency, typing detection, auto-save, file watcher batching, version history, and derived-view invalidation. Maps production values from Yjs, Hocuspocus, Liveblocks, Figma, Google Docs…
+
+- **Created:** 2026-04-16
+- **Topics:** debounce timing, collaborative editing latency, CRDT sync frequency
+- **Subjects:** Yjs, Hocuspocus, Liveblocks, CodeMirror, ProseMirror, Figma, Google Docs, VS Code
+- **Evidence files:** 5
+
+### [Yjs 14 + @y/* Stack: Source-Traced Ecosystem Adoption Status & Transitive Migration Cost](yjs-14-ecosystem-adoption/REPORT.md)
+
+> Source-traced map of the Yjs 14 ecosystem as of 2026-04-16 — every load-bearing package's API diff (yjs core, y-prosemirror, y-codemirror.next, @tiptap/y-tiptap, @hocuspocus, lib0), the @y/* npm rebrand reality, what's structurally compatible vs broken, what would need to be forked or rewritten for…
+
+- **Created:** 2026-04-16
+- **Topics:** Yjs major version migration, CRDT ecosystem adoption, editor binding compatibility, server lifecycle migration, peer-dependency analysis
+- **Subjects:** Yjs, @y/y, y-prosemirror, @y/prosemirror, y-codemirror.next, @y/codemirror, @tiptap/y-tiptap, @hocuspocus/server, @hocuspocus/provider, @y/websocket-server, @y/protocols, lib0, BlockNote, dmonad
+- **Evidence files:** 9
+- **Warnings:** 1
+
+### [Config-Driven Folder Frontmatter for Open Knowledge](config-driven-folder-frontmatter/REPORT.md)
+
+> Research landscape for attaching frontmatter-like metadata to folders in Open Knowledge via config.yml. Covers the existing 1P config loader + frontmatter pipeline, sibling-file prior art (Fumadocs meta.json, Docusaurus _category_.json, Nextra _meta, Hugo _index.md cascade, Obsidian folder-note plu…
+
+- **Created:** 2026-04-16
+- **Topics:** folder metadata, config.yml extension, frontmatter inheritance, path matching globs, navigation sidebar, sibling-file vs centralized config
+- **Subjects:** Open Knowledge, Fumadocs, Docusaurus, Nextra, Hugo, Obsidian, VitePress, Starlight, Astro, Mintlify, Turborepo, Biome
+- **Evidence files:** 4
+- **Warnings:** 2
+
+### [TipTap WYSIWYG Clipboard Round-Trip with Markdown: Primitives, Prior Art, and Best Practices](tiptap-clipboard-round-trip-markdown/REPORT.md)
+
+> How ProseMirror and TipTap expose clipboard hooks, how 10+ markdown-canonical editors implement copy-as-markdown and paste-from-markdown, which MIME types destination apps actually read, and how to intelligently handle rich HTML paste from Google Docs / Notion / Word / VS Code / Gmail via the unifi…
+
+- **Created:** 2026-04-15
+- **Topics:** clipboard serialization, markdown round-trip, editor primitives, MIME strategy, browser clipboard API, drag-and-drop symmetry, HTML paste handling, source detection heuristics, HTML-to-markdown conversion, unified ecosystem integration, dual-mode clipboard (WYSIWYG + Source), mdast-canonical pipeline
+- **Subjects:** TipTap, ProseMirror, Outline, BlockNote, Milkdown, AFFiNE, BlockSuite, Keystatic, Plate, Notion, Slack, GitHub, Google Docs, Google Sheets, Microsoft Word, Gmail, Apple Notes, VS Code, Obsidian, CKEditor, CodeMirror 6, Turndown, rehype-remark, remark-rehype, unified, Chromium, WebKit, Firefox
+- **Evidence files:** 9
+- **Warnings:** 1
+
 ### [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond](git-lifecycle-push-pull-merge-patterns/REPORT.md)
 
-> How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff…
+> How 50+ tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, non-developer wrappers, headless CMS platforms, bot/CI systems, and file-sync tools — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credent…
 
 - **Created:** 2026-04-14
 - **Updated:** 2026-04-15
-- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum, sync engine architecture, offline affordances, progress reporting, failure taxonomy, sustained auth lifecycle, auto-sync scheduling, retry and backoff patterns, file sync dynamics, workflow automation
-- **Subjects:** Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync, iCloud Drive, Dropbox, Stripe API, gRPC, Tower, VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan, n8n, Temporal, Prefect, Airbyte, Apache Airflow, Syncthing, Rclone, Nextcloud, git-annex, OneDrive
-- **Evidence files:** 18
-- **Warnings:** 2
+- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum, sync engine architecture, offline affordances, progress reporting, failure taxonomy, sustained auth lifecycle, credential helper token refresh, auto-sync scheduling, retry and backoff patterns, file sync dynamics, workflow automation, embeddable merge controls, full-auto sync prevalence
+- **Subjects:** Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync, iCloud Drive, Dropbox, Stripe API, gRPC, Tower, VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan, n8n, Temporal, Prefect, Airbyte, Apache Airflow, Syncthing, Rclone, Nextcloud, git-annex, OneDrive, git-credential-oauth, Gitea, Forgejo, Codeberg, @codemirror/merge, Monaco Editor, Mergely, react-diff-view, Wiki.js, CloudCannon, GitBook, Decap CMS, Sveltia CMS, Static CMS, Keystatic, Mintlify, Statamic, Forestry, Prose.io, Dependabot, Renovate, semantic-release, Dendron, Foam, Gollum, Publii, Front Matter CMS, Netlify Create, SilverBullet, isomorphic-git
+- **Evidence files:** 25
+- **Warnings:** 3
+
+### [Electron App Development for AI Coding Agents 2026](electron-ai-coding-agent-development/REPORT.md)
+
+> How teams structure Electron app repos for AI-coding-agent-first development velocity. 13 dimensions across repo structure, CI/CD, multi-process testing, dev↔packaged parity gates, agent-specific workflow affordances, IPC observability, quality gates, worktree isolation, hot-reload orchestration, h…
+
+- **Created:** 2026-04-15
+- **Topics:** Electron repo structure for AI agents, multi-process test harness primitives, dev-vs-packaged parity gates, hot-reload orchestration, headless Electron in CI, typed IPC observability, worktree isolation, packaged-build smoke tests, AI agent developer velocity
+- **Subjects:** Electron, electron-vite, electron-forge, electron-builder, Playwright, WebdriverIO, electron-log, electron-trpc, Sentry, Electronegativity, pnpm, Xvfb, Claude Code, Codex
+- **Evidence files:** 1
+- **Warnings:** 4
 
 ### [Storybook Ecosystem Survey — Component Blocks v2 Reuse Assessment](storybook-ecosystem-component-blocks-reuse/REPORT.md)
 
@@ -343,15 +785,6 @@
 - **Subjects:** AGPL-3.0, GPLv3, JavaScript, npm
 - **Evidence files:** 1
 
-### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
-
-> Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, N…
-
-- **Created:** 2026-04-11
-- **Topics:** desktop app wrapping, macOS native apps, web to desktop, electron vs tauri
-- **Subjects:** Electron, Tauri, SwiftUI WebView, Claude Desktop, ChatGPT Desktop, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Warp Terminal, electron-vite, ToDesktop
-- **Evidence files:** 4
-
 ### [Open-Core Split Licensing Engineering Patterns: ee/ Directories, AGPL Linking Exceptions, and npm IP Protection](open-core-split-licensing-engineering/REPORT.md)
 
 > How open-core companies architecturally implement split licensing — structuring proprietary code alongside open-source code, building/distributing compiled-only npm packages, handling contributor boundaries, and using AGPL linking exceptions. 13 company code-first case studies, legal mechanics, npm…
@@ -544,8 +977,8 @@
 - **Created:** 2026-04-07
 - **Topics:** Peritext CRDT rich text, Y.Text formatting internals, dual-view editor architecture, CRDT block-level structure, ProseMirror binding architecture
 - **Subjects:** Yjs, Peritext, ProseMirror, TipTap, Hocuspocus, Automerge, Loro, BlockSuite, AFFiNE, y-prosemirror, y-quill
-- **Evidence files:** 7
-- **Warnings:** 1
+- **Evidence files:** 15
+- **Warnings:** 2
 
 ### [@parcel/watcher for Bidirectional Disk-CRDT Sync: Source-Level Implementation Analysis](parcel-watcher-crdt-disk-bridge/REPORT.md)
 
