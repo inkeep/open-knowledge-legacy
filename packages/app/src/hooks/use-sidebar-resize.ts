@@ -137,7 +137,6 @@ export function useSidebarResize({
   const startX = useRef(0);
   const isDragging = useRef(false);
   const isInteractingWithRail = useRef(false);
-  const lastWidth = useRef(0);
   const lastDragDirection = useRef<'expand' | 'collapse' | null>(null);
   const lastTogglePoint = useRef(0);
   const toggleCooldown = useRef(false);
@@ -177,7 +176,6 @@ export function useSidebarResize({
     const currentWidthPx = isCollapsedRef.current ? 0 : toPx(currentWidthRef.current);
     startWidth.current = currentWidthPx;
     startX.current = e.clientX;
-    lastWidth.current = currentWidthPx;
     lastTogglePoint.current = e.clientX;
     lastDragDirection.current = null;
     toggleCooldown.current = false;
@@ -364,9 +362,6 @@ export function useSidebarResize({
         const formattedWidth = formatWidth(newWidth, unit);
         onResize(formattedWidth);
         persistWidth(formattedWidth);
-
-        // Update last width
-        lastWidth.current = clampedWidthPx;
       }
     }
 
@@ -381,7 +376,6 @@ export function useSidebarResize({
       // Reset all state
       isDragging.current = false;
       isInteractingWithRail.current = false;
-      lastWidth.current = 0;
       lastDragDirection.current = null;
       lastTogglePoint.current = 0;
       toggleCooldown.current = false;
