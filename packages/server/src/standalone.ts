@@ -539,17 +539,17 @@ export function createServer(options: ServerOptions): ServerInstance {
   // duplicates the document. Keep normal user docs resident for the server
   // lifetime; explicit lifecycle paths below opt into unload.
   const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
-  let forceUnloadDepth = 0;
+  const forceUnloadSet = new Set<Document>();
   let shutdownAllowsUnload = false;
   hocuspocus.shouldUnloadDocument = (document) =>
-    (shutdownAllowsUnload || forceUnloadDepth > 0) && defaultShouldUnloadDocument(document);
+    (shutdownAllowsUnload || forceUnloadSet.has(document)) && defaultShouldUnloadDocument(document);
 
   async function forceUnloadDocument(document: Document): Promise<void> {
-    forceUnloadDepth += 1;
+    forceUnloadSet.add(document);
     try {
       await hocuspocus.unloadDocument(document);
     } finally {
-      forceUnloadDepth -= 1;
+      forceUnloadSet.delete(document);
     }
   }
 
@@ -888,6 +888,18 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     hocuspocus.closeConnections();
     hocuspocus.flushPendingStores();
+
+    // shouldUnloadDocument blocks normal unloads while the server is running.
+    // Clients that disconnected before destroy() was called (e.g. pool.dispose()
+    // in test teardown) will have left documents resident with 0 connections.
+    // closeConnections() above is a no-op for those docs, so no unload events
+    // fire. Explicitly unload any document with no remaining connections so
+    // afterUnloadDocument can resolve.
+    for (const doc of hocuspocus.documents.values()) {
+      if (doc.getConnectionsCount() === 0) {
+        void hocuspocus.unloadDocument(doc);
+      }
+    }
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((_, reject) => {

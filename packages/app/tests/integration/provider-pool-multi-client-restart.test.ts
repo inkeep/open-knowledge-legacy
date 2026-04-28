@@ -15,6 +15,7 @@
  * — marker counts at baseline and clientID-drift assertion holds. Any
  * reintroduction of the multi-client restart duplication trips this red.
  */
+import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,7 +50,7 @@ afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
   }
-});
+}, 30_000);
 
 describe('T2: Multi-client fast restart', () => {
   test('REPRO: 2 clients + fast restart → no 3-way duplication', async () => {

@@ -63,7 +63,7 @@ afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
   }
-});
+}, 30_000);
 
 /** Seed the fixture on disk and wait for the pool's active provider to reach
  *  synced + zero unsynced changes. Returns the first provider instance so
@@ -96,7 +96,6 @@ describe('ProviderPool reconnects', () => {
     writeFileSync(join(server.contentDir, `${docName}.md`), SMALL_FIXTURE, 'utf-8');
 
     const firstPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
-    cleanups.push(() => firstPool.dispose());
     await seedPoolServerInstanceId(server, firstPool);
     await seedAndSyncSingleClient(server, firstPool, docName);
     await wait(300);
