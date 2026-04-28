@@ -1,4 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import type { Principal } from '@inkeep/open-knowledge-core';
+import { PrincipalSchema } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
@@ -26,6 +28,12 @@ export interface PoolEntrySnapshot {
 }
 
 interface DocumentContextValue {
+  /**
+   * The resolved principal from `/api/principal`. Null while the fetch is in
+   * flight or if it failed/was absent. Consumers use this to prefer real
+   * git-config identity over the random animal-adjective fallback in awareness.
+   */
+  principal: Principal | null;
   activeTarget: ResolvedNavigationTarget | null;
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
@@ -236,6 +244,16 @@ function warnPinPersistFailureOnce(err: unknown): void {
   );
 }
 
+let principalFetchWarned = false;
+function warnPrincipalFetchOnce(err: unknown): void {
+  if (principalFetchWarned) return;
+  principalFetchWarned = true;
+  console.warn(
+    '[principal-fetch] failed to resolve principal — falling back to random identity.',
+    err,
+  );
+}
+
 function loadPinFromStorage(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -322,6 +340,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const [principal, setPrincipal] = useState<Principal | null>(null);
   const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
   const [docPanelMode, setDocPanelModeState] = useState<'doc' | 'agent'>('doc');
   const [docPanelAgentId, setDocPanelAgentId] = useState<string | null>(null);
@@ -363,19 +382,22 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // Fetch principal and wire tab identity so HocuspocusProvider includes
     // {principalId, tabSessionId} in its auth token. The server's
     // onAuthenticate hook reads this to set connection.context.principalId for
-    // correct writer attribution. Silent on failure — pool uses anonymous token.
+    // correct writer attribution. Also lifts the resolved principal into React
+    // state so TiptapEditor can prefer real names over random animal fallbacks.
+    // Silent on failure — pool uses anonymous token; presence falls back to random.
     fetch('/api/principal')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((principal: unknown) => {
-        if (principal && typeof (principal as { id?: unknown }).id === 'string') {
-          p.setTabIdentity({
-            principalId: (principal as { id: string }).id,
-            tabSessionId,
-          });
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((json: unknown) => {
+        const parsed = PrincipalSchema.safeParse(json);
+        if (parsed.success) {
+          p.setTabIdentity({ principalId: parsed.data.id, tabSessionId });
+          setPrincipal(parsed.data as Principal);
+        } else {
+          warnPrincipalFetchOnce(parsed.error);
         }
       })
-      .catch(() => {
-        // principal unavailable — pool opens providers with anonymous auth token
+      .catch((err: unknown) => {
+        warnPrincipalFetchOnce(err);
       });
 
     // CRDT server-restart recovery boot fetch: pull the server's
@@ -522,6 +544,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   };
 
   const value: DocumentContextValue = {
+    principal,
     activeTarget,
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
@@ -669,6 +692,7 @@ if (import.meta.hot) {
     pool?.dispose();
     pool = null;
     pinPersistWarned = false;
+    principalFetchWarned = false;
     if (typeof window !== 'undefined') {
       try {
         delete (window as { __providerPool?: unknown }).__providerPool;
