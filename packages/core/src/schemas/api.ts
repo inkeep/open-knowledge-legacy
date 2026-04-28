@@ -44,25 +44,6 @@ import { z } from 'zod';
  * `lastDiskAckedSV` on every `__system__` reconnect via this fetch.
  * Empty `{}` is valid (cold server with no flushed docs).
  */
-/**
- * Response shape for `GET /api/principal`.
- *
- * Mirrors the `Principal` type in `packages/core/src/types/principal.ts`.
- * `.loose()` preserves unknown fields for forward-compat — new server
- * fields don't break older clients. Parse failures fall back silently to
- * the random-identity fallback; presence remains functional.
- */
-export const PrincipalSchema = z
-  .object({
-    id: z.string().min(1),
-    display_name: z.string(),
-    display_email: z.string(),
-    source: z.enum(['git-config', 'synthesized']),
-    created_at: z.string(),
-  })
-  .loose();
-export type PrincipalResponse = z.infer<typeof PrincipalSchema>;
-
 export const ServerInfoResponseSchema = z
   .object({
     ok: z.literal(true),
@@ -72,3 +53,32 @@ export const ServerInfoResponseSchema = z
   })
   .loose();
 export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;
+
+/**
+ * Response shape for `GET /api/principal`.
+ *
+ * The Zod schema is the single source of truth for the wire shape; the
+ * `Principal` type alias re-exported from `../types/principal.ts` is
+ * `z.infer<typeof PrincipalResponseSchema>`. Schema-first eliminates the
+ * "two parallel declarations + cast at trust boundary" failure class.
+ *
+ * `display_name` and `display_email` are `.min(1)` so an empty git-config
+ * value (template-rendered configs, mis-quoted setup scripts) routes
+ * through the `safeParse` failure path to the random-identity fallback
+ * rather than rendering an empty initial / blank tooltip / blank cursor
+ * label downstream.
+ *
+ * `.loose()` preserves unknown fields for forward-compat — new server
+ * fields don't break older clients. Parse failures fall back silently to
+ * the random-identity fallback; presence remains functional.
+ */
+export const PrincipalResponseSchema = z
+  .object({
+    id: z.string().min(1),
+    display_name: z.string().min(1),
+    display_email: z.string().min(1),
+    source: z.enum(['git-config', 'synthesized']),
+    created_at: z.string().min(1),
+  })
+  .loose();
+export type PrincipalResponse = z.infer<typeof PrincipalResponseSchema>;

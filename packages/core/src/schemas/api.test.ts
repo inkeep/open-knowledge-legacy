@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PrincipalSchema } from './api';
+import { PrincipalResponseSchema } from './api';
 
 const validPrincipal = {
   id: 'principal-abc123',
@@ -9,9 +9,9 @@ const validPrincipal = {
   created_at: '2026-04-27T00:00:00.000Z',
 };
 
-describe('PrincipalSchema', () => {
+describe('PrincipalResponseSchema', () => {
   test('parses a valid git-config principal', () => {
-    const result = PrincipalSchema.safeParse(validPrincipal);
+    const result = PrincipalResponseSchema.safeParse(validPrincipal);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.id).toBe('principal-abc123');
@@ -21,7 +21,7 @@ describe('PrincipalSchema', () => {
   });
 
   test('parses a valid synthesized principal', () => {
-    const result = PrincipalSchema.safeParse({
+    const result = PrincipalResponseSchema.safeParse({
       ...validPrincipal,
       source: 'synthesized',
       display_name: 'Local User',
@@ -33,7 +33,7 @@ describe('PrincipalSchema', () => {
   });
 
   test('preserves unknown fields for forward-compat (loose schema)', () => {
-    const result = PrincipalSchema.safeParse({
+    const result = PrincipalResponseSchema.safeParse({
       ...validPrincipal,
       future_field: 'new-server-value',
     });
@@ -42,7 +42,7 @@ describe('PrincipalSchema', () => {
 
   test('fails when id is missing', () => {
     const { id: _id, ...withoutId } = validPrincipal;
-    const result = PrincipalSchema.safeParse(withoutId);
+    const result = PrincipalResponseSchema.safeParse(withoutId);
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues.length).toBeGreaterThan(0);
@@ -50,15 +50,29 @@ describe('PrincipalSchema', () => {
   });
 
   test('fails when id is an empty string', () => {
-    const result = PrincipalSchema.safeParse({ ...validPrincipal, id: '' });
+    const result = PrincipalResponseSchema.safeParse({ ...validPrincipal, id: '' });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues.length).toBeGreaterThan(0);
     }
   });
 
+  test('fails when display_name is an empty string', () => {
+    // An empty git-config user.name (template-rendered configs, mis-quoted setup
+    // scripts) must not propagate to the awareness publish-site as name: ''. The
+    // safeParse failure here routes the client to the random-identity fallback
+    // — same path as a 404 / network error.
+    const result = PrincipalResponseSchema.safeParse({ ...validPrincipal, display_name: '' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when display_email is an empty string', () => {
+    const result = PrincipalResponseSchema.safeParse({ ...validPrincipal, display_email: '' });
+    expect(result.success).toBe(false);
+  });
+
   test('fails when source is an invalid enum value', () => {
-    const result = PrincipalSchema.safeParse({
+    const result = PrincipalResponseSchema.safeParse({
       ...validPrincipal,
       source: 'ldap',
     });
@@ -69,7 +83,7 @@ describe('PrincipalSchema', () => {
   });
 
   test('fails when display_name is not a string', () => {
-    const result = PrincipalSchema.safeParse({
+    const result = PrincipalResponseSchema.safeParse({
       ...validPrincipal,
       display_name: 42,
     });
@@ -80,7 +94,7 @@ describe('PrincipalSchema', () => {
   });
 
   test('fails when the entire object is null', () => {
-    const result = PrincipalSchema.safeParse(null);
+    const result = PrincipalResponseSchema.safeParse(null);
     expect(result.success).toBe(false);
   });
 });

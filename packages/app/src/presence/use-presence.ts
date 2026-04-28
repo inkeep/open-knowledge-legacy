@@ -8,10 +8,10 @@ import {
 } from '@/lib/agent-presence';
 import type { AwarenessState, AwarenessUser } from './identity.ts';
 
-// NOTE: `pickAgentsForDoc` now returns `{agentId, entry}` pairs directly so
-// this hook doesn't have to reverse-lookup the id from the awareness map
-// per render (previously O(N²) against presence map entries — see review
-// pass 0 finding #11).
+// `pickAgentsForDoc` returns `{agentId, entry}` pairs directly so this hook
+// doesn't have to reverse-lookup the id from the awareness map per render.
+// The earlier shape forced a Map.entries() reverse lookup inside the
+// participants build, which was O(N²) over presence-map size.
 
 /**
  * A human participant — publishes per-doc awareness (name, color, icon,

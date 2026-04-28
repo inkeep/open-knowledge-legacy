@@ -1,5 +1,5 @@
 /**
- * Integration tests for principal-identity-in-presence (FR4, FR6, FR9, FR12).
+ * Integration tests for the human-presence pipeline.
  *
  * Tests awareness publication wire format and the dedupe behavior implemented
  * in dedupeHumansByPrincipalId. Awareness states are driven directly via
@@ -192,8 +192,8 @@ describe('presence dedupe — different principalIds', () => {
   });
 });
 
-describe('FR3 awareness payload shape', () => {
-  test('state (a): principal not yet resolved — no principalId in payload, type===human', async () => {
+describe('awareness payload shape under each principal-resolution state', () => {
+  test('boot race — principal not yet resolved: no principalId in payload, type===human', async () => {
     const docName = `presence-fr3-a-${crypto.randomUUID()}`;
     const clientA = await createTestClient(server.port, docName);
     const clientB = await createTestClient(server.port, docName);
@@ -221,7 +221,7 @@ describe('FR3 awareness payload shape', () => {
     }
   });
 
-  test('state (b): git-config — principalId present, type===human, coeditor preserved', async () => {
+  test('git-config principal: principalId present, type===human, coeditor preserved', async () => {
     const docName = `presence-fr3-b-${crypto.randomUUID()}`;
     const clientA = await createTestClient(server.port, docName);
     const clientB = await createTestClient(server.port, docName);
@@ -249,19 +249,20 @@ describe('FR3 awareness payload shape', () => {
     }
   });
 
-  test('state (c): synthesized — no principalId, type===human, coeditor preserved (FR9)', async () => {
+  test('synthesized principal: no principalId in payload, type===human, coeditor preserved', async () => {
     const docName = `presence-fr3-c-${crypto.randomUUID()}`;
     const clientA = await createTestClient(server.port, docName);
     const clientB = await createTestClient(server.port, docName);
     try {
-      // State (c): synthesized — random name, no principalId per FR9
+      // Synthesized principal: random fallback name, no principalId on the
+      // wire — see awareness-user.ts for the rationale (cross-browser-profile
+      // false-dedupe avoidance).
       clientA.provider.awareness?.setLocalStateField('user', {
         type: 'human' as const,
         name: 'Brave Bird',
         color: '#dce8fa',
         coeditor: 'standalone',
         tabId: 'tab-state-c',
-        // NO principalId per FR9
       });
 
       const clientAId = clientA.provider.awareness?.clientID ?? 0;
@@ -278,7 +279,7 @@ describe('FR3 awareness payload shape', () => {
   });
 });
 
-describe('FR9 — synthesized users do not false-dedupe', () => {
+describe('synthesized principals never publish principalId — no false dedupe', () => {
   test('two synthesized users without principalId render as two separate participants', async () => {
     const docName = `presence-synthesized-${crypto.randomUUID()}`;
     const clientA = await createTestClient(server.port, docName);

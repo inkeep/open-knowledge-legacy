@@ -97,6 +97,29 @@ export function computeInitials(name: string): string {
 }
 
 /**
+ * Polish a `display_name` for human-readable surfaces (cursor labels, tooltips).
+ * Single-word strings carrying separators (`-` or `_`) — typical of Unix-style
+ * git config user.names like `miles-kt-inkeep` — are title-cased per segment
+ * and joined with spaces, giving `Miles Kt Inkeep`. Strings already containing
+ * a space, or single words with no separators, pass through unchanged so that
+ * `Miles Kaming-Thanassi` keeps its hyphenated surname and `MilesKT` keeps its
+ * camelCase shape (it's already capitalised).
+ *
+ * Used at the awareness-publish boundary; downstream consumers (HumanAvatar's
+ * computeInitials, Tiptap collaboration-cursor's label, the bar's tooltip)
+ * therefore see one consistent string rather than diverging polish per surface.
+ */
+export function formatPresenceLabel(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return name;
+  if (trimmed.includes(' ')) return trimmed;
+  if (!/[-_]/.test(trimmed)) return trimmed;
+  const segments = trimmed.split(/[-_]+/).filter(Boolean);
+  if (!segments.length) return trimmed;
+  return segments.map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1).toLowerCase()).join(' ');
+}
+
+/**
  * Map known MCP `clientInfo.name` values to icon identifiers used by both
  * the presence bar (`AGENT_ICON_COLORS[icon]`) and the Timeline dot-color
  * derivation. Unknown clients map to `'bot'` so the fallback indigo color

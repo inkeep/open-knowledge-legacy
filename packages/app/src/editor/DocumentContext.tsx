@@ -1,6 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Principal } from '@inkeep/open-knowledge-core';
-import { PrincipalSchema } from '@inkeep/open-knowledge-core';
+import { PrincipalResponseSchema } from '@inkeep/open-knowledge-core';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
@@ -388,10 +388,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     fetch('/api/principal')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((json: unknown) => {
-        const parsed = PrincipalSchema.safeParse(json);
+        const parsed = PrincipalResponseSchema.safeParse(json);
         if (parsed.success) {
           p.setTabIdentity({ principalId: parsed.data.id, tabSessionId });
-          setPrincipal(parsed.data as Principal);
+          setPrincipal(parsed.data);
         } else {
           warnPrincipalFetchOnce(parsed.error);
         }

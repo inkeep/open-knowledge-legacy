@@ -82,7 +82,7 @@ export {
 } from './metrics/parse-health.ts';
 export {
   type PrincipalResponse,
-  PrincipalSchema,
+  PrincipalResponseSchema,
   type ServerInfoResponse,
   ServerInfoResponseSchema,
 } from './schemas/api.ts';
@@ -167,6 +167,7 @@ export {
   colorFromSeed,
   computeInitials,
   deriveIconColor,
+  formatPresenceLabel,
   generateRandomColor,
   generateRandomName,
   getIdentity,

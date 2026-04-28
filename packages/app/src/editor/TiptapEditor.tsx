@@ -1,12 +1,10 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
-  colorFromSeed,
   sharedExtensions as coreExtensions,
   deriveIconColor,
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
-  HUMAN_COLORS,
   hasNewEntries,
   MarkdownManager,
 } from '@inkeep/open-knowledge-core';
@@ -30,6 +28,7 @@ import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePa
 import { mark } from '@/lib/perf';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
+import { buildAwarenessUser } from './awareness-user';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
@@ -641,27 +640,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     return () => metaMap.unobserve(observer);
   }, [provider.document]);
 
-  // Set awareness state on mount (user identity + mode).
-  // Three-state merge depending on principal resolution:
-  //   (a) no principal yet → random-fallback name + random color, no principalId
-  //   (b) git-config source → display_name + deterministic color + principalId
-  //   (c) synthesized source → random-fallback name + deterministic color, no principalId
-  //       (omitting principalId avoids false deduplication when two browser profiles
-  //        share the same synthesized principal.id but have different random names)
-  // type: 'human' as const is mandatory in every branch — usePresence filters on it.
-  // coeditor is always explicit — no ...spread that could accidentally drop it.
+  // Awareness `user` payload is built by `buildAwarenessUser` (a pure helper
+  // unit-tested in awareness-user.test.ts). The three-state design lives there;
+  // this effect just resolves it and publishes once per (provider, identity,
+  // principal) triple.
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    const isGitConfig = principal?.source === 'git-config';
-    awareness.setLocalStateField('user', {
-      type: 'human' as const,
-      name: isGitConfig ? principal.display_name : identity.name,
-      color: principal ? colorFromSeed(principal.id, HUMAN_COLORS) : identity.color,
-      coeditor: identity.coeditor,
-      tabId: identity.tabId,
-      ...(isGitConfig ? { principalId: principal.id } : {}),
-    });
+    awareness.setLocalStateField('user', buildAwarenessUser({ principal, identity }));
     awareness.setLocalStateField('mode', 'wysiwyg');
   }, [provider, identity, principal]);
 
