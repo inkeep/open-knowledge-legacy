@@ -156,54 +156,10 @@ export function useSidebarResize({
   const minWidthPx = toPx(minResizeWidth);
   const maxWidthPx = toPx(maxResizeWidth);
 
-  // Helper function to determine if width is increasing based on direction and mouse movement
-  function isIncreasingWidth(currentX: number, referenceX: number): boolean {
-    return direction === 'left'
-      ? currentX < referenceX // For left-positioned handle, moving left increases width
-      : currentX > referenceX; // For right-positioned handle, moving right increases width
-  }
-
-  // Helper function to calculate width based on mouse position and direction
-  function calculateWidth(
-    e: MouseEvent,
-    initialX: number,
-    initialWidth: number,
-    currentRailRect: DOMRect | null,
-  ): number {
-    if (isNested && currentRailRect) {
-      // For nested sidebars, use the delta from start position for precise tracking
-      const deltaX = e.clientX - initialX;
-
-      if (direction === 'left') {
-        // For left-positioned handle (right panel)
-        // Width increases as mouse moves left (negative deltaX)
-        return initialWidth - deltaX;
-      }
-      // For right-positioned handle (left panel)
-      // Width increases as mouse moves right (positive deltaX)
-      return initialWidth + deltaX;
-    }
-    // For standard sidebars at window edges
-    if (direction === 'left') {
-      // For left-positioned handle (right panel)
-      return window.innerWidth - e.clientX;
-    }
-    // For right-positioned handle (left panel)
-    return e.clientX;
-  }
-
   // Update auto-collapse threshold when dependencies change
   useEffect(() => {
     autoCollapseThresholdPx.current = enableAutoCollapse ? minWidthPx * autoCollapseThreshold : 0;
   }, [minWidthPx, enableAutoCollapse, autoCollapseThreshold]);
-
-  // Persist width to cookie if cookie name is provided
-  function persistWidth(width: string) {
-    if (widthCookieName) {
-      // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
-      document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
-    }
-  }
 
   // Handle mouse down on resize handle
   function handleMouseDown(e: ReactMouseEvent) {
@@ -242,6 +198,47 @@ export function useSidebarResize({
 
   // Handle mouse movement and resizing
   useEffect(() => {
+    // Persist width to cookie if cookie name is provided
+    function persistWidth(width: string) {
+      if (widthCookieName) {
+        // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
+        document.cookie = `${widthCookieName}=${width}; path=/; max-age=${widthCookieMaxAge}`;
+      }
+    }
+    // Helper function to determine if width is increasing based on direction and mouse movement
+    function isIncreasingWidth(currentX: number, referenceX: number): boolean {
+      return direction === 'left'
+        ? currentX < referenceX // For left-positioned handle, moving left increases width
+        : currentX > referenceX; // For right-positioned handle, moving right increases width
+    }
+    // Helper function to calculate width based on mouse position and direction
+    function calculateWidth(
+      e: MouseEvent,
+      initialX: number,
+      initialWidth: number,
+      currentRailRect: DOMRect | null,
+    ): number {
+      if (isNested && currentRailRect) {
+        // For nested sidebars, use the delta from start position for precise tracking
+        const deltaX = e.clientX - initialX;
+
+        if (direction === 'left') {
+          // For left-positioned handle (right panel)
+          // Width increases as mouse moves left (negative deltaX)
+          return initialWidth - deltaX;
+        }
+        // For right-positioned handle (left panel)
+        // Width increases as mouse moves right (positive deltaX)
+        return initialWidth + deltaX;
+      }
+      // For standard sidebars at window edges
+      if (direction === 'left') {
+        // For left-positioned handle (right panel)
+        return window.innerWidth - e.clientX;
+      }
+      // For right-positioned handle (left panel)
+      return e.clientX;
+    }
     function handleMouseMove(e: MouseEvent) {
       if (!isInteractingWithRail.current) return;
 
@@ -417,20 +414,17 @@ export function useSidebarResize({
     onToggle,
     isCollapsed,
     currentWidth,
-    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
-    persistWidth,
     setIsDraggingRail,
     minWidthPx,
     maxWidthPx,
-    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
-    isIncreasingWidth,
-    // biome-ignore lint/correctness/useExhaustiveDependencies: false positive, variable is stable and optimized by the React Compiler
-    calculateWidth,
     isNested,
     enableAutoCollapse,
     autoCollapseThreshold,
     expandThreshold,
     enableToggle,
+    widthCookieName,
+    widthCookieMaxAge,
+    direction,
   ]);
 
   return {
