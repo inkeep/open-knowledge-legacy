@@ -327,8 +327,12 @@ describe('POST /api/frontmatter-patch — telemetry (US-012)', () => {
     expect(readHistogramSampleCount(harness, 'ok.frontmatter.patch.duration')).toBe(0);
   });
 
-  test('all five FrontmatterFormOp values flow through as attribute', async () => {
-    for (const op of ['set', 'add', 'remove', 'rename', 'reorder']) {
+  test('all four implemented FrontmatterFormOp values flow through as attribute', async () => {
+    // `reorder` stays in the FrontmatterFormOp union for spec parity but is
+    // intentionally absent from the runtime accept-set (D31/NG13 deferred
+    // reorder from MVP, and no UI emits it). Sending `op: 'reorder'` over
+    // the HTTP boundary is silently no-op'd — verified separately below.
+    for (const op of ['set', 'add', 'remove', 'rename']) {
       await callApi(
         harness.hocuspocus,
         harness.sessionManager,
@@ -348,6 +352,24 @@ describe('POST /api/frontmatter-patch — telemetry (US-012)', () => {
       .getFinishedSpans()
       .filter((s) => s.name === 'frontmatter.form_write')
       .map((s) => String(s.attributes['frontmatter.op']));
-    expect(ops.sort()).toEqual(['add', 'remove', 'rename', 'reorder', 'set']);
+    expect(ops.sort()).toEqual(['add', 'remove', 'rename', 'set']);
+  });
+
+  test('reorder op is silently no-op via the HTTP boundary (no form_write span)', async () => {
+    await callApi(
+      harness.hocuspocus,
+      harness.sessionManager,
+      harness.contentDir,
+      '/api/frontmatter-patch',
+      { docName: 'test-doc', patch: { k_reorder: 'v' }, source: 'form', op: 'reorder' },
+    );
+    await harness.flushMetrics();
+
+    // Outer `frontmatter.patch` span fires (the patch IS applied — only the
+    // op-labeled inner `frontmatter.form_write` span is gated on FORM_OPS).
+    const formSpans = harness.spanExporter
+      .getFinishedSpans()
+      .filter((s) => s.name === 'frontmatter.form_write');
+    expect(formSpans).toHaveLength(0);
   });
 });

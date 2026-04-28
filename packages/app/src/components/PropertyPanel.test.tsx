@@ -74,14 +74,13 @@ describe('PropertyPanel', () => {
     seedMetaMap(provider, { title: 'Hello' });
     const html = renderToString(<PropertyPanel provider={provider} />);
     expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('aria-controls="property-panel-rows"');
   });
 
   test('rows are visible by default (panel mounts expanded)', () => {
     const provider = makeProvider('default-expanded-doc');
     seedMetaMap(provider, { title: 'Hello' });
     const html = renderToString(<PropertyPanel provider={provider} />);
-    expect(html).toContain('id="property-panel-rows"');
+    expect(html).toContain('data-testid="property-row"');
   });
 });
 

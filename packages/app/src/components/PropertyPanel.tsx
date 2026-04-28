@@ -238,7 +238,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       <button
         type="button"
         aria-expanded={!collapsed}
-        aria-controls="property-panel-rows"
         onClick={() => setCollapsed((c) => !c)}
         className="flex w-full items-center gap-1.5 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
       >
@@ -250,7 +249,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
         <span>{`Properties (${keys.length})`}</span>
       </button>
       {!collapsed && (
-        <div id="property-panel-rows" className="px-4 pb-2">
+        <div className="px-4 pb-2">
           {keys.map((key) => {
             const value = map[key];
             if (value === undefined) return null;
@@ -402,7 +401,7 @@ function PropertyRow({
           data-key={keyName}
           aria-label={`Remove ${keyName}`}
           onClick={onRemove}
-          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground group-hover:text-muted-foreground"
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground focus-visible:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-muted-foreground"
         >
           <Trash2 className="size-3.5" />
         </button>

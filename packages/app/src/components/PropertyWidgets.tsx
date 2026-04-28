@@ -18,7 +18,7 @@
 
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
 import { Calendar, Hash, List, ToggleLeft, Type, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +36,15 @@ interface CommonWidgetProps<T extends FrontmatterValue> {
 
 export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<string>) {
   const [draft, setDraft] = useState(value);
+  const focusedRef = useRef(false);
+  // Re-sync local draft to incoming `value` when the input is not focused.
+  // Without this, a remote concurrent edit (other peer / MCP / file-watcher)
+  // is invisible to the widget; on next blur the stale draft would overwrite
+  // the remote update — a CRDT divergence at the form surface that the per-
+  // key storage layer is supposed to prevent.
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(value);
+  }, [value]);
   return (
     <Input
       data-testid="text-widget"
@@ -43,7 +52,11 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       type="text"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
       onBlur={() => {
+        focusedRef.current = false;
         if (draft !== value) onCommit(draft);
       }}
       onKeyDown={(e) => {
@@ -64,6 +77,10 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
 
 export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<number>) {
   const [draft, setDraft] = useState<string>(String(value));
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(value));
+  }, [value]);
   return (
     <Input
       data-testid="number-widget"
@@ -71,7 +88,11 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
       type="number"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
       onBlur={() => {
+        focusedRef.current = false;
         const parsed = Number.parseFloat(draft);
         const next = Number.isFinite(parsed) ? parsed : 0;
         if (next !== value) onCommit(next);
@@ -108,6 +129,10 @@ export function BooleanWidget({ keyName, value, onCommit }: CommonWidgetProps<bo
 
 export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<string>) {
   const [draft, setDraft] = useState(value);
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(value);
+  }, [value]);
   return (
     <Input
       data-testid="date-widget"
@@ -115,7 +140,11 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       type="date"
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
       onBlur={() => {
+        focusedRef.current = false;
         if (draft !== value) onCommit(draft);
       }}
       onKeyDown={(e) => {

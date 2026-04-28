@@ -12,13 +12,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
-import { getFrontmatterMap } from '@inkeep/open-knowledge-core';
+import { getFrontmatterMap, type Principal } from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   AgentSessionManager,
   applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { swapContributors } from './contributor-tracker.ts';
 
 interface CapturedResponse {
   status: number;
@@ -52,12 +53,14 @@ async function callApi(
   contentDir: string,
   url: string,
   body: unknown,
+  opts: { getPrincipal?: () => Principal | null } = {},
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus,
     sessionManager,
     contentDir,
     getFileIndex: () => new Map(),
+    ...(opts.getPrincipal ? { getPrincipal: opts.getPrincipal } : {}),
   });
   const req = makeJsonPostReq(url, body);
   const { res, captured } = makeRes();
@@ -595,6 +598,202 @@ describe('POST /api/frontmatter-patch — type inference (D29)', () => {
 
       expect(response.status).toBe(200);
       expect(getFrontmatterMap(session.dc.document).version).toBe('2026-04-27');
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('POST /api/frontmatter-patch — form-caller identity attribution (precedent #25)', () => {
+  // Pre-fix the form path defaulted unidentified callers to `claude-1`/Claude,
+  // attributing every browser property edit to the agent. Form callers ARE
+  // identified — they're the local human principal. These tests pin the
+  // attribution to `principal-<UUID>` so contributor tracking, presence
+  // broadcasts, and focus pushes carry the user's identity.
+
+  function makePrincipal(): Principal {
+    return {
+      id: 'principal-test-uuid',
+      display_name: 'Sarah',
+      display_email: 'sarah@example.com',
+      source: 'git-config',
+      created_at: '2026-04-28T00:00:00.000Z',
+    };
+  }
+
+  test('form write with no agentId attributes to principal, not claude-1', async () => {
+    swapContributors(); // reset accumulator
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+      const principal = makePrincipal();
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        // NB: no agentId / agentName — exactly what the browser PropertyPanel sends.
+        { docName: 'test-doc', patch: { title: 'New' }, source: 'form', op: 'set' },
+        { getPrincipal: () => principal },
+      );
+
+      expect(response.status).toBe(200);
+      const writers = [...swapContributors().keys()];
+      expect(writers).toContain('principal-test-uuid');
+      expect(writers).not.toContain('claude-1');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('form write falls back to principal-local when getPrincipal is not wired', async () => {
+    swapContributors();
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+
+      // Don't wire getPrincipal — exercises the test/setup-without-principal
+      // fallback. Should NOT default to claude-1.
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { title: 'New' }, source: 'form' },
+      );
+
+      expect(response.status).toBe(200);
+      const writers = [...swapContributors().keys()];
+      expect(writers).toContain('principal-local');
+      expect(writers).not.toContain('claude-1');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('MCP write (no source field) preserves caller-supplied agentId', async () => {
+    swapContributors();
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        {
+          docName: 'test-doc',
+          patch: { title: 'New' },
+          agentId: 'agent-cursor-abc',
+          agentName: 'Cursor',
+        },
+        { getPrincipal: () => makePrincipal() }, // present but unused for MCP path
+      );
+
+      expect(response.status).toBe(200);
+      const writers = [...swapContributors().keys()];
+      expect(writers).toContain('agent-cursor-abc');
+      expect(writers).not.toContain('principal-test-uuid');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('MCP write without agentId still defaults to claude-1 (existing behavior preserved)', async () => {
+    // Sanity check: the form-vs-MCP distinction is the `source: 'form'` field.
+    // MCP callers that omit agentId continue to use the legacy `claude-1`
+    // default — only the form path gets principal attribution.
+    swapContributors();
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        // No source field, no agentId — legacy MCP shape.
+        { docName: 'test-doc', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(200);
+      const writers = [...swapContributors().keys()];
+      expect(writers).toContain('claude-1');
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('POST /api/frontmatter-patch — comment preservation on legacy mirror', () => {
+  // Pre-fix the form path synthesized the legacy slot from per-key state via
+  // `serializeFrontmatterMap`, building a fresh Document AST that dropped
+  // YAML comments. Now the handler applies the patch to the parsed pre-patch
+  // Document so comments + source order survive the round-trip.
+
+  test('YAML comments above an unchanged key survive a patch to a different key', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      // Seed via applyAgentMarkdownWrite so the legacy slot ends up with the
+      // comment-bearing yaml as written.
+      const session = await sessionManager.getSession('test-doc');
+      const seededFm = '---\n# spec owner\ntitle: Foo\nstatus: draft\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, `${seededFm}# Body\n`, 'replace');
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        // Patch a different key — the `# spec owner` comment should survive.
+        { docName: 'test-doc', patch: { status: 'published' }, source: 'form', op: 'set' },
+      );
+
+      expect(response.status).toBe(200);
+      const metaMap = session.dc.document.getMap('metadata');
+      const legacy = metaMap.get('frontmatter') as string | undefined;
+      expect(legacy).toBeDefined();
+      // The YAML comment must survive the patch.
+      expect(legacy).toContain('# spec owner');
+      expect(legacy).toContain('title: Foo');
+      expect(legacy).toContain('status: published');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('comment preservation also covers the patched key itself', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+      // Comment immediately above the key being patched.
+      const seededFm = '---\n# Author of record\nauthor: Alice\nversion: 1\n---\n';
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, `${seededFm}# Body\n`, 'replace');
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { author: 'Bob' }, source: 'form', op: 'set' },
+      );
+
+      expect(response.status).toBe(200);
+      const legacy = session.dc.document.getMap('metadata').get('frontmatter') as
+        | string
+        | undefined;
+      expect(legacy).toBeDefined();
+      expect(legacy).toContain('# Author of record');
+      expect(legacy).toContain('author: Bob');
+      expect(legacy).toContain('version: 1');
+      expect(legacy).not.toContain('author: Alice');
     } finally {
       await cleanup();
     }

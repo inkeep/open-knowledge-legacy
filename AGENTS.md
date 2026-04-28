@@ -175,7 +175,7 @@ Snapshots on failure write to `/tmp/fuzz-*`.
 - **Agent running Playwright + dev server:** Playwright sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; `bun run dev` uses `packages/content/`. No contention.
 - **VITE\_PORT** env var for custom port (`VITE_PORT=9999 bun run dev`, strict). Default 5173 (not strict).
 
-**Worktree gotcha — `bun install` after `git worktree add`.** Worktrees nested at `.claude/worktrees/X/` inherit `node_modules` via Bun's upward-walk resolution, causing ProseMirror-model dedup failures (`PmNode.fromJSON()` throws "multiple versions of prosemirror-model"). Also causes spurious `bun run knip` reports (missing `docs/.source/` postinstall artifacts). **Always run `bun install` in the worktree before `bun run check` or `git push`.** Full analysis: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
+**Worktree gotcha — always `bun install` in the worktree before `bun run check` or `git push`.** Nested worktrees inherit `node_modules` via Bun's upward-walk, causing PM-model dedup failures + spurious knip reports. Background: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
 
 ## STOP rules
 
