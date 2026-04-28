@@ -46,7 +46,7 @@ const DEV_MCP_ENV = {
  *   desktop's auto-updater replaces the symlink target atomically); volatile
  *   pins (worktree dist, npx-cache) silently stale.
  */
-export type McpInstallMode = 'published' | 'dev' | 'pinned';
+type McpInstallMode = 'published' | 'dev' | 'pinned';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
