@@ -1,3 +1,6 @@
+/**
+ * Copied from https://github.com/lumpinif/shadcn-resizable-sidebar
+ */
 import { useEffect, useRef } from 'react';
 
 export interface UseSidebarResizeProps {
