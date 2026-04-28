@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   __resetSidebarHoverPrewarmForTests,
   cancelHoverPrewarm,
@@ -19,7 +20,7 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
     });
     scheduleHoverPrewarm('doc-a', prewarm);
     expect(prewarm).not.toHaveBeenCalled();
-    await new Promise((r) => setTimeout(r, 120));
+    await wait(120);
     expect(prewarm).toHaveBeenCalledTimes(1);
   });
 
@@ -27,9 +28,9 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
     const prewarm = mock(() => {});
     scheduleHoverPrewarm('doc-a', prewarm);
     // Mouse leaves after 30ms, well before the 80ms intent threshold.
-    await new Promise((r) => setTimeout(r, 30));
+    await wait(30);
     cancelHoverPrewarm('doc-a');
-    await new Promise((r) => setTimeout(r, 120));
+    await wait(120);
     expect(prewarm).not.toHaveBeenCalled();
   });
 
@@ -45,11 +46,11 @@ describe('sidebar-hover-prewarm (review Major #7 + V2 FR12 Option G)', () => {
   test('already-prewarmed doc does not re-fire', async () => {
     const prewarm = mock(() => {});
     scheduleHoverPrewarm('doc-b', prewarm);
-    await new Promise((r) => setTimeout(r, 120));
+    await wait(120);
     expect(prewarm).toHaveBeenCalledTimes(1);
     // Second hover on the same doc — no re-fire.
     scheduleHoverPrewarm('doc-b', prewarm);
-    await new Promise((r) => setTimeout(r, 120));
+    await wait(120);
     expect(prewarm).toHaveBeenCalledTimes(1);
   });
 });

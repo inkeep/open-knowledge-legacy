@@ -23,8 +23,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
@@ -66,6 +65,7 @@ import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
+  showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
 import {
@@ -92,8 +92,6 @@ import {
   WindowManager,
 } from './window-manager.ts';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const DEFAULT_WIN_OPTS = {
   width: 1280,
   height: 800,
@@ -104,6 +102,36 @@ const DEFAULT_WIN_OPTS = {
     sandbox: true,
   },
 };
+
+/**
+ * Production WS-upgrade probe — opens a fresh `WebSocket(url)`, resolves
+ * `true` on `open`, `false` on `close` / `error` / timeout. Used by the
+ * window-manager attach gate to refuse servers that lie about WS readiness
+ * (HTTP responding but `/collab` upgrade hung). The deadline must comfortably
+ * exceed loopback handshake latency (sub-millisecond on healthy local stacks)
+ * but stay well under the 30 s `SyncTimeoutError` we're defending against.
+ */
+function probeWsUpgrade(url: string, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolveProbe) => {
+    let settled = false;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        // Best-effort — close on a not-yet-connected socket throws on some
+        // platforms; we already have our verdict.
+      }
+      resolveProbe(ok);
+    };
+    const ws = new WebSocket(url);
+    ws.addEventListener('open', () => settle(true));
+    ws.addEventListener('close', () => settle(false));
+    ws.addEventListener('error', () => settle(false));
+    setTimeout(() => settle(false), timeoutMs);
+  });
+}
 
 /**
  * Quarantine a corrupt `state.json` to a timestamped sibling and log so
@@ -309,6 +337,7 @@ function ensureWindowManager() {
     readServerLock: (lockDir) => readServerLock(lockDir),
     isProcessAlive: (pid) => isProcessAlive(pid),
     hostname: () => osHostname(),
+    probeWsUpgrade: (url, timeoutMs) => probeWsUpgrade(url, timeoutMs),
     // Canonicalize `windowsByPath` keys via realpath so a deep-link URL
     // carrying `realpathSync(contentDir)` (emitted by preview-url.ts) matches
     // a window opened via a symlinked project path. See window-manager.ts's
@@ -368,19 +397,31 @@ async function openProjectOrFallbackToNavigator(projectPath: string, pendingDeep
     await openProject(projectPath, pendingDeepLinkDoc);
   } catch (err) {
     const errorMessage = (err as Error).message;
+    const kind = (err as Error & { kind?: string }).kind;
+    const holderPid = (err as Error & { holderPid?: number }).holderPid;
     console.error('[main] openProject failed, falling back to Navigator', {
       projectPath,
+      kind,
       err: errorMessage,
     });
-    // Surface the failure so users know why the Navigator reappeared. Without
-    // this, a `ProjectGitInitError` (D12 fail-fast — git missing, permission
-    // denied, partial init) drops the user back into the picker with zero
-    // explanation, which reads as "the app is broken." Modal is blocking and
-    // self-acknowledgeable — no follow-up actions needed beyond OK. SPEC R6
-    // has the authoritative install-or-init-yourself copy for the CLI; the
-    // utility's IPC error message already includes the git-init details in
-    // its body.
-    dialog.showErrorBox('Unable to open project', `${projectPath}\n\n${errorMessage}`);
+    // Pick a dialog title + body based on the error's structured kind.
+    // Default ("Unable to open project") matches the existing pre-spec
+    // path so plain failures (ProjectGitInitError, generic boot crashes)
+    // continue to read the same way; specific kinds get specific copy.
+    let dialogTitle = 'Unable to open project';
+    let dialogBody = `${projectPath}\n\n${errorMessage}`;
+    if (kind === 'mcp-server-stuck') {
+      dialogTitle = "Couldn't reclaim project lock";
+      dialogBody =
+        `${projectPath}\n\n` +
+        `Another process${typeof holderPid === 'number' ? ` (pid ${holderPid})` : ''} ` +
+        `is holding the server lock and didn't release it after a SIGTERM. ` +
+        `Quit it manually and try again, or restart Open Knowledge.`;
+    } else if (kind === 'lock-collision') {
+      dialogTitle = 'Open Knowledge is already running for this project';
+      dialogBody = `${projectPath}\n\n${errorMessage}`;
+    }
+    dialog.showErrorBox(dialogTitle, dialogBody);
     openNavigator();
   }
 }
@@ -646,6 +687,32 @@ function registerIpcHandlers() {
       },
       line,
     );
+    return undefined;
+  });
+
+  handle('ok:shell:show-item-in-folder', async (event, path) => {
+    // Resolve caller window's project directory (undefined for Navigator).
+    // Validation, refusal, and security rationale live in `showItemInFolderImpl`.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    const result = showItemInFolderImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        showItemInFolder: (p) => shell.showItemInFolder(p),
+      },
+      path,
+    );
+    // Channel result is `undefined` (silent-by-design — don't leak validation
+    // signal back to a potentially-compromised renderer), but a refusal is
+    // worth a main-side breadcrumb: a renderer bug constructing a wrong path
+    // otherwise produces a "nothing happened" UX with no debug trail.
+    if (!result.ok) {
+      console.warn('[main] show-item-in-folder refused', { reason: result.reason });
+    }
     return undefined;
   });
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AddressInfo } from 'node:net';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   createInstalledAgentsProbe,
   createOsProbe,
@@ -63,7 +64,7 @@ describe('createInstalledAgentsProbe', () => {
       counts[scheme] = (counts[scheme] ?? 0) + 1;
       // Deliberate microtask-deferred resolution so all 5 callers see the
       // same in-flight entry.
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await wait(0);
       return true;
     };
     const { probeAll } = createInstalledAgentsProbe({ probe: probeFn });

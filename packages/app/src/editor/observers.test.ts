@@ -23,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { describe, expect, test } from 'bun:test';
+import { setTimeout } from 'node:timers/promises';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -42,7 +43,7 @@ const schema = getSchema(sharedExtensions);
 /** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
  *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
 function wait(ms = 400): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return setTimeout(ms);
 }
 
 /** Helper: populate XmlFragment from markdown */

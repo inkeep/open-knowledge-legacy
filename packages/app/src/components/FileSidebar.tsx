@@ -24,6 +24,7 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
+  SidebarRail,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProfilerBoundary } from '@/lib/perf';
@@ -36,8 +37,9 @@ export function FileSidebar() {
     </ProfilerBoundary>
   );
 }
+
 interface ToolbarButtonProps extends ComponentProps<typeof Button> {
-  icon: FC;
+  icon: FC<ComponentProps<'svg'>>;
   label: string;
 }
 
@@ -129,6 +131,7 @@ function FileSidebarInner() {
         ) : null}
         <UpdateNotices />
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   );
 }

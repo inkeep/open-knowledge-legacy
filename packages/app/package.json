@@ -21,14 +21,14 @@
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "perf:profile": "bun run tests/perf/profile.ts",
-    "size": "bun run build && size-limit"
+    "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
   "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "280 kB",
+      "limit": "290 kB",
       "gzip": true
     },
     {

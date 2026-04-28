@@ -20,6 +20,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   agentWriteMd,
   clientIdsInDoc,
@@ -27,7 +28,6 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
-  wait,
 } from './test-harness';
 
 const CONTENT_A = `# Content A

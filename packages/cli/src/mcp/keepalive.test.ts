@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { setImmediate as runMicrotasks } from 'node:timers/promises';
 import type { KeepaliveScheduler, MinimalWebSocket } from './keepalive.ts';
 import { startKeepalive } from './keepalive.ts';
 
@@ -75,12 +76,6 @@ class FakeWebSocket implements MinimalWebSocket {
     if (type === 'close') this.readyState = 3;
     for (const l of this.listeners[type]) l();
   }
-}
-
-function runMicrotasks(): Promise<void> {
-  return new Promise((done) => {
-    setImmediate(done);
-  });
 }
 
 describe('startKeepalive', () => {

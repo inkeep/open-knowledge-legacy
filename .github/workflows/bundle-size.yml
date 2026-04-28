@@ -43,13 +43,5 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install --frozen-lockfile
-      # Build via turbo so `^build` produces `packages/{server,core}/dist/`
-      # before vite's config loader resolves `@inkeep/open-knowledge-server`
-      # in `packages/app/vite.config.ts`. After PR #320, the workspace deps'
-      # `exports.default` resolves to `dist/index.mjs`; running `vite build`
-      # directly skips upstream builds and crashes at config load.
-      - name: Build packages/app (with workspace deps)
-        run: bunx turbo run build --filter=@inkeep/open-knowledge-app
       - name: Check bundle size
-        run: bunx size-limit
-        working-directory: packages/app
+        run: bun run --filter @inkeep/open-knowledge-app size

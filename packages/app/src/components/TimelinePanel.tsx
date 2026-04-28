@@ -5,6 +5,26 @@
  * Checkpoint entries are always visible; WIP entries between checkpoints
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
+ *
+ * Per-row UX (shape parity with AgentActivityPanel's burst rows):
+ *   - Click anywhere on a row except the Restore icon → toggle inline expand.
+ *     Expanded rows render <ActivityPanelDiffView> below the header showing
+ *     the diff between that commit and the live Y.Text. Multi-expand is
+ *     supported; the displayed diff is a snapshot at expand time. Expansion
+ *     state is lifted to TimelineContent (Set<sha>), so a successful restore
+ *     can collapse every row in one place — no per-row signal counter, no
+ *     late-mount no-op effects.
+ *   - The per-row Restore icon (lucide Undo2, ghost variant, hover-destructive
+ *     on the icon) sits in the row header and is always visible — both
+ *     collapsed and expanded states. Click → shadcn Dialog confirmation →
+ *     POST /api/rollback. Cancel aborts the in-flight fetch via
+ *     AbortController so a mid-confirm cancel is honored. On success the row
+ *     collapses and any other expanded rows from this mount also collapse —
+ *     their cached `current` baseline is now stale.
+ *   - The diff renderer is loaded lazily under React.Suspense so the
+ *     react-diff-view bundle + CSS only land in the editor route once a user
+ *     actually expands a Timeline entry — matching the AgentActivityPanel
+ *     burst-row precedent.
  */
 import {
   AGENT_ICON_COLORS,
@@ -23,31 +43,53 @@ import {
   FileArchive,
   GitBranch,
   HardDrive,
+  Loader2,
   Sparkles,
+  Undo2,
   User,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import type { SVGProps } from 'react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, type SVGProps, useEffect, useId, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import type { DiffLayout } from '@/components/DiffView';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { ClineIcon } from '@/components/icons/cline';
 import { CodexIcon } from '@/components/icons/codex';
 import { CopilotIcon } from '@/components/icons/copilot';
 import { CursorIcon } from '@/components/icons/cursor';
 import { WindsurfIcon } from '@/components/icons/windsurf';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { LruStringCache } from '@/lib/lru-string-cache';
+import {
+  HISTORICAL_CONTENT_CACHE_LIMIT,
+  useTimelineEntryDiff,
+} from '@/lib/use-timeline-entry-diff';
+
+const LazyActivityPanelDiffView = lazy(async () => {
+  const mod = await import('@/components/ActivityPanelDiffView');
+  return { default: mod.ActivityPanelDiffView };
+});
 
 // ─── Public props ────────────────────────────────────────────────────────────
 
 interface TimelineContentProps {
   docName: string;
-  onEntrySelect?: (entry: TimelineEntry) => void;
-  selectedSha?: string;
+  diffLayout: DiffLayout;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-export function formatRelativeTime(isoString: string): string {
+function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -68,8 +110,22 @@ export function formatRelativeTime(isoString: string): string {
   return date.toLocaleDateString();
 }
 
+function formatAbsoluteTime(isoString: string): string {
+  const date = new Date(isoString);
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
 /** Map internal author names to user-friendly display names. Uses structured contributors when available. */
-export function displayAuthor(entry: TimelineEntry): string {
+function displayAuthor(entry: TimelineEntry): string {
   if (entry.type === 'upstream') return 'Upstream sync';
   if (entry.contributors.length === 1) return entry.contributors[0].name;
   if (entry.contributors.length > 1) return entry.contributors.map((c) => c.name).join(', ');
@@ -137,52 +193,44 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
 
 // ─── "Current version" pinned row ────────────────────────────────────────────
 
-function CurrentVersionRow({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+function CurrentVersionRow() {
   return (
-    <button
-      type="button"
-      className={[
-        'group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected ? 'bg-muted' : 'hover:bg-muted/50',
-      ].join(' ')}
-      onClick={onSelect}
-    >
+    <div className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5">
       <div className="flex items-center justify-center w-3.5 h-3.5">
-        {' '}
         <span className="inline-block size-2 rounded-full bg-emerald-500 shrink-0" />
       </div>
-
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">Current version</p>
       </div>
-    </button>
+    </div>
   );
 }
-
-// ─── Empty entry sentinel (for current-version clicks) ──────────────────────
-
-const EMPTY_ENTRY: TimelineEntry = {
-  sha: '',
-  timestamp: '',
-  author: '',
-  authorEmail: '',
-  type: 'wip',
-  message: '',
-  contributors: [],
-  checkpoint: null,
-};
 
 // ─── WIP Group component ──────────────────────────────────────────────────────
 
 interface WipGroupProps {
   entries: TimelineEntry[];
   defaultExpanded: boolean;
-  selectedSha?: string;
-  onSelect?: (entry: TimelineEntry) => void;
   isDark: boolean;
+  diffLayout: DiffLayout;
+  cache: LruStringCache;
+  docName: string;
+  expandedShas: Set<string>;
+  onToggleExpanded: (sha: string) => void;
+  onRestoreSuccess: () => void;
 }
 
-function WipGroup({ entries, defaultExpanded, selectedSha, onSelect, isDark }: WipGroupProps) {
+function WipGroup({
+  entries,
+  defaultExpanded,
+  isDark,
+  diffLayout,
+  cache,
+  docName,
+  expandedShas,
+  onToggleExpanded,
+  onRestoreSuccess,
+}: WipGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (entries.length === 0) return null;
@@ -205,9 +253,13 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect, isDark }: W
           <EntryRow
             key={entry.sha}
             entry={entry}
-            selected={entry.sha === selectedSha}
-            onSelect={onSelect}
             isDark={isDark}
+            diffLayout={diffLayout}
+            cache={cache}
+            docName={docName}
+            expanded={expandedShas.has(entry.sha)}
+            onToggleExpanded={onToggleExpanded}
+            onRestoreSuccess={onRestoreSuccess}
           />
         ))}
     </div>
@@ -238,6 +290,42 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
   return `${Math.round(n / 104857.6) / 10} MB`;
+}
+
+/**
+ * Classify an entry for Restore-affordance copy.
+ *
+ * `version` — a Save Version checkpoint (user-triggered named snapshot).
+ * `auto-save` — bridge-merge or external-change rescue checkpoints.
+ * `wip` — per-writer mid-burst commits between checkpoints; restoring lands
+ *   the doc on an unnamed intermediate state, which deserves more explicit
+ *   tooltip + dialog wording than a Save Version row.
+ */
+type RestoreSemantic = 'version' | 'auto-save' | 'wip';
+
+function restoreSemantic(entry: TimelineEntry): RestoreSemantic {
+  if (entry.type !== 'checkpoint') return 'wip';
+  return checkpointVariant(entry) === 'save' ? 'version' : 'auto-save';
+}
+
+const RESTORE_TOOLTIP_TEXT = {
+  version: 'Restore this version',
+  'auto-save': 'Restore this auto-save',
+  wip: 'Restore to this point',
+} as const satisfies Record<RestoreSemantic, string>;
+
+const RESTORE_DIALOG_TITLE = {
+  version: 'Restore this version?',
+  'auto-save': 'Restore this auto-save?',
+  wip: 'Restore to this point?',
+} as const satisfies Record<RestoreSemantic, string>;
+
+function restoreTooltipText(entry: TimelineEntry): string {
+  return RESTORE_TOOLTIP_TEXT[restoreSemantic(entry)];
+}
+
+function restoreDialogTitle(entry: TimelineEntry): string {
+  return RESTORE_DIALOG_TITLE[restoreSemantic(entry)];
 }
 
 // ─── Summary bullets (spec D16 + D25) ─────────────────────────────────────────
@@ -335,25 +423,161 @@ function SummaryBullets({ summaries }: SummaryBulletsProps) {
   );
 }
 
+// ─── Inline diff panel ───────────────────────────────────────────────────────
+
+interface EntryDiffPanelProps {
+  sha: string;
+  docName: string;
+  cache: LruStringCache;
+  diffLayout: DiffLayout;
+  panelId: string;
+}
+
+/**
+ * Renders only when its parent expanded the row. Splitting this out from
+ * EntryRow keeps the `useTimelineEntryDiff` subscription off collapsed rows
+ * — no `useDocumentContext` subscription, no effect on activeProvider
+ * churn. The lazy-loaded diff renderer also lives inside this gated subtree
+ * so the react-diff-view bundle never lands for users who don't expand
+ * Timeline rows.
+ */
+function EntryDiffPanel({ sha, docName, cache, diffLayout, panelId }: EntryDiffPanelProps) {
+  const result = useTimelineEntryDiff(sha, docName, cache);
+
+  return (
+    <div id={panelId} className="px-3 pb-2" data-testid="timeline-entry-diff">
+      {result.status === 'loading' && (
+        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3 animate-spin" />
+          Loading diff…
+        </div>
+      )}
+      {result.status === 'error' && (
+        <p className="py-2 text-xs text-destructive">Diff unavailable</p>
+      )}
+      {result.status === 'ready' && (
+        <Suspense
+          fallback={
+            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3 animate-spin" />
+              Loading diff renderer…
+            </div>
+          }
+        >
+          <LazyActivityPanelDiffView diff={result.diff} viewType={diffLayout} />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
 // ─── Entry row ────────────────────────────────────────────────────────────────
 
 interface EntryRowProps {
   entry: TimelineEntry;
-  selected: boolean;
-  onSelect?: (entry: TimelineEntry) => void;
   prominent?: boolean;
   isDark: boolean;
+  diffLayout: DiffLayout;
+  cache: LruStringCache;
+  docName: string;
+  expanded: boolean;
+  onToggleExpanded: (sha: string) => void;
+  onRestoreSuccess: () => void;
 }
 
-function EntryRow({ entry, selected, onSelect, prominent = false, isDark }: EntryRowProps) {
+function EntryRow({
+  entry,
+  prominent = false,
+  isDark,
+  diffLayout,
+  cache,
+  docName,
+  expanded,
+  onToggleExpanded,
+  onRestoreSuccess,
+}: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
   const authorName = displayAuthor(entry);
   const allDocs = entry.contributors.flatMap((c) => c.docs);
   const allSummaries = allSummariesFor(entry);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const diffPanelId = useId();
 
-  const handleActivate = () => onSelect?.(entry);
+  // Aborting an in-flight restore on unmount avoids state writes on a
+  // disposed component if the response lands after the user navigated away.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
-  // Leading icon: checkpoint variants get special icons, others get contributor icon
+  const handleActivate = () => onToggleExpanded(entry.sha);
+
+  function handleCancelDialog() {
+    // Cancel honors the user's intent: any in-flight rollback is aborted so
+    // the document is not silently rewritten after they "Cancel".
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setRestoring(false);
+    setDialogOpen(false);
+  }
+
+  async function handleRestore() {
+    setRestoring(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    function cleanup() {
+      if (!controller.signal.aborted) setRestoring(false);
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+
+    let res: Response;
+    try {
+      res = await fetch('/api/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName, commitSha: entry.sha }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (
+        !controller.signal.aborted &&
+        !(err instanceof DOMException && err.name === 'AbortError')
+      ) {
+        console.error('[timeline] rollback fetch failed', { docName, sha: entry.sha, err });
+        toast.error('Restore failed — document unchanged', { duration: 4000 });
+      }
+      cleanup();
+      return;
+    }
+
+    if (controller.signal.aborted) {
+      cleanup();
+      return;
+    }
+    if (res.ok) {
+      setDialogOpen(false);
+      onRestoreSuccess();
+    } else {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) detail = body.error;
+      } catch {
+        // non-JSON body; keep status detail
+      }
+      console.error('[timeline] rollback failed', {
+        docName,
+        sha: entry.sha,
+        status: res.status,
+        detail,
+      });
+      toast.error('Restore failed', { description: detail, duration: 6000 });
+    }
+    cleanup();
+  }
+
   const leadingIcon = prominent ? (
     (() => {
       const variant = checkpointVariant(entry);
@@ -380,73 +604,180 @@ function EntryRow({ entry, selected, onSelect, prominent = false, isDark }: Entr
   );
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander that is a real <button>; native nested buttons are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive child.
-    <div
-      role="button"
-      tabIndex={0}
-      className={[
-        'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        selected ? 'bg-muted' : 'hover:bg-muted/50',
-      ].join(' ')}
-      onClick={handleActivate}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleActivate();
-        }
-      }}
-    >
-      {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
-      <span className="mt-0.5 shrink-0">{leadingIcon}</span>
+    <>
+      <div className="flex flex-col rounded-lg">
+        {/* biome-ignore lint/a11y/useSemanticElements: row contains a nested SummaryBullets expander and a Restore <button>; native nested buttons inside a <button> are invalid HTML, so the row uses div[role=button] to preserve keyboard activation while allowing the nested interactive children. */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          aria-controls={expanded ? diffPanelId : undefined}
+          data-testid="timeline-entry-expand"
+          className={[
+            'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            expanded ? 'bg-muted' : 'hover:bg-muted/50',
+          ].join(' ')}
+          onClick={handleActivate}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleActivate();
+            }
+          }}
+        >
+          {/* mt-0.5 aligns the icon to the center of the first text line rather than the full content block */}
+          <span className="mt-0.5 shrink-0">{leadingIcon}</span>
 
-      <div className="min-w-0 flex-1 space-y-0.5">
-        {/* Row 1: title + date, vertically centered with the icon */}
-        <div className="flex items-center gap-1.5">
-          {prominent ? (
-            <>
-              <span className="text-xs text-foreground truncate">
-                {checkpointHeadlineLabel(entry)}
-              </span>
-              <span className="text-xs text-muted-foreground/50">·</span>
-              <span className="truncate text-xs text-muted-foreground">{authorName}</span>
-            </>
-          ) : (
-            <span className="truncate text-xs text-foreground">{authorName}</span>
-          )}
-          <time
-            className="ml-auto shrink-0 text-xs text-muted-foreground/80"
-            dateTime={entry.timestamp}
-            title={entry.timestamp}
-          >
-            {relative}
-          </time>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            {/* Row 1: title + date + Restore icon, vertically centered with the icon */}
+            <div className="flex items-center gap-1.5">
+              {prominent ? (
+                <>
+                  <span className="text-xs text-foreground truncate">
+                    {checkpointHeadlineLabel(entry)}
+                  </span>
+                  <span className="text-xs text-muted-foreground/50">·</span>
+                  <span className="truncate text-xs text-muted-foreground">{authorName}</span>
+                </>
+              ) : (
+                <span className="truncate text-xs text-foreground">{authorName}</span>
+              )}
+              <time
+                className="ml-auto shrink-0 text-xs text-muted-foreground/80"
+                dateTime={entry.timestamp}
+                title={entry.timestamp}
+              >
+                {relative}
+              </time>
+              {/* Visual separator anchors the destructive Restore action as its own region. */}
+              <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-5 shrink-0 text-muted-foreground hover:text-destructive"
+                    data-testid="timeline-entry-restore"
+                    aria-label={restoreTooltipText(entry)}
+                    disabled={restoring}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDialogOpen(true);
+                    }}
+                  >
+                    {restoring ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <Undo2 className="size-3" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{restoreTooltipText(entry)}</TooltipContent>
+              </Tooltip>
+            </div>
+
+            {/* Row 2: details, aligned with title start */}
+            {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
+            {allDocs.length > 0 ? (
+              <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
+                {allDocs.join(', ')}
+              </p>
+            ) : (
+              <p className="truncate text-xs text-muted-foreground" title={entry.message}>
+                {entry.message}
+              </p>
+            )}
+          </div>
         </div>
 
-        {/* Row 2: details, aligned with title start */}
-        {allSummaries.length > 0 && <SummaryBullets summaries={allSummaries} />}
-        {allDocs.length > 0 ? (
-          <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
-            {allDocs.join(', ')}
-          </p>
-        ) : (
-          <p className="truncate text-xs text-muted-foreground" title={entry.message}>
-            {entry.message}
-          </p>
+        {expanded && (
+          <EntryDiffPanel
+            sha={entry.sha}
+            docName={docName}
+            cache={cache}
+            diffLayout={diffLayout}
+            panelId={diffPanelId}
+          />
         )}
       </div>
-    </div>
+
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(next) => {
+          if (!next) handleCancelDialog();
+          else setDialogOpen(true);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{restoreDialogTitle(entry)}</DialogTitle>
+            <DialogDescription>
+              This will replace the current document content with the version from{' '}
+              <span className="font-medium text-foreground">
+                {relative} ({formatAbsoluteTime(entry.timestamp)}, {shortSha(entry.sha)})
+              </span>{' '}
+              by <span className="font-medium text-foreground">{authorName}</span>. Your current
+              content is already saved in the timeline — you can restore it anytime.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              data-testid="timeline-entry-restore-cancel"
+              onClick={handleCancelDialog}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              data-testid="timeline-entry-restore-confirm"
+              disabled={restoring}
+              onClick={() => handleRestore()}
+            >
+              {restoring ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Restore
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
-export function TimelineContent({ docName, onEntrySelect, selectedSha }: TimelineContentProps) {
+export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [cache] = useState(() => new LruStringCache(HISTORICAL_CONTENT_CACHE_LIMIT));
+  const [expandedShas, setExpandedShas] = useState<Set<string>>(() => new Set());
+
+  // Reset expansion + cache on doc nav. The parent intentionally does not key
+  // <TimelineContent> on docName (it would force a re-mount on every nav and
+  // throw away the polling timer), so we clear locally.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cache is a stable useState-initialized instance — including it in deps would not change behavior but reads as a noisier signal of "this effect depends on the cache" when in fact it depends only on the active doc.
+  useEffect(() => {
+    setExpandedShas(new Set());
+    cache.clear();
+  }, [docName]);
+
+  function toggleExpanded(sha: string) {
+    setExpandedShas((prev) => {
+      const next = new Set(prev);
+      if (next.has(sha)) next.delete(sha);
+      else next.add(sha);
+      return next;
+    });
+  }
+
+  function handleRestoreSuccess() {
+    setExpandedShas(new Set());
+  }
 
   useEffect(() => {
     if (!docName) {
@@ -524,8 +855,6 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
-  const isViewingCurrent = !selectedSha;
-
   return (
     <div className="flex h-full flex-col">
       {/* Scrollable entry list */}
@@ -567,17 +896,18 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow
-              selected={isViewingCurrent}
-              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
-            />
+            <CurrentVersionRow />
             {entries.map((entry) => (
               <EntryRow
                 key={entry.sha}
                 entry={entry}
-                selected={entry.sha === selectedSha}
-                onSelect={onEntrySelect}
                 isDark={isDark}
+                diffLayout={diffLayout}
+                cache={cache}
+                docName={docName}
+                expanded={expandedShas.has(entry.sha)}
+                onToggleExpanded={toggleExpanded}
+                onRestoreSuccess={handleRestoreSuccess}
               />
             ))}
           </div>
@@ -586,20 +916,21 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow
-              selected={isViewingCurrent}
-              onSelect={() => onEntrySelect?.(EMPTY_ENTRY)}
-            />
+            <CurrentVersionRow />
             {groups.map((group, idx) => {
               if (group.kind === 'checkpoint') {
                 return (
                   <EntryRow
                     key={group.entry.sha}
                     entry={group.entry}
-                    selected={group.entry.sha === selectedSha}
-                    onSelect={onEntrySelect}
                     prominent
                     isDark={isDark}
+                    diffLayout={diffLayout}
+                    cache={cache}
+                    docName={docName}
+                    expanded={expandedShas.has(group.entry.sha)}
+                    onToggleExpanded={toggleExpanded}
+                    onRestoreSuccess={handleRestoreSuccess}
                   />
                 );
               }
@@ -608,9 +939,13 @@ export function TimelineContent({ docName, onEntrySelect, selectedSha }: Timelin
                   key={group.entries[0]?.sha ?? `wip-${idx}`}
                   entries={group.entries}
                   defaultExpanded={group.isPreCheckpoint}
-                  selectedSha={selectedSha}
-                  onSelect={onEntrySelect}
                   isDark={isDark}
+                  diffLayout={diffLayout}
+                  cache={cache}
+                  docName={docName}
+                  expandedShas={expandedShas}
+                  onToggleExpanded={toggleExpanded}
+                  onRestoreSuccess={handleRestoreSuccess}
                 />
               );
             })}

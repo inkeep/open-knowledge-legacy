@@ -24,12 +24,29 @@ export const ALL_EDITOR_IDS: EditorId[] = [
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
 const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
 const DEV_MCP_SERVER_COMMAND = 'node';
+const PINNED_MCP_SERVER_COMMAND = 'node';
 const DEV_MCP_ENV = {
   MCP_DEBUG: '1',
   OK_LOG_FILE: '/tmp/ok-mcp.log',
 } as const;
 
-export type McpInstallMode = 'published' | 'dev';
+/**
+ * MCP install modes for `ok init`-written editor configs.
+ *
+ * - `'published'` (default) — `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}`.
+ *   Self-heals after CLI reinstalls; the version each editor's MCP child runs
+ *   may drift over time (the protocol gate at `cli/mcp/server-discovery.ts`
+ *   refuses on mismatch).
+ * - `'dev'` — `{command: 'node', args: [<dist/cli.mjs>, 'mcp'], env: {...}}`.
+ *   Used by `--dev-mcp` for monorepo development against a worktree-local CLI.
+ * - `'pinned'` — `{command: 'node', args: [<absolute process.argv[1]>, 'mcp']}`.
+ *   Used by `ok init --pin` (specs/2026-04-24-cross-install-version-handshake
+ *   §3 G7 + D14). The absolute path is the cli entry of whatever ran `ok init`.
+ *   Recommended pin target is M6's stable shim at `/usr/local/bin/ok` (the
+ *   desktop's auto-updater replaces the symlink target atomically); volatile
+ *   pins (worktree dist, npx-cache) silently stale.
+ */
+export type McpInstallMode = 'published' | 'dev' | 'pinned';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
@@ -88,6 +105,19 @@ export function buildManagedServerEntry(options: McpInstallOptions = {}): Record
     return {
       command: options.cliPath,
       args: ['mcp'],
+    };
+  }
+
+  if (options.mode === 'pinned') {
+    const cliEntry = options.cliEntryPath ?? process.argv[1];
+    if (!cliEntry) {
+      throw new Error(
+        'Cannot pin MCP entry — process.argv[1] is empty. Pass --no-pin to use the default `npx` entry.',
+      );
+    }
+    return {
+      command: PINNED_MCP_SERVER_COMMAND,
+      args: [resolve(cliEntry), 'mcp'],
     };
   }
 
@@ -225,8 +255,8 @@ export interface EditorMcpTarget {
   scope: 'project' | 'global';
   /** Filesystem path whose existence implies the editor is installed. */
   detectPath?: (cwd: string, home?: string) => string;
-  /** Legacy project-local MCP config path from pre-global installs, if any. */
-  legacyProjectConfigPath?: (cwd: string) => string;
+  /** Project-local MCP config path (used for project-scope installs). */
+  projectConfigPath?: (cwd: string) => string;
 }
 
 function managedFieldEquals(a: unknown, b: unknown): boolean {
@@ -288,7 +318,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => join(home ?? homedir(), '.claude'),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.mcp.json'),
   }),
   'claude-desktop': createEditorTarget({
     id: 'claude-desktop',
@@ -311,7 +341,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCursorConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
   }),
   vscode: createEditorTarget({
     id: 'vscode',
@@ -323,7 +353,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => ({ type: 'stdio', ...buildManagedServerEntry(options) }),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveVsCodeConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
   }),
   windsurf: createEditorTarget({
     id: 'windsurf',
@@ -346,7 +376,10 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
+    // Codex reads CODEX_HOME (default ~/.codex) for user config; project-local
+    // .codex/config.toml support was added by analogy with the other editors.
+    // Verify against Codex CLI release notes before promoting in docs.
+    projectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
   }),
 };
 

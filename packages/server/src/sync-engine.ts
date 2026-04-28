@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { CC1Broadcaster } from './cc1-broadcast.ts';
 import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
@@ -413,7 +414,7 @@ export class SyncEngine {
           );
           break;
         }
-        await new Promise((r) => setTimeout(r, 50));
+        await wait(50);
       }
       this.pausedReason = undefined;
       this.error = undefined;

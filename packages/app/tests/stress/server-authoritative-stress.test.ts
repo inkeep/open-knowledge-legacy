@@ -29,8 +29,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import * as Y from 'yjs';
-
 import {
   assertBridgeInvariant,
   createTestClients,
@@ -38,7 +38,6 @@ import {
   serializeFragment,
   type TestClient,
   type TestServer,
-  wait,
 } from '../integration/test-harness';
 
 // ─── Seeded PRNG (xorshift32 — consistent with bridge-convergence.fuzz.test.ts) ───

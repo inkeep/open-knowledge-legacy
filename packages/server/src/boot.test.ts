@@ -187,3 +187,75 @@ describe('parseKeepaliveConnectionId', () => {
     expect(parseKeepaliveConnectionId('/collab/keepalive')).toBeNull();
   });
 });
+
+describe('bootServer — parent-death watch', () => {
+  test('shuts down when injected parentAliveCheck returns false', async () => {
+    const contentDir = resolve(tmpDir, 'pdw');
+    writeFileSync(resolve(tmpDir, 'placeholder'), '');
+    await execFileAsync('git', ['init'], { cwd: tmpDir });
+
+    let parentAlive = true;
+    const aliveCheck = mock((_pid: number) => parentAlive);
+
+    const booted = await bootServer({
+      contentDir,
+      projectDir: tmpDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      skipAutoInit: true,
+      parentPid: 999_999, // arbitrary; the injected aliveCheck decides
+      parentDeathPollMs: 25,
+      parentAliveCheck: aliveCheck,
+    });
+
+    // Confirm the watch is firing while the parent is alive — destroy was NOT called.
+    await new Promise((r) => setTimeout(r, 80));
+    expect(aliveCheck).toHaveBeenCalled();
+
+    // Flip parent to dead. The poll runs every 25 ms; destroy itself is
+    // async (Hocuspocus teardown + telemetry flush). Poll for the lock
+    // file disappearing as the observable side-effect of completed
+    // shutdown — `destroy` was fire-and-forget from inside the watch so
+    // we can't await it directly without re-entering bootServer's promise.
+    parentAlive = false;
+    const lockPath = resolve(contentDir, '.open-knowledge', 'server.lock');
+    const deadline = Date.now() + 5_000;
+    while (existsSync(lockPath) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(existsSync(lockPath)).toBe(false);
+
+    // Idempotency: explicit destroy must not throw even though the watch
+    // already drove destroy itself.
+    await expect(booted.destroy()).resolves.toBeUndefined();
+  });
+
+  test('does not install the poll when parentPid is absent', async () => {
+    const contentDir = resolve(tmpDir, 'no-pdw');
+    writeFileSync(resolve(tmpDir, 'placeholder'), '');
+    await execFileAsync('git', ['init'], { cwd: tmpDir });
+
+    const aliveCheck = mock(() => false); // would tear down if invoked
+
+    const booted = await bootServer({
+      contentDir,
+      projectDir: tmpDir,
+      port: 0,
+      quiet: true,
+      gitEnabled: false,
+      idleShutdownMs: null,
+      attachUiSibling: false,
+      skipAutoInit: true,
+      parentDeathPollMs: 25,
+      parentAliveCheck: aliveCheck,
+      // parentPid intentionally omitted
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(aliveCheck).not.toHaveBeenCalled();
+    await booted.destroy();
+  });
+});

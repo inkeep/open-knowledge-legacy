@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   commitUpstreamImport,
   commitWip,
@@ -105,10 +106,10 @@ describe('readShadowLog — multi-writer merge', () => {
 
     writeFileSync(authPath, '# v1\n');
     await commitWip(shadow, agent, contentDir, 'agent first', branch);
-    await new Promise((r) => setTimeout(r, 1100));
+    await wait(1100);
     writeFileSync(authPath, '# v2\n');
     await commitWip(shadow, principal, contentDir, 'principal second', branch);
-    await new Promise((r) => setTimeout(r, 1100));
+    await wait(1100);
     writeFileSync(authPath, '# v3\n');
     await commitWip(shadow, agent, contentDir, 'agent third', branch);
 
@@ -135,7 +136,7 @@ describe('readShadowLog — multi-writer merge', () => {
     for (let i = 0; i < 4; i++) {
       writeFileSync(authPath, `# v${i}\n`);
       await commitWip(shadow, writer, contentDir, `edit ${i}`, branch);
-      await new Promise((r) => setTimeout(r, 1100));
+      await wait(1100);
     }
 
     const { commits } = await readShadowLog(project, 'content/auth.md', 2);

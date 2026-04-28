@@ -19,7 +19,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createMultiClientContext, createRestartableServer, pollUntil, wait } from './test-harness';
+import { setTimeout as wait } from 'node:timers/promises';
+import { createMultiClientContext, createRestartableServer, pollUntil } from './test-harness';
 
 const SOURCE_CONTENT = `# Source Doc
 

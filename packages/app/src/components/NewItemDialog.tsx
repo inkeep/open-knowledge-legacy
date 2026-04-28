@@ -4,6 +4,7 @@ import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -221,75 +222,79 @@ export function NewItemDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {kind === 'folder' && (
+        <DialogBody>
+          <div className="space-y-3">
+            {kind === 'folder' && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
+                  Folder name
+                </label>
+                <Input
+                  ref={folderInputRef}
+                  id={folderInputId}
+                  value={folderName}
+                  onChange={(e) => {
+                    setFolderName(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder="folder-name"
+                  autoFocus
+                  aria-describedby={
+                    error && (errorField === 'folder' || errorField === 'form')
+                      ? errorId
+                      : undefined
+                  }
+                  aria-invalid={
+                    error && (errorField === 'folder' || errorField === 'form') ? true : undefined
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const folderErr = validatePath(folderName.trim());
+                      if (folderErr) {
+                        setError(`Folder name: ${folderErr}`);
+                        setErrorField('folder');
+                        return;
+                      }
+                      fileInputRef.current?.focus();
+                    }
+                  }}
+                />
+              </div>
+            )}
             <div>
-              <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
-                Folder name
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
+                {kind === 'folder' ? 'First file name' : 'File name'}
               </label>
               <Input
-                ref={folderInputRef}
-                id={folderInputId}
-                value={folderName}
+                ref={fileInputRef}
+                id={fileInputId}
+                value={fileName}
                 onChange={(e) => {
-                  setFolderName(e.target.value);
+                  setFileName(e.target.value);
                   setError(null);
                 }}
-                placeholder="folder-name"
-                autoFocus
+                placeholder="my-note.md"
+                autoFocus={kind === 'file'}
                 aria-describedby={
-                  error && (errorField === 'folder' || errorField === 'form') ? errorId : undefined
+                  error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
                 }
                 aria-invalid={
-                  error && (errorField === 'folder' || errorField === 'form') ? true : undefined
+                  error && (errorField === 'file' || errorField === 'form') ? true : undefined
                 }
+                onFocus={(e) => selectBasename(e.currentTarget)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const folderErr = validatePath(folderName.trim());
-                    if (folderErr) {
-                      setError(`Folder name: ${folderErr}`);
-                      setErrorField('folder');
-                      return;
-                    }
-                    fileInputRef.current?.focus();
-                  }
+                  if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
                 }}
               />
             </div>
-          )}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
-              {kind === 'folder' ? 'First file name' : 'File name'}
-            </label>
-            <Input
-              ref={fileInputRef}
-              id={fileInputId}
-              value={fileName}
-              onChange={(e) => {
-                setFileName(e.target.value);
-                setError(null);
-              }}
-              placeholder="my-note.md"
-              autoFocus={kind === 'file'}
-              aria-describedby={
-                error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
-              }
-              aria-invalid={
-                error && (errorField === 'file' || errorField === 'form') ? true : undefined
-              }
-              onFocus={(e) => selectBasename(e.currentTarget)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
-              }}
-            />
+            {error && (
+              <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
+                {error}
+              </p>
+            )}
           </div>
-          {error && (
-            <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
-              {error}
-            </p>
-          )}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button

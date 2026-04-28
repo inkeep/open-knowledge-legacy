@@ -18,7 +18,7 @@ import type { HandoffFailureReason, HandoffTarget } from '@inkeep/open-knowledge
 export type HandoffHost = 'electron' | 'web';
 
 /** Outcome status — `error` carries the optional `reason` discriminator. */
-export type HandoffOutcomeStatus = 'ok' | 'error';
+type HandoffOutcomeStatus = 'ok' | 'error';
 
 /**
  * One JSONL line in `~/.open-knowledge/stats.jsonl`. Schema is intentionally

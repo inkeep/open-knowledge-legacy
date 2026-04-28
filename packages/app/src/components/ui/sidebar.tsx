@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useSidebarResize } from '@/hooks/use-sidebar-resize';
 import { cn } from '@/lib/utils';
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
@@ -16,6 +17,10 @@ const SIDEBAR_WIDTH = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = '\\';
 const SIDEBAR_ID = 'app-file-sidebar';
+const MIN_SIDEBAR_WIDTH = '14rem';
+const MAX_SIDEBAR_WIDTH = '22rem';
+const SIDEBAR_WIDTH_COOKIE_NAME = 'sidebar_width';
+const SIDEBAR_WIDTH_VALUE_PATTERN = /^\d+(?:\.\d+)?(?:rem|px)$/;
 
 type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
 
@@ -27,6 +32,10 @@ type SidebarContextProps = {
   setOpenMobile: OpenHandler;
   isMobile: boolean;
   toggleSidebar: () => void;
+  width: string;
+  setWidth: React.Dispatch<React.SetStateAction<string>>;
+  isDraggingRail: boolean;
+  setIsDraggingRail: React.Dispatch<React.SetStateAction<boolean>>;
   showPushPulse: boolean;
   setShowPushPulse: React.Dispatch<React.SetStateAction<boolean>>;
   /**
@@ -39,6 +48,20 @@ type SidebarContextProps = {
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
+
+function getInitialSidebarWidth(defaultWidth: string) {
+  if (typeof document === 'undefined') return defaultWidth;
+
+  const savedWidth = document.cookie
+    .split('; ')
+    .find((row) => row.startsWith(`${SIDEBAR_WIDTH_COOKIE_NAME}=`))
+    ?.split('=')[1];
+
+  if (!savedWidth) return defaultWidth;
+
+  const decodedWidth = decodeURIComponent(savedWidth);
+  return SIDEBAR_WIDTH_VALUE_PATTERN.test(decodedWidth) ? decodedWidth : defaultWidth;
+}
 
 function useSidebar() {
   const context = React.use(SidebarContext);
@@ -56,14 +79,18 @@ function SidebarProvider({
   className,
   style,
   children,
+  defaultWidth = SIDEBAR_WIDTH,
   ...props
 }: React.ComponentProps<'div'> & {
   defaultOpen?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  defaultWidth?: string;
 }) {
   const isMobile = useIsMobile();
+  const [width, setWidth] = React.useState(() => getInitialSidebarWidth(defaultWidth));
   const [openMobile, setOpenMobile] = React.useState(false);
+  const [isDraggingRail, setIsDraggingRail] = React.useState(false);
   const [showPushPulse, setShowPushPulse] = React.useState(false);
 
   // This is the internal state of the sidebar.
@@ -172,6 +199,10 @@ function SidebarProvider({
         openMobile,
         setOpenMobile,
         toggleSidebar,
+        width,
+        setWidth,
+        isDraggingRail,
+        setIsDraggingRail,
         showPushPulse,
         setShowPushPulse,
         notifySidebarFileSelected,
@@ -181,7 +212,7 @@ function SidebarProvider({
         data-slot="sidebar-wrapper"
         style={
           {
-            '--sidebar-width': SIDEBAR_WIDTH,
+            '--sidebar-width': width,
             '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
             ...style,
           } as React.CSSProperties
@@ -210,7 +241,7 @@ function Sidebar({
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile } = useSidebar();
+  const { isMobile, state, openMobile, isDraggingRail } = useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -282,6 +313,7 @@ function Sidebar({
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
+      data-dragging={isDraggingRail}
     >
       {/* This is what handles the sidebar gap on desktop */}
       <div
@@ -293,6 +325,7 @@ function Sidebar({
           variant === 'floating' || variant === 'inset'
             ? 'group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]'
             : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon)',
+          'group-data-[dragging=true]:duration-0! group-data-[dragging=true]_*:!duration-0',
         )}
       />
       <div
@@ -304,6 +337,7 @@ function Sidebar({
           variant === 'floating' || variant === 'inset'
             ? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
             : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l',
+          'group-data-[dragging=true]:duration-0! group-data-[dragging=true]_*:!duration-0',
           className,
         )}
         {...props}
@@ -344,16 +378,42 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
   );
 }
 
-function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
-  const { toggleSidebar } = useSidebar();
+function SidebarRail({
+  className,
+  enableDrag = true,
+  onMouseDown,
+  ...props
+}: React.ComponentProps<'button'> & {
+  enableDrag?: boolean;
+}) {
+  const { toggleSidebar, setWidth, state, width, setIsDraggingRail } = useSidebar();
+  const { dragRef, handleMouseDown } = useSidebarResize({
+    direction: 'right',
+    enableDrag,
+    onResize: setWidth,
+    onToggle: toggleSidebar,
+    currentWidth: width,
+    isCollapsed: state === 'collapsed',
+    minResizeWidth: MIN_SIDEBAR_WIDTH,
+    maxResizeWidth: MAX_SIDEBAR_WIDTH,
+    setIsDraggingRail,
+    widthCookieName: SIDEBAR_WIDTH_COOKIE_NAME,
+    widthCookieMaxAge: SIDEBAR_COOKIE_MAX_AGE,
+  });
 
   return (
     <button
+      ref={dragRef}
       data-sidebar="rail"
       data-slot="sidebar-rail"
       aria-label="Toggle Sidebar"
       tabIndex={-1}
-      onClick={toggleSidebar}
+      onMouseDown={(event) => {
+        onMouseDown?.(event);
+        if (!event.defaultPrevented) {
+          handleMouseDown(event);
+        }
+      }}
       title="Toggle Sidebar"
       className={cn(
         'absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2',
