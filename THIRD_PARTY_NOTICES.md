@@ -1170,8 +1170,18 @@ Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/ansi/READM
 
 Copyright (c) 2025 Simon Boudrias
 
+### `@inquirer/checkbox@5.1.4`
+Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/checkbox/README.md
+
+Copyright (c) 2025 Simon Boudrias
+
 ### `@inquirer/confirm@5.1.21`
 Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/confirm/README.md
+
+Copyright (c) 2025 Simon Boudrias
+
+### `@inquirer/core@11.1.9`
+Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/core/README.md
 
 Copyright (c) 2025 Simon Boudrias
 

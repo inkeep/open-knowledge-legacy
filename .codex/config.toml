@@ -1,0 +1,3 @@
+[mcp_servers.open-knowledge]
+command = "npx"
+args = [ "@inkeep/open-knowledge", "mcp" ]
