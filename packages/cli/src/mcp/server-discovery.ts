@@ -5,6 +5,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import {
   isProcessAlive as defaultIsProcessAlive,
   readServerLock,
+  PROTOCOL_VERSION as SERVER_PROTOCOL_VERSION,
   type ServerLockMetadata,
 } from '@inkeep/open-knowledge-server';
 import { resolveSelfSpawn } from '../commands/self-spawn.ts';
@@ -38,7 +39,14 @@ export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefine
 export type AutoStartDecision =
   | { action: 'connect'; url: string; message: string }
   | { action: 'spawn'; message: string }
-  | { action: 'disk-only'; message: string };
+  | { action: 'disk-only'; message: string }
+  | {
+      action: 'incompatible';
+      message: string;
+      expectedProtocolVersion: number;
+      actualProtocolVersion: number | undefined;
+      lock: ServerLockMetadata;
+    };
 
 interface DecideAutoStartInput {
   host: string;
@@ -47,6 +55,13 @@ interface DecideAutoStartInput {
   configAutoStart: boolean;
   readLock: () => ServerLockMetadata | null;
   isAlive: (pid: number) => boolean;
+  /**
+   * Protocol version this MCP child speaks. Compared against `lock.protocolVersion`
+   * on the connect path; mismatch (or `undefined` lock value — pre-version-field
+   * lock format) returns `action: 'incompatible'`. Defaults to the server
+   * package's `PROTOCOL_VERSION` constant.
+   */
+  expectedProtocolVersion?: number;
 }
 
 /**
@@ -79,11 +94,33 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
 
   const lock = input.readLock();
   if (lock && lock.port > 0 && input.isAlive(lock.pid)) {
-    const url = `ws://localhost:${lock.port}`;
+    // Protocol gate (specs/2026-04-24-cross-install-version-handshake §3 G6 +
+    // D14). Connect only when the lock owner speaks the same `protocolVersion`
+    // we do. Pre-version-field locks (`lock.protocolVersion === undefined`)
+    // count as a mismatch — we cannot safely assume contract compatibility
+    // with a binary that pre-dates the lock-version scheme.
+    const expected = input.expectedProtocolVersion ?? SERVER_PROTOCOL_VERSION;
+    const actual = lock.protocolVersion;
+    if (actual === expected) {
+      const url = `ws://localhost:${lock.port}`;
+      return {
+        action: 'connect',
+        url,
+        message: `connected to running instance at ${url} (pid ${lock.pid})`,
+      };
+    }
+    const actualLabel = actual === undefined ? 'unknown (pre-version-field lock)' : `v${actual}`;
+    const runtimeLabel = lock.runtimeVersion ? ` runtime ${lock.runtimeVersion}` : '';
+    const message =
+      `Open Knowledge server at port ${lock.port} (pid ${lock.pid}${runtimeLabel}) ` +
+      `speaks protocol ${actualLabel}; this MCP needs protocol v${expected}. ` +
+      `Stop the server and retry, or align versions.`;
     return {
-      action: 'connect',
-      url,
-      message: `connected to running instance at ${url} (pid ${lock.pid})`,
+      action: 'incompatible',
+      message,
+      expectedProtocolVersion: expected,
+      actualProtocolVersion: actual,
+      lock,
     };
   }
 
@@ -188,6 +225,20 @@ export async function ensureServerRunning(
   }
   if (decision.action === 'disk-only') {
     return { serverUrl: undefined, message: decision.message };
+  }
+  if (decision.action === 'incompatible') {
+    // MCP has no attended user and cannot prompt — exit 1 surfaces the error
+    // to the editor's MCP log where the user can reconcile (specs/2026-04-24-cross-install-version-handshake
+    // §3 G6 + D7). Throwing here causes ensureServerRunning's caller (the
+    // MCP main entry) to exit with code 1.
+    opts.logger?.error('protocol mismatch — refusing to connect', undefined, {
+      expectedProtocolVersion: decision.expectedProtocolVersion,
+      actualProtocolVersion: decision.actualProtocolVersion,
+      lockPid: decision.lock.pid,
+      lockPort: decision.lock.port,
+      lockRuntimeVersion: decision.lock.runtimeVersion,
+    });
+    throw new Error(decision.message);
   }
 
   // action === 'spawn' — detach-spawn ok start as a sibling process.

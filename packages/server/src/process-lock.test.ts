@@ -10,9 +10,11 @@ import {
   ProcessLockCollisionError,
   type ProcessLockMetadata,
   readProcessLock,
+  readProcessLockDetailed,
   releaseProcessLock,
   updateProcessLockPort,
 } from './process-lock';
+import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants';
 
 const LOCK_NAME: LockName = 'ui';
 
@@ -529,5 +531,167 @@ describe('releaseProcessLock', () => {
     expect(existsSync(lockPath)).toBe(true);
     releaseProcessLock({ lockName: LOCK_NAME, lockDir });
     expect(existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe('version metadata (protocolVersion + runtimeVersion)', () => {
+  test('acquireProcessLock auto-populates protocolVersion + runtimeVersion from constants', () => {
+    acquireProcessLock({
+      lockName: LOCK_NAME,
+      lockDir,
+      metadata: { port: 3000, worktreeRoot: '/me' },
+    });
+    const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    expect(md.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(md.runtimeVersion).toBe(RUNTIME_VERSION);
+    expect(typeof md.runtimeVersion).toBe('string');
+    expect(md.runtimeVersion?.length).toBeGreaterThan(0);
+  });
+
+  test('acquireProcessLock honors explicit overrides on the metadata input', () => {
+    acquireProcessLock({
+      lockName: LOCK_NAME,
+      lockDir,
+      metadata: {
+        port: 3000,
+        worktreeRoot: '/me',
+        protocolVersion: 99,
+        runtimeVersion: 'test-1.2.3',
+      },
+    });
+    const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    expect(md.protocolVersion).toBe(99);
+    expect(md.runtimeVersion).toBe('test-1.2.3');
+  });
+
+  test('updateProcessLockPort preserves the version fields', () => {
+    const handle = acquireProcessLock({
+      lockName: LOCK_NAME,
+      lockDir,
+      metadata: {
+        port: 0,
+        worktreeRoot: '/me',
+        protocolVersion: 7,
+        runtimeVersion: 'preserve-test',
+      },
+    });
+    handle.updatePort(4000);
+    const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    expect(md.port).toBe(4000);
+    expect(md.protocolVersion).toBe(7);
+    expect(md.runtimeVersion).toBe('preserve-test');
+  });
+});
+
+describe('readProcessLockDetailed', () => {
+  test('returns absent when no lock file exists', () => {
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('absent');
+  });
+
+  test('returns live with the parsed lock when fields are complete', () => {
+    acquireProcessLock({
+      lockName: LOCK_NAME,
+      lockDir,
+      metadata: { port: 5000, worktreeRoot: '/me' },
+    });
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('live');
+    if (result.status !== 'live') throw new Error('expected live');
+    expect(result.lock.port).toBe(5000);
+    expect(result.lock.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(result.lock.runtimeVersion).toBe(RUNTIME_VERSION);
+  });
+
+  test('returns incompatible.missing-fields for a live lock missing protocolVersion', () => {
+    // Hand-craft a lock as if a pre-version-constants binary wrote it. PID 1
+    // is init/launchd — always alive on POSIX, so liveness passes.
+    const versionless = {
+      pid: 1,
+      hostname: hostname(),
+      port: 6000,
+      startedAt: new Date().toISOString(),
+      worktreeRoot: '/legacy',
+      // No protocolVersion, no runtimeVersion — simulates a v0.x lock.
+    };
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, JSON.stringify(versionless), 'utf-8');
+
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('incompatible');
+    if (result.status !== 'incompatible') throw new Error('expected incompatible');
+    expect(result.reason).toBe('missing-fields');
+  });
+
+  test('returns incompatible.missing-fields for a live lock missing runtimeVersion only', () => {
+    const partial = {
+      pid: 1,
+      hostname: hostname(),
+      port: 6500,
+      startedAt: new Date().toISOString(),
+      worktreeRoot: '/legacy',
+      protocolVersion: 1,
+      // No runtimeVersion.
+    };
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, JSON.stringify(partial), 'utf-8');
+
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('incompatible');
+  });
+
+  test('returns incompatible.corrupt for unparseable JSON', () => {
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, '{not json', 'utf-8');
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('incompatible');
+    if (result.status !== 'incompatible') throw new Error('expected incompatible');
+    expect(result.reason).toBe('corrupt');
+  });
+
+  test('returns incompatible.corrupt for shape violation (missing pid)', () => {
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({ port: 1234 }), 'utf-8');
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('incompatible');
+    if (result.status !== 'incompatible') throw new Error('expected incompatible');
+    expect(result.reason).toBe('corrupt');
+  });
+
+  test('returns stale + cleans up on dead pid', () => {
+    const stale: ProcessLockMetadata = {
+      pid: 99999999,
+      hostname: hostname(),
+      port: 7000,
+      startedAt: new Date().toISOString(),
+      worktreeRoot: '/old',
+      protocolVersion: 1,
+      runtimeVersion: '0.1.0',
+    };
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, JSON.stringify(stale), 'utf-8');
+
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('stale');
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('returns stale (without cleanup) on cross-host lock', () => {
+    const remote: ProcessLockMetadata = {
+      pid: 1, // alive on POSIX, but cross-host
+      hostname: 'some-other-host',
+      port: 7100,
+      startedAt: new Date().toISOString(),
+      worktreeRoot: '/remote',
+      protocolVersion: 1,
+      runtimeVersion: '0.1.0',
+    };
+    require('node:fs').mkdirSync(lockDir, { recursive: true });
+    writeFileSync(lockPath, JSON.stringify(remote), 'utf-8');
+
+    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
+    expect(result.status).toBe('stale');
+    // We do NOT unlink cross-host locks (they're owned by another machine).
+    expect(existsSync(lockPath)).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -66,6 +67,7 @@ import {
   saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
@@ -128,6 +130,20 @@ export interface ServerOptions {
    * host pid. Optional — desktop's parent-liveness gate skips when absent.
    */
   parentPid?: number;
+  /**
+   * Skip the durable state-manifest pre-flight gate
+   * (`assertCompatibleStateManifest` from `state-manifest.ts`). Default `false`.
+   *
+   * Production paths (CLI `ok start`, Electron utility, Vite dev plugin) leave
+   * this `false` so an incompatible cold start fails loud before the server
+   * touches the shadow repo.
+   *
+   * The integration test harness passes `true` because each test allocates a
+   * fresh tmpdir, so the manifest gate has nothing meaningful to assert and
+   * the writes would just generate noise across thousands of tmpdirs.
+   * (Resolves SPEC Q3 under D14.)
+   */
+  skipStateManifestCheck?: boolean;
 }
 
 export interface ServerInstance {
@@ -204,6 +220,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
     localOpCliArgs,
+    skipStateManifestCheck = false,
   } = options;
 
   const log = getLogger('server');
@@ -235,6 +252,32 @@ export function createServer(options: ServerOptions): ServerInstance {
     // (e.g. an HTTP-only relay) advertise differently.
     capabilities: ['http', 'ws'],
   });
+
+  // Durable state-manifest gate (specs/2026-04-24-cross-install-version-handshake
+  // §6.2 + D14). Runs AFTER lock acquisition so two cold-starting binaries
+  // serialize through the lock first, then the loser fails fast on
+  // ProcessLockCollisionError before reaching the manifest check. Runs BEFORE
+  // any shadow-repo or persistence side effect so an incompatible cold start
+  // refuses to boot before any durable mutation.
+  //
+  // Skipped when the caller passes `skipStateManifestCheck: true` — used by
+  // the integration test harness, which allocates a fresh tmpdir per test
+  // (no pre-existing state to gate on; writes would just generate noise
+  // across thousands of throwaway content dirs). Resolves SPEC Q3 under D14.
+  //
+  // On throw, release the lock before propagating so other processes can
+  // proceed (matches the cleanup path below for synchronous-init failures).
+  if (!skipStateManifestCheck) {
+    try {
+      assertCompatibleStateManifest({
+        lockDir,
+        shadowRepoDir: resolveShadowDir(projectDir),
+      });
+    } catch (err) {
+      releaseServerLock(lockDir);
+      throw err;
+    }
+  }
 
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
