@@ -60,18 +60,15 @@ const STABLE_SHIM_PATHS = new Set([
   '/opt/homebrew/bin/open-knowledge',
 ]);
 
-/** Path fragments that mark a binary as living inside a signed `.app` bundle (M6's wrapper). */
-const APP_BUNDLE_MARKERS = ['/Applications/', '.app/Contents/'];
-
 export function classifyMcpLaunchPath(launchPath: string | undefined): McpLaunchShape {
-  if (!launchPath || typeof launchPath !== 'string' || launchPath.length === 0) return 'unknown';
+  if (!launchPath || launchPath.length === 0) return 'unknown';
   for (const marker of NPX_CACHE_MARKERS) {
     if (launchPath.includes(marker)) return 'npx-cache';
   }
   if (STABLE_SHIM_PATHS.has(launchPath)) return 'stable-shim';
-  for (const marker of APP_BUNDLE_MARKERS) {
-    if (launchPath.includes(marker)) return 'stable-shim';
-  }
+  // macOS `/Applications/…` only — substring `/Applications/` matches `/home/x/Applications/ok`.
+  if (launchPath.startsWith('/Applications/')) return 'stable-shim';
+  if (launchPath.includes('.app/Contents/')) return 'stable-shim';
   // Absolute paths that didn't match the cache or shim heuristics — typical
   // shape of an `ok init --pin` write (dist/cli.mjs, ~/.npm-global/bin/ok,
   // /Users/x/.local/bin/ok, etc.).
@@ -158,7 +155,7 @@ function formatSpawnFailedMessage(
   launchPath: string | undefined,
 ): string {
   const stderrBlock = stderr ? ` stderr:\n${stderr}` : '';
-  let out = `Error: spawn failed: ${asyncSpawnError}${stderrBlock}`;
+  let out = `spawn failed: ${asyncSpawnError}${stderrBlock}`;
   if (isSpawnEnoentMessage(asyncSpawnError)) {
     out += `\n\n${describeSpawnEnoentRemedy(launchPath)}`;
   }
@@ -529,7 +526,7 @@ export async function ensureServerRunning(
     stderr: stderr || undefined,
   });
   throw new Error(
-    `Error: server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
+    `server did not start within ${seconds}s.${livenessHint}${stderr ? ` stderr:\n${stderr}` : ''}`,
   );
 }
 
@@ -555,6 +552,11 @@ interface CreateProjectServerUrlResolverOptions {
   readErrorLog?: (path: string) => string;
   openErrorLog?: (path: string) => number;
   closeFd?: (fd: number) => void;
+  /**
+   * Passed to `ensureServerRunning` for launch-shape hints (spawn ENOENT, protocol mismatch).
+   * Defaults to `process.argv[1]` when omitted.
+   */
+  launchPath?: string;
   ensureServerRunningFn?: EnsureServerRunningFn;
 }
 
@@ -619,6 +621,7 @@ export function createProjectServerUrlResolver(
         readErrorLog: opts.readErrorLog,
         openErrorLog: opts.openErrorLog,
         closeFd: opts.closeFd,
+        launchPath: opts.launchPath,
       });
       cache.set(effectiveCwd, { url: result.serverUrl, expiresAt: Date.now() + cacheMs });
       return result.serverUrl;

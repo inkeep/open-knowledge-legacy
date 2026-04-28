@@ -401,6 +401,11 @@ describe('server-discovery', () => {
         path: '/Users/x/work/open-knowledge/packages/cli/dist/cli.mjs',
         expected: 'absolute-pin',
       },
+      {
+        name: 'Linux path containing Applications segment is not bundle shim',
+        path: '/home/alice/Applications/ok',
+        expected: 'absolute-pin',
+      },
     ];
     for (const c of cases) {
       test(c.name, () => {
@@ -656,7 +661,7 @@ describe('server-discovery', () => {
           openErrorLog,
           closeFd: () => {},
         }),
-      ).rejects.toThrow(/Error: server did not start within.*stderr:/s);
+      ).rejects.toThrow(/server did not start within.*stderr:/s);
 
       // Confirm the content made it to the log.
       expect(readFileSync(errorLog, 'utf-8')).toContain('ENOENT');
@@ -679,7 +684,7 @@ describe('server-discovery', () => {
           pollIntervalMs: 1,
           timeoutMs: 3,
         }),
-      ).rejects.toThrow(/Error: server did not start within/);
+      ).rejects.toThrow(/server did not start within/);
     });
 
     test('sync spawn throw surfaces a spawn-failed error', async () => {
@@ -706,7 +711,7 @@ describe('server-discovery', () => {
       } catch (e) {
         expect(e).toBeInstanceOf(Error);
         const msg = (e as Error).message;
-        expect(msg).toMatch(/Error: spawn failed: EACCES/);
+        expect(msg).toMatch(/spawn failed: EACCES/);
         expect(msg).not.toContain('CLI entry script');
         expect(msg).not.toContain('ok init --pin');
       }
@@ -749,7 +754,7 @@ describe('server-discovery', () => {
         launchPath: pinned,
       }).catch((e: unknown) => e as Error);
 
-      expect(err.message).toContain('Error: spawn failed: ENOENT');
+      expect(err.message).toContain('spawn failed: ENOENT');
       expect(err.message).toContain(describeSpawnEnoentRemedy(pinned));
     });
 
@@ -830,6 +835,24 @@ describe('server-discovery', () => {
           lockDir: '/workspace/b/knowledge-b/.open-knowledge',
         },
       ]);
+    });
+
+    test('forwards launchPath to ensureServerRunning', async () => {
+      let seenLaunchPath: string | undefined;
+      const resolver = createProjectServerUrlResolver({
+        startupCwd: '/workspace/a',
+        resolveConfig: async () => BASE_CONFIG,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        launchPath: '/custom/bin/ok',
+        ensureServerRunningFn: async (opts) => {
+          seenLaunchPath = opts.launchPath;
+          return { serverUrl: 'ws://localhost:45001', message: 'ok' };
+        },
+      });
+      await expect(resolver('/workspace/a')).resolves.toBe('ws://localhost:45001');
+      expect(seenLaunchPath).toBe('/custom/bin/ok');
     });
 
     test('uses startup cwd when the caller does not provide one', async () => {
