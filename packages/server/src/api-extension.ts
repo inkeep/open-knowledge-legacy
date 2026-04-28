@@ -27,7 +27,9 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
+  ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_VIDEO_MIME_TYPES,
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
@@ -243,6 +245,8 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
+const ALLOWED_VIDEO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_VIDEO_MIME_TYPES);
+const ALLOWED_AUDIO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_AUDIO_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -4244,13 +4248,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
+  /**
+   * Shared upload mechanics for image / video / audio endpoints. The three
+   * handlers differ only in their per-endpoint MIME allowlist + whether SVG
+   * fallback applies (image only — video and audio are binary formats with
+   * detectable magic bytes). Keeping a single source of truth for the
+   * security-critical path validation, magic-byte sniffing, and atomic
+   * write — every per-endpoint copy of this 100-line body would otherwise
+   * need the same audit + bug-fix cadence.
+   */
+  async function uploadMediaCore(
+    req: IncomingMessage,
+    res: ServerResponse,
+    allowlist: Set<string>,
+    options: { allowSvgFallback: boolean },
+  ): Promise<void> {
     let uploadResult: UploadResult | undefined;
     try {
       uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
@@ -4267,10 +4279,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const { filename, buffer, parentDocName } = uploadResult;
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
 
     if (!parentDocName) {
       json(res, 400, { ok: false, error: 'parentDocName is required' });
@@ -4321,15 +4329,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const fileTypeResult = await fileTypeFromBuffer(buffer);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes) — check manually
-    if (!detectedMime) {
+    // file-type can't detect SVG (text-based, no magic bytes). Only the image
+    // endpoint accepts SVG, so the fallback is gated by the option.
+    if (!detectedMime && options.allowSvgFallback) {
       const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
       if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !ALLOWED_MIME_TYPES.has(detectedMime)) {
+    if (!detectedMime || !detectedExt || !allowlist.has(detectedMime)) {
       json(res, 400, {
         ok: false,
         error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
@@ -4363,6 +4372,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
       json(res, 500, { ok: false, error: 'Failed to save file' });
     }
+  }
+
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_MIME_TYPES, { allowSvgFallback: true });
+  }
+
+  async function handleUploadVideo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_VIDEO_MIME_TYPES_SET, { allowSvgFallback: false });
+  }
+
+  async function handleUploadAudio(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_AUDIO_MIME_TYPES_SET, { allowSvgFallback: false });
   }
 
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
@@ -5587,6 +5633,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload-image': handleUploadImage,
+    '/api/upload-video': handleUploadVideo,
+    '/api/upload-audio': handleUploadAudio,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
