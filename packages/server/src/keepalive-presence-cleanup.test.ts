@@ -19,13 +19,10 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket as WsClient } from 'ws';
 import { toBroadcasterKey } from './agent-id.ts';
 import { type BootedServer, bootServer } from './boot.ts';
-
-async function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function poll<T>(
   read: () => T,

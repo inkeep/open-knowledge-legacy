@@ -15,6 +15,7 @@
 
 import {
   acquireProcessLock,
+  type LockKind,
   ProcessLockCollisionError,
   type ProcessLockMetadata,
   readProcessLock,
@@ -33,7 +34,13 @@ export class UiLockCollisionError extends ProcessLockCollisionError {
 
 export function acquireUiLock(
   lockDir: string,
-  init: { port: number; worktreeRoot: string },
+  init: {
+    port: number;
+    worktreeRoot: string;
+    kind?: LockKind;
+    parentPid?: number;
+    capabilities?: string[];
+  },
 ): string {
   try {
     const handle = acquireProcessLock({ lockName: 'ui', lockDir, metadata: init });

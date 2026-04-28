@@ -109,7 +109,7 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,
-  contentRoot = 'content',
+  contentRoot = '.',
 ): Promise<HistoryResult> {
   // Graceful degradation: if the shadow workTree doesn't exist, return empty
   if (!existsSync(shadow.workTree) || !existsSync(shadow.gitDir)) {
@@ -125,9 +125,9 @@ export async function getDocumentHistory(
   const excludeAuthorFilter = toArray(query.excludeAuthor);
 
   // Build file pathspec so git log only returns commits touching this document.
-  // Normalize contentRoot: strip leading './' — git rejects relative path syntax
-  // ("./foo") when operating against a bare repo (cat-file, log --).
-  const normalizedRoot = contentRoot.replace(/^\.\//, '');
+  // Normalize: strip leading './' AND treat bare '.' as empty (git rejects
+  // both "./foo" and "./" pathspecs when operating against a bare repo).
+  const normalizedRoot = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
   const docPath = query.docName
     ? normalizedRoot
       ? `${normalizedRoot}/${query.docName}${getDocExtension(query.docName)}`

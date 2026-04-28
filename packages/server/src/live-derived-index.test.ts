@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { Hocuspocus } from '@hocuspocus/server';
 import type * as Y from 'yjs';
 import { applyExternalChange } from './external-change.ts';
@@ -10,10 +11,6 @@ function getDoc(conn: Conn): Y.Doc {
   const doc = (conn as unknown as { document: Y.Doc }).document;
   if (!doc) throw new Error('DirectConnection has no document');
   return doc;
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function makeOnChangePayload(

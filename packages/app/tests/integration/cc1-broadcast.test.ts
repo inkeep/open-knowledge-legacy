@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   type CC1DerivedViewPayload,
@@ -10,7 +11,7 @@ import {
 import { applyExternalChange, BacklinkIndex, reconcile } from '@inkeep/open-knowledge-server';
 import * as encoding from 'lib0/encoding';
 import * as Y from 'yjs';
-import { createTestServer, type TestServer, wait, waitForSync } from './test-harness';
+import { createTestServer, pollUntil, type TestServer, waitForSync } from './test-harness';
 
 let server: TestServer;
 
@@ -81,6 +82,25 @@ describe('CC1 broadcast — L1 integration', () => {
       expect(signal.ch).toBe('files');
       expect(typeof signal.seq).toBe('number');
       expect(signal.seq).toBeGreaterThanOrEqual(1);
+    } finally {
+      destroy();
+    }
+  });
+
+  test('empty disk-created markdown file triggers ch:files and appears in documents', async () => {
+    const { provider, signals, destroy } = connectSystemDoc(server.port);
+    try {
+      await waitForSync(provider);
+      await wait(100);
+
+      const docName = `cc1-empty-${crypto.randomUUID()}`;
+      writeFileSync(join(server.contentDir, `${docName}.md`), '', 'utf-8');
+
+      await pollUntil(() => signals.length > 0, 5000, 50);
+
+      const docsRes = await fetch(`http://localhost:${server.port}/api/documents`);
+      const docsBody: { documents?: Array<{ docName: string }> } = await docsRes.json();
+      expect(docsBody.documents?.some((doc) => doc.docName === docName)).toBe(true);
     } finally {
       destroy();
     }

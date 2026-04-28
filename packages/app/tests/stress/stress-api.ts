@@ -14,6 +14,7 @@
  * Usage: bun run tests/stress/stress-api.ts
  */
 
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import * as Y from 'yjs';
 import { generateMarkdown } from './synthetic';
@@ -63,10 +64,6 @@ async function agentUndo(
     body: JSON.stringify({ connectionId, docName, scope }),
   });
   return res.ok ? { ok: true } : { ok: false };
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Create a fresh HocuspocusProvider connected to the dev server. */

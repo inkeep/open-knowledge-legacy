@@ -30,6 +30,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { ensureProjectGit } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
@@ -41,7 +42,6 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
-  wait,
 } from './test-harness';
 
 const CONTENT_A = `# Main Branch Doc

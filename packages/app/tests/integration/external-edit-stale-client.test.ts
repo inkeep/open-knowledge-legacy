@@ -26,6 +26,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   clientIdsInDoc,
@@ -33,7 +34,6 @@ import {
   pollDiskContentStable,
   pollUntil,
   seedPoolServerInstanceId,
-  wait,
 } from './test-harness';
 
 const CONTENT_A = `# Version A

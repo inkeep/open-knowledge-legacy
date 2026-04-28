@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { setImmediate } from 'node:timers/promises';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { clearContributors, formatContributors } from './contributor-tracker.ts';
@@ -387,7 +388,7 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     // Note: flushDocToGit chains `l1.then(() => flushGitCommit?.())` —
     // the flush is kicked but not awaited by the handler. Give the
     // microtask queue a beat to resolve.
-    await new Promise((resolve) => setImmediate(resolve));
+    await setImmediate();
     expect(spy.calls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -407,7 +408,7 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     );
 
     expect(response.status).toBe(200);
-    await new Promise((resolve) => setImmediate(resolve));
+    await setImmediate();
     // UI-driven rename path should not kick a flush on its behalf — the
     // flush is there to drain newly-added attribution; no agentId → no
     // attribution → no flush. This also keeps UI-driven paths as lean
@@ -433,7 +434,7 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     );
 
     expect(response.status).toBe(400);
-    await new Promise((resolve) => setImmediate(resolve));
+    await setImmediate();
     // 400 path short-circuits before recordContributor / flushDocToGit.
     expect(spy.calls.length).toBe(0);
   });

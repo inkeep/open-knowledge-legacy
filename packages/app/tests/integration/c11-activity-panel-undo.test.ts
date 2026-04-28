@@ -14,9 +14,10 @@
  * gitEnabled: true + commitDebounceMs: 200 so the commit fires quickly.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { listAgentActivity } from '../../../../packages/server/src/agent-activity.ts';
 import type { TestServer } from './test-harness';
-import { agentUndo, agentWriteMd, createTestServer, wait } from './test-harness';
+import { agentUndo, agentWriteMd, createTestServer } from './test-harness';
 
 let server: TestServer;
 

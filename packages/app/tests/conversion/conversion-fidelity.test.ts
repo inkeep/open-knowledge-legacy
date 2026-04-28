@@ -14,9 +14,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
-
 import {
   agentWriteMd,
   assertBridgeInvariant,
@@ -30,7 +30,6 @@ import {
   stripTrailingWhitespace,
   type TestServer,
   testReset,
-  wait,
 } from '../integration/test-harness';
 
 // ─── Helpers ───

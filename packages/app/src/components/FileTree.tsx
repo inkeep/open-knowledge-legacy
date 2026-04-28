@@ -11,6 +11,7 @@ import {
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import {
   Copy,
+  FolderOpen,
   FolderPlus,
   FoldVertical,
   Pencil,
@@ -78,6 +79,7 @@ import {
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { createRefreshScheduler } from '@/lib/refresh-scheduler';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
 import { OpenInAgentContextSubmenu } from './handoff/OpenInAgentContextSubmenu';
 import {
@@ -155,6 +157,7 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
     '--trees-padding-inline-override': '0.5rem',
     '--trees-border-radius-override': '0.375rem',
     '--trees-selected-fg': 'var(--color-primary)',
+    '--truncate-marker-fade-in-duration': '0s', // render ellipsis without delay
   } as CSSProperties;
 }
 
@@ -190,6 +193,65 @@ interface WorkspaceInfo {
 interface PendingCreate {
   kind: 'file' | 'folder';
   renamePath: string;
+}
+
+/**
+ * Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy.
+ * Linux verb asymmetry (Open vs Reveal) is intentional — no stable Linux file-manager
+ * brand to "Reveal in"; a normalizing fix to "Reveal in Files" would be incorrect on
+ * most distros.
+ */
+function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
+  if (platform === 'darwin') return 'Reveal in Finder';
+  if (platform === 'win32') return 'Reveal in File Explorer';
+  return 'Open Containing Folder';
+}
+
+/**
+ * File-tree menu row that opens the OS file manager with the target file/folder
+ * selected. Hidden entirely on the web variant (no useful no-op without a host
+ * filesystem) — the disabled-with-hint pattern used by `OpenInAgentContextSubmenu`
+ * doesn't apply here because reveal has no cross-host fallback. When present but
+ * the workspace metadata hasn't resolved yet, renders disabled with a "No workspace"
+ * affordance mirroring the handoff submenu's pattern.
+ */
+function RevealInFileManagerMenuItem({
+  item,
+  workspace,
+  onClose,
+}: {
+  item: ContextMenuItem;
+  workspace: WorkspaceInfo | null;
+  onClose: () => void;
+}) {
+  const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
+  if (!bridge) return null;
+  const label = revealInFileManagerLabel(bridge.platform);
+  const hint = !workspace ? 'No workspace' : null;
+  return (
+    <DropdownMenuItem
+      disabled={!workspace}
+      onSelect={() => {
+        if (!workspace) return;
+        onClose();
+        const full = joinWorkspacePath(
+          workspace.contentDir,
+          relativePathForTreeItem(item),
+          workspace.pathSeparator,
+        );
+        void bridge.shell.showItemInFolder(full);
+      }}
+      aria-label={hint ? `${label}, ${hint}` : label}
+    >
+      <FolderOpen aria-hidden="true" />
+      <span className="flex-1">{label}</span>
+      {hint ? (
+        <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+          {hint}
+        </span>
+      ) : null}
+    </DropdownMenuItem>
+  );
 }
 
 interface FileTreeMenuProps {
@@ -348,6 +410,8 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
         {!isFolder && (
           <OpenInAgentContextSubmenu
             input={handoffInput}
@@ -528,21 +592,23 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (active) setLoading(false);
     }
 
-    void refreshDocs();
+    const scheduler = createRefreshScheduler(refreshDocs);
+    scheduler.request();
     const handleResume = () => {
       if (document.visibilityState === 'visible') {
-        void refreshDocs();
+        scheduler.request();
       }
     };
     window.addEventListener('focus', handleResume);
     window.addEventListener('visibilitychange', handleResume);
     const unsubscribe = subscribeToDocumentsChanged((channels) => {
       if (channels.includes('files')) {
-        void refreshDocs();
+        scheduler.request();
       }
     });
     return () => {
       active = false;
+      scheduler.dispose();
       window.removeEventListener('focus', handleResume);
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();

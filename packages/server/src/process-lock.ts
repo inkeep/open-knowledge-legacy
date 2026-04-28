@@ -22,8 +22,17 @@ import {
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { isProcessAlive } from './process-alive.ts';
+import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants.ts';
 
 export type LockName = 'server' | 'ui';
+
+/**
+ * Who started this server. `interactive` means a user-facing CLI/Electron
+ * boot; `mcp-spawned` means an MCP-driven detach-spawn (see
+ * `packages/cli/src/mcp/server-discovery.ts`). Desktop attach validation
+ * uses this to refuse non-collab-capable peers.
+ */
+export type LockKind = 'interactive' | 'mcp-spawned';
 
 export interface ProcessLockMetadata {
   pid: number;
@@ -32,6 +41,40 @@ export interface ProcessLockMetadata {
   port: number;
   startedAt: string;
   worktreeRoot: string;
+  /**
+   * Optional — absent on locks written by older binaries. Readers MUST
+   * tolerate `undefined` and fall through to conservative paths
+   * (e.g., the desktop refuses to attach when kind is missing).
+   */
+  kind?: LockKind;
+  /**
+   * Pid of the *spawner* — not `process.ppid` (which gets reparented to
+   * launchd when the spawn is detached). For `mcp-spawned`: the MCP server's
+   * pid. For `interactive`: the user-facing host (CLI shell, Electron main).
+   * Optional for legacy-lock tolerance.
+   */
+  parentPid?: number;
+  /**
+   * Protocol/feature surfaces this server exposes. v1: `["http", "ws"]`
+   * for any server booted via `bootServer`. Forward-compat for variants
+   * that lack one or the other.
+   */
+  capabilities?: string[];
+  /**
+   * Cross-process contract version (specs/2026-04-24-cross-install-version-handshake
+   * §6.1 + D14). Optional in the type to support locks written by binaries
+   * predating the field; the MCP protocol gate uses `readProcessLockDetailed`
+   * to classify missing-field locks as `'incompatible'`.
+   *
+   * Always present in locks written by binaries from this commit forward:
+   * `acquireProcessLock` defaults to the current `PROTOCOL_VERSION` constant.
+   */
+  protocolVersion?: number;
+  /**
+   * Semver of the binary that wrote the lock. Used for diagnostic messages on
+   * protocol mismatch. Optional for the same reason as `protocolVersion`.
+   */
+  runtimeVersion?: string;
 }
 
 export interface ProcessLockHandle {
@@ -144,7 +187,17 @@ function parseLock(lockPath: string, logPrefix: string): ProcessLockMetadata | n
 export function acquireProcessLock(opts: {
   lockName: LockName;
   lockDir: string;
-  metadata: { port: number; worktreeRoot: string };
+  metadata: {
+    port: number;
+    worktreeRoot: string;
+    kind?: LockKind;
+    parentPid?: number;
+    capabilities?: string[];
+    /** Override the auto-populated protocolVersion. Primarily for tests. */
+    protocolVersion?: number;
+    /** Override the auto-populated runtimeVersion. Primarily for tests. */
+    runtimeVersion?: string;
+  };
 }): ProcessLockHandle {
   const { lockName, lockDir, metadata: init } = opts;
   const logPrefix = `[${lockName}-lock]`;
@@ -158,6 +211,11 @@ export function acquireProcessLock(opts: {
     port: init.port,
     startedAt: new Date().toISOString(),
     worktreeRoot: init.worktreeRoot,
+    ...(init.kind !== undefined && { kind: init.kind }),
+    ...(init.parentPid !== undefined && { parentPid: init.parentPid }),
+    ...(init.capabilities !== undefined && { capabilities: init.capabilities }),
+    protocolVersion: init.protocolVersion ?? PROTOCOL_VERSION,
+    runtimeVersion: init.runtimeVersion ?? RUNTIME_VERSION,
   };
   const payload = JSON.stringify(record, null, 2);
 
@@ -285,6 +343,12 @@ export function updateProcessLockPort(opts: {
  * Read the lock if it exists and the holder is alive on this host.
  * Returns null for missing, stale, cross-host, or corrupt locks. Cleans
  * up a stale lock as a side effect (same host, dead pid only).
+ *
+ * Locks missing the version fields (`protocolVersion` / `runtimeVersion`)
+ * are returned as-is — the legacy callers (`tryAttachExistingServer` in the
+ * desktop, `discoverServerUrl` in the CLI MCP) treat them the same as locks
+ * with version fields. Use `readProcessLockDetailed` to classify version-blind
+ * locks as `'incompatible'` (the MCP protocol gate path).
  */
 export function readProcessLock(opts: {
   lockName: LockName;
@@ -314,6 +378,85 @@ export function readProcessLock(opts: {
   }
 
   return existing;
+}
+
+/**
+ * Tagged-union read for callers that need to distinguish "no lock" from
+ * "live lock with missing version fields" (the MCP protocol gate).
+ *
+ * Statuses:
+ * - `absent` — no lock file exists at all.
+ * - `stale` — lock present + parseable, but holder is dead OR on a foreign
+ *   host. The file is unlinked on the dead-pid path as a side effect; cross-
+ *   host locks are NOT unlinked (they may be owned by a live process on
+ *   another machine sharing the contentDir over NFS / shared volume).
+ * - `live` — lock present, parseable, holder alive on this host, ALL version
+ *   fields present. Compatible with the MCP gate's `protocolVersion` check.
+ * - `incompatible` — lock present, parseable, holder alive, but missing one
+ *   or both version fields (`protocolVersion` / `runtimeVersion`) OR the
+ *   payload itself is corrupt/unparseable. The MCP gate refuses to attach
+ *   in this state.
+ */
+export type ReadProcessLockResult =
+  | { status: 'absent' }
+  | { status: 'stale'; lock: ProcessLockMetadata }
+  | { status: 'live'; lock: ProcessLockMetadata }
+  | { status: 'incompatible'; reason: 'missing-fields' | 'corrupt'; raw: unknown };
+
+export function readProcessLockDetailed(opts: {
+  lockName: LockName;
+  lockDir: string;
+}): ReadProcessLockResult {
+  const { lockName, lockDir } = opts;
+  const lockPath = lockFilePath(lockDir, lockName);
+  if (!existsSync(lockPath)) return { status: 'absent' };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+  } catch {
+    return { status: 'incompatible', reason: 'corrupt', raw: undefined };
+  }
+
+  if (!raw || typeof raw !== 'object') {
+    return { status: 'incompatible', reason: 'corrupt', raw };
+  }
+  const r = raw as Partial<ProcessLockMetadata>;
+  if (
+    typeof r.pid !== 'number' ||
+    typeof r.hostname !== 'string' ||
+    typeof r.port !== 'number' ||
+    typeof r.startedAt !== 'string' ||
+    typeof r.worktreeRoot !== 'string'
+  ) {
+    return { status: 'incompatible', reason: 'corrupt', raw };
+  }
+
+  const lock: ProcessLockMetadata = {
+    pid: r.pid,
+    hostname: r.hostname,
+    port: r.port,
+    startedAt: r.startedAt,
+    worktreeRoot: r.worktreeRoot,
+    protocolVersion: typeof r.protocolVersion === 'number' ? r.protocolVersion : undefined,
+    runtimeVersion: typeof r.runtimeVersion === 'string' ? r.runtimeVersion : undefined,
+  };
+
+  if (lock.hostname !== hostname()) return { status: 'stale', lock };
+  if (!isProcessAlive(lock.pid)) {
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Raced another cleanup — fine
+    }
+    return { status: 'stale', lock };
+  }
+
+  if (lock.protocolVersion === undefined || lock.runtimeVersion === undefined) {
+    return { status: 'incompatible', reason: 'missing-fields', raw };
+  }
+
+  return { status: 'live', lock };
 }
 
 /**

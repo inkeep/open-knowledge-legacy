@@ -9,9 +9,10 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { clearContributors } from '@inkeep/open-knowledge-server';
 import type { TestServer } from './test-harness';
-import { agentWriteMd, createTestServer, wait } from './test-harness';
+import { agentWriteMd, createTestServer } from './test-harness';
 
 /** Grace period used by all tests in this file — short enough to keep tests fast. */
 const GRACE_MS = 150;

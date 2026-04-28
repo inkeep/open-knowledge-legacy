@@ -12,8 +12,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { TestServer } from './test-harness';
-import { assertBridgeInvariant, createTestClient, createTestServer, wait } from './test-harness';
+import { assertBridgeInvariant, createTestClient, createTestServer } from './test-harness';
 
 let server: TestServer;
 

@@ -13,7 +13,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   agentWriteMd,
   assertBridgeInvariant,
@@ -24,7 +24,6 @@ import {
   serializeFragment,
   type TestClient,
   type TestServer,
-  wait,
 } from './test-harness';
 
 let server: TestServer;

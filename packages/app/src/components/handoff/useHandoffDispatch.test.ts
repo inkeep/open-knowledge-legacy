@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, mock, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { HandoffOutcome, HandoffPayload, HandoffTarget } from '@inkeep/open-knowledge-core';
 import type {
   HandoffDispatchDeps,
@@ -282,7 +283,7 @@ describe('runHandoffDispatch — failure path', () => {
 
     // The retry is fire-and-forget (`void runHandoffDispatch(...)`). Yield so
     // the second attempt's await-chain completes before assertions.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await wait(0);
 
     expect(dispatch).toHaveBeenCalledTimes(2);
     const firstPayload = (dispatch as ReturnType<typeof mock>).mock.calls[0]?.[0] as HandoffPayload;
@@ -318,7 +319,7 @@ describe('runHandoffDispatch — failure path', () => {
     const firstAction = deps.toast.errorCalls[0]?.action;
     expect(firstAction).toBeDefined();
     firstAction?.onClick();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await wait(0);
     expect(deps.toast.errorCalls).toHaveLength(2);
     expect(deps.toast.errorCalls[1]?.message).toBe(
       "Still couldn't reach Cursor — try one more time?",
@@ -329,7 +330,7 @@ describe('runHandoffDispatch — failure path', () => {
     const secondAction = deps.toast.errorCalls[1]?.action;
     expect(secondAction).toBeDefined();
     secondAction?.onClick();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await wait(0);
     expect(deps.toast.errorCalls).toHaveLength(3);
     expect(deps.toast.errorCalls[2]?.message).toBe(
       "Couldn't reach Cursor — please try again later.",

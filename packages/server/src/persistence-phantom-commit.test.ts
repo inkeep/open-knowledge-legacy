@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
 import { clearContributors, contributorCount } from './contributor-tracker.ts';
@@ -109,7 +110,7 @@ describe('onStoreDocument phantom-principal-commit regression (PR #295)', () => 
       // debounced store hook and we only see the synthetic local-origin
       // store Hocuspocus fires on document unload (Hocuspocus server.esm.js
       // line ~1955) — not the path we care about regression-testing.
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await wait(300);
       conn.disconnect();
     } finally {
       await server.destroy();
@@ -162,7 +163,7 @@ describe('onStoreDocument phantom-principal-commit regression (PR #295)', () => 
       // and teardown before the safety-net has a chance to run — the hook
       // IS flushed during destroy, but the disconnect below fires first
       // and changes the clients count, which must not suppress the store.
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await wait(300);
       conn.disconnect();
     } finally {
       await server.destroy();

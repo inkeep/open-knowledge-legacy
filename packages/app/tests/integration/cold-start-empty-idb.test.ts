@@ -22,6 +22,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   assertIDBEmpty,
@@ -29,7 +30,6 @@ import {
   pollDiskContentStable,
   pollUntil,
   seedPoolServerInstanceId,
-  wait,
 } from './test-harness';
 
 const COLD_START_FIXTURE = `# Cold Start Doc
