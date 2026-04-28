@@ -4,10 +4,11 @@ Append-only process history. Latest entry on top.
 
 ---
 
-## 2026-04-28 — Post-ship repair: scope exception recorded
+## 2026-04-28 — Pre-QA review repair: scope exception + FR3 refinement recorded
 
 - **`api-extension.ts` touched despite §16 EXCLUDE.** Commit `2ebb3ff8` added a loopback + Host-header gate to `handlePrincipal`, mirroring the identical gate already present on `handleWorkspace` and `handleMetricsAgentPresence`. The §16 rationale ("server side already correct; no changes") assumed the gate was already in place — it was not. The change is correct and low-risk (17 lines, established pattern), so it was accepted rather than reverted.
 - **Coverage added.** `packages/app/tests/integration/principal-endpoint.test.ts` adds integration tests for the security gates: happy-path schema round-trip, DNS-rebinding Host-header rejection (403), and auth-before-method ordering (POST with bad Host → 403, not 405). Mirrors `workspace-endpoint.test.ts` precedent.
+- **FR3 amendment — wire-side label polish.** Implementation calls `formatPresenceLabel(principal.display_name)` at the publish boundary so Unix-style git-config names like `miles-kt-inkeep` reach peers as `Miles Kt Inkeep`. FR3 says `name = principal.display_name` literally; the polish was added to fix an asymmetry that surfaced during pre-QA review (`computeInitials` already polished the avatar, but the cursor label and tooltip floated raw `display_name` next to every selection — a regression vs. the random-fallback experience for users whose git config is a Unix-style username). Single transform at the publish boundary is preferred over per-consumer polish; downstream surfaces (avatar / tooltip / cursor label) inherit consistency.
 
 ## 2026-04-27 — Session 1: Intake + scaffold
 
