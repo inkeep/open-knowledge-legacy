@@ -22,6 +22,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {
@@ -378,10 +379,6 @@ export function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): P
       resolve();
     }
   });
-}
-
-export function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

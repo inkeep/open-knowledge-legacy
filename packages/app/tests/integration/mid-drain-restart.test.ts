@@ -24,6 +24,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import {
   agentWriteMd,
@@ -32,7 +33,6 @@ import {
   pollDiskContentStable,
   pollUntil,
   seedPoolServerInstanceId,
-  wait,
 } from './test-harness';
 
 const DURABILITY_MARKER = 'T11-DURABILITY-MARKER-7a3f';

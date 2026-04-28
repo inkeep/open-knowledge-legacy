@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   type CC1DerivedViewPayload,
@@ -10,7 +11,7 @@ import {
 import { applyExternalChange, BacklinkIndex, reconcile } from '@inkeep/open-knowledge-server';
 import * as encoding from 'lib0/encoding';
 import * as Y from 'yjs';
-import { createTestServer, pollUntil, type TestServer, wait, waitForSync } from './test-harness';
+import { createTestServer, pollUntil, type TestServer, waitForSync } from './test-harness';
 
 let server: TestServer;
 

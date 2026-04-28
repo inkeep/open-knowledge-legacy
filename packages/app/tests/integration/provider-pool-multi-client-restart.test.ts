@@ -18,6 +18,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   assertNoClientIdDrift,
   clientIdsInDoc,
@@ -25,7 +26,6 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
-  wait,
 } from './test-harness';
 
 const MULTI_FIXTURE = `# T2 Multi-Client Doc

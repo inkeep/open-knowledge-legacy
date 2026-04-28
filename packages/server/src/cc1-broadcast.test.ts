@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
@@ -11,10 +12,6 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
-
-function wait(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 describe('isSystemDoc', () => {
   test('returns true for __system__', () => {

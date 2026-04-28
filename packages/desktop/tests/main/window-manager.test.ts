@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   type BrowserWindowLike,
   type ServerLockMetadataLike,
@@ -304,7 +305,7 @@ describe('WindowManager', () => {
     const promise = wm.createProjectWindow({ projectPath: '/tmp/clean-run' });
     expect(env.utilities.length).toBe(0); // not forked yet
     // Wait a microtask so runClean's promise resolves
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
     expect(runClean).toHaveBeenCalledWith({ lockDir: '/tmp/clean-run/.open-knowledge' });
     env.utilities[0]?.fire({ type: 'ready', port: 51006, apiOrigin: 'http://localhost:51006' });
     await promise;
@@ -481,7 +482,7 @@ describe('WindowManager', () => {
       const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
 
       // runClean is async — let its microtask drain before the utility forks.
-      await new Promise((r) => setTimeout(r, 5));
+      await wait(5);
       expect(runClean).toHaveBeenCalled();
       expect(env.utilities.length).toBe(1);
       env.utilities[0]?.fire({ type: 'ready', port: 40001, apiOrigin: 'http://localhost:40001' });

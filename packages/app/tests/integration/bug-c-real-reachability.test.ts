@@ -17,17 +17,16 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
-
 import {
   createTestClient,
   createTestServer,
   mdManager,
   schema,
   testReset,
-  wait,
   waitForSync,
 } from './test-harness';
 

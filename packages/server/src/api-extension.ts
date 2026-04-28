@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
@@ -4584,7 +4585,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      await new Promise<void>((r) => setTimeout(r, 500));
+      await wait(500);
       const uiLock = readUiLock(lockDir);
       if (uiLock && uiLock.port > 0) {
         return { port: uiLock.port };

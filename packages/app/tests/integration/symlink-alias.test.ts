@@ -12,9 +12,10 @@ import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { createServer } from '@inkeep/open-knowledge-server';
 import { WebSocketServer } from 'ws';
-import { agentPatch, agentWriteMd, type TestServer, wait } from './test-harness';
+import { agentPatch, agentWriteMd, type TestServer } from './test-harness';
 
 let server: TestServer;
 

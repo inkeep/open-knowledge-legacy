@@ -41,6 +41,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { ProviderPool } from '../../src/editor/provider-pool';
 import { refreshServerInfo } from '../../src/lib/server-info-refresh';
 import {
@@ -49,7 +50,6 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
-  wait,
 } from './test-harness';
 
 const MARKER = 'T15-MISSED-FRAME-MARKER-9b2e';

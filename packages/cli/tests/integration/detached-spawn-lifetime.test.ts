@@ -33,10 +33,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+import { setTimeout as wait } from 'node:timers/promises';
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -99,6 +96,7 @@ describe('detached spawn lifetime (A3 / D-003)', () => {
       grandchildScript,
       `
 import { createServer } from 'node:http';
+import { setTimeout as wait } from 'node:timers/promises';
 import { writeFileSync } from 'node:fs';
 
 const server = createServer((_req, res) => {
@@ -112,7 +110,7 @@ server.listen(0, '127.0.0.1', () => {
 });
 
 // Idle for 30s (well past the test deadline). Tests SIGKILL us in cleanup.
-await new Promise((r) => setTimeout(r, 30_000));
+await wait(30_000);
 `,
       'utf-8',
     );
@@ -147,7 +145,7 @@ setTimeout(() => process.exit(0), 300);
     // Wait for the grandchild to bind + write its state file.
     const stateDeadline = Date.now() + 3_000;
     while (Date.now() < stateDeadline && !existsSync(stateFile)) {
-      await sleep(50);
+      await wait(50);
     }
     expect(existsSync(stateFile)).toBe(true);
 
@@ -177,7 +175,7 @@ setTimeout(() => process.exit(0), 300);
       // shutting down). The OS guarantee that 5s of survival implies
       // any duration of survival; the spec AC's ≥10s is the same
       // structural assertion. Keeping it at 5s preserves CI speed.
-      await sleep(5_000);
+      await wait(5_000);
 
       // Checkpoint #2 — 5 seconds later, still alive AND still serving.
       expect(isProcessAlive(state.pid)).toBe(true);
