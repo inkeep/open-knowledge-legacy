@@ -366,6 +366,25 @@ describe('M1 smoke', () => {
     }
   });
 
+  test('M1 invariant: SWITCH_PROJECT_LABEL_WITH_ELLIPSIS drift catcher', async () => {
+    // The "Switch Project…" string is duplicated across two packages:
+    //   - packages/desktop/src/shared/labels.ts        (consumed by main/menu.ts)
+    //   - packages/app/src/lib/desktop-labels.ts       (consumed by ProjectSwitcher + CommandPalette)
+    // The app package does not import from desktop (same module-resolution
+    // constraint that forces the three-way OkDesktopBridge duplication), so
+    // the two label files must agree by hand. TS-import equality is strictly
+    // stronger than text extraction — a typo'd export name fails at module
+    // load, and a non-literal binding (template, computed) is captured rather
+    // than silently ignored.
+    const [desktop, app] = await Promise.all([
+      import('../../src/shared/labels.ts'),
+      import('../../../app/src/lib/desktop-labels.ts'),
+    ]);
+    expect(typeof desktop.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe('string');
+    expect(typeof app.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe('string');
+    expect(app.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS).toBe(desktop.SWITCH_PROJECT_LABEL_WITH_ELLIPSIS);
+  });
+
   test('M1 invariant: KeyringSmokeResult shape drift catcher (M5)', async () => {
     // Walks the `KeyringSmokeResult` (desktop utility source), and
     // `OkKeyringSmokeResult` (core + app mirror) interfaces and asserts the

@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { parseDocument } from 'yaml';
 import { STARTER_FOLDERS, starterFolderRule } from './starter.ts';
 import type { ConfigEdit, FileEntry, ScaffoldPlan, SeedOptions, SkipEntry } from './types.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
 const LOG_MD_FILENAME = 'log.md';
 
@@ -29,6 +29,47 @@ function readExistingFolderMatches(configYmlRaw: string | null): string[] {
 }
 
 /**
+ * Normalize a user-supplied rootDir to a POSIX-style relative path with no
+ * trailing slash. `.` and `''` both collapse to `''` (= project-root scaffold,
+ * historical behavior).
+ *
+ * String-shape checks reject the obvious bad inputs (absolute paths, `..`
+ * segments). The resolved-path containment check after that catches every
+ * platform-specific shape that string-level checks miss: Windows UNC paths
+ * (`\\server\share`), drive-letter forms (`C:/foo`), and any other input
+ * whose `path.resolve(projectDir, rootDir)` lands outside `projectDir`.
+ */
+function normalizeRootDir(rootDir: string | undefined, projectDir: string): string {
+  if (!rootDir) return '';
+  const trimmed = rootDir.trim();
+  if (trimmed === '' || trimmed === '.' || trimmed === './') return '';
+  if (trimmed.startsWith('/')) {
+    throw new SeedRootDirError(
+      `rootDir must be relative to the project directory, got: ${rootDir}`,
+    );
+  }
+  const posix = trimmed.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (posix.split('/').some((seg) => seg === '..')) {
+    throw new SeedRootDirError(`rootDir must not contain '..' segments, got: ${rootDir}`);
+  }
+  // Path-shape verification: the resolved absolute path must equal projectDir
+  // (impossible here since posix is non-empty) or sit strictly under it. The
+  // `+ sep` guard prevents `<projectDir>foo` from passing as `<projectDir>/foo`.
+  const projectAbs = resolve(projectDir);
+  const candidateAbs = resolve(projectAbs, posix);
+  if (candidateAbs !== projectAbs && !candidateAbs.startsWith(projectAbs + sep)) {
+    throw new SeedRootDirError(
+      `rootDir must resolve inside the project directory, got: ${rootDir}`,
+    );
+  }
+  return posix;
+}
+
+function joinRelative(root: string, path: string): string {
+  return root === '' ? path : `${root}/${path}`;
+}
+
+/**
  * Compute a ScaffoldPlan for the given project. Read-only — performs no writes.
  *
  * Throws `SeedPrerequisiteError` if `.open-knowledge/` is absent — the user
@@ -46,18 +87,33 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
     );
   }
 
+  const rootDir = normalizeRootDir(opts.rootDir, projectDir);
+
   const created: FileEntry[] = [];
   const skipped: SkipEntry[] = [];
   const configEdits: ConfigEdit[] = [];
   const warnings: string[] = [];
 
-  // 1. Folder existence check on disk.
-  for (const folder of STARTER_FOLDERS) {
-    const folderPath = join(projectDir, folder.path);
-    if (existsSync(folderPath)) {
-      skipped.push({ path: folder.path, reason: 'already-exists' });
+  // 0. Root folder itself — when the user picked a subfolder (e.g. `brain/`),
+  //    create it if missing so the three starter folders have a parent. When
+  //    rootDir is '.' this is a no-op.
+  if (rootDir !== '') {
+    const rootPath = join(projectDir, rootDir);
+    if (!existsSync(rootPath)) {
+      created.push({ path: rootDir, kind: 'folder' });
     } else {
-      created.push({ path: folder.path, kind: 'folder' });
+      skipped.push({ path: rootDir, reason: 'already-exists' });
+    }
+  }
+
+  // 1. Starter folders — existence check on disk.
+  for (const folder of STARTER_FOLDERS) {
+    const folderPath = joinRelative(rootDir, folder.path);
+    const absPath = join(projectDir, folderPath);
+    if (existsSync(absPath)) {
+      skipped.push({ path: folderPath, reason: 'already-exists' });
+    } else {
+      created.push({ path: folderPath, kind: 'folder' });
     }
   }
 
@@ -74,24 +130,27 @@ export async function planSeed(opts: SeedOptions = {}): Promise<ScaffoldPlan> {
 
   const existingMatches = new Set(readExistingFolderMatches(configYmlRaw));
   for (const folder of STARTER_FOLDERS) {
-    if (existingMatches.has(folder.match)) {
+    const scopedMatch = joinRelative(rootDir, folder.match);
+    if (existingMatches.has(scopedMatch)) {
       // Entry already in config — never overwrite user edits.
-      skipped.push({ path: `${SEED_CONFIG_FILENAME}#${folder.match}`, reason: 'already-exists' });
+      skipped.push({ path: `${SEED_CONFIG_FILENAME}#${scopedMatch}`, reason: 'already-exists' });
     } else {
+      const scopedFolder = { ...folder, match: scopedMatch };
       configEdits.push({
         configPath,
-        folderMatch: folder.match,
-        entry: starterFolderRule(folder),
+        folderMatch: scopedMatch,
+        entry: starterFolderRule(scopedFolder),
       });
     }
   }
 
-  // 3. Optional root log.md.
-  const logPath = join(projectDir, LOG_MD_FILENAME);
-  if (existsSync(logPath)) {
-    skipped.push({ path: LOG_MD_FILENAME, reason: 'already-exists' });
+  // 3. Optional log.md (inside rootDir when set).
+  const logRelPath = joinRelative(rootDir, LOG_MD_FILENAME);
+  const logAbsPath = join(projectDir, logRelPath);
+  if (existsSync(logAbsPath)) {
+    skipped.push({ path: logRelPath, reason: 'already-exists' });
   } else {
-    created.push({ path: LOG_MD_FILENAME, kind: 'file' });
+    created.push({ path: logRelPath, kind: 'file', template: LOG_MD_FILENAME });
   }
 
   return { created, skipped, configEdits, warnings };

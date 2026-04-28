@@ -1,16 +1,14 @@
 /**
  * `findHubCandidates` — soft-nudge helper that suggests parent hub docs for
- * an orphaned wiki file. Used by `/api/agent-write-md` to attach a
+ * an orphaned knowledge-base doc. Used by `/api/agent-write-md` to attach a
  * `hints: [{type: 'orphan', ...}]` entry to the response when a new doc has
  * zero backlinks and a hub candidate exists in its folder tree.
- *
- * Implements SPEC.md §6.6 / US-003 / D7 (LOCKED).
  *
  * Algorithm:
  *   - Walk from `dirname(targetPath)` up to the content root.
  *   - At each level, look for: INDEX.md, README.md, REPORT.md, SPEC.md, OR a
  *     file whose basename matches the folder name (e.g. `reports/r1/r1.md`).
- *   - Return up to 3 nearest-first wiki docNames that exist in the file index
+ *   - Return up to 3 nearest-first docNames that exist in the file index
  *     (which is already scoped to `content.include`).
  */
 

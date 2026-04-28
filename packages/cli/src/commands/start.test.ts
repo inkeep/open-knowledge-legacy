@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { type Config, ConfigSchema } from '../config/schema.ts';
 import {
   awaitUiSiblingPort,
@@ -630,7 +631,7 @@ describe('bootStartServer (integration)', () => {
 
       // The WS should stay open — not get closed by the server after the
       // handshake. We wait 100ms and re-check readyState.
-      await new Promise((r) => setTimeout(r, 100));
+      await wait(100);
       expect(ws.readyState).toBe(1);
     } finally {
       ws.close();
@@ -912,7 +913,7 @@ describe('bootStartServer — resolvedUiPort tracks the port ok ui actually bind
       if (Date.now() > handleDeadline) {
         throw new Error('in-process UI handle never settled within 5s');
       }
-      await new Promise((r) => setTimeout(r, 10));
+      await wait(10);
     }
     expect(booted.resolvedUiPort).toBe(uiHandle.port);
 

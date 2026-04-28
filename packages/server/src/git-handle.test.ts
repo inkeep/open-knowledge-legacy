@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { createGitInstance } from './git-handle.ts';
 import { withParentLock } from './git-mutex.ts';
 
@@ -39,7 +40,7 @@ describe('withParentLock', () => {
 
     await Promise.all([
       withParentLock(async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await wait(10);
         order.push(1);
       }),
       withParentLock(async () => {

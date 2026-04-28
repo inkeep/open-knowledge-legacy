@@ -110,6 +110,22 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+export { type ServerInfoResponse, ServerInfoResponseSchema } from './schemas/api.ts';
+export {
+  CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_DISK_ACK,
+  CC1_CHANNEL_SERVER_INFO,
+  type CC1BranchSwitchedPayload,
+  CC1BranchSwitchedPayloadSchema,
+  type CC1DerivedViewPayload,
+  CC1DerivedViewPayloadSchema,
+  type CC1DiskAckPayload,
+  CC1DiskAckPayloadSchema,
+  type CC1ServerInfoPayload,
+  CC1ServerInfoPayloadSchema,
+  type DerivedViewChannel,
+  DerivedViewChannelSchema,
+} from './schemas/cc1.ts';
 export { extensionOf } from './utils/extension.ts';
 
 // Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are

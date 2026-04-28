@@ -1,7 +1,8 @@
 import { test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTestClient, createTestServer, wait } from './test-harness';
+import { setTimeout as wait } from 'node:timers/promises';
+import { createTestClient, createTestServer } from './test-harness';
 
 async function pollUntilAsync(
   condition: () => Promise<boolean>,

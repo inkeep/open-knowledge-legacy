@@ -3,17 +3,21 @@ import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
 import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { mark } from '@/lib/perf';
+import { refreshServerInfo } from '@/lib/server-info-refresh';
 import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
+import { handleBranchSwitched } from './branch-invalidation';
+import { subscribePoolEviction } from './editor-cache';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 import { tabSessionId } from './tab-identity';
 
 /**
  * Read-only projection of a `PoolEntry` — exposes the fields downstream React
- * components need without leaking the mutable pool internals (observerCleanup,
- * pendingRecycleTimer, tearingDown). Sorted by `lastAccessedAt` descending so
- * consumers like `EditorActivityPool` can apply LRU bounding without re-sorting.
+ * components need without leaking the mutable pool internals (`kind`
+ * discriminator, `persistence`, `observerCleanup`, `pendingRecycleTimer`).
+ * Sorted by `lastAccessedAt` descending so consumers like `EditorActivityPool`
+ * can apply LRU bounding without re-sorting.
  */
 export interface PoolEntrySnapshot {
   docName: string;
@@ -106,6 +110,50 @@ interface DocumentContextValue {
    * convention — only one SystemDocSubscriber should mount at a time.
    */
   setSystemProvider: (provider: HocuspocusProvider | null) => void;
+  /**
+   * Update the pool's cached server instance ID. Called by
+   * `SystemDocSubscriber` on every `__system__` CC1 `server-info` broadcast
+   * so the pool's next provider-open claim matches the live server. Null
+   * clears the claim (used by the auth-failure recycle path).
+   */
+  updateServerInstanceId: (id: string | null) => void;
+  /**
+   * Invalidate every open provider's IndexedDB persistence and recycle
+   * the providers. Called by `SystemDocSubscriber` on every `__system__`
+   * CC1 `branch-switched` broadcast so the client discards content
+   * authored against the previous branch and re-syncs from the
+   * markdown-rebuilt post-switch state. Delegates to
+   * `handleBranchSwitched` in `branch-invalidation.ts`.
+   */
+  onBranchSwitched: (branch: string) => Promise<void>;
+  /**
+   * Late-join backstop for CC1 `branch-switched`. Called whenever a
+   * channel reports the current branch (boot HTTP `/api/server-info`
+   * fetch + every CC1 `server-info` frame on `__system__` connect /
+   * reconnect). First call seeds the observed value; subsequent
+   * mismatches replay `handleBranchSwitched` client-side, covering the
+   * window where the live broadcast was missed.
+   */
+  observeBranch: (branch: string) => Promise<void>;
+  /**
+   * Dispatcher for CC1 `disk-ack` payloads — advances the per-entry
+   * `lastDiskAckedSV` watermark. `handleServerInstanceMismatch` reads
+   * this watermark when computing the recycle buffer baseline so the
+   * client only re-replays updates the server has NOT yet durably
+   * persisted. Called by `SystemDocSubscriber` for every recognized
+   * `disk-ack` frame.
+   */
+  observeDiskAck: (docName: string, sv: Uint8Array) => void;
+  /**
+   * Re-fetch `/api/server-info` and dispatch every recognized field
+   * (instanceId, branch, disk-ack watermarks). Called by
+   * `SystemDocSubscriber` on every `__system__` reconnect to recover
+   * from missed CC1 stateless broadcasts (which have no replay).
+   * Boot path uses the same helper for consistency. Idempotent —
+   * each dispatcher no-ops on unchanged inputs, so a redundant call
+   * costs only one HTTP round-trip.
+   */
+  refreshServerInfo: () => Promise<void>;
   /**
    * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
    * same-origin fallback). Null while the initial fetch is in flight or
@@ -222,6 +270,13 @@ let pool: ProviderPool | null = null;
 function getPool(collabUrl: string): ProviderPool {
   if (!pool) {
     pool = new ProviderPool(MAX_POOL, collabUrl);
+    // Wire the editor cache to the pool's eviction events. Without this
+    // subscription, cached `Editor` / `EditorView` instances would
+    // outlive the Y.Doc they're bound to. Single subscription per pool
+    // lifetime; the unsubscribe handle is intentionally dropped — the
+    // pool is a module-level singleton and only torn down on HMR/dispose,
+    // at which point its listener Set is GC'd along with the pool.
+    subscribePoolEviction(pool);
   }
   return pool;
 }
@@ -283,6 +338,20 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     // Sync initial state
     setSnapshot(takeSnapshot(p));
 
+    // Late-join branch backstop. Auth-token `expectedBranch` claim
+    // mismatch (server is on branch B, client claims branch A) routes
+    // through the same handleBranchSwitched flow as the live CC1
+    // broadcast. The fresh branch comes from /api/server-info — the
+    // pool's lastObservedBranch is stale by definition (it's what the
+    // failed claim was built from).
+    //
+    // Returning the promise (not `void`) is load-bearing: the pool's
+    // in-flight gate awaits whatever the callback returns. A
+    // `void`-fronted fetch resolves the gate on the next microtask
+    // while the recovery is still in flight, so cross-turn mismatches
+    // (N providers, N RTTs) re-fire the dispatch and double-recycle.
+    p.setOnBranchMismatch(() => refreshServerInfo(p));
+
     // Subscribe to pool changes
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
 
@@ -290,8 +359,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const persisted = loadPinFromStorage();
     if (persisted !== null) setPinnedDoc(persisted);
 
-    // D50 / US-024: fetch principal and wire tab identity so HocuspocusProvider
-    // includes {principalId, tabSessionId} in its auth token. The server's
+    // Fetch principal and wire tab identity so HocuspocusProvider includes
+    // {principalId, tabSessionId} in its auth token. The server's
     // onAuthenticate hook reads this to set connection.context.principalId for
     // correct writer attribution. Silent on failure — pool uses anonymous token.
     fetch('/api/principal')
@@ -307,6 +376,22 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         // principal unavailable — pool opens providers with anonymous auth token
       });
+
+    // CRDT server-restart recovery boot fetch: pull the server's
+    // per-process instance ID, current git branch, and per-doc
+    // disk-ack watermarks at startup, dispatch them all into the
+    // pool. Subsequent provider opens claim the instance ID + branch
+    // in their auth tokens so server-side enforcement can reject a
+    // stale-client reconnect before Yjs sync merges ghost state. The
+    // disk-ack batch refreshes per-entry `lastDiskAckedSV` so the
+    // mismatch-recycle baseline-selection always operates on fresh
+    // data (closes the missed-frame staleness gap that CC1 stateless
+    // broadcasts otherwise leave open).
+    //
+    // SystemDocSubscriber re-fires this on every `__system__` reconnect
+    // — same helper, same dispatch — so a brief WS drop doesn't leave
+    // any of the three watermarks permanently stale.
+    void refreshServerInfo(p);
 
     // systemProvider exposure happens in a dedicated effect below because it
     // depends on `systemProvider` state, not `collabUrl`.
@@ -369,7 +454,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   // storage-key renames or versioning changes don't silently break E2E
   // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
   // UX via `pin()` button) + `persistPinToStorage` so post-reload
-  // behavior also matches. See review pass 0 finding #8.
+  // behavior also matches.
   //
   // STOP — empty deps is intentional and must stay empty:
   //   - `setPinnedDoc` is a stable React state setter (guaranteed by
@@ -378,9 +463,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   //   - Widening the deps would cause this effect to re-register on
   //     every render, tearing down + re-installing `window.__test_setPin`
   //     mid-test and racing Playwright's `page.evaluate`.
-  // A biome-ignore pragma would fail lint ("suppression has no effect")
-  // because the current Biome version does not flag this effect — see
-  // review pass 1 finding #2 Declined section in the iteration log.
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
     (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (
@@ -487,6 +569,36 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     },
     systemProvider,
     setSystemProvider,
+    updateServerInstanceId: (id: string | null) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.setExpectedServerInstanceId(id);
+    },
+    onBranchSwitched: async (branch: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.setObservedBranch(branch);
+      await handleBranchSwitched(p, branch);
+    },
+    observeBranch: async (branch: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      // First observation seeds the pool's branch state without invalidating;
+      // subsequent mismatches replay handleBranchSwitched client-side.
+      if (p.compareAndUpdateObservedBranch(branch)) {
+        await handleBranchSwitched(p, branch);
+      }
+    },
+    observeDiskAck: (docName: string, sv: Uint8Array) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      p.observeDiskAck(docName, sv);
+    },
+    refreshServerInfo: async () => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      await refreshServerInfo(p);
+    },
     collabUrl,
     collabTerminal,
     collabLastError,

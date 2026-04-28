@@ -1,7 +1,7 @@
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
+import type { DiffLayout } from '@/components/DiffView';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
 import { TimelineContent } from '@/components/TimelinePanel';
@@ -48,8 +48,7 @@ interface DocPanelProps {
   isSourceMode: boolean;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
-  onEntrySelect?: (entry: TimelineEntry) => void;
-  selectedSha?: string;
+  diffLayout?: DiffLayout;
   /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
   mode: DocPanelMode;
 }
@@ -59,8 +58,7 @@ export function DocPanel({
   isSourceMode,
   activeTab,
   onActiveTabChange,
-  onEntrySelect,
-  selectedSha,
+  diffLayout,
   mode,
 }: DocPanelProps) {
   return (
@@ -125,11 +123,7 @@ export function DocPanel({
             </Suspense>
           )}
           {activeTab === 'timeline' && (
-            <TimelineContent
-              docName={docName}
-              onEntrySelect={onEntrySelect}
-              selectedSha={selectedSha}
-            />
+            <TimelineContent docName={docName} diffLayout={diffLayout ?? 'unified'} />
           )}
         </div>
       ) : (

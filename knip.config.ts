@@ -53,6 +53,7 @@ export default {
       entry: [
         'src/**/*.test.{ts,tsx}',
         'tests/**/*.{test,e2e}.ts',
+        'tests/integration/idb-preload.ts', // bunfig.toml `[test] preload`
         'tests/perf/profile.ts',
         'tests/perf/lib/*.ts',
       ],

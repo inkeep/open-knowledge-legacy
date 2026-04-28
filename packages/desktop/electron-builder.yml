@@ -49,6 +49,13 @@ extraResources:
       - "!**/*.d.ts.map"
   - from: "resources/cli/bin/ok.sh"
     to: "cli/bin/ok.sh"
+  # Top-level discoverable third-party attribution. The same file ships inside
+  # cli/dist via the rule above; this places a copy at the Resources root so
+  # license reviewers and an eventual in-app About panel can find it without
+  # crawling cli/dist/. Electron's own LICENSE + LICENSES.chromium.html are
+  # placed by electron-builder automatically and cover Electron + Chromium.
+  - from: "../cli/dist/THIRD_PARTY_NOTICES.md"
+    to: "THIRD_PARTY_NOTICES.md"
 
 asarUnpack:
   - "**/*.node"

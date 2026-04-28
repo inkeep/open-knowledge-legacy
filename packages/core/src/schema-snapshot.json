@@ -407,6 +407,17 @@
       "group": "",
       "inclusive": false,
       "spanning": true
+    },
+    "sourceLiteral": {
+      "attrs": {
+        "sourceRaw": {
+          "hasDefault": true
+        }
+      },
+      "excludes": "",
+      "group": "",
+      "inclusive": false,
+      "spanning": true
     }
   },
   "extensionOrder": [
@@ -428,6 +439,7 @@
     "linkRefDef",
     "hardBreak",
     "escapeMark",
+    "sourceLiteral",
     "starterKit",
     "table",
     "tableRow",

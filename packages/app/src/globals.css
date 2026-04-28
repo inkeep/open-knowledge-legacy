@@ -152,7 +152,13 @@
      Combines three effects in a single animation:
      1. Inset box-shadow left accent bar slides in then out
      2. Subtle background tint pulses once
-     3. Slight scale nudge (barely perceptible, adds "alive" quality) */
+     3. Slight scale nudge (barely perceptible, adds "alive" quality)
+
+     Easing rationale: uses --ease-out-strong (cubic-bezier custom curve) —
+     strong custom curves outpunch built-in CSS easing keywords on UI work.
+     Duration 2s is deliberately above the typical UI ceiling (~300ms) because
+     this is a one-shot state-indication flash (rare event), not a frequently-
+     triggered interaction. */
   @keyframes agent-flash {
     0% {
       box-shadow: inset 3px 0 0 transparent;
@@ -1204,6 +1210,100 @@ button:active:not(:disabled) {
 
 .subtle-scrollbar {
   @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
+}
+
+/* Subtle top + bottom fade for scrollable regions — masks the first and last
+   ~1rem of content so it fades into the surrounding bg as a "more above/below"
+   affordance. Used by DialogBody and any other scrollable surface that wants
+   the same polish.
+
+   Modern browsers (Chrome 115+, Safari 18+) get a position-aware fade via
+   two scroll-driven animations:
+   - The TOP fade transitions IN over the first 1rem of scroll, then holds
+     full strength until the bottom (so scrolling past the start reveals it,
+     scrolling back to the start hides it).
+   - The BOTTOM fade transitions OUT over the last 1rem of scroll (so it's
+     full when there's content below, gone when you've reached the end).
+   - When the body isn't scrollable at all, both timelines are inactive,
+     both vars fall back to their @property initial-value of 1 (opaque
+     edges → no fade).
+
+   Browsers without scroll-driven animation support (Firefox today) fall
+   through the @supports block and get the always-on fade — same as the
+   original implementation, no regression. */
+
+@property --scroll-fade-top {
+  syntax: "<number>";
+  initial-value: 1;
+  inherits: false;
+}
+
+@property --scroll-fade-bottom {
+  syntax: "<number>";
+  initial-value: 1;
+  inherits: false;
+}
+
+@keyframes scroll-fade-top-in {
+  from {
+    --scroll-fade-top: 1;
+  }
+  to {
+    --scroll-fade-top: 0;
+  }
+}
+
+@keyframes scroll-fade-bottom-out {
+  from {
+    --scroll-fade-bottom: 0;
+  }
+  to {
+    --scroll-fade-bottom: 1;
+  }
+}
+
+.scroll-fade-mask {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 1rem,
+    black calc(100% - 1rem),
+    transparent 100%
+  );
+}
+
+@supports (animation-timeline: scroll(self)) {
+  .scroll-fade-mask {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, var(--scroll-fade-top)) 0,
+      black 1rem,
+      black calc(100% - 1rem),
+      rgba(0, 0, 0, var(--scroll-fade-bottom)) 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, var(--scroll-fade-top)) 0,
+      black 1rem,
+      black calc(100% - 1rem),
+      rgba(0, 0, 0, var(--scroll-fade-bottom)) 100%
+    );
+    animation-name: scroll-fade-top-in, scroll-fade-bottom-out;
+    animation-duration: auto;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(self);
+    animation-range:
+      0 1rem,
+      calc(100% - 1rem) 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

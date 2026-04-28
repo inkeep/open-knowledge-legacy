@@ -21,6 +21,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
 
@@ -237,7 +238,7 @@ async function runPatchMode() {
 
     if (i < PATCH_SEQUENCE.length - 1) {
       console.log(`    waiting ${intervalMs}ms...`);
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await wait(intervalMs);
     }
   }
 
@@ -280,7 +281,7 @@ async function runFileMode() {
     console.log('  Seeded file with template.');
     // Give file watcher time to sync the seed into Y.Text before edits begin
     console.log(`  Waiting 1500ms for file watcher sync...\n`);
-    await new Promise((r) => setTimeout(r, 1500));
+    await wait(1500);
   } else {
     console.log('File already contains patch targets — skipping seed.\n');
   }
@@ -310,7 +311,7 @@ async function runFileMode() {
 
     if (i < PATCH_SEQUENCE.length - 1) {
       console.log(`    waiting ${intervalMs}ms...`);
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await wait(intervalMs);
     }
   }
 
@@ -336,7 +337,7 @@ if (usePatch) {
     for (let i = 0; i < count; i++) {
       await doWrite(i + 1);
       if (i < count - 1) {
-        await new Promise((r) => setTimeout(r, 100));
+        await wait(100);
       }
     }
   } else {

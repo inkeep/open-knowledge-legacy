@@ -199,25 +199,25 @@ Tear down on server shutdown with `cc1Broadcaster.destroy()` to clear pending de
 
 ### Subscribing (client-side contract)
 
+Canonical surface: `dispatchCC1Stateless` from `packages/app/src/lib/cc1.ts` parses the payload through the per-channel Zod schemas in `@inkeep/open-knowledge-core` (`CC1ServerInfoPayloadSchema`, `CC1BranchSwitchedPayloadSchema`, `CC1DiskAckPayloadSchema`, `CC1DerivedViewPayloadSchema`) and routes to typed handlers — adding a new channel is a one-place edit there.
+
 ```ts
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { type CC1Signal, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-server';
+import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-server';
+import { dispatchCC1Stateless } from '@/lib/cc1';
 
 const provider = new HocuspocusProvider({
 	url: 'ws://localhost:5173/collab',
 	name: SYSTEM_DOC_NAME, // '__system__'
 	document: new Y.Doc(),
 	onStateless: ({ payload }) => {
-		let signal: CC1Signal;
-		try {
-			signal = JSON.parse(payload) as CC1Signal;
-		} catch {
-			return; // malformed — skip, never disconnect
-		}
-		if (signal.v !== 1) return; // unknown version — skip
-		if (signal.ch === 'files') {
-			// re-fetch GET /api/documents (at-most-one in flight per channel)
-		}
+		dispatchCC1Stateless(payload, {
+			onServerInfo: (p) => { /* p.serverInstanceId, p.currentBranch? */ },
+			onBranchSwitched: (p) => { /* p.branch */ },
+			onDiskAck: (p) => { /* p.docName, p.sv (Uint8Array) */ },
+			onDerivedView: (p) => { /* p.ch === 'files' | 'backlinks' | 'graph' */ },
+			onUnknown: (raw) => { /* schema mismatch — log + skip, never disconnect */ },
+		});
 	},
 });
 ```
@@ -343,6 +343,8 @@ The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 
 The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
 
+`createApiExtension({ installedAgentsProbe })` accepts a probe override so unit tests and integration tests don't shell out. The default uses `createOsProbe(process.platform)` from `handoff-api.ts`.
+
 ### Managed-rename behavior for refs (FR-7)
 
 `src/managed-rename-rewrite.ts` rewrites image refs when a markdown doc moves:
@@ -350,11 +352,11 @@ The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT ca
 - **Plain markdown image ref `![alt](relative-src)`:** `readImageRef` regex parses the ref; `recomputeRelativeImageHref` resolves the old dirname + ref to a content-relative asset path, then emits the new relative form from the new doc's dirname. Returns `null` when old+new dirname match (no rewrite needed for same-dir sibling renames).
 - **Absolute path ref `![alt](/docs/photo.png)`:** detected and **left unchanged** (SPEC FR-7 test matrix; STOP rule). Preserves byte-identity for refs that pre-date FR-1a and for hand-authored absolutes.
 - **URL refs `http(s):`, `data:`:** detected and left unchanged.
-- **Wiki-embed ref `![[file.ext]]`:** **no rewrite** (D-K LOCKED refs-only). The basename index resolves these dynamically from the new doc's dirname. `readImageRef`'s regex naturally excludes the `![[...]]` shape because it requires a `(` after the `]`.
+- **Wiki-embed ref `![[file.ext]]`:** **no rewrite** (refs-only). The basename index resolves these dynamically from the new doc's dirname. `readImageRef`'s regex naturally excludes the `![[...]]` shape because it requires a `(` after the `]`.
 
 The `MANAGED_RENAME_ORIGIN` is a paired-write origin (`context.paired: true`) so Observer A + Observer B both short-circuit symmetrically for the atomic `Y.XmlFragment` + `Y.Text` mutation.
 
-### Upload-surface constants (2026-04-24 amendment)
+### Upload-surface constants
 
 There is no user-facing `upload.*` config. Every value is a module-level constant in `packages/core/src/constants/upload.ts`:
 
@@ -374,7 +376,7 @@ Consumers import these directly:
 
 Legacy configs carrying `upload.*` keys parse cleanly — `ConfigSchema` is not `.strict()`, so unknown sections are silently stripped. Obsidian-refugee onboarding is deferred to a future one-shot `ok migrate --from-obsidian-vault` CLI (separate spec).
 
-See the `## Post-finalization amendment (2026-04-24)` section at the bottom of [`SPEC.md`](../../specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) for the full rationale; root `AGENTS.md` carries the STOP rule that keeps the surface from regressing.
+See the bottom of [`SPEC.md`](../../specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md) for the full rationale; root `AGENTS.md` carries the STOP rule that keeps the surface from regressing.
 
 ### Observability
 
@@ -392,4 +394,106 @@ Upload handler emits one structured JSON log per request:
 }
 ```
 
-Plus the Obsidian vault-detect structured events noted above.
+## CRDT server-restart recovery — instance ID + client-side persistence
+
+Design research: [`reports/yjs-client-persistence-alternatives/REPORT.md`](../../reports/yjs-client-persistence-alternatives/REPORT.md); landed architecture: [`specs/2026-04-24-client-persistence-replaces-sidecar/SPEC.md`](../../specs/2026-04-24-client-persistence-replaces-sidecar/SPEC.md). Prior sidecar report (superseded): [`reports/crdt-server-restart-recovery/REPORT.md`](../../reports/crdt-server-restart-recovery/REPORT.md).
+
+### The bug class
+
+A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs identifies items by `(clientID, clock)` — content equality is NOT checked; merge is additive union. On reconnect within the ProviderPool's recycle debounce window, the client's pre-restart items (under the original clientID) merge with the server's fresh items (under a new clientID generated by `persistence.onLoadDocument`'s `updateYFragment`). Every content marker appears twice on disk after the next L1 flush.
+
+### Topology
+
+**Markdown stays canonical (precedent #1).** `onLoadDocument` reconstructs Y.Doc state from disk; `onStoreDocument` flushes the Y.Doc back to markdown on L1 debounce. Neither reads nor writes a server-side CRDT cache.
+
+**Server instance ID is the authority signal.** `serverInstanceId: string` (readonly on `ServerInstance`), generated once per `createServer()` via `randomUUID()`, advertised via `GET /api/server-info` and the `__system__` CC1 `server-info` channel. On connect, clients present `expectedServerInstanceId` in the Hocuspocus auth token (Zod-typed + `.loose()` via `parseHocuspocusAuthToken`). `onAuthenticate` throws `{ reason: 'server-instance-mismatch' }` when the claim is non-empty and doesn't match this process — before any Y.Doc sync runs.
+
+**Client-side `y-indexeddb` is the recovery cache.** Each browser tab's `ProviderPool` attaches a `ClientPersistenceProvider` (wrapper around upstream `y-indexeddb`, patched — see `patches/y-indexeddb@9.0.12.patch`) per open doc at `ok-ydoc:${branch}:${docName}`. The `${branch}` prefix isolates per-branch state so a checkout doesn't surface stale-branch IDB into the post-switch session. Hydration is synchronous-ish IDB (ms scale); Cmd-R renders the prior state before the server round-trip completes.
+
+**Buffer-and-replay preserves unsynced edits across mismatch-recycle.** On every `synced` event, `ProviderPool` captures `entry.lastServerSyncedSV = captureStateVector(doc)`. On `authenticationFailed({reason: 'server-instance-mismatch'})` the pool:
+
+1. For each entry with `lastServerSyncedSV !== null`, computes `computeUnsyncedUpdate(doc, lastServerSyncedSV)` and stores the bytes under `docName` in `bufferedUpdates`. Entries with null SV (auth-fail arrived before any successful sync — typical for populated IDB on first connect against a mismatched server) are **skipped**: their state has no acked baseline, so it's by definition stale.
+2. `await persistence.clearData()` per entry — wipes IDB (the patched wrapper awaits `indexedDB.deleteDatabase` directly to avoid upstream's race against subsequent opens).
+3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
+4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
+
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+
+### Composition with existing primitives
+
+- **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
+- **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+
+### Test coverage
+
+- Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
+- Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
+- Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
+- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
+- Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
+- End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.
+
+### Disk-ack and late-join recovery
+
+CC1 `disk-ack` fires per-doc when the persistence layer flushes a write to disk (`emitDiskAck(docName, sv)` from `cc1-broadcast.ts`); the client's `ProviderPool` records it as `entry.lastDiskAckedSV`. The `server-instance-mismatch` recycle then prefers `lastDiskAckedSV` over `lastServerSyncedSV` for baseline-selection — content the server has durably persisted is not in the recycle buffer (the post-restart server's markdown rebuild already includes it, so replaying would duplicate).
+
+`GET /api/server-info` includes `currentDiskAckSVs` so a client booting late or reconnecting after the broadcast missed it can recover the watermark per-doc without waiting for the next emit.
+
+### Out of scope
+
+- Durable buffer-and-replay across tab crash (localStorage persistence of the unsynced delta). Accepted trade-off: a crash inside the 50-500ms recycle window loses unsynced edits. The disk-ack channel narrows the loss boundary further: edits the server has durably persisted are recovered from the post-restart markdown rebuild, so the actual loss window is "in-memory edits the server hasn't yet flushed" (sub-second under typical L1 debounce).
+- Pre-fix attribution cleanup — doubled-content commits under `refs/wip/<branch>/openknowledge-service` from past bug occurrences. Separate one-shot migration task.
+
+## CRDT server-restart recovery — instance ID + client-side persistence
+
+Design research: [`reports/yjs-client-persistence-alternatives/REPORT.md`](../../reports/yjs-client-persistence-alternatives/REPORT.md); landed architecture: [`specs/2026-04-24-client-persistence-replaces-sidecar/SPEC.md`](../../specs/2026-04-24-client-persistence-replaces-sidecar/SPEC.md). Prior sidecar report (superseded): [`reports/crdt-server-restart-recovery/REPORT.md`](../../reports/crdt-server-restart-recovery/REPORT.md).
+
+### The bug class
+
+A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs identifies items by `(clientID, clock)` — content equality is NOT checked; merge is additive union. On reconnect within the ProviderPool's recycle debounce window, the client's pre-restart items (under the original clientID) merge with the server's fresh items (under a new clientID generated by `persistence.onLoadDocument`'s `updateYFragment`). Every content marker appears twice on disk after the next L1 flush.
+
+### Topology
+
+**Markdown stays canonical (precedent #1).** `onLoadDocument` reconstructs Y.Doc state from disk; `onStoreDocument` flushes the Y.Doc back to markdown on L1 debounce. Neither reads nor writes a server-side CRDT cache.
+
+**Server instance ID is the authority signal.** `serverInstanceId: string` (readonly on `ServerInstance`), generated once per `createServer()` via `randomUUID()`, advertised via `GET /api/server-info` and the `__system__` CC1 `server-info` channel. On connect, clients present `expectedServerInstanceId` in the Hocuspocus auth token (Zod-typed + `.loose()` via `parseHocuspocusAuthToken`). `onAuthenticate` throws `{ reason: 'server-instance-mismatch' }` when the claim is non-empty and doesn't match this process — before any Y.Doc sync runs.
+
+**Client-side `y-indexeddb` is the recovery cache.** Each browser tab's `ProviderPool` attaches a `ClientPersistenceProvider` (wrapper around upstream `y-indexeddb`, patched — see `patches/y-indexeddb@9.0.12.patch`) per open doc at `ok-ydoc:${branch}:${docName}`. The `${branch}` prefix isolates per-branch state so a checkout doesn't surface stale-branch IDB into the post-switch session. Hydration is synchronous-ish IDB (ms scale); Cmd-R renders the prior state before the server round-trip completes.
+
+**Buffer-and-replay preserves unsynced edits across mismatch-recycle.** On every `synced` event, `ProviderPool` captures `entry.lastServerSyncedSV = captureStateVector(doc)`. On `authenticationFailed({reason: 'server-instance-mismatch'})` the pool:
+
+1. For each entry with `lastServerSyncedSV !== null`, computes `computeUnsyncedUpdate(doc, lastServerSyncedSV)` and stores the bytes under `docName` in `bufferedUpdates`. Entries with null SV (auth-fail arrived before any successful sync — typical for populated IDB on first connect against a mismatched server) are **skipped**: their state has no acked baseline, so it's by definition stale.
+2. `await persistence.clearData()` per entry — wipes IDB (the patched wrapper awaits `indexedDB.deleteDatabase` directly to avoid upstream's race against subsequent opens).
+3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
+4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
+
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+
+### Composition with existing primitives
+
+- **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
+- **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+
+### Test coverage
+
+- Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
+- Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
+- Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
+- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
+- Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
+- End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.
+
+### Disk-ack and late-join recovery
+
+CC1 `disk-ack` fires per-doc when the persistence layer flushes a write to disk (`emitDiskAck(docName, sv)` from `cc1-broadcast.ts`); the client's `ProviderPool` records it as `entry.lastDiskAckedSV`. The `server-instance-mismatch` recycle then prefers `lastDiskAckedSV` over `lastServerSyncedSV` for baseline-selection — content the server has durably persisted is not in the recycle buffer (the post-restart server's markdown rebuild already includes it, so replaying would duplicate).
+
+`GET /api/server-info` includes `currentDiskAckSVs` so a client booting late or reconnecting after the broadcast missed it can recover the watermark per-doc without waiting for the next emit.
+
+### Out of scope
+
+- Durable buffer-and-replay across tab crash (localStorage persistence of the unsynced delta). Accepted trade-off: a crash inside the 50-500ms recycle window loses unsynced edits. The disk-ack channel narrows the loss boundary further: edits the server has durably persisted are recovered from the post-restart markdown rebuild, so the actual loss window is "in-memory edits the server hasn't yet flushed" (sub-second under typical L1 debounce).
+- Pre-fix attribution cleanup — doubled-content commits under `refs/wip/<branch>/openknowledge-service` from past bug occurrences. Separate one-shot migration task.

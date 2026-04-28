@@ -29,7 +29,10 @@ export type OkSeedPlanResult =
   | { ok: true; plan: ScaffoldPlan }
   | {
       ok: false;
-      error: { kind: 'no-project' | 'prerequisite-missing' | 'internal'; message: string };
+      error: {
+        kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
+        message: string;
+      };
     };
 
 /** Renderer-facing result of `okDesktop.seed.apply(plan)`. Mirrors `SeedApplyResult` in main. */
@@ -244,9 +247,24 @@ export interface OkDesktopBridge {
     close(): Promise<void>;
   };
 
+  /**
+   * Re-summon the Project Navigator window from inside an editor window.
+   * Lifecycle is focus-existing-or-create (idempotent on already-focused).
+   * Renderer surfaces: `ProjectSwitcher` dropdown "Switch Project…",
+   * CommandPalette "Switch Project", and File → Switch Project… (which
+   * calls main's `openNavigator()` directly via the menu binding).
+   */
+  navigator: {
+    open(): Promise<void>;
+  };
+
   seed: {
-    /** Compute a scaffold plan for the current window's project (read-only). */
-    plan(): Promise<OkSeedPlanResult>;
+    /**
+     * Compute a scaffold plan for the current window's project (read-only).
+     * `rootDir` is a project-relative subfolder; defaults to the project root
+     * when omitted, matching the historical behavior.
+     */
+    plan(rootDir?: string): Promise<OkSeedPlanResult>;
     /** Apply a ScaffoldPlan — writes folders, log.md, and config.yml entries. */
     apply(plan: ScaffoldPlan): Promise<OkSeedApplyResult>;
   };

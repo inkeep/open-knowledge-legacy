@@ -6,6 +6,7 @@
  * architecture, precedent #14). This file covers client-side shimmer prevention only.
  */
 import { describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment } from '@tiptap/y-tiptap';
@@ -15,11 +16,6 @@ import { ORIGIN_TEXT_TO_TREE, ORIGIN_TREE_TO_TEXT, setupObservers } from './obse
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-/** Wait for debounce + settling */
-function wait(ms = 100): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** Populate XmlFragment from markdown */
 function applyMarkdown(doc: Y.Doc, fragment: Y.XmlFragment, md: string) {

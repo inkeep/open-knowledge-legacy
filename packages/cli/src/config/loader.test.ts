@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { OK_DIR } from '../constants.ts';
 import { createProjectConfigResolver, loadConfig } from './loader';
 
@@ -315,7 +316,7 @@ describe('createProjectConfigResolver', () => {
     });
 
     writeWorkspaceConfigAt(projectB, 'content:\n  dir: docs-c\n');
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+    await wait(5);
 
     await expect(resolveConfig(projectB)).resolves.toMatchObject({
       content: { dir: 'docs-c' },

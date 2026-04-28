@@ -228,6 +228,50 @@ describe('Tier C: link style', () => {
     expect(linkMark.attrs.href).toBe('https://example.com');
     expect(linkMark.attrs.linkStyle).toBe('inline');
   });
+
+  test('empty-label inline links stay literal text (no link mark)', () => {
+    const json = mdManager.parse('[]()\n');
+    const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content?.[0]?.type).toBe('text');
+    expect(paragraph?.content?.[0]?.text).toBe('[]()');
+    expect(findMarkInJson(json, 'link')).toBeNull();
+  });
+
+  test('empty-label inline link with destination stays literal text (no link mark)', () => {
+    const json = mdManager.parse('[](https://example.com)\n');
+    const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content?.[0]?.type).toBe('text');
+    expect(paragraph?.content?.[0]?.text).toBe('[](https://example.com)');
+    expect(findMarkInJson(json, 'link')).toBeNull();
+  });
+
+  test('trailing backslash runs carry sourceLiteral mark', () => {
+    const triple = '\\'.repeat(3);
+    const json = mdManager.parse(`text ${triple}\n`);
+    const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content).toHaveLength(1);
+    expect(paragraph?.content?.[0]?.type).toBe('text');
+    expect(paragraph?.content?.[0]?.text).toBe(`text ${'\\'.repeat(2)}`);
+    const sourceLiteral = findMarkInJson(json, 'sourceLiteral');
+    expect(sourceLiteral?.attrs?.sourceRaw).toBe(`text ${triple}`);
+  });
+
+  test('sourceRaw takes priority when escapedChars and trailing backslash coexist', () => {
+    const trailing = '\\';
+    const json = mdManager.parse(`\\[text${trailing}\n`);
+    const paragraph = findInJson(json, 'paragraph');
+    expect(paragraph?.content).toHaveLength(1);
+    expect(paragraph?.content?.[0]?.type).toBe('text');
+    expect(paragraph?.content?.[0]?.text).toBe(`[text${trailing}`);
+    const sourceLiteral = findMarkInJson(json, 'sourceLiteral');
+    expect(sourceLiteral?.attrs?.sourceRaw).toBe(`\\[text${trailing}`);
+    expect(findMarkInJson(json, 'escapeMark')).toBeNull();
+  });
+
+  test('image with empty alt remains image syntax', () => {
+    const json = mdManager.parse('![](https://example.com/img.png)\n');
+    expect(findInJson(json, 'image')).toBeDefined();
+  });
 });
 
 describe('Tier A: passthrough', () => {

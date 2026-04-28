@@ -25,6 +25,15 @@ export {
 } from './asset-serve-middleware.ts';
 export { seedBasenameIndex } from './asset-walk.ts';
 export {
+  HOCUSPOCUS_AUTH_REJECTION_REASONS,
+  HocuspocusAuthRejection,
+  type HocuspocusAuthRejectionReason,
+  type HocuspocusAuthToken,
+  HocuspocusAuthTokenSchema,
+  isHocuspocusAuthRejectionReason,
+  parseHocuspocusAuthToken,
+} from './auth-token-schema.ts';
+export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,
@@ -50,7 +59,6 @@ export {
 export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
-  type CC1Signal,
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
@@ -176,6 +184,7 @@ export {
   SEED_CONFIG_FILENAME,
   type SeedOptions,
   SeedPrerequisiteError,
+  SeedRootDirError,
   type SkipEntry,
   STARTER_FOLDERS,
   type StarterFolder,
