@@ -343,6 +343,254 @@ const audioProps: PropDef[] = [
   },
 ];
 
+// ── Lowercase HTML media canonicals — htmlImgProps / htmlVideoProps / htmlAudioProps ──
+//
+// Replaces the capitalized `imageProps` / `videoProps` / `audioProps` above
+// once US-007 flips the canonical descriptor names from `Image` / `Video` /
+// `Audio` to lowercase `img` / `video` / `audio`. Defined alongside the old
+// arrays in US-004 so the inflection in US-007 is a single atomic swap.
+//
+// Two intentional shape changes vs. the predecessor arrays:
+//
+//   1. HTML-attr lowercase names — `autoplay` (not `autoPlay`), `playsinline`
+//      (not `playsInline`), `fetchpriority`, `crossorigin`, `referrerpolicy`.
+//      The descriptor `name` is the source-form attribute spelling that gets
+//      emitted by `emitMdxJsx`, so storing lowercase makes the rendered MDX
+//      match the HTML spec exactly. The React media components translate to
+//      camelCase at the JSX boundary (where TypeScript's
+//      `JSX.IntrinsicElements` types require it).
+//
+//   2. Common / advanced split via `advanced: true` — props that experienced
+//      authors want available but don't edit on every insert (responsive
+//      `srcset` / `sizes`, `decoding`, `fetchpriority`, `crossorigin`,
+//      `referrerpolicy`, native HTML `title`, video `muted` / `loop` /
+//      `playsinline` / `preload`) live under PropPanel's collapsed
+//      "Advanced" section.
+//
+// `caption` and `zoom` are deliberately ABSENT from htmlImgProps:
+//   - `caption` belongs on a compositional Frame v2 wrapper (Mintlify
+//     pattern) — putting it on `<img>` bloats the storage shape and
+//     pre-commits the design space.
+//   - `zoom` is OK-specific (not HTML-native). The Image React component
+//     always wraps in `<Zoom>`; Frame v2 will introduce `<Frame zoom={false}>`
+//     as the opt-out path when it lands.
+
+// htmlImgProps — 12 props (4 common + 8 advanced).
+//
+// Common: src + alt + width + height. Advanced: srcset + sizes + loading +
+// title + decoding + fetchpriority + crossorigin + referrerpolicy.
+//
+// Index map (used by commonMarkImageProps below — identity-shared):
+//   [0] src         [4] srcset          [8]  decoding
+//   [1] alt         [5] sizes           [9]  fetchpriority
+//   [2] width       [6] loading         [10] crossorigin
+//   [3] height      [7] title           [11] referrerpolicy
+// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical img descriptor in US-007 (flip step)
+const htmlImgProps: PropDef[] = [
+  // common
+  { name: 'src', type: 'string', required: true, description: 'Image source URL' },
+  {
+    name: 'alt',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Alt text',
+  },
+  { name: 'width', type: 'number', required: false, description: 'Image width' },
+  { name: 'height', type: 'number', required: false, description: 'Image height' },
+  // advanced
+  {
+    name: 'srcset',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Responsive image candidate set (e.g. "x.png 1x, y.png 2x")',
+  },
+  {
+    name: 'sizes',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Responsive image sizes hint paired with srcset',
+  },
+  {
+    name: 'loading',
+    type: 'enum',
+    enumValues: ['eager', 'lazy'],
+    defaultValue: 'lazy',
+    required: false,
+    advanced: true,
+    description: 'Native img loading strategy (defaults to lazy)',
+  },
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Native HTML title attribute (tooltip)',
+  },
+  {
+    name: 'decoding',
+    type: 'enum',
+    enumValues: ['sync', 'async', 'auto'],
+    defaultValue: 'auto',
+    required: false,
+    advanced: true,
+    description: 'Hint for how the browser should decode the image',
+  },
+  {
+    name: 'fetchpriority',
+    type: 'enum',
+    enumValues: ['high', 'low', 'auto'],
+    defaultValue: 'auto',
+    required: false,
+    advanced: true,
+    description: 'Resource fetch priority hint',
+  },
+  {
+    name: 'crossorigin',
+    type: 'enum',
+    enumValues: ['anonymous', 'use-credentials'],
+    required: false,
+    advanced: true,
+    description: 'CORS mode for the image fetch',
+  },
+  {
+    name: 'referrerpolicy',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Referrer policy for the image fetch (HTML referrerpolicy values)',
+  },
+];
+
+// htmlVideoProps — 11 props (6 common + 5 advanced).
+//
+// Common: src + controls + autoplay + poster + width + height.
+// Advanced: title + muted + loop + playsinline + preload.
+//
+// Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps to
+// React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
+// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical video descriptor in US-007 (flip step)
+const htmlVideoProps: PropDef[] = [
+  // common
+  { name: 'src', type: 'string', required: true, description: 'Video source URL' },
+  {
+    name: 'controls',
+    type: 'boolean',
+    required: false,
+    defaultValue: true,
+    description: 'Show native HTML5 video controls (defaults to true)',
+  },
+  {
+    name: 'autoplay',
+    type: 'boolean',
+    required: false,
+    description: 'Begin playback as soon as possible (usually requires muted)',
+  },
+  {
+    name: 'poster',
+    type: 'string',
+    required: false,
+    description: 'Poster image URL shown before playback',
+  },
+  { name: 'width', type: 'number', required: false, description: 'Video width' },
+  { name: 'height', type: 'number', required: false, description: 'Video height' },
+  // advanced
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Native HTML title attribute (tooltip)',
+  },
+  {
+    name: 'muted',
+    type: 'boolean',
+    required: false,
+    advanced: true,
+    description: 'Mute audio on load',
+  },
+  {
+    name: 'loop',
+    type: 'boolean',
+    required: false,
+    advanced: true,
+    description: 'Restart from the beginning when playback ends',
+  },
+  {
+    name: 'playsinline',
+    type: 'boolean',
+    required: false,
+    advanced: true,
+    description: 'Play inline on iOS rather than entering fullscreen',
+  },
+  {
+    name: 'preload',
+    type: 'enum',
+    enumValues: ['none', 'metadata', 'auto'],
+    required: false,
+    advanced: true,
+    description: 'Hint for how much of the video to preload',
+  },
+];
+
+// htmlAudioProps — 7 props (3 common + 4 advanced).
+//
+// Common: src + controls + autoplay. Advanced: title + muted + loop + preload.
+//
+// `controls` is now an explicit prop (default true) — Audio.tsx no longer
+// hardcodes always-on. Authors who want a chrome-less audio set
+// `controls={false}` instead of escaping to raw HTML.
+// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical audio descriptor in US-007 (flip step)
+const htmlAudioProps: PropDef[] = [
+  // common
+  { name: 'src', type: 'string', required: true, description: 'Audio source URL' },
+  {
+    name: 'controls',
+    type: 'boolean',
+    required: false,
+    defaultValue: true,
+    description: 'Show native HTML5 audio controls (defaults to true)',
+  },
+  {
+    name: 'autoplay',
+    type: 'boolean',
+    required: false,
+    description: 'Begin playback as soon as possible (usually requires muted)',
+  },
+  // advanced
+  {
+    name: 'title',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description: 'Native HTML title attribute (tooltip)',
+  },
+  {
+    name: 'muted',
+    type: 'boolean',
+    required: false,
+    advanced: true,
+    description: 'Mute audio on load',
+  },
+  {
+    name: 'loop',
+    type: 'boolean',
+    required: false,
+    advanced: true,
+    description: 'Restart from the beginning when playback ends',
+  },
+  {
+    name: 'preload',
+    type: 'enum',
+    enumValues: ['none', 'metadata', 'auto'],
+    required: false,
+    advanced: true,
+    description: 'Hint for how much of the audio to preload',
+  },
+];
+
 // ── Accordion (US-009) ───────────────────────────────────────────────────────
 //
 // FR-5 (SPEC 2026-04-23-cb-v2-md-foundation): 6-prop standalone accordion
