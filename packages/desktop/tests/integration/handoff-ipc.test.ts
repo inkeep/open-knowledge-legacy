@@ -29,6 +29,7 @@ import type { IpcMain, IpcMainInvokeEvent, IpcRenderer } from 'electron';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
+  showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from '../../src/main/ipc-handlers.ts';
 import { checkOutboundUrl } from '../../src/main/shell-allowlist.ts';
@@ -310,6 +311,72 @@ describe("'ok:shell:spawn-cursor' round-trips spawn outcomes", () => {
 
     const result = await invoke('ok:shell:spawn-cursor', '/Users/x/project');
     expect(result).toEqual({ ok: false, reason: 'timeout' });
+  });
+});
+
+describe("'ok:shell:show-item-in-folder' round-trips reveal outcomes", () => {
+  // The wire's contract: result is `undefined` (silent-by-design — refusals
+  // do NOT leak validation signal back to a potentially-compromised renderer).
+  // What's observable through the wire is whether `shell.showItemInFolder` was
+  // invoked + with what argument. Each test asserts both.
+  test('valid path within project invokes shell.showItemInFolder', async () => {
+    const { handle, invoke } = setupRig();
+    const calls: string[] = [];
+    handle('ok:shell:show-item-in-folder', async (_event, path) => {
+      showItemInFolderImpl(
+        {
+          platform: 'darwin',
+          projectPath: '/Users/x/project',
+          showItemInFolder: (p) => calls.push(p),
+        },
+        path,
+      );
+      return undefined;
+    });
+
+    const result = await invoke('ok:shell:show-item-in-folder', '/Users/x/project/specs/foo.md');
+    expect(result).toBeUndefined();
+    expect(calls).toEqual(['/Users/x/project/specs/foo.md']);
+  });
+
+  test('undefined projectPath (Navigator window) refuses every path silently', async () => {
+    const { handle, invoke } = setupRig();
+    const calls: string[] = [];
+    handle('ok:shell:show-item-in-folder', async (_event, path) => {
+      showItemInFolderImpl(
+        {
+          platform: 'darwin',
+          projectPath: undefined,
+          showItemInFolder: (p) => calls.push(p),
+        },
+        path,
+      );
+      return undefined;
+    });
+
+    const result = await invoke('ok:shell:show-item-in-folder', '/Users/x/project/specs/foo.md');
+    expect(result).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  test('path outside project tree refuses silently', async () => {
+    const { handle, invoke } = setupRig();
+    const calls: string[] = [];
+    handle('ok:shell:show-item-in-folder', async (_event, path) => {
+      showItemInFolderImpl(
+        {
+          platform: 'darwin',
+          projectPath: '/Users/x/project',
+          showItemInFolder: (p) => calls.push(p),
+        },
+        path,
+      );
+      return undefined;
+    });
+
+    const result = await invoke('ok:shell:show-item-in-folder', '/Users/x/other/secrets.txt');
+    expect(result).toBeUndefined();
+    expect(calls).toEqual([]);
   });
 });
 

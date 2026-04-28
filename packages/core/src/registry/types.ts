@@ -115,7 +115,7 @@ export interface SerializeContext {
  * its `rendersAs` canonical Component expects. Pure; no React. Identity for
  * v1's three compat descriptors (their prop names already match canonical).
  */
-export type TranslateProps = (compatProps: Record<string, unknown>) => Record<string, unknown>;
+type TranslateProps = (compatProps: Record<string, unknown>) => Record<string, unknown>;
 
 // ── JsxComponentMeta — discriminated on `surface` ───────────────────────────
 
@@ -164,7 +164,7 @@ interface JsxComponentMetaBase {
  * fresh inserts. Renders directly through its own React component in
  * `componentMap` (keyed by `name`).
  */
-export interface CanonicalMeta extends JsxComponentMetaBase {
+interface CanonicalMeta extends JsxComponentMetaBase {
   surface: 'canonical';
 }
 

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 
 /** Stored credential entry keyed by hostname. */
-export interface TokenEntry {
+interface TokenEntry {
   login: string;
   token: string;
   /** Default git protocol for this host (default 'https') */

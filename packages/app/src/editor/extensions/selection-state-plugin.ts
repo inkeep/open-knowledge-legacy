@@ -45,7 +45,7 @@ import { bridgeIdPluginKey } from './bridge-id-plugin.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type SelectionOrigin = 'keyboard' | 'pointer' | 'programmatic';
+type SelectionOrigin = 'keyboard' | 'pointer' | 'programmatic';
 
 export interface BlockChainEntry {
   /** Stable bridgeId for the jsxComponent wrapper, or a position-derived

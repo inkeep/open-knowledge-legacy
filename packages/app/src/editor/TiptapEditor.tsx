@@ -30,12 +30,14 @@ import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePa
 import { mark } from '@/lib/perf';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
+import { buildAwarenessUser } from './awareness-user';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
   createClipboardTextSerializer,
   createHandlePaste,
 } from './clipboard/index.ts';
+import { useDocumentContext } from './DocumentContext';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
@@ -94,9 +96,17 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 interface TiptapEditorProps {
   provider: HocuspocusProvider;
   placeholder?: string;
+  /**
+   * Whether the active doc's editor surface is the source view. TiptapEditor
+   * stays mounted underneath the source surface (CSS-hidden) per the editor
+   * cache pattern, but we publish the mode the user is actually using —
+   * keeps presence consistent with what they see. Single mode-publication
+   * site avoids the race between two editor effects writing the same field.
+   */
+  isSourceMode: boolean;
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
@@ -104,6 +114,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
+  const { principal, activeDocName } = useDocumentContext();
+  const docName = provider.configuration.name ?? '';
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
   // Use useState with a lazy initializer so the bundle is constructed once
@@ -176,7 +188,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const [mountError, setMountError] = useState<Error | null>(null);
   if (mountError) throw mountError;
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
-  const docName = provider.configuration.name ?? '';
 
   // Placeholder deliberately excluded from the deps array below. The only
   // observable placeholder transition (the `isNewDoc` draft→saved flip) is
@@ -649,19 +660,50 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     return () => metaMap.unobserve(observer);
   }, [provider.document]);
 
-  // Set awareness state on mount (user identity + mode)
+  // Publish (or clear) this tab's awareness for the doc this editor binds to.
+  //
+  // EditorActivityPool keeps multiple TiptapEditor instances mounted in
+  // parallel (one per pool entry) — but only ONE of those docs is the
+  // foreground at a time. Without the `docName !== activeDocName` gate the
+  // effect would fire on mount and then never clear, leaving stale "this user
+  // is here" entries on every doc that ever passed through the pool. Peers
+  // would dedupe two ghost tabs into a `· N tabs` tooltip even after the
+  // user navigated away (they're still pool-cached, WebSocket open, awareness
+  // set).
+  //
+  // `activeDocName` is in the dep list so this re-runs on every navigation:
+  // the editor whose doc just became active publishes; the editor whose doc
+  // just became inactive calls `setLocalState(null)`, which deletes the entry
+  // entirely from y-protocols' awareness map (not just empties it). The
+  // delete fans out to peers as an "awareness removal" the same way an
+  // ungraceful disconnect would — so peers' usePresence drops the entry
+  // immediately, no TTL wait. `buildAwarenessUser` is the pure helper holding
+  // the three-state FR3 design (unit-tested in awareness-user.test.ts).
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    awareness.setLocalStateField('user', {
-      name: identity.name,
-      color: identity.color,
-      type: 'human' as const,
-      coeditor: identity.coeditor,
-      tabId: identity.tabId,
+    if (docName !== activeDocName) {
+      awareness.setLocalState(null);
+      return;
+    }
+    // Atomic publish via setLocalState (not two setLocalStateField calls):
+    // y-protocols' setLocalStateField short-circuits when localState is null,
+    // so once setLocalState(null) ran on a previous navigate-away, a follow-up
+    // setLocalStateField('user', ...) would silently no-op. setLocalState
+    // unconditionally rebuilds the entry, restoring the navigate-away → back
+    // path. Atomicity also means peers never observe an entry with `mode` but
+    // no `user` (the discriminator that usePresence filters on).
+    //
+    // TiptapEditor is the sole writer of `user` and `mode` on per-doc
+    // awareness. Two writers (TiptapEditor + SourceEditor's previous
+    // setLocalStateField calls) would race on every render — peers' observed
+    // mode depended on React's effect-firing order across siblings. Single
+    // writer eliminates the race.
+    awareness.setLocalState({
+      user: buildAwarenessUser({ principal, identity }),
+      mode: isSourceMode ? 'source' : 'wysiwyg',
     });
-    awareness.setLocalStateField('mode', 'wysiwyg');
-  }, [provider, identity]);
+  }, [provider, docName, activeDocName, identity, principal, isSourceMode]);
 
   // Data attributes are set once on initial render; the flash useEffect updates them
   // imperatively via wrapperRef to avoid triggering React re-renders during typing.

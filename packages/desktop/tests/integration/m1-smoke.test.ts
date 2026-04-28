@@ -229,6 +229,7 @@ describe('M1 smoke', () => {
       'shell.detectProtocol', // 2026-04-21 US-004 (Open in Agent)
       'shell.spawnCursor', // 2026-04-21 US-004 (Open in Agent)
       'shell.recordHandoff', // 2026-04-21 US-008 (Open in Agent telemetry)
+      'shell.showItemInFolder', // 2026-04-27 file-tree reveal-in-finder
     ] as const;
     for (const [label, members] of [
       ['core', coreMembers],

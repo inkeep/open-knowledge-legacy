@@ -52,8 +52,7 @@ To opt out of both `.open-knowledge/` scaffolding and the parent-repo auto-`git 
 
 ## `init`
 
-Scaffold the `.open-knowledge/` directory and register the MCP server in the
-correct user-scoped editor config for each selected tool.
+Scaffold the `.open-knowledge/` directory and register the MCP server in editor config files.
 
 ```bash
 npx @inkeep/open-knowledge init [options]
@@ -62,9 +61,18 @@ npx @inkeep/open-knowledge init [options]
 | Option | Description |
 |--------|-------------|
 | `--editor <names>` | Target specific editors instead of all detected editors |
+| `--scope <user\|project\|both>` | Where to write MCP config (see below) |
 | `--force` | Overwrite existing Open Knowledge MCP and preview-launcher entries |
 | `--no-mcp` | Skip writing editor MCP config |
 | `--dev-mcp` | Point MCP config and Claude Code preview launchers at the local `packages/cli/dist/cli.mjs` build |
+
+**Scope selection.** `init` writes MCP config to the user level (`~/.claude.json`, `~/.cursor/mcp.json`, etc.), the project level (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml` in the working directory), or both:
+
+- **Interactive (TTY):** a checkbox prompt appears with both scopes pre-selected. Deselect either to write only the other.
+- **Non-interactive (piped, scripted, CI):** defaults to `both` without prompting.
+- **`--scope <user|project|both>`:** bypasses the prompt and writes exactly the specified scope.
+
+Project-level configs are useful for teams who want all contributors to pick up the same MCP wiring without each person running `ok init` individually — commit `.mcp.json` (and equivalent files for other editors) to the repository. Note: Windsurf and Claude Desktop do not have a standardized project-local config format and are skipped for project-scope writes.
 
 The command is idempotent -- safe to run again without side effects. If the project has no `.git/`, `init` runs `git init --initial-branch=main` first and prints the same disclosure line as `start`.
 

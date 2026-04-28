@@ -81,14 +81,14 @@ interface DeadLinkEntry {
   sources: BacklinkEntry[];
 }
 
-export interface DocGraphNode {
+interface DocGraphNode {
   kind: 'doc';
   id: string;
   docName: string;
   anchor: string | null;
 }
 
-export interface ExternalGraphNode {
+interface ExternalGraphNode {
   kind: 'external';
   id: string;
   url: string;

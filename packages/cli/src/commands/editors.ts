@@ -46,7 +46,7 @@ const DEV_MCP_ENV = {
  *   desktop's auto-updater replaces the symlink target atomically); volatile
  *   pins (worktree dist, npx-cache) silently stale.
  */
-export type McpInstallMode = 'published' | 'dev' | 'pinned';
+type McpInstallMode = 'published' | 'dev' | 'pinned';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
@@ -255,8 +255,8 @@ export interface EditorMcpTarget {
   scope: 'project' | 'global';
   /** Filesystem path whose existence implies the editor is installed. */
   detectPath?: (cwd: string, home?: string) => string;
-  /** Legacy project-local MCP config path from pre-global installs, if any. */
-  legacyProjectConfigPath?: (cwd: string) => string;
+  /** Project-local MCP config path (used for project-scope installs). */
+  projectConfigPath?: (cwd: string) => string;
 }
 
 function managedFieldEquals(a: unknown, b: unknown): boolean {
@@ -318,7 +318,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => join(home ?? homedir(), '.claude'),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.mcp.json'),
   }),
   'claude-desktop': createEditorTarget({
     id: 'claude-desktop',
@@ -341,7 +341,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCursorConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.cursor', 'mcp.json'),
   }),
   vscode: createEditorTarget({
     id: 'vscode',
@@ -353,7 +353,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => ({ type: 'stdio', ...buildManagedServerEntry(options) }),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveVsCodeConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
+    projectConfigPath: (cwd) => join(cwd, '.vscode', 'mcp.json'),
   }),
   windsurf: createEditorTarget({
     id: 'windsurf',
@@ -376,7 +376,10 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
-    legacyProjectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
+    // Codex reads CODEX_HOME (default ~/.codex) for user config; project-local
+    // .codex/config.toml support was added by analogy with the other editors.
+    // Verify against Codex CLI release notes before promoting in docs.
+    projectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
   }),
 };
 

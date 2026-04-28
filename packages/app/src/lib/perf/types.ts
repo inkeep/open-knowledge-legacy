@@ -7,7 +7,7 @@
  * track-entry payload that DevTools uses to surface custom tracks.
  */
 
-export type DevToolsColor =
+type DevToolsColor =
   | 'primary'
   | 'primary-light'
   | 'primary-dark'
@@ -40,7 +40,7 @@ export interface PerfMark {
   properties?: Record<string, unknown>;
 }
 
-export type ProfilerPhase = 'mount' | 'update' | 'nested-update';
+type ProfilerPhase = 'mount' | 'update' | 'nested-update';
 
 export interface ProfilerRenderEvent {
   id: string;

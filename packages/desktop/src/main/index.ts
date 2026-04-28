@@ -23,8 +23,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir as osHomedir, hostname as osHostname } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   ALL_EDITOR_IDS,
   detectInstalledEditors,
@@ -66,6 +65,7 @@ import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
   recordHandoff as recordHandoffImpl,
+  showItemInFolder as showItemInFolderImpl,
   spawnCursor as spawnCursorImpl,
 } from './ipc-handlers.ts';
 import {
@@ -91,8 +91,6 @@ import {
   type UtilityProcessLike,
   WindowManager,
 } from './window-manager.ts';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_WIN_OPTS = {
   width: 1280,
@@ -689,6 +687,32 @@ function registerIpcHandlers() {
       },
       line,
     );
+    return undefined;
+  });
+
+  handle('ok:shell:show-item-in-folder', async (event, path) => {
+    // Resolve caller window's project directory (undefined for Navigator).
+    // Validation, refusal, and security rationale live in `showItemInFolderImpl`.
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    const result = showItemInFolderImpl(
+      {
+        platform: process.platform,
+        projectPath: callerProjectPath,
+        showItemInFolder: (p) => shell.showItemInFolder(p),
+      },
+      path,
+    );
+    // Channel result is `undefined` (silent-by-design — don't leak validation
+    // signal back to a potentially-compromised renderer), but a refusal is
+    // worth a main-side breadcrumb: a renderer bug constructing a wrong path
+    // otherwise produces a "nothing happened" UX with no debug trail.
+    if (!result.ok) {
+      console.warn('[main] show-item-in-folder refused', { reason: result.reason });
+    }
     return undefined;
   });
 
