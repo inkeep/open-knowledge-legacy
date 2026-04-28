@@ -8,6 +8,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
 import { buildExecResult, type ExecStructuredResult } from '../src/mcp/tools/exec.ts';
@@ -41,7 +42,7 @@ async function main(): Promise<void> {
   const agent: WriterIdentity = { id: 'agent-claude-7x', name: 'Claude (Tim)', email: 'a@ok.test' };
   const human: WriterIdentity = { id: 'human-tim', name: 'Tim Cardona', email: 't@ok.test' };
   await commitWip(shadow, human, contentDir, 'initial auth doc', branch);
-  await new Promise((r) => setTimeout(r, 1100));
+  await wait(1100);
   writeFileSync(resolve(contentDir, 'auth.md'), '# Auth v2\n\noauth rewrite.\n');
   await commitWip(shadow, agent, contentDir, 'rewrite §3 oauth examples', branch);
 

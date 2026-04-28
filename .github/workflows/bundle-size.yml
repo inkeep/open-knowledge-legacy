@@ -43,9 +43,5 @@ jobs:
         with:
           bun-version-file: ".bun-version"
       - run: bun install --frozen-lockfile
-      - name: Build packages/app
-        run: bun run build
-        working-directory: packages/app
       - name: Check bundle size
-        run: bunx size-limit
-        working-directory: packages/app
+        run: bun run --filter @inkeep/open-knowledge-app size

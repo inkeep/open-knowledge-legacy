@@ -7,21 +7,19 @@ import {
   normalizeRenameValue,
   remapActiveDocName,
 } from './file-tree-operations';
-import type { DocEntry, TreeNode } from './file-tree-utils';
+import type { DocEntry } from './file-tree-utils';
 
-const fileNode: TreeNode = {
+const fileNode = {
   name: 'notes',
   path: 'docs/notes',
   kind: 'file',
-  children: [],
-};
+} as const;
 
-const folderNode: TreeNode = {
+const folderNode = {
   name: 'docs',
   path: 'docs',
   kind: 'folder',
-  children: [],
-};
+} as const;
 
 const documents: DocEntry[] = [
   { docName: 'docs/notes', size: 10, modified: '2026-04-13T00:00:00.000Z' },

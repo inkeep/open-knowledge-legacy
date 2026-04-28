@@ -20,7 +20,7 @@
  *   [data-slot="presence-divider"]
  */
 
-import { expect, test } from './_helpers';
+import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
 function agentId(label: string): string {
   // UUID-shape with `label` embedded so test logs are readable. Must match
@@ -37,6 +37,7 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     await api.seedDocs([{ name: docFoo, markdown: '# foo' }]);
 
     await page.goto(`/#/${docFoo}`);
+    await waitForActiveProviderSynced(page);
     const bar = page.locator('[data-slot="presence-bar"]');
     await expect(bar).toBeVisible();
 
@@ -44,16 +45,18 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     // the time the assertion polls.
     const claudeId = agentId('claude');
     const cursorId = agentId('cursor');
-    await api.writeAsAgent(docFoo, '# Claude was here', {
-      agentId: claudeId,
-      agentName: 'Claude',
-      clientName: 'claude-code',
-    });
-    await api.writeAsAgent(docFoo, '# Cursor was here', {
-      agentId: cursorId,
-      agentName: 'Cursor',
-      clientName: 'cursor',
-    });
+    await Promise.all([
+      api.writeAsAgent(docFoo, '# Claude was here', {
+        agentId: claudeId,
+        agentName: 'Claude',
+        clientName: 'claude-code',
+      }),
+      api.writeAsAgent(docFoo, '# Cursor was here', {
+        agentId: cursorId,
+        agentName: 'Cursor',
+        clientName: 'cursor',
+      }),
+    ]);
 
     // Both named agents MUST render in the current-doc section. The bug
     // being fixed would have collapsed them to a single entry. Asserting
@@ -64,22 +67,17 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     const currentSection = bar.locator('[data-presence-section="current"]');
     await expect
       .poll(
-        async () =>
-          currentSection
+        async () => ({
+          claude: await currentSection
             .locator('[data-presence-badge="agent"][aria-label="Open activity panel for Claude"]')
             .count(),
-        { timeout: 10_000, intervals: [100, 250, 500] },
-      )
-      .toBe(1);
-    await expect
-      .poll(
-        async () =>
-          currentSection
+          cursor: await currentSection
             .locator('[data-presence-badge="agent"][aria-label="Open activity panel for Cursor"]')
             .count(),
-        { timeout: 5_000, intervals: [100, 250, 500] },
+        }),
+        { timeout: 10_000, intervals: [100, 250, 500] },
       )
-      .toBe(1);
+      .toEqual({ claude: 1, cursor: 1 });
   });
 
   test('cross-doc agent renders in dimmed section with divider', async ({ page, api }) => {

@@ -13,11 +13,11 @@ import type { Page } from '@playwright/test';
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
 async function openFromSidebar(page: Page, filename: string) {
-  // Scope to sidebar to avoid strict-mode violations when the EditorHeader
-  // also displays the active document name as text. The sidebar container
-  // has `data-slot="sidebar-container"` which scopes the text search.
-  const sidebar = page.locator('[data-slot="sidebar-container"]');
-  await sidebar.getByText(filename, { exact: true }).click({ timeout: 10_000 });
+  await page.getByRole('treeitem', { name: filename, exact: true }).click({ timeout: 10_000 });
+}
+
+function sidebarItem(page: Page, filename: string) {
+  return page.getByRole('treeitem', { name: filename, exact: true });
 }
 
 const FILLER_LINE = 'Filler paragraph to force scrollable content. '.repeat(10);
@@ -81,18 +81,17 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await expect(page.locator('.ProseMirror')).toContainText('Small', { timeout: 30_000 });
 
-    // The sidebar's active-row indicator is `aria-current="page"` — driven
+    // The sidebar's active-row indicator is `aria-selected="true"` — driven
     // by `activeDocName` directly (see FileTree.tsx:400). Before the click
     // it's on small.md's row; after the click we want it to move to big.md.
     // This is the load-bearing SHELL signal — completely independent of the
     // editor subtree rendering. If shell state is decoupled from editor
     // mount, this flips in one frame.
-    const sidebar = page.locator('[data-slot="sidebar-container"]');
-    const bigRow = sidebar.getByText('big.md', { exact: true });
+    const bigRow = sidebarItem(page, 'big.md');
     // Pre-assertion: small.md is currently active in the sidebar.
-    await expect(sidebar.locator('[aria-current="page"]')).toContainText('small.md');
+    await expect(sidebarItem(page, 'small.md')).toHaveAttribute('aria-selected', 'true');
 
-    // Install an in-page timer that observes the aria-current mutation so we
+    // Install an in-page timer that observes the aria-selected mutation so we
     // measure wall-clock time from click to shell-snap — Playwright's own
     // poll intervals (50-200ms) would round up our measurement and hide
     // subframe regressions. MutationObserver fires synchronously after the
@@ -100,20 +99,20 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // "click dispatch → React commit of new activeDocName".
     await page.evaluate(() => {
       window.__f0Result = null;
-      const sidebar = document.querySelector('[data-slot="sidebar-container"]');
-      if (!sidebar) return;
+      const root = document.querySelector('file-tree-container')?.shadowRoot;
+      if (!root) return;
       const start = performance.now();
       const observer = new MutationObserver(() => {
-        const current = sidebar.querySelector('[aria-current="page"]');
-        if (current?.textContent?.includes('big.md')) {
+        const current = root.querySelector('[aria-selected="true"]');
+        if (current?.getAttribute('aria-label') === 'big.md') {
           window.__f0Result = { shellMs: performance.now() - start };
           observer.disconnect();
         }
       });
-      observer.observe(sidebar, {
+      observer.observe(root, {
         subtree: true,
         attributes: true,
-        attributeFilter: ['aria-current'],
+        attributeFilter: ['aria-selected'],
       });
       window.__f0Start = start;
     });
@@ -121,7 +120,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await bigRow.click();
 
     // Poll for the shell-snap result; the MutationObserver fills it as soon
-    // as aria-current moves. 2s timeout is generous enough to avoid flake
+    // as aria-selected moves. 2s timeout is generous enough to avoid flake
     // while still failing hard on the bug class (3s editor mount).
     await expect
       .poll(async () => (await page.evaluate(() => window.__f0Result)) !== null, {
@@ -220,8 +219,7 @@ test.describe('docs-open — hybrid navigation UX', () => {
       window.__f0bObserverCleanup = () => observer.disconnect();
     });
 
-    const sidebar = page.locator('[data-slot="sidebar-container"]');
-    await sidebar.getByText('big.md', { exact: true }).click();
+    await sidebarItem(page, 'big.md').click();
     await waitForActiveProviderSynced(page);
     await expect(page.locator('.ProseMirror')).toContainText('Big Doc', { timeout: 30_000 });
 

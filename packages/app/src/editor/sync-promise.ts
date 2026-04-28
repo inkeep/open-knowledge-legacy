@@ -93,6 +93,26 @@ export class BridgeSetupError extends Error {
   }
 }
 
+/**
+ * Server connected but lacks a capability we need (today: WebSocket
+ * collab). Reserved for a future renderer-side capability check that can
+ * detect post-attach divergence (e.g., `/api/server-info` claims `ws` but
+ * the upgrade handler is missing). The desktop's pre-attach probe in
+ * window-manager closes the same hole before the renderer mounts; this
+ * class is the parallel error class for the renderer-side failure mode
+ * so `errorCopy` has a complete taxonomy.
+ */
+export class ServerCapabilityMismatchError extends Error {
+  readonly docName: string;
+  readonly missingCapability: string;
+  constructor(docName: string, missingCapability: string) {
+    super(`Server is missing capability "${missingCapability}" required to open "${docName}".`);
+    this.name = 'ServerCapabilityMismatchError';
+    this.docName = docName;
+    this.missingCapability = missingCapability;
+  }
+}
+
 interface CacheEntry {
   promise: Promise<void>;
   resolve: () => void;

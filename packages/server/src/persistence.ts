@@ -23,7 +23,9 @@ import {
   formatWipSubject,
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
+import type { JSONContent } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
@@ -60,13 +62,13 @@ import { getMeter, setActiveSpanAttributes, withSpan } from './telemetry.ts';
 const log = getLogger('persistence');
 
 /**
- * Derive a WriterIdentity from a Hocuspocus transaction origin (D31, D32, FR-16).
+ * Derive a WriterIdentity from a Hocuspocus transaction origin.
  *
  * Called from onStoreDocument to determine which writer triggered the store.
  * Handles the three origin shapes Hocuspocus surfaces:
  *   - local  + context.session_id  → per-session agent writer
  *   - local  + context.origin      → classified service writer
- *   - connection + principalId     → human-browser principal writer (US-024)
+ *   - connection + principalId     → human-browser principal writer
  *
  * precedent #1 — origins are LocalTransactionOrigin object refs, not strings.
  * Exported for unit-testing the dispatch table without spinning up a server.
@@ -102,16 +104,16 @@ export function resolveWriterFromOrigin(
   }
 
   if (o.source === 'connection') {
-    // Human browser write — principalId set via onAuthenticate (D50, US-024)
+    // Human browser write — principalId set via onAuthenticate.
     const conn = o.connection as Record<string, unknown> | undefined;
     const ctx = conn?.context as Record<string, unknown> | undefined;
     if (typeof ctx?.principalId === 'string') {
       const principalId = ctx.principalId as string;
-      // Post-QA review fix: when the claimed principalId matches the loaded
-      // principal record, use the real display_name / display_email (e.g.
-      // git-config user.name) so `ok-actor:` body + Co-Authored-By trailers
-      // mirror the user's git identity. Fall back to a stub only when the
-      // server has no principal loaded or the claim doesn't match.
+      // When the claimed principalId matches the loaded principal record,
+      // use the real display_name / display_email (e.g. git-config user.name)
+      // so `ok-actor:` body + Co-Authored-By trailers mirror the user's git
+      // identity. Fall back to a stub only when the server has no principal
+      // loaded or the claim doesn't match.
       const loaded = getPrincipal?.();
       if (loaded && loaded.id === principalId && loaded.display_name && loaded.display_email) {
         return {
@@ -159,6 +161,49 @@ export interface PersistenceOptions {
    * Omitted in plugin mode where no CC1Broadcaster is available.
    */
   onAgentCommit?: () => void;
+  /**
+   * Optional callback fired after each successful L1 disk write
+   * (post-`tracedRename`). The state vector is captured PRE-WRITE so
+   * the watermark reflects exactly the doc state that landed on disk —
+   * any updates received after capture but before the rename completes
+   * are excluded by construction, matching the actual durable state.
+   *
+   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
+   * boot. Omitted in plugin mode where no CC1Broadcaster is available
+   * — the closure shape is identical to `onAgentCommit`.
+   */
+  onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+}
+
+/**
+ * Atomic snapshot of a Y.Doc's pre-write state for the L1 persistence path.
+ *
+ * Returned together because the disk-ack watermark contract depends on
+ * the SV being captured at the SAME synchronous instant the JSON is
+ * extracted: any update applied to the doc AFTER `json` is read but
+ * BEFORE `tracedRename` resolves is — by construction — NOT in the
+ * markdown that lands on disk. Including it in the watermark would
+ * tell clients "the server has durably persisted this update" when the
+ * server has not, causing them to drop the corresponding unsynced bytes
+ * from the recycle buffer on the next instance-mismatch.
+ *
+ * Single-threaded JS guarantees this helper is uninterruptible:
+ * `Y.encodeStateVector` and `yXmlFragmentToProseMirrorRootNode` both
+ * run synchronously, so a Y.js transaction cannot interleave between
+ * them. Returning both as a single value (rather than two separate
+ * locals at the call site) makes that uninterruptible-co-capture
+ * a structural property — a future refactor can't naturally split
+ * the SV from the JSON across an `await` boundary without explicitly
+ * undoing the destructure, which is loud at review time.
+ */
+export function captureDocSnapshotForPersistence(document: Y.Doc): {
+  readonly sv: Uint8Array;
+  readonly json: JSONContent;
+} {
+  return {
+    sv: Y.encodeStateVector(document),
+    json: yXmlFragmentToProseMirrorRootNode(document.getXmlFragment('default'), schema).toJSON(),
+  };
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -248,10 +293,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
-  const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
+  // `relative(a, a) === ''` (falsy), so workspaces with content.dir at the
+  // project root must fall back to '.' — using the literal pathspec would
+  // make `git add <fallback>` look for a non-existent subfolder.
+  const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || '.');
   const backlinkIndex = options?.backlinkIndex;
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
+  const onDiskFlush = options?.onDiskFlush;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -621,18 +670,26 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             metaMap.set('frontmatter', frontmatter);
           }
 
-          // parseWithFallback — never throws (R6). On parse failure with position
-          // info, degrades to block-level rawMdxFallback preserving surrounding
-          // structure. On position-less error, splits at blank-line boundaries
-          // per-block. Only falls through to whole-doc raw text when every block
-          // fails — strictly better than parse() throwing on broken MDX.
-          const json = mdManager.parseWithFallback(body);
-
           const xmlFragment = document.getXmlFragment('default');
           log.info(
             { documentName, fragmentLength: xmlFragment.length },
             `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
           );
+
+          // Markdown is the sole source of truth (precedent #1). CRDT restart
+          // recovery is now a client-side concern: y-indexeddb hydrates the
+          // tab's Y.Doc from IndexedDB, and the server-instance-ID defense
+          // plus buffer-and-replay reconcile divergence on reconnect. See
+          // packages/app/src/editor/client-persistence.ts + provider-pool.ts.
+          //
+          // parseWithFallback — never throws (R6).
+          // On parse failure with position info, degrades to block-level
+          // rawMdxFallback preserving surrounding structure. On position-less
+          // error, splits at blank-line boundaries per-block. Only falls
+          // through to whole-doc raw text when every block fails — strictly
+          // better than parse() throwing on broken MDX.
+          const json = mdManager.parseWithFallback(body);
+
           if (xmlFragment.length === 0) {
             const pmNode = schema.nodeFromJSON(json);
             updateYFragment(document, xmlFragment, pmNode, {
@@ -672,6 +729,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       });
     },
 
+    // STOP: Do NOT add additional `Y.encodeStateVector(document)` calls
+    // anywhere in this function. The only sanctioned capture is via
+    // `captureDocSnapshotForPersistence` at the top of the body — its
+    // co-capture of `{sv, json}` is what guarantees the disk-ack
+    // watermark reflects the exact doc state that lands on disk. A
+    // second SV captured later (e.g., after `await tracedRename`) would
+    // include updates from the async write window, falsely advancing the
+    // watermark past content that's NOT durably persisted, and
+    // clients would drop those bytes from the recycle buffer →
+    // unsynced-edit loss on server-restart. See the helper's docstring
+    // for the full timing contract.
     async onStoreDocument({
       document,
       documentName,
@@ -686,8 +754,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         'persistence.onStoreDocument',
         { attributes: { 'doc.name': documentName } },
         async () => {
-          const xmlFragment = document.getXmlFragment('default');
-          const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
+          // Atomic pre-write snapshot — `sv` and `json` MUST be captured
+          // at the same synchronous instant. See
+          // `captureDocSnapshotForPersistence` for the timing contract;
+          // splitting the destructure across the upcoming `await`
+          // boundary would silently break the disk-ack watermark.
+          const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
           const body = mdManager.serialize(json);
           const metaMap = document.getMap('metadata');
@@ -722,26 +794,24 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             return;
           }
 
-          // Thread origin → contributor tracker (D31, D32, FR-16).
-          // This is a safety-net for writes that bypass api-extension.ts handlers.
-          // Agent write handlers already call recordContributor explicitly; this
-          // handles human-browser connection writes (US-024) and any other origin
-          // that doesn't go through a handler. Gated on `markdown !== currentBase`
-          // above — semantic no-op writes (y-prosemirror empty-paragraph init) do
-          // not record the principal, so the L2 fan-out no longer attributes
-          // phantom commits to the browser alongside a legitimate agent write.
+          // Thread origin → contributor tracker. Safety-net for writes that
+          // bypass api-extension.ts handlers. Agent write handlers already
+          // call recordContributor explicitly; this handles human-browser
+          // connection writes and any other origin that doesn't go through a
+          // handler. Gated on `markdown !== currentBase` above — semantic
+          // no-op writes (y-prosemirror empty-paragraph init) do not record
+          // the principal, so the L2 fan-out no longer attributes phantom
+          // commits to the browser alongside a legitimate agent write.
           const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
           if (writer && writer.id !== SERVICE_WRITER.id) {
-            // Post-QA review fix (safety-net-metadata-races-handler, Minor 2):
             // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
             // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
             // the handler-path entry is in the tracker by the time we get here.
             // The safety-net only fills in for writes that never pass through an
-            // /api/* handler — specifically browser-principal writes (US-024,
-            // `source: 'connection'`). Skipping when the entry already exists
-            // guarantees the stub `Agent (<short>)` displayName can never
-            // overwrite the handler's rich identity under any ordering edge case
-            // (post-restart replay, test harness, future extension ordering changes).
+            // /api/* handler — specifically browser-principal writes via the
+            // `source: 'connection'` origin path. Skipping when the entry already
+            // exists guarantees the stub `Agent (<short>)` displayName can never
+            // overwrite the handler's rich identity under any ordering edge case.
             if (!hasContributor(writer.id)) {
               recordContributor(documentName, writer.id, writer.name, writer.id);
             }
@@ -818,6 +888,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             // drops skipStoreHooks, observer writes trigger onStoreDocument
             // and produce amplified disk writes per user/agent edit.
             incrementPersistenceDiskWrite();
+            // Notify clients that disk durability has been achieved up to the
+            // pre-write state vector. Fired AFTER `tracedRename` succeeds so
+            // a write failure (caught below) skips the watermark advance.
+            onDiskFlush?.(documentName, stateVectorAtRead);
           } catch (e) {
             try {
               tracedUnlinkSync(tmpPath);

@@ -95,10 +95,11 @@ const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 // Without this, fresh clones / worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
 
-// Playwright worker tmpdirs have no `.git/` and don't need git tracking.
-// Setting gitEnabled:false + skipping ensureProjectGit lets `initShadowRepo`
-// fail gracefully into createServer's `degraded` list rather than aborting.
+// Playwright worker tmpdirs have no `.git/` by default. When a suite needs
+// the shadow-repo pipeline (e.g. /api/history, /api/save-version), it sets
+// OK_TEST_GIT_ENABLED=1 and this flag opts the plugin into git mode.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
+const gitEnabledForTest = isTestIsolated && process.env.OK_TEST_GIT_ENABLED === '1';
 
 const KEEPALIVE_GRACE_MS = 10_000;
 
@@ -135,6 +136,8 @@ export function hocuspocusPlugin(): Plugin {
       // matches that contract for fail-fast on missing git.
       if (!isTestIsolated) {
         await ensureProjectGit(PROJECT_ROOT);
+      } else if (gitEnabledForTest) {
+        await ensureProjectGit(CONTENT_DIR);
       }
 
       // Fresh ServerInstance per invocation. The local `currentSrv` is
@@ -146,7 +149,7 @@ export function hocuspocusPlugin(): Plugin {
         contentDir: CONTENT_DIR,
         projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
         contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-        gitEnabled: !isTestIsolated,
+        gitEnabled: !isTestIsolated || gitEnabledForTest,
         includePatterns: contentConfig.include,
         excludePatterns: contentConfig.exclude,
         enableTestRoutes: true,

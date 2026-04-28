@@ -21,7 +21,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
-import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, normalizeBridge, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
@@ -285,6 +285,62 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     expect(
       mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
     ).toBe(serializedBody);
+
+    cleanup();
+  });
+
+  test('canonicalization preserves literal bracket text in Y.Text', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    doc.transact(() => {
+      ytext.insert(0, '[[Page\n');
+    });
+
+    expect(ytext.toString()).not.toContain('\\[');
+    expect(normalizeBridge(ytext.toString())).toBe('[[Page');
+    expect(
+      normalizeBridge(
+        mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+      ),
+    ).toBe('[[Page');
+
+    cleanup();
+  });
+
+  test('canonicalization preserves empty-label inline links in Y.Text', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+
+    doc.transact(() => {
+      ytext.insert(0, 'see []() and [](x)\n');
+    });
+
+    expect(ytext.toString()).toBe('see []() and [](x)\n');
+    expect(
+      normalizeBridge(
+        mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+      ),
+    ).toBe('see []() and [](x)');
+
+    cleanup();
+  });
+
+  test('canonicalization preserves trailing backslash text in Y.Text', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
+    const triple = '\\'.repeat(3);
+
+    doc.transact(() => {
+      ytext.insert(0, `text ${triple}\n`);
+    });
+
+    expect(ytext.toString()).toBe(`text ${triple}\n`);
+    expect(
+      normalizeBridge(
+        mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
+      ),
+    ).toBe(`text ${triple}`);
 
     cleanup();
   });

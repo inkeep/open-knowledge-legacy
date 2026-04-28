@@ -22,6 +22,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { EditorState, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import {
@@ -37,7 +38,6 @@ import {
   createTestServer,
   schema,
   type TestServer,
-  wait,
 } from './test-harness';
 
 const EMPTY: BlockSelection = {

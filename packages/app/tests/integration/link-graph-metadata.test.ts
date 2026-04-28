@@ -7,7 +7,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTestServer, type TestServer, wait } from './test-harness';
+import { setTimeout as wait } from 'node:timers/promises';
+import { createTestServer, type TestServer } from './test-harness';
 
 interface LinkGraphResponse {
   ok: boolean;

@@ -16,6 +16,12 @@ const reactCompilerConfig: PluginOptions = {
 const vitePort = process.env.VITE_PORT ? Number.parseInt(process.env.VITE_PORT, 10) : undefined;
 
 export default defineConfig({
+  // Relative asset paths — `./assets/foo.js` in the built index.html.
+  // Works under both HTTP (`ok ui` serves from root) and `file://` (Electron's
+  // `loadFile()` resolves relative to the bundle path). Default `base: '/'`
+  // silently broke the packaged renderer: under `file://`, `/assets/foo.js`
+  // resolves to the filesystem root and every chunk 404s.
+  base: './',
   plugins: [
     react(),
     babel({

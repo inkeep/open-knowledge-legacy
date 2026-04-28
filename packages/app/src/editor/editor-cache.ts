@@ -2,7 +2,7 @@
  * V2 editor cache — module-level `Map<docName, Entry>` that survives React
  * unmount, SPA navigation, Activity mode flips, StrictMode double-invoke, HMR.
  *
- * Contract (US-001, V2 spec §9.1, §10 D3 / precedent #27(a)):
+ * Contract (precedent #18(g)/(h), #27(a)):
  *
  *   mount{Tiptap,Cm}Editor({ docName, container, factory })
  *     — CACHE HIT: reparent editor.editorView.dom / view.dom into `container`,
@@ -836,6 +836,34 @@ function findProvider(docName: string): HocuspocusProvider | null {
   const cm = cmCache.get(docName);
   if (cm) return cm.provider;
   return null;
+}
+
+/**
+ * Subscribe the editor cache to a pool's eviction events. Returns an
+ * unsubscribe function (call on pool teardown to drop the listener).
+ *
+ * The subscription is the load-bearing mechanism that keeps cached
+ * `Editor` / `EditorView` instances from outliving the Y.Doc they're
+ * bound to. The pool fires an event on every eviction; the cache
+ * subscribes once at construction time so the pool stays free of
+ * editor-cache imports.
+ *
+ * The cache must be subscribed BEFORE the pool can fire any eviction
+ * event. The intended call site is right after `new ProviderPool(...)`
+ * in `DocumentContext.tsx`, on the `getPool(collabUrl)` path.
+ *
+ * Safe to call multiple times (idempotent on the underlying Set). The
+ * unsubscribe closure captures the specific listener identity, so
+ * calling unsubscribe doesn't tear down listeners registered by other
+ * callers.
+ */
+export function subscribePoolEviction(pool: {
+  onEvict: (cb: (docName: string) => void) => () => void;
+}): () => void {
+  return pool.onEvict((docName) => {
+    evictTiptapEditor(docName);
+    evictCmEditor(docName);
+  });
 }
 
 // ---------------------------------------------------------------------------

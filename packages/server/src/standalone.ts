@@ -1,14 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import { Hocuspocus } from '@hocuspocus/server';
+import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
@@ -64,6 +67,7 @@ import {
   saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
@@ -114,6 +118,32 @@ export interface ServerOptions {
    * runtime that launched this server — necessary in dev (bun + .ts entry).
    */
   localOpCliArgs?: string[];
+  /**
+   * Server kind written into the lock metadata. `interactive` (default) for
+   * user-facing boots; `mcp-spawned` for the MCP detach-spawn path. Desktop
+   * attach validation refuses to attach to non-interactive locks.
+   */
+  lockKind?: 'interactive' | 'mcp-spawned';
+  /**
+   * Pid of the spawning process, written into the lock metadata. For
+   * `mcp-spawned`: the MCP server's pid. For `interactive`: the user-facing
+   * host pid. Optional — desktop's parent-liveness gate skips when absent.
+   */
+  parentPid?: number;
+  /**
+   * Skip the durable state-manifest pre-flight gate
+   * (`assertCompatibleStateManifest` from `state-manifest.ts`). Default `false`.
+   *
+   * Production paths (CLI `ok start`, Electron utility, Vite dev plugin) leave
+   * this `false` so an incompatible cold start fails loud before the server
+   * touches the shadow repo.
+   *
+   * The integration test harness passes `true` because each test allocates a
+   * fresh tmpdir, so the manifest gate has nothing meaningful to assert and
+   * the writes would just generate noise across thousands of tmpdirs.
+   * (Resolves SPEC Q3 under D14.)
+   */
+  skipStateManifestCheck?: boolean;
 }
 
 export interface ServerInstance {
@@ -123,6 +153,17 @@ export interface ServerInstance {
   agentFocusBroadcaster: AgentFocusBroadcaster;
   agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
+  /**
+   * Random UUID generated once per `createServer()` call. Advertised to
+   * clients via `GET /api/server-info` + the `__system__` CC1 `server-info`
+   * channel. Clients cache the last-observed ID and include it in the
+   * `expectedServerInstanceId` field of their auth token on every connect —
+   * `onAuthenticate` rejects on mismatch, forcing a clean client recycle
+   * before Yjs sync can merge stale-client state with a post-restart
+   * server Y.Doc. Part of the CRDT server-restart recovery defense (see
+   * `reports/crdt-server-restart-recovery/REPORT.md`).
+   */
+  readonly serverInstanceId: string;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -179,6 +220,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
     localOpCliArgs,
+    skipStateManifestCheck = false,
   } = options;
 
   const log = getLogger('server');
@@ -189,6 +231,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   // bypasses bootServer and enters createServer directly).
   initTelemetry();
 
+  // Generated once per process. Advertised to clients so they can detect
+  // restart-across-reconnect before Yjs sync merges stale state. See the
+  // field docstring on ServerInstance.serverInstanceId for the full
+  // defense-in-depth flow.
+  const serverInstanceId = randomUUID();
+
   // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
   // HTTP listen, etc.). Collides fast with another running server in the same
   // contentDir. Port may be 0 here — the CLI rewrites it post-listen via
@@ -197,7 +245,39 @@ export function createServer(options: ServerOptions): ServerInstance {
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
+    kind: options.lockKind ?? 'interactive',
+    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
+    // Every server booted through `createServer` wires Hocuspocus + WS
+    // upgrade in `boot.ts`. The capability flag lets future variants
+    // (e.g. an HTTP-only relay) advertise differently.
+    capabilities: ['http', 'ws'],
   });
+
+  // Durable state-manifest gate (specs/2026-04-24-cross-install-version-handshake
+  // §6.2 + D14). Runs AFTER lock acquisition so two cold-starting binaries
+  // serialize through the lock first, then the loser fails fast on
+  // ProcessLockCollisionError before reaching the manifest check. Runs BEFORE
+  // any shadow-repo or persistence side effect so an incompatible cold start
+  // refuses to boot before any durable mutation.
+  //
+  // Skipped when the caller passes `skipStateManifestCheck: true` — used by
+  // the integration test harness, which allocates a fresh tmpdir per test
+  // (no pre-existing state to gate on; writes would just generate noise
+  // across thousands of throwaway content dirs). Resolves SPEC Q3 under D14.
+  //
+  // On throw, release the lock before propagating so other processes can
+  // proceed (matches the cleanup path below for synchronous-init failures).
+  if (!skipStateManifestCheck) {
+    try {
+      assertCompatibleStateManifest({
+        lockDir,
+        shadowRepoDir: resolveShadowDir(projectDir),
+      });
+    } catch (err) {
+      releaseServerLock(lockDir);
+      throw err;
+    }
+  }
 
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
@@ -209,7 +289,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
   let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
-  // Mutable principal holder — populated in initAsync (D50, US-024)
+  // Mutable principal holder — populated by the async load in initAsync.
   let loadedPrincipal: Principal | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
@@ -242,6 +322,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       // cc1Broadcaster is initialized after persistence but captured by
       // closure reference — the callback always sees the latest value.
       onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
+      // Emit CC1 ch:'disk-ack' after each successful L1 write so clients
+      // can advance their `lastDiskAckedSV` watermark. Same closure-deferred
+      // pattern as `onAgentCommit` — broadcaster is initialized after
+      // persistence but captured by reference.
+      onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -263,14 +348,13 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
-    // D50 / US-024: Browser tabs supply { principalId, tabSessionId } via token.
+    // Browser tabs supply { principalId, tabSessionId } via the auth token.
     // onAuthenticate parses the JSON token and hoists identity into connection
     // context so persistence.resolveWriterFromOrigin sees source:'connection'
     // with ctx.principalId set. Missing or invalid tokens are silently ignored
     // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
     // like test harness and MCP never send tokens).
     //
-    // Post-QA review fix (principalId-token-unverified, Consider):
     // The token is unauthenticated — a rogue browser tab (or a page that
     // discovers the localhost port + passes the Origin allowlist) could claim
     // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
@@ -279,59 +363,147 @@ export function createServer(options: ServerOptions): ServerInstance {
     // This closes attribution-forgery on the single-user loopback deployment
     // without requiring a signed token. When multi-principal support is ever
     // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
-    const principalAuthExtension: Extension = {
+    const principalAuthExtension: Extension & { __kind: 'principal-auth' } = {
+      // Named marker so test code can find THIS extension specifically rather
+      // than "the first extension with an onAuthenticate hook" — future
+      // additions of other onAuthenticate-carrying extensions won't silently
+      // break identity-based extraction.
+      __kind: 'principal-auth',
       async onAuthenticate(payload) {
-        try {
-          const tokenStr = payload.token;
-          if (!tokenStr) return;
-          const parsed = JSON.parse(tokenStr) as Record<string, unknown>;
-          const ctx = payload.context as Record<string, unknown>;
-          if (typeof parsed.principalId === 'string') {
-            // Pin to loaded principal when the claim matches; ignore on mismatch.
-            if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
-              ctx.principalId = loadedPrincipal.id;
-            } else if (loadedPrincipal) {
-              // Claim doesn't match — log at warn and omit principalId so the
-              // write falls through to SERVICE_WRITER. Preserves observability
-              // without letting the claim through.
-              console.warn(
-                JSON.stringify({
-                  event: 'principal-token-mismatch',
-                  claimed: parsed.principalId,
-                  loaded: loadedPrincipal.id,
-                }),
-              );
-            }
-            // When loadedPrincipal is null (not yet loaded), accept the claim
-            // — the async load is best-effort and browser writes need a writer
-            // ID even in the brief pre-load window. Classified writer fallback
-            // happens via resolveWriterFromOrigin when loaded fields aren't
-            // available for display-name lookup.
-            else {
-              ctx.principalId = parsed.principalId;
-            }
-          }
-          if (typeof parsed.tabSessionId === 'string') {
-            ctx.tabSessionId = parsed.tabSessionId;
-          }
-          ctx.kind = 'human';
-        } catch {
-          // Invalid/missing token — connection proceeds without principal context
+        const tokenStr = payload.token;
+        // Route the parse through the Zod schema so the v3→v4 forward-compat
+        // story stays honest (fields we haven't seen yet survive via
+        // `.loose()`). Legacy untokened clients and malformed tokens both
+        // return `undefined` — we continue through the existing accept path.
+        const parsed = parseHocuspocusAuthToken(tokenStr);
+
+        // CRDT server-restart recovery: if the client claimed a specific
+        // serverInstanceId and it doesn't match OUR instance ID, throw with
+        // `reason: 'server-instance-mismatch'` so the client's
+        // `authenticationFailed` handler can recycle all providers BEFORE
+        // any Yjs sync runs (which would merge ghost items under the stale
+        // clientID — the root cause this defends).
+        // Empty-string claim is treated as absent (matches client-side
+        // `buildAuthToken` behavior). Legacy clients without the field
+        // are accepted unconditionally for backward compat.
+        const claimed = parsed?.expectedServerInstanceId;
+        if (typeof claimed === 'string' && claimed.length > 0 && claimed !== serverInstanceId) {
+          throw new HocuspocusAuthRejection(
+            'server-instance-mismatch',
+            `server instance mismatch: client claimed ${claimed}, this server is ${serverInstanceId}`,
+          );
         }
+
+        // Cross-branch invalidation late-join backstop. Mirrors the
+        // expectedServerInstanceId pattern. CC1 `branch-switched` is a
+        // stateless broadcast with no replay; clients offline during the
+        // emit, or fresh tabs restored from stale-branch IDB, would
+        // otherwise re-sync against the new branch with branch-A items
+        // still in IDB. Comparing the claimed branch against the live
+        // `getActiveBranch()` and rejecting on mismatch routes those
+        // clients through `handleBranchSwitched` BEFORE Yjs sync can
+        // union-merge stale-branch state. Empty / absent claim = legacy
+        // path (accepted unconditionally).
+        const claimedBranch = parsed?.expectedBranch;
+        const currentBranch = getActiveBranch();
+        if (
+          typeof claimedBranch === 'string' &&
+          claimedBranch.length > 0 &&
+          claimedBranch !== currentBranch
+        ) {
+          throw new HocuspocusAuthRejection(
+            'branch-mismatch',
+            `branch mismatch: client claimed ${claimedBranch}, server is on ${currentBranch}`,
+          );
+        }
+
+        if (!parsed) return;
+        const ctx = payload.context as Record<string, unknown>;
+        if (typeof parsed.principalId === 'string') {
+          // Pin to loaded principal when the claim matches; ignore on mismatch.
+          if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
+            ctx.principalId = loadedPrincipal.id;
+          } else if (loadedPrincipal) {
+            // Claim doesn't match — log at warn and omit principalId so the
+            // write falls through to SERVICE_WRITER. Preserves observability
+            // without letting the claim through.
+            console.warn(
+              JSON.stringify({
+                event: 'principal-token-mismatch',
+                claimed: parsed.principalId,
+                loaded: loadedPrincipal.id,
+              }),
+            );
+          }
+          // When loadedPrincipal is null (not yet loaded), accept the claim
+          // — the async load is best-effort and browser writes need a writer
+          // ID even in the brief pre-load window. Classified writer fallback
+          // happens via resolveWriterFromOrigin when loaded fields aren't
+          // available for display-name lookup.
+          else {
+            ctx.principalId = parsed.principalId;
+          }
+        }
+        if (typeof parsed.tabSessionId === 'string') {
+          ctx.tabSessionId = parsed.tabSessionId;
+        }
+        ctx.kind = 'human';
       },
     };
     hocuspocus.configuration.extensions.push(principalAuthExtension);
+
+    // CC1 forgery guard. Hocuspocus's MessageReceiver relays every
+    // BroadcastStateless message from any peer to all peers on the
+    // same document with NO source filter (MessageReceiver.ts:88-94).
+    // The `__system__` doc is server→client only by design — every CC1
+    // channel (`server-info`, `branch-switched`, `disk-ack`, derived-
+    // view) flows out via the server's own DirectConnection through
+    // Document.broadcastStateless. A malicious client that opens a
+    // `__system__` WebSocket and sends a BroadcastStateless can forge
+    // any payload dispatchCC1Stateless accepts: a forged
+    // `branch-switched` would wipe IDB on every other peer, and a
+    // forged `disk-ack` would advance lastDiskAckedSV past unsynced
+    // bytes (re-opening the T11 content-loss bug class).
+    //
+    // Reject inbound BroadcastStateless on `__system__` from every
+    // client. The hook throws to abort message dispatch — Hocuspocus's
+    // Connection.ts catches and closes the offending connection,
+    // which is the right outcome (legitimate subscribers only receive,
+    // never broadcast). The IncomingMessage decoder reads the
+    // documentName prefix first, then the message type varUint.
+    const systemDocBroadcastGuard: Extension & { __kind: 'system-doc-broadcast-guard' } = {
+      __kind: 'system-doc-broadcast-guard',
+      async beforeHandleMessage(payload) {
+        if (payload.documentName !== SYSTEM_DOC_NAME) return;
+        const message = new IncomingMessage(payload.update);
+        message.readVarString();
+        const type = message.readVarUint();
+        if (type === MessageType.BroadcastStateless) {
+          throw new Error(
+            `inbound BroadcastStateless on ${SYSTEM_DOC_NAME} rejected — server-only channel`,
+          );
+        }
+      },
+    };
+    hocuspocus.configuration.extensions.push(systemDocBroadcastGuard);
 
     const apiExtension = createApiExtension({
       hocuspocus,
       sessionManager,
       contentDir,
+      serverInstanceId,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      // CC1 broadcaster is initialized after persistence but captured by
+      // closure reference (same pattern as `onAgentCommit` + `onDiskFlush`
+      // above). `getLatestDiskAckSVsAsBase64()` returns `{}` when the
+      // server has flushed nothing yet, matching the schema's
+      // empty-object case.
+      getDiskAckSVs: () => cc1Broadcaster?.getLatestDiskAckSVsAsBase64() ?? {},
       contentRoot,
       backlinkIndex,
       signalChannel,
@@ -994,7 +1166,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
-    // Load (or create) the principal record — non-blocking best-effort (D50, US-024)
+    // Load (or create) the principal record — non-blocking best-effort.
     try {
       loadedPrincipal = await loadPrincipal(contentDir);
       log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
@@ -1133,6 +1305,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     // any browser connects. Must happen before the file watcher starts.
     try {
       systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+      // Emit the server-info signal once __system__ is materialized so any
+      // late-arriving client that subscribes to the channel gets the current
+      // serverInstanceId (part of the CRDT restart-recovery defense — clients
+      // cache this + claim it in their auth token on every connect).
+      cc1Broadcaster?.emitServerInfo(serverInstanceId, getActiveBranch());
     } catch (err) {
       log.error(
         { err },
@@ -1140,6 +1317,18 @@ export function createServer(options: ServerOptions): ServerInstance {
       );
       degraded.push('cc1-push');
     }
+
+    // Reset branch-scoped state to match THIS project's current HEAD before
+    // anything reads/writes it. `persistence.activeBranch` and the
+    // `BacklinkIndex.activeBranch` are mutable state; in single-process test
+    // runners (bun test) these leak across test files, so a prior test that
+    // triggered `switchReconciledBaseScope` leaves state at the wrong branch
+    // for the next server's reads. Detecting the actual HEAD here and
+    // normalizing both scopes in lock-step closes the leak.
+    const gitDirForInit = resolveGitDir(projectDir);
+    const startupBranch = gitDirForInit ? (readBranchFromHead(gitDirForInit) ?? 'main') : 'main';
+    switchReconciledBaseScope(startupBranch);
+    backlinkIndex.switchBranch(startupBranch);
 
     // Start file watcher (with content filter for gitignore + config exclude)
     try {
@@ -1391,6 +1580,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                 log.error({ err: e }, '[branch-switch] detached cleanup failed');
               }
             }
+
+            // Notify connected clients that the branch scope changed so they can
+            // invalidate their IDB persistence caches. Emit AFTER all server-side
+            // state transitions (Y.Doc reset, backlink rebuild, WIP restore,
+            // detached-ref cleanup) so a client's recycle-triggered reconnect
+            // synchronizes against the new branch's fully-settled state.
+            cc1Broadcaster?.emitBranchSwitched(newBranch);
           }
 
           // Record upstream import if HEAD moved AND content files were affected.
@@ -1399,7 +1595,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           // `git rebase`, or `git checkout` produce buffered file-watcher events, so
           // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
           if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
-            const contentRootForShadow = contentRoot ?? 'content';
+            const contentRootForShadow = contentRoot ?? '.';
             try {
               const sha = await commitUpstreamImport(
                 shadowRef.current,
@@ -1464,6 +1660,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
     contentFilter,
+    serverInstanceId,
     destroy,
     ready,
     degraded,

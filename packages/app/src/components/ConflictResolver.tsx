@@ -262,7 +262,7 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
             )}
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto subtle-scrollbar">
             {fetchError ? (
               <div className="px-4 py-6 text-sm text-center space-y-2">
                 <p className="text-destructive">

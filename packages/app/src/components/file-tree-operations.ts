@@ -1,21 +1,23 @@
-import type { DocEntry, TreeNode } from '@/components/file-tree-utils';
+import type { DocEntry } from '@/components/file-tree-utils';
 
 export interface RenamedDocMapping {
   fromDocName: string;
   toDocName: string;
 }
 
-export type FileTreeTarget = Pick<TreeNode, 'kind' | 'path' | 'name' | 'docExt'>;
+export interface FileTreeTarget {
+  kind: 'folder' | 'file';
+  path: string;
+  name: string;
+}
 
-export function normalizeRenameValue(_kind: TreeNode['kind'], value: string): string {
+export function normalizeRenameValue(_kind: FileTreeTarget['kind'], value: string): string {
   // PRESERVE user-typed extension when present — it's the signal the server
   // uses to detect an extension-change rename (e.g., `foo.md` → `foo.mdx`).
   // The rename input is pre-filled with the extension-less path, so a plain
   // edit produces a plain bare name; typing a supported extension opts into
   // the extension-change path via `resolveContentEntryPath`'s explicit-ext
-  // detection in `packages/server/src/api-extension.ts`. The `_kind` param
-  // is preserved in the signature for API stability; the normalize logic is
-  // now kind-agnostic (folder names never carry .md/.mdx extensions anyway).
+  // detection in `packages/server/src/api-extension.ts`.
   return value.trim();
 }
 

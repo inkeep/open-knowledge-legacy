@@ -10,8 +10,11 @@
  *   - `runWithToast` rejection path (toast.error called with resolved message)
  *   - `runWithToast` non-Error rejection falls back to the provided fallback
  *   - setError(null) clear-at-start does NOT surface as a toast
+ *   - Source-level regression guards on the "Switch Project…" affordance
  */
 import { describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('ProjectSwitcher module', () => {
   test('Component module imports cleanly', async () => {
@@ -79,5 +82,49 @@ describe('runWithToast (IPC rejection → toast feedback)', () => {
     // sonner's no-op-when-no-Toaster-mounted behavior in bun test.
     const { runWithToast } = await import('./ProjectSwitcher');
     await expect(runWithToast(() => Promise.resolve(), 'fallback')).resolves.toBeUndefined();
+  });
+});
+
+describe('Switch Project affordance (source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'ProjectSwitcher.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  test('imports the shared label constant', () => {
+    expect(src).toContain('SWITCH_PROJECT_LABEL_WITH_ELLIPSIS');
+    expect(src).toContain("from '@/lib/desktop-labels'");
+  });
+
+  test('renders the Switch Project dropdown item with the correct testid', () => {
+    expect(src).toContain('data-testid="project-switcher-switch-project"');
+  });
+
+  test('Switch Project item: onSelect routes through onSwitchProject which calls bridge.navigator.open()', () => {
+    // Anchored on the exact opening tag carrying our testid, so a refactor
+    // that crossed onSelect onto a sibling DropdownMenuItem would fail the
+    // first assertion below rather than silently passing because
+    // `bridge.navigator.open()` exists somewhere in the file.
+    const tagRe = /<DropdownMenuItem\b[^>]*data-testid="project-switcher-switch-project"[^>]*>/;
+    const tag = src.match(tagRe)?.[0];
+    expect(
+      tag,
+      'DropdownMenuItem with project-switcher-switch-project testid not found',
+    ).toBeTruthy();
+    expect(tag).toContain('onSelect={onSwitchProject}');
+
+    // The onSwitchProject handler body must call bridge.navigator.open().
+    // Lazy [\s\S]*? matches up to the first `};` — the function close —
+    // because the body has no nested `}` characters.
+    const handlerRe = /const onSwitchProject = \(\) => \{[\s\S]*?\};/;
+    const handler = src.match(handlerRe)?.[0];
+    expect(handler, 'onSwitchProject handler definition not found').toBeTruthy();
+    expect(handler).toMatch(/bridge\.navigator\.open\(\)/);
+  });
+
+  test('the new item sits BELOW "Open folder…" (Obsidian-pattern position)', () => {
+    const openFolderIdx = src.indexOf('data-testid="project-switcher-open-folder"');
+    const switchProjectIdx = src.indexOf('data-testid="project-switcher-switch-project"');
+    expect(openFolderIdx).toBeGreaterThan(0);
+    expect(switchProjectIdx).toBeGreaterThan(0);
+    expect(switchProjectIdx).toBeGreaterThan(openFolderIdx);
   });
 });

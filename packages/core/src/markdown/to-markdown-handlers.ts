@@ -32,14 +32,19 @@ type MdastToMarkdownHandlers = {
 
 export const toMarkdownHandlers = {
   /**
-   * text: strip `&` (before [#A-Za-z]) and `<` from the unsafe list.
-   * Without this, every literal `&` or `<` in prose gets backslash-escaped,
-   * violating NG5 storage-layer fidelity.
+   * text: strip `&` (before [#A-Za-z]), `<`, `[`, and `(` from the unsafe list.
+   * Without this, literal prose characters that already round-trip as plain
+   * text get backslash-escaped during serialization, degrading source-mode UX
+   * without adding fidelity value.
    *
    * Also handles D20 escapeMark: if the text carries data.escapedChars,
    * re-emit backslash sequences for structurally-ambiguous escapes.
    */
   text(node, _parent, state, info) {
+    if (typeof node.data?.sourceRaw === 'string') {
+      return node.data.sourceRaw;
+    }
+
     // D20: if position-walker tagged escaped chars, reconstruct source form
     if (node.data?.escapedChars?.length) {
       const value: string = node.value ?? '';
@@ -548,6 +553,11 @@ function safeText(state: State, value: string, info: Info): string {
   state.unsafe = originalUnsafe.filter((u) => {
     if (u.character === '&' && u.after === '[#A-Za-z]') return false;
     if (u.character === '<') return false;
+    // Plain text `[` / `(` is safe here: complete links/wiki-links parse into
+    // dedicated mdast nodes, while incomplete bracket constructs should remain
+    // literal prose instead of serializing with surprising backslashes.
+    if (u.character === '[') return false;
+    if (u.character === '(') return false;
     return true;
   });
   let result: string;

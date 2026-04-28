@@ -4,6 +4,7 @@ import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -264,92 +265,96 @@ export function NewItemDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {kind === 'folder' && (
-            <div>
-              <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
-                Folder name
-              </label>
-              <Input
-                ref={folderInputRef}
-                id={folderInputId}
-                value={folderName}
-                onChange={(e) => {
-                  setFolderName(e.target.value);
-                  setError(null);
-                }}
-                placeholder="folder-name"
-                autoFocus
-                aria-describedby={
-                  error && (errorField === 'folder' || errorField === 'form') ? errorId : undefined
-                }
-                aria-invalid={
-                  error && (errorField === 'folder' || errorField === 'form') ? true : undefined
-                }
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const folderErr = validatePath(folderName.trim());
-                    if (folderErr) {
-                      setError(`Folder name: ${folderErr}`);
-                      setErrorField('folder');
-                      return;
-                    }
-                    fileInputRef.current?.focus();
+        <DialogBody>
+          <div className="space-y-3">
+            {kind === 'folder' && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
+                  Folder name
+                </label>
+                <Input
+                  ref={folderInputRef}
+                  id={folderInputId}
+                  value={folderName}
+                  onChange={(e) => {
+                    setFolderName(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder="folder-name"
+                  autoFocus
+                  aria-describedby={
+                    error && (errorField === 'folder' || errorField === 'form')
+                      ? errorId
+                      : undefined
                   }
-                }}
-              />
-            </div>
-          )}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
-              {kind === 'folder' ? 'First file name' : 'File name'}
-            </label>
-            <div className="flex items-stretch gap-2">
-              <Input
-                ref={fileInputRef}
-                id={fileInputId}
-                value={fileName}
-                onChange={(e) => handleFileNameChange(e.target.value)}
-                placeholder="my-note"
-                autoFocus={kind === 'file'}
-                aria-describedby={
-                  error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
-                }
-                aria-invalid={
-                  error && (errorField === 'file' || errorField === 'form') ? true : undefined
-                }
-                onFocus={(e) => selectBasename(e.currentTarget)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
-                }}
-                className="flex-1"
-              />
-              <ToggleGroup
-                type="single"
-                value={fileExtension}
-                onValueChange={(v) => {
-                  if (v === '.md' || v === '.mdx') setFileExtension(v);
-                }}
-                variant="outline"
-                size="sm"
-                aria-label="File extension"
-                className="shrink-0"
-              >
-                {SUPPORTED_EXTENSIONS.map((ext) => (
-                  <ToggleGroupItem key={ext} value={ext} aria-label={`Use ${ext} extension`}>
-                    {ext}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+                  aria-invalid={
+                    error && (errorField === 'folder' || errorField === 'form') ? true : undefined
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const folderErr = validatePath(folderName.trim());
+                      if (folderErr) {
+                        setError(`Folder name: ${folderErr}`);
+                        setErrorField('folder');
+                        return;
+                      }
+                      fileInputRef.current?.focus();
+                    }
+                  }}
+                />
+              </div>
+            )}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
+                {kind === 'folder' ? 'First file name' : 'File name'}
+              </label>
+              <div className="flex items-stretch gap-2">
+                <Input
+                  ref={fileInputRef}
+                  id={fileInputId}
+                  value={fileName}
+                  onChange={(e) => handleFileNameChange(e.target.value)}
+                  placeholder="my-note"
+                  autoFocus={kind === 'file'}
+                  aria-describedby={
+                    error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
+                  }
+                  aria-invalid={
+                    error && (errorField === 'file' || errorField === 'form') ? true : undefined
+                  }
+                  onFocus={(e) => selectBasename(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();
+                  }}
+                  className="flex-1"
+                />
+                <ToggleGroup
+                  type="single"
+                  value={fileExtension}
+                  onValueChange={(v) => {
+                    if (v === '.md' || v === '.mdx') setFileExtension(v);
+                  }}
+                  variant="outline"
+                  size="sm"
+                  aria-label="File extension"
+                  className="shrink-0"
+                >
+                  {SUPPORTED_EXTENSIONS.map((ext) => (
+                    <ToggleGroupItem key={ext} value={ext} aria-label={`Use ${ext} extension`}>
+                      {ext}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+              {error && (
+                <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
+                  {error}
+                </p>
+              )}
             </div>
           </div>
-          {error && (
-            <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
-              {error}
-            </p>
-          )}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button

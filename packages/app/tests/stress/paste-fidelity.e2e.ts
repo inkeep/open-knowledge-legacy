@@ -1175,6 +1175,30 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${baseURL}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
       method: 'POST',
     });
+    // Client-persistence (y-indexeddb) preserves Y.Doc state in
+    // `ok-ydoc:${branch}:${docName}` across reloads. test-reset wipes
+    // server state but cannot reach the browser's IDB; without explicit
+    // cleanup the client hydrates seed content from IDB and the
+    // post-reset doc never empties out. Prefix-agnostic deletion: walk
+    // every IDB whose name matches `ok-ydoc:.*:${docName}` regardless
+    // of branch. Mirrors what CC1 `branch-switched` does in production.
+    await page.evaluate(async (name) => {
+      const dbs = await indexedDB.databases();
+      const target = new RegExp(`^ok-ydoc:.*:${name}$`);
+      await Promise.all(
+        dbs
+          .filter((d) => d.name !== undefined && target.test(d.name))
+          .map(
+            (d) =>
+              new Promise<void>((resolve) => {
+                const req = indexedDB.deleteDatabase(d.name as string);
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                req.onblocked = () => resolve();
+              }),
+          ),
+      );
+    }, docName);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
@@ -1227,6 +1251,26 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await fetch(`${baseURL}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
       method: 'POST',
     });
+    // Drop the client-persistence IDB row(s) alongside the server reset
+    // — see prior test for rationale. Prefix-agnostic deletion (any
+    // observed-branch namespace).
+    await page.evaluate(async (name) => {
+      const dbs = await indexedDB.databases();
+      const target = new RegExp(`^ok-ydoc:.*:${name}$`);
+      await Promise.all(
+        dbs
+          .filter((d) => d.name !== undefined && target.test(d.name))
+          .map(
+            (d) =>
+              new Promise<void>((resolve) => {
+                const req = indexedDB.deleteDatabase(d.name as string);
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                req.onblocked = () => resolve();
+              }),
+          ),
+      );
+    }, docName);
     // Force full reload — see the prior test's comment; same-hash goto is a
     // no-op and lets ProviderPool replay the cached pre-reset Y.Doc.
     await page.reload({ waitUntil: 'domcontentloaded' });

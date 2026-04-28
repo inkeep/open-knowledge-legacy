@@ -116,6 +116,7 @@ export interface RawMdxFallbackMdast {
 declare module 'mdast' {
   interface TextData {
     escapedChars?: Array<{ offset: number; char: string }>;
+    sourceRaw?: string;
   }
   interface EmphasisData {
     sourceDelimiter?: string;
@@ -125,6 +126,10 @@ declare module 'mdast' {
   }
   interface LinkData {
     sourceStyle?: string;
+    sourceRaw?: string;
+  }
+  interface LinkReferenceData {
+    sourceRaw?: string;
   }
   interface ThematicBreakData {
     sourceRaw?: string;

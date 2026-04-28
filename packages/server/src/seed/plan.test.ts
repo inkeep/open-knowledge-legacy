@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { planSeed } from './plan.ts';
 import { STARTER_FOLDERS } from './starter.ts';
-import { SEED_CONFIG_FILENAME, SeedPrerequisiteError } from './types.ts';
+import { SEED_CONFIG_FILENAME, SeedPrerequisiteError, SeedRootDirError } from './types.ts';
 
 let testDir: string;
 
@@ -149,6 +149,119 @@ describe('planSeed — partial overlap', () => {
     const plan = await planSeed({ projectDir: testDir });
     expect(plan.configEdits.map((e) => e.folderMatch)).not.toContain('external-sources/**');
     expect(plan.skipped.some((s) => s.path.includes('external-sources/**'))).toBe(true);
+  });
+});
+
+describe('planSeed — rootDir scoping', () => {
+  test('scaffolds starter folders + log.md under a brand-new rootDir', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+
+    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
+    // The root itself comes first, then the three starter folders scoped under it.
+    expect(createdFolders).toEqual([
+      'brain',
+      'brain/external-sources',
+      'brain/research',
+      'brain/articles',
+    ]);
+
+    const createdFiles = plan.created.filter((e) => e.kind === 'file').map((e) => e.path);
+    expect(createdFiles).toEqual(['brain/log.md']);
+
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'brain/external-sources/**',
+      'brain/research/**',
+      'brain/articles/**',
+    ]);
+  });
+
+  test('does not re-create an existing rootDir but still scaffolds children', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    mkdirSync(join(testDir, 'knowledge'), { recursive: true });
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'knowledge' });
+
+    const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
+    expect(createdFolders).not.toContain('knowledge');
+    expect(createdFolders).toContain('knowledge/external-sources');
+    expect(plan.skipped.some((s) => s.path === 'knowledge')).toBe(true);
+  });
+
+  test('rootDir="." is equivalent to the default project-root scaffold', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const a = await planSeed({ projectDir: testDir });
+    const b = await planSeed({ projectDir: testDir, rootDir: '.' });
+    expect(a).toEqual(b);
+  });
+
+  test('normalizes trailing slashes and leading ./ in rootDir', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const a = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    const b = await planSeed({ projectDir: testDir, rootDir: './brain/' });
+    expect(a.created.map((e) => e.path)).toEqual(b.created.map((e) => e.path));
+    expect(a.configEdits.map((e) => e.folderMatch)).toEqual(
+      b.configEdits.map((e) => e.folderMatch),
+    );
+  });
+
+  test('rejects absolute rootDir as SeedRootDirError', async () => {
+    scaffoldOkDir(testDir);
+    await expect(planSeed({ projectDir: testDir, rootDir: '/tmp/escape' })).rejects.toBeInstanceOf(
+      SeedRootDirError,
+    );
+  });
+
+  test('rejects rootDir with .. escape segments as SeedRootDirError', async () => {
+    scaffoldOkDir(testDir);
+    await expect(planSeed({ projectDir: testDir, rootDir: '../sibling' })).rejects.toBeInstanceOf(
+      SeedRootDirError,
+    );
+  });
+
+  test('containment check rejects strings that resolve outside projectDir', async () => {
+    scaffoldOkDir(testDir);
+    // `foo/../..` resolves above projectDir even though `..` is at depth — caught
+    // by the containment check, not the string-shape pre-check.
+    await expect(
+      planSeed({ projectDir: testDir, rootDir: 'foo/bar/../../..' }),
+    ).rejects.toBeInstanceOf(SeedRootDirError);
+  });
+
+  test('rejects rootDir whose first segment matches projectDir prefix without separator', async () => {
+    scaffoldOkDir(testDir);
+    // `<projectDir>foo` (no separator) must not pass as `<projectDir>/foo` — the
+    // `+ sep` guard in the containment check prevents prefix-matching tricks.
+    // We can simulate this only through the string pre-check on absolute paths,
+    // since relative paths always go under projectDir; the test below covers
+    // the absolute case which is the realistic attack shape.
+    await expect(
+      planSeed({ projectDir: testDir, rootDir: `${testDir}foo` }),
+    ).rejects.toBeInstanceOf(SeedRootDirError);
+  });
+
+  test('rootDir config edits only collide with matching-scoped entries', async () => {
+    // An existing unscoped `external-sources/**` entry should NOT cause the
+    // scoped `brain/external-sources/**` to be skipped — they're distinct.
+    scaffoldOkDir(
+      testDir,
+      `folders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Root scaffold\n`,
+    );
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'brain/external-sources/**',
+      'brain/research/**',
+      'brain/articles/**',
+    ]);
+  });
+
+  test('nested rootDir path works', async () => {
+    scaffoldOkDir(testDir, 'content:\n  dir: .\n');
+    const plan = await planSeed({ projectDir: testDir, rootDir: 'areas/personal' });
+    expect(plan.configEdits.map((e) => e.folderMatch)).toEqual([
+      'areas/personal/external-sources/**',
+      'areas/personal/research/**',
+      'areas/personal/articles/**',
+    ]);
   });
 });
 

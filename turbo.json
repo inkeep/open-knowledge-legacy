@@ -9,6 +9,11 @@
       "dependsOn": ["^build", "@inkeep/open-knowledge#build"],
       "outputs": ["out/**"]
     },
+    "dev:electron": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
     "build:desktop:dir": {
       "dependsOn": ["build:desktop"],
       "outputs": ["dist-desktop/**"],
@@ -27,7 +32,7 @@
       "inputs": ["src/**/*.ts", "src/**/*.tsx"]
     },
     "test:integration": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "src/editor/**/*.ts",
@@ -38,7 +43,7 @@
       ]
     },
     "test:conversion": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "src/editor/**/*.ts",
@@ -50,7 +55,7 @@
       ]
     },
     "test:fidelity": {
-      "dependsOn": [],
+      "dependsOn": ["^build"],
       "cache": true,
       "inputs": [
         "tests/fidelity/**/*.ts",

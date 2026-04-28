@@ -122,14 +122,27 @@ describe('buildMenuTemplate', () => {
     expect(clearRecentProjects).toHaveBeenCalledTimes(1);
   });
 
-  test('New Project click dispatches deps.openNavigator()', () => {
+  test('Switch Project click dispatches deps.openNavigator()', () => {
     const openNavigator = mock(() => {});
     const deps = makeDeps({ openNavigator });
     const template = buildMenuTemplate(deps);
-    const newProject = findByLabel(template, 'New Project…');
-    expect(newProject).toBeDefined();
-    (newProject?.click as (() => void) | undefined)?.();
+    const switchProject = findByLabel(template, 'Switch Project…');
+    expect(switchProject).toBeDefined();
+    (switchProject?.click as (() => void) | undefined)?.();
     expect(openNavigator).toHaveBeenCalledTimes(1);
+  });
+
+  test('Switch Project preserves Cmd+Shift+N accelerator (muscle-memory contract)', () => {
+    const template = buildMenuTemplate(makeDeps());
+    const switchProject = findByLabel(template, 'Switch Project…');
+    expect(switchProject?.accelerator).toBe('CmdOrCtrl+Shift+N');
+  });
+
+  test('"New Project…" label no longer appears in any submenu', () => {
+    // Regression guard against partial rename — the old verb was misleading
+    // because the underlying action covers create AND open AND list.
+    const template = buildMenuTemplate(makeDeps());
+    expect(findByLabel(template, 'New Project…')).toBeUndefined();
   });
 
   test('top-level menus include File / Edit / View / Window / Help', () => {

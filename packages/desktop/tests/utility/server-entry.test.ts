@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { KeyringSmokeResult } from '../../src/utility/keyring-smoke.ts';
 import { setupUtility } from '../../src/utility/server-entry.ts';
 
@@ -180,7 +181,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     pollCb?.();
 
     // Allow async shutdown to settle
-    await new Promise((r) => setTimeout(r, 10));
+    await wait(10);
     expect(env.exit).toHaveBeenCalledWith(0);
     void handle;
   });
@@ -213,7 +214,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     await handle.readyPromise;
 
     env.parentPort.fire({ type: 'shutdown' });
-    await new Promise((r) => setTimeout(r, 10));
+    await wait(10);
 
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(env.exit).toHaveBeenCalledWith(0);
@@ -253,7 +254,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     const sigtermHandler = env.signalHandlers.get('SIGTERM');
     expect(sigtermHandler).toBeDefined();
     sigtermHandler?.();
-    await new Promise((r) => setTimeout(r, 10));
+    await wait(10);
 
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(env.exit).toHaveBeenCalledWith(0);
@@ -322,7 +323,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     });
 
     // Auto-smoke is async — give it a microtask window.
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
     expect(writeSmokeResult).toHaveBeenCalledTimes(1);
@@ -366,7 +367,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       writeSmokeResult,
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
     expect(writeSmokeResult).toHaveBeenCalledTimes(1);
@@ -403,7 +404,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       writeSmokeResult,
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
     // No OUT path → no file write
@@ -439,7 +440,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       env: {},
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     expect(runSmoke).not.toHaveBeenCalled();
     expect(env.parentPort.on).toHaveBeenCalled();
@@ -475,7 +476,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
       writeSmokeResult,
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     // Smoke ran and was attempted to write
     expect(runSmoke).toHaveBeenCalledTimes(1);
@@ -513,7 +514,7 @@ describe('setupUtility (IPC handshake + lifecycle)', () => {
     });
 
     env.parentPort.fire({ type: 'debug-keyring-smoke', correlationId: 'abc-123' });
-    await new Promise((r) => setTimeout(r, 5));
+    await wait(5);
 
     expect(runSmoke).toHaveBeenCalledTimes(1);
     expect(env.parentPort.postMessage).toHaveBeenCalledWith({

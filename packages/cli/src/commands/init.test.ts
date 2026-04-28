@@ -1146,7 +1146,7 @@ describe('runInit', () => {
       // with empty stderr; exit code null) and times out the 5s budget.
       // The git-init wiring under test is independent of skill install,
       // so the hermetic stub is the right scope.
-      const result = await runInitForTest();
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(true);
       expect(existsSync(join(testDir, '.git/HEAD'))).toBe(true);
@@ -1161,7 +1161,7 @@ describe('runInit', () => {
     it('pre-existing .git/ → runInit does not re-init and reports didGitInit=false', async () => {
       mkdirSync(join(testDir, '.git'));
 
-      const result = await runInitForTest();
+      const result = await runInitForTest({ editors: ['claude'] });
 
       expect(result.didGitInit).toBe(false);
       // formatInitResult omits the disclosure line
@@ -1176,9 +1176,9 @@ describe('runInit', () => {
         // Import the server error type lazily to keep the import surface minimal
         // for other tests in this file.
         const { ProjectGitInitError } = await import('@inkeep/open-knowledge-server');
-        await expect(
-          runInit({ cwd: testDir, home: fakeHome, editors: ['claude'] }),
-        ).rejects.toBeInstanceOf(ProjectGitInitError);
+        await expect(runInitForTest({ editors: ['claude'] })).rejects.toBeInstanceOf(
+          ProjectGitInitError,
+        );
       } finally {
         process.env.PATH = originalPath;
       }

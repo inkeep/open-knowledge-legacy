@@ -19,6 +19,15 @@ export {
   safeSubdir,
 } from './api-extension.ts';
 export {
+  HOCUSPOCUS_AUTH_REJECTION_REASONS,
+  HocuspocusAuthRejection,
+  type HocuspocusAuthRejectionReason,
+  type HocuspocusAuthToken,
+  HocuspocusAuthTokenSchema,
+  isHocuspocusAuthRejectionReason,
+  parseHocuspocusAuthToken,
+} from './auth-token-schema.ts';
+export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,
@@ -44,7 +53,6 @@ export {
 export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
-  type CC1Signal,
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
@@ -133,7 +141,9 @@ export {
   ProcessLockCollisionError,
   type ProcessLockHandle,
   type ProcessLockMetadata,
+  type ReadProcessLockResult,
   readProcessLock,
+  readProcessLockDetailed,
   releaseProcessLock,
   updateProcessLockPort,
 } from './process-lock.ts';
@@ -169,6 +179,7 @@ export {
   SEED_CONFIG_FILENAME,
   type SeedOptions,
   SeedPrerequisiteError,
+  SeedRootDirError,
   type SkipEntry,
   STARTER_FOLDERS,
   type StarterFolder,
@@ -226,6 +237,18 @@ export {
 } from './skill-install.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
+  assertCompatibleStateManifest,
+  detectProjectShape,
+  type ProjectShape,
+  type ReadStateManifestResult,
+  readStateManifest,
+  STATE_MANIFEST_FILENAME,
+  StateManifestError,
+  type StateManifestRecord,
+  type StateManifestWriter,
+  writeStateManifest,
+} from './state-manifest.ts';
+export {
   getMeter,
   getTracer,
   initTelemetry,
@@ -242,3 +265,4 @@ export {
   type UiLockMetadata,
   updateUiLockPort,
 } from './ui-lock.ts';
+export { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
