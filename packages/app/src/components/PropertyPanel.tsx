@@ -38,42 +38,89 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [overrides, setOverrides] = useState<Record<string, FrontmatterType>>({});
   const [adding, setAdding] = useState<AddDraft | null>(null);
   const [renaming, setRenaming] = useState<RenameDraft | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
-  async function commitPatch(
-    patch: Record<string, FrontmatterValue | null>,
-  ): Promise<{ ok: boolean; status: number }> {
+  async function commitPatch(patch: Record<string, FrontmatterValue | null>): Promise<PatchResult> {
     try {
       const res = await fetch('/api/frontmatter-patch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docName, patch }),
       });
-      if (!res.ok) {
-        console.warn('[PropertyPanel] frontmatter-patch failed', { status: res.status });
-      }
-      return { ok: res.ok, status: res.status };
+      if (res.ok) return { ok: true, status: res.status };
+      let parsed: { error?: unknown; fieldErrors?: unknown } = {};
+      try {
+        parsed = (await res.json()) as { error?: unknown; fieldErrors?: unknown };
+      } catch {}
+      const error = typeof parsed.error === 'string' ? parsed.error : undefined;
+      const fieldErrors =
+        parsed.fieldErrors && typeof parsed.fieldErrors === 'object'
+          ? (parsed.fieldErrors as Record<string, string>)
+          : undefined;
+      console.warn('[PropertyPanel] frontmatter-patch failed', {
+        status: res.status,
+        error,
+      });
+      return { ok: false, status: res.status, error, fieldErrors };
     } catch (err) {
       console.warn('[PropertyPanel] frontmatter-patch network error', { err });
-      return { ok: false, status: 0 };
+      return { ok: false, status: 0, error: 'Network error' };
     }
   }
 
+  function clearError(key: string) {
+    setErrors((prev) => {
+      if (!Object.hasOwn(prev, key)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function setErrorForKeys(result: PatchResult, keys: readonly string[]) {
+    if (result.ok) return;
+    const generic = result.error ?? `HTTP ${result.status || 'network'}`;
+    const fieldErrors = result.fieldErrors ?? {};
+    setErrors((prev) => {
+      const next = { ...prev };
+      for (const key of keys) {
+        next[key] = fieldErrors[key] ?? generic;
+      }
+      return next;
+    });
+    setResetCounters((prev) => {
+      const next = { ...prev };
+      for (const key of keys) {
+        next[key] = (next[key] ?? 0) + 1;
+      }
+      return next;
+    });
+  }
+
   async function commitProperty(key: string, value: FrontmatterValue) {
-    await commitPatch({ [key]: value });
+    clearError(key);
+    const result = await commitPatch({ [key]: value });
+    setErrorForKeys(result, [key]);
   }
 
   async function removeProperty(key: string) {
-    await commitPatch({ [key]: null });
+    clearError(key);
+    const result = await commitPatch({ [key]: null });
+    setErrorForKeys(result, [key]);
   }
 
-  async function renameProperty(oldKey: string, newKey: string): Promise<boolean> {
-    if (oldKey === newKey) return true;
-    if (Object.hasOwn(map, newKey)) return false;
+  async function renameProperty(oldKey: string, newKey: string): Promise<PatchResult> {
+    if (oldKey === newKey) return { ok: true, status: 200 };
+    if (Object.hasOwn(map, newKey)) {
+      return { ok: false, status: 0, error: `Property "${newKey}" already exists` };
+    }
     const value = map[oldKey];
-    if (value === undefined) return false;
-    const result = await commitPatch({ [oldKey]: null, [newKey]: value });
-    return result.ok;
+    if (value === undefined) {
+      return { ok: false, status: 0, error: `Property "${oldKey}" not found` };
+    }
+    return commitPatch({ [oldKey]: null, [newKey]: value });
   }
 
   function setType(key: string, nextType: FrontmatterType) {
@@ -123,12 +170,11 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     const result = await commitPatch({ [trimmed]: adding.value });
     if (result.ok) {
       setAdding(null);
-    } else {
-      setAdding({
-        ...adding,
-        error: `Failed to add property (HTTP ${result.status || 'network error'})`,
-      });
+      return;
     }
+    const fieldError = result.fieldErrors?.[trimmed];
+    const generic = result.error ?? `HTTP ${result.status || 'network error'}`;
+    setAdding({ ...adding, error: fieldError ?? `Failed to add property (${generic})` });
   }
 
   function cancelAdd() {
@@ -162,8 +208,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setRenaming({ ...renaming, error: `Property "${trimmed}" already exists` });
       return;
     }
-    const ok = await renameProperty(renaming.key, trimmed);
-    if (ok) {
+    const result = await renameProperty(renaming.key, trimmed);
+    if (result.ok) {
       setOverrides((prev) => {
         if (!Object.hasOwn(prev, renaming.key)) return prev;
         const next = { ...prev };
@@ -171,10 +217,14 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
         delete next[renaming.key];
         return next;
       });
+      clearError(renaming.key);
       setRenaming(null);
-    } else {
-      setRenaming({ ...renaming, error: `Property "${trimmed}" already exists` });
+      return;
     }
+    const fieldError = result.fieldErrors?.[trimmed] ?? result.fieldErrors?.[renaming.key];
+    const message =
+      fieldError ?? result.error ?? `Failed to rename (HTTP ${result.status || 'network error'})`;
+    setRenaming({ ...renaming, error: message });
   }
 
   const keys = Object.keys(map);
@@ -210,6 +260,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
                 value={value}
                 declared={declared}
                 renameState={renameState}
+                error={errors[key] ?? null}
+                resetCounter={resetCounters[key] ?? 0}
                 onCommit={(v) => commitProperty(key, v)}
                 onChangeType={(t) => setType(key, t)}
                 onRemove={() => removeProperty(key)}
@@ -246,6 +298,13 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   );
 }
 
+interface PatchResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+  fieldErrors?: Record<string, string>;
+}
+
 interface AddDraft {
   name: string;
   type: FrontmatterType;
@@ -264,6 +323,8 @@ interface PropertyRowProps {
   value: FrontmatterValue;
   declared: FrontmatterType;
   renameState: RenameDraft | null;
+  error: string | null;
+  resetCounter: number;
   onCommit: (next: FrontmatterValue) => void;
   onChangeType: (next: FrontmatterType) => void;
   onRemove: () => void;
@@ -278,6 +339,8 @@ function PropertyRow({
   value,
   declared,
   renameState,
+  error,
+  resetCounter,
   onCommit,
   onChangeType,
   onRemove,
@@ -289,47 +352,65 @@ function PropertyRow({
   const widgetType = resolveWidgetType(value, declared);
   return (
     <div
-      className="group flex items-center gap-1 py-0.5"
+      className="group py-0.5"
       data-testid="property-row"
       data-key={keyName}
       data-widget-type={widgetType}
+      data-error={error ?? undefined}
     >
-      <TypeIconButton keyName={keyName} type={widgetType} onChangeType={onChangeType} />
-      <div className="w-32 shrink-0">
-        {renameState ? (
-          <RenameInput
+      <div className="flex items-center gap-1">
+        <TypeIconButton keyName={keyName} type={widgetType} onChangeType={onChangeType} />
+        <div className="w-32 shrink-0">
+          {renameState ? (
+            <RenameInput
+              keyName={keyName}
+              draft={renameState.draft}
+              error={renameState.error}
+              onChangeDraft={onChangeRenameDraft}
+              onCommit={onCommitRename}
+              onCancel={onCancelRename}
+            />
+          ) : (
+            <button
+              type="button"
+              data-testid="property-name-button"
+              data-key={keyName}
+              onClick={onBeginRename}
+              className="block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
+            >
+              {keyName}
+            </button>
+          )}
+        </div>
+        <div className="flex-1">
+          <Widget
+            key={`widget-${resetCounter}`}
             keyName={keyName}
-            draft={renameState.draft}
-            error={renameState.error}
-            onChangeDraft={onChangeRenameDraft}
-            onCommit={onCommitRename}
-            onCancel={onCancelRename}
+            value={value}
+            widgetType={widgetType}
+            onCommit={onCommit}
           />
-        ) : (
-          <button
-            type="button"
-            data-testid="property-name-button"
-            data-key={keyName}
-            onClick={onBeginRename}
-            className="block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
-          >
-            {keyName}
-          </button>
-        )}
+        </div>
+        <button
+          type="button"
+          data-testid="property-remove-button"
+          data-key={keyName}
+          aria-label={`Remove ${keyName}`}
+          onClick={onRemove}
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground group-hover:text-muted-foreground"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
       </div>
-      <div className="flex-1">
-        <Widget keyName={keyName} value={value} widgetType={widgetType} onCommit={onCommit} />
-      </div>
-      <button
-        type="button"
-        data-testid="property-remove-button"
-        data-key={keyName}
-        aria-label={`Remove ${keyName}`}
-        onClick={onRemove}
-        className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground group-hover:text-muted-foreground"
-      >
-        <Trash2 className="size-3.5" />
-      </button>
+      {error ? (
+        <div
+          data-testid="property-error"
+          data-key={keyName}
+          className="pl-9 text-[10px] text-destructive"
+        >
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

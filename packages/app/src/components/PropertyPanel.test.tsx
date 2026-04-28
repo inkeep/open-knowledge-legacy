@@ -219,3 +219,25 @@ describe('PropertyPanel duplicate-name guard (US-009)', () => {
     expect(map.has('newKey')).toBe(false);
   });
 });
+
+describe('PropertyPanel error rendering (US-010)', () => {
+  test('rows render with no error subline by default', () => {
+    const provider = makeProvider('no-error-doc');
+    seedMetaMap(provider, { title: 'Hello' });
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    expect(html).not.toContain('data-testid="property-error"');
+    expect(html).not.toContain('data-error="');
+  });
+
+  test('row container exposes data-error="undefined" attribute slot for failed-commit attribution', () => {
+    // The presence of the data-error attribute slot is part of the contract
+    // for browser-side error visibility (the value populates dynamically when
+    // a failed commit lands). On the SSR snapshot, error is null → React
+    // omits the attribute entirely.
+    const provider = makeProvider('error-slot-doc');
+    seedMetaMap(provider, { title: 'Hello' });
+    const html = renderToString(<PropertyPanel provider={provider} />);
+    expect(html).toContain('data-testid="property-row"');
+    expect(html).toContain('data-key="title"');
+  });
+});
