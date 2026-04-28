@@ -410,6 +410,7 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        <DropdownMenuSeparator />
         <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
         {!isFolder && (
           <OpenInAgentContextSubmenu
