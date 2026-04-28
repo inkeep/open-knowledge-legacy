@@ -179,11 +179,7 @@ export function useSidebarResize({
     dragDistanceFromToggle.current = 0;
 
     // Store the rail element's position for nested sidebars
-    if (isNested && dragRef.current) {
-      railRect.current = dragRef.current.getBoundingClientRect();
-    } else {
-      railRect.current = null;
-    }
+    railRect.current = isNested && dragRef.current ? dragRef.current.getBoundingClientRect() : null;
 
     e.preventDefault();
   }
