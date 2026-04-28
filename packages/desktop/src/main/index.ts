@@ -446,6 +446,11 @@ function refreshApplicationMenu() {
       saveAppState(appState);
       refreshApplicationMenu();
     },
+    sendMenuAction: (action) => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      sendToRenderer(target.webContents, 'ok:menu-action', action);
+    },
     // D47 scheme allowlist is enforced in the renderer IPC path (shell-allowlist.ts).
     // Help-menu URLs are hardcoded in menu.ts (always `https://github.com/inkeep/…`),
     // so they're trusted at build time — direct shell.openExternal is fine here.

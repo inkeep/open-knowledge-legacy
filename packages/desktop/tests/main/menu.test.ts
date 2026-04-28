@@ -138,6 +138,15 @@ describe('buildMenuTemplate', () => {
     expect(switchProject?.accelerator).toBe('CmdOrCtrl+Shift+N');
   });
 
+  test('Find preserves browser muscle memory and dispatches focus-search', () => {
+    const sendMenuAction = mock(() => {});
+    const template = buildMenuTemplate(makeDeps({ sendMenuAction }));
+    const find = findByLabel(template, 'Find');
+    expect(find?.accelerator).toBe('CmdOrCtrl+F');
+    (find?.click as (() => void) | undefined)?.();
+    expect(sendMenuAction).toHaveBeenCalledWith('focus-search');
+  });
+
   test('"New Project…" label no longer appears in any submenu', () => {
     // Regression guard against partial rename — the old verb was misleading
     // because the underlying action covers create AND open AND list.
