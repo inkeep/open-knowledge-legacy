@@ -195,7 +195,12 @@ interface PendingCreate {
   renamePath: string;
 }
 
-/** Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy. */
+/**
+ * Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy.
+ * Linux verb asymmetry (Open vs Reveal) is intentional — no stable Linux file-manager
+ * brand to "Reveal in"; a normalizing fix to "Reveal in Files" would be incorrect on
+ * most distros.
+ */
 function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
   if (platform === 'darwin') return 'Reveal in Finder';
   if (platform === 'win32') return 'Reveal in File Explorer';
@@ -358,24 +363,43 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        {handoff.isElectronHost && window.okDesktop ? (
-          <DropdownMenuItem
-            disabled={!workspace}
-            onSelect={() => {
-              if (!workspace) return;
-              close();
-              const full = joinWorkspacePath(
-                workspace.contentDir,
-                relativePathForTreeItem(item),
-                workspace.pathSeparator,
+        {/*
+          Hide-on-web: a file-manager reveal has no useful no-op in the web
+          variant (no host filesystem to open), so we hide the row rather than
+          render disabled-with-hint like `OpenInAgentContextSubmenu`. The
+          handoff submenu always has a meaningful disabled state because some
+          targets (claude.ai web fallback) do work cross-host; reveal does not.
+        */}
+        {handoff.isElectronHost && window.okDesktop
+          ? (() => {
+              const label = revealInFileManagerLabel(window.okDesktop.platform);
+              const hint = !workspace ? 'No workspace' : null;
+              return (
+                <DropdownMenuItem
+                  disabled={!workspace}
+                  onSelect={() => {
+                    if (!workspace) return;
+                    close();
+                    const full = joinWorkspacePath(
+                      workspace.contentDir,
+                      relativePathForTreeItem(item),
+                      workspace.pathSeparator,
+                    );
+                    void window.okDesktop?.shell.showItemInFolder(full);
+                  }}
+                  aria-label={hint ? `${label}, ${hint}` : label}
+                >
+                  <FolderOpen aria-hidden="true" />
+                  <span className="flex-1">{label}</span>
+                  {hint ? (
+                    <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+                      {hint}
+                    </span>
+                  ) : null}
+                </DropdownMenuItem>
               );
-              void window.okDesktop?.shell.showItemInFolder(full);
-            }}
-          >
-            <FolderOpen aria-hidden="true" />
-            {revealInFileManagerLabel(window.okDesktop.platform)}
-          </DropdownMenuItem>
-        ) : null}
+            })()
+          : null}
         {!isFolder && (
           <OpenInAgentContextSubmenu
             input={handoffInput}

@@ -289,8 +289,17 @@ export async function spawnCursor(deps: SpawnCursorDeps, path: string): Promise<
   return deps.spawn(exec, args, deps.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS);
 }
 
-/** Outcome of a `showItemInFolder` invocation — observable in main logs / tests. */
-type ShowItemInFolderOutcome = { ok: true } | { ok: false; reason: 'invalid-path' };
+/**
+ * Outcome of a `showItemInFolder` invocation — observable in main logs / tests.
+ * The wire shape collapses every refusal to `undefined` (silent-by-design — see
+ * the handler in `main/index.ts`). This internal type widens the refusal so the
+ * main-side breadcrumb log distinguishes the three branches: format failure,
+ * no project bound, escape from project. `SpawnOutcome`'s collapsed shape is
+ * forced because its reason IS exposed on the wire; this one is not.
+ */
+type ShowItemInFolderOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'invalid-format' | 'no-project-bound' | 'out-of-project' };
 
 /** Injected deps for `showItemInFolder` — the electron `shell.showItemInFolder` and platform/projectPath. */
 interface ShowItemInFolderDeps {
@@ -316,13 +325,13 @@ export function showItemInFolder(
   path: string,
 ): ShowItemInFolderOutcome {
   if (!validateSpawnPath(path, deps.platform)) {
-    return { ok: false, reason: 'invalid-path' };
+    return { ok: false, reason: 'invalid-format' };
   }
   if (deps.projectPath === undefined) {
-    return { ok: false, reason: 'invalid-path' };
+    return { ok: false, reason: 'no-project-bound' };
   }
   if (!isPathWithinProject(path, deps.projectPath, deps.platform)) {
-    return { ok: false, reason: 'invalid-path' };
+    return { ok: false, reason: 'out-of-project' };
   }
   deps.showItemInFolder(path);
   return { ok: true };

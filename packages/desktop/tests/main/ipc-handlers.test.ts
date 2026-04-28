@@ -7,7 +7,10 @@
  * smoke-tested by the integration surface (contract-equality + D19 scan).
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   detectProtocol,
   isPathWithinProject,
@@ -228,6 +231,32 @@ describe('isPathWithinProject — Review M5 confined-path check', () => {
     expect(
       isPathWithinProject('C:\\Users\\x\\project\\specs', 'C:\\Users\\x\\project', 'win32'),
     ).toBe(true);
+  });
+
+  describe('lexical-only symlink contract', () => {
+    // Pins the JSDoc contract: isPathWithinProject does NOT resolve symlinks.
+    // A symlink inside projectPath that targets outside (e.g. <proj>/notes -> /etc)
+    // passes this check at the lexical layer; the OS follows it at use time.
+    // A future "hardening" with fs.realpathSync would silently break user setups
+    // like `notes -> ~/Documents/notes` symlinked inside their project.
+    let root: string;
+
+    beforeAll(() => {
+      root = mkdtempSync(join(tmpdir(), 'ok-pathcheck-symlink-'));
+      mkdirSync(join(root, 'proj'), { recursive: true });
+      mkdirSync(join(root, 'outside'), { recursive: true });
+      writeFileSync(join(root, 'outside', 'secret.md'), 'OUT-OF-PROJECT TARGET');
+      symlinkSync(join(root, 'outside', 'secret.md'), join(root, 'proj', 'link.md'));
+    });
+
+    afterAll(() => {
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    test('allows symlinked path inside project (lexical-only contract)', () => {
+      const lexicalIn = join(root, 'proj', 'link.md');
+      expect(isPathWithinProject(lexicalIn, join(root, 'proj'), process.platform)).toBe(true);
+    });
   });
 });
 
@@ -644,7 +673,7 @@ describe('showItemInFolder', () => {
     expect(calls).toEqual(['/Users/me/proj']);
   });
 
-  test('refuses path outside project (parent escape)', () => {
+  test('refuses path outside project (parent escape) with reason "out-of-project"', () => {
     const calls: string[] = [];
     const result = showItemInFolder(
       {
@@ -654,11 +683,11 @@ describe('showItemInFolder', () => {
       },
       '/Users/me/other/secrets.txt',
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(result).toEqual({ ok: false, reason: 'out-of-project' });
     expect(calls).toEqual([]);
   });
 
-  test('refuses non-absolute path', () => {
+  test('refuses non-absolute path with reason "invalid-format"', () => {
     const calls: string[] = [];
     const result = showItemInFolder(
       {
@@ -668,11 +697,11 @@ describe('showItemInFolder', () => {
       },
       'relative/foo.md',
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(result).toEqual({ ok: false, reason: 'invalid-format' });
     expect(calls).toEqual([]);
   });
 
-  test('refuses path with null byte', () => {
+  test('refuses path with null byte (reason "invalid-format")', () => {
     const calls: string[] = [];
     const result = showItemInFolder(
       {
@@ -682,11 +711,11 @@ describe('showItemInFolder', () => {
       },
       '/Users/me/proj/foo\0.md',
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(result).toEqual({ ok: false, reason: 'invalid-format' });
     expect(calls).toEqual([]);
   });
 
-  test('refuses every path when projectPath is undefined (Navigator window)', () => {
+  test('refuses every path when projectPath is undefined (Navigator window) with reason "no-project-bound"', () => {
     const calls: string[] = [];
     const result = showItemInFolder(
       {
@@ -696,7 +725,7 @@ describe('showItemInFolder', () => {
       },
       '/Users/me/proj/foo.md',
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(result).toEqual({ ok: false, reason: 'no-project-bound' });
     expect(calls).toEqual([]);
   });
 
@@ -714,7 +743,7 @@ describe('showItemInFolder', () => {
     expect(calls).toEqual(['C:\\Users\\me\\proj\\specs\\foo.md']);
   });
 
-  test('Windows: refuses cross-drive escape', () => {
+  test('Windows: refuses cross-drive escape with reason "out-of-project"', () => {
     const calls: string[] = [];
     const result = showItemInFolder(
       {
@@ -724,7 +753,7 @@ describe('showItemInFolder', () => {
       },
       'D:\\elsewhere\\foo.md',
     );
-    expect(result).toEqual({ ok: false, reason: 'invalid-path' });
+    expect(result).toEqual({ ok: false, reason: 'out-of-project' });
     expect(calls).toEqual([]);
   });
 });
