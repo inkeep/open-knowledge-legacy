@@ -37,12 +37,12 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   nativeImage,
   session,
   shell,
   utilityProcess,
-  globalShortcut
 } from 'electron';
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
@@ -303,7 +303,7 @@ function ensureWindowManager() {
       });
       if (process.env.NODE_ENV === 'development') {
         globalShortcut.register('CommandOrControl+Shift+I', () => {
-          win.webContents.toggleDevTools()
+          win.webContents.toggleDevTools();
         });
       }
       // Electron defaults to updating the window title from the renderer's
