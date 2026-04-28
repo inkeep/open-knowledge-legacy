@@ -85,7 +85,6 @@ export default defineConfig({
   },
   renderer: {
     root: appRoot,
-    configFile: false,
     plugins: [
       react({
         babel: {
