@@ -11,7 +11,7 @@
  *     → `detailsAccordionPromoterPlugin`
  *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
  *     → `imagePromoterPlugin`
- *        (M15 / SPEC §1+§5 G2: CommonMark `![alt](src)` → `<Image>` mdxJsxFlow)
+ *        (CommonMark `![alt](src)` → `<CommonMarkImage>` mdxJsxFlow compat)
  *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
  *        doc-start thematic fix + position slice + unknown-mdast guard)
  *     → `ensureNonEmptyDoc` → remarkProseMirror
@@ -168,10 +168,10 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     // attaches data.sourceRaw onto the emitted mdxJsxFlowElement using its
     // copied opener..closer position span.
     .use(detailsAccordionPromoterPlugin)
-    // M15 / SPEC §1+§5 G2: CommonMark `![alt](src)` → `<Image>` promoter.
-    // Delivers the MDX-as-strict-superset invariant for Image — both
-    // authoring forms land on the same jsxComponent(Image) PM node; γ
-    // sourceRaw keeps the original `![alt](src)` bytes pristine on disk.
+    // CommonMark `![alt](src)` → `<CommonMarkImage>` promoter.
+    // Both authoring forms land on a jsxComponent PM node — `<img>` via
+    // the canonical descriptor, `![alt](src)` via the CommonMarkImage
+    // compat. γ sourceRaw keeps `![alt](src)` byte-identical on disk.
     // Runs after details promoter so image nodes inside a <details> body
     // (already shallow-wrapped into the Accordion's children) get
     // promoted in the accordion's subtree too.

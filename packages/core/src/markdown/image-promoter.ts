@@ -1,14 +1,10 @@
 /**
- * CommonMark `image` → `<Image>` mdxJsxFlowElement promoter.
+ * CommonMark `image` → `<CommonMarkImage>` mdxJsxFlowElement promoter.
  *
- * Delivers the G2 "MDX as a strict superset of the markdown form" invariant
- * for the Image descriptor (SPEC 2026-04-23-cb-v2-md-foundation §1 + §5) —
- * before this transformer, `![alt](src)` rendered via the native `<img>` PM
- * node while `<Image src=...>` rendered via `jsxComponent` with zoom +
- * caption; identical source bytes produced two different UX tiers.
- *
- * After this transformer, both forms land on the same `jsxComponent(Image,
- * ...)` PM node. γ preservation keeps the authored form byte-identical on
+ * Both `![alt](src)` and `<img src="…" />` land on a `jsxComponent` PM node
+ * — the markdown form via the `CommonMarkImage` compat descriptor (read-
+ * only round-trip), and the lowercase JSX form via the canonical `img`
+ * descriptor. γ preservation keeps the authored form byte-identical on
  * pristine save: the original `![alt](src "title")` bytes stay on disk,
  * Phase B's position-slice walker attaches `data.sourceRaw` to the emitted
  * `mdxJsxFlowElement`, and the pristine-form to-markdown handler emits
@@ -19,17 +15,20 @@
  * Input: mdast `image` node — `{ type: 'image', url: string, alt?: string,
  * title?: string, position?: ... }`.
  *
- * Output: `mdxJsxFlowElement` — `{ type: 'mdxJsxFlowElement', name: 'Image',
- * attributes: [src, alt?, title?], children: [], position: <copied> }`.
+ * Output: `mdxJsxFlowElement` — `{ type: 'mdxJsxFlowElement', name:
+ * 'CommonMarkImage', attributes: [src, alt?, title?], children: [],
+ * position: <copied> }`. The compat descriptor renders through the
+ * canonical `img` React component and offers a Convert affordance to
+ * promote into the canonical descriptor's full HTML-attr surface.
  *
  * ## Attr mapping
  *
  * CommonMark image syntax carries `url`, `alt`, `title`. These map directly
- * onto the `<Image>` descriptor's `src` / `alt` / `title` props (descriptor
- * FR-2). Width, height, caption, loading, zoom are NOT inferrable from
- * CommonMark syntax — they stay at descriptor defaults (zoom=true from
- * `built-ins.ts`, loading='lazy' from `Image.tsx`). Authors who want those
- * props author the MDX form directly.
+ * onto the CommonMarkImage descriptor's three props. The richer HTML-attr
+ * tail (`width`, `height`, `srcset`, `sizes`, `loading`, …) is reachable
+ * only via the canonical `<img>` MDX form; CommonMark syntax can't express
+ * those, so authors who need them write `<img …/>` directly or click
+ * Convert from a CommonMark image.
  *
  * ## Position semantics
  *
@@ -46,8 +45,8 @@
  * a `paragraph` when it's the sole inline child. This transformer promotes
  * ONLY the block-context form: a paragraph whose single child is an image.
  * Inline images inside prose (e.g. `A paragraph with an ![inline](src)
- * image in it.`) stay as inline `image` nodes — promoting those to the
- * flow-level `<Image>` component would break the paragraph structure.
+ * image in it.`) stay as inline `image` nodes — promoting those to a
+ * flow-level component would break the paragraph structure.
  *
  * ## Scope
  *
@@ -55,9 +54,8 @@
  * resolves them to `image` nodes after the definition pass, so they arrive
  * at this transformer with `url` / `title` already populated.
  *
- * Obsidian `![[file.png]]` wiki-embed syntax is **OUT OF SCOPE** (PR #270
- * territory, NG23). Those go through the separate `wikiLinkEmbed` parse
- * path.
+ * Obsidian `![[file.png]]` wiki-embed syntax is out of scope; it goes
+ * through the separate `wikiLinkEmbed` parse path.
  *
  * ## When it runs
  *
@@ -74,7 +72,7 @@ import { visit } from 'unist-util-visit';
 /**
  * Unified plugin factory — emits a transformer that walks the tree, finds
  * paragraphs containing exactly one image child, and replaces them with an
- * `mdxJsxFlowElement(Image, ...)` carrying the copied position.
+ * `mdxJsxFlowElement(CommonMarkImage, ...)` carrying the copied position.
  */
 export function imagePromoterPlugin() {
   return (tree: Root) => {

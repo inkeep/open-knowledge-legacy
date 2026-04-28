@@ -228,3 +228,35 @@ adapted to the new contract.
 
 **Next step:** Cloud review iteration on PR #310.
 
+## 2026-04-27 — Lowercase media canonical pivot (corrigendum)
+
+Canonical `Image` / `Video` / `Audio` replaced with lowercase `img` /
+`video` / `audio`. PropPanel gains an "Advanced" collapsible section
+for the HTML-native attribute tail (`srcset`, `sizes`, `decoding`,
+`fetchpriority`, `crossorigin`, `referrerpolicy`, …). `caption` and
+`zoom` dropped from descriptor props — Frame v2 will host caption as a
+compositional wrapper (`<Frame caption="…"><img/></Frame>`); zoom is
+always-on inside the Image React component for now, with `<Frame
+zoom={false}>` as the planned opt-out path.
+
+`displayName` stays capitalized so the slash-menu label and PropPanel
+header read "Image" / "Video" / "Audio". `componentMap` keys flip to
+lowercase HTML-tag form. `CommonMarkImage` compat reroutes through the
+canonical `img` (`rendersAs: 'img'`, `convertibleTo.target: 'img'`);
+the Convert button label uses target descriptor's `displayName` so it
+still reads "Convert to Image".
+
+Rule formalized in JSDoc above `builtInComponents`: media converges
+with HTML primitives because HTML has primitives rich enough; non-
+media (`Callout`, `Accordion`) stays capitalized canonical because
+HTML has no primitive rich enough to converge with (`<details>` is
+structurally a subset of Accordion; HTML has no Callout primitive).
+
+Greenfield directive — no user-content migration. The
+`autolink-void-html-guard` carve-out lets self-closing `<img/>` /
+`<video/>` / `<audio/>` reach remark-mdx as `mdxJsxFlowElement`
+instead of being PUA-protected as raw HTML.
+
+Authoritative implementation in this branch (cb-v2-md-foundation
+follow-up commits, US-001 through US-008).
+
