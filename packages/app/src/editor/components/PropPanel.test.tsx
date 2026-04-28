@@ -441,19 +441,21 @@ describe('runUpload', () => {
   });
 
   test('(d) error path tolerates non-Error rejections', async () => {
-    // Throw inside an async-function body rather than `() => Promise.reject('...')`.
-    // A bare `Promise.reject(string)` constructs the rejection synchronously
-    // before any await/then handler can attach; Bun on Linux emits an
-    // `unhandledRejection` event for that microtask window which then bleeds
-    // into the *next* test file's group and makes Bun fail every test in it
-    // (CI failure mode observed on `caf81914` — image-upload/upload-file.test.ts
-    // tests reported the literal string `string-rejection` as their thrown
-    // message, which is exactly the value this mock rejects with). Throwing
-    // inside an async body keeps the rejection in the promise's own handler
-    // chain — the await in `runUpload` catches it before any unhandled-
-    // rejection observer sees it.
+    // Reject with a non-Error, non-string value to exercise the `String(err)`
+    // fallback in runUpload's catch arm without triggering Bun's
+    // string-rejection unhandled-rejection observer. Bun on Linux flags
+    // every Promise that rejects with `typeof reason === 'string'` (even
+    // when the throw is inside an async body whose await chain attaches a
+    // handler) and the resulting `unhandledRejection` event bleeds into
+    // the next test file's group, making every test in it report
+    // `"string-rejection"` as the thrown message (CI failures on
+    // `caf81914` and `01619638`). A non-string non-Error reaches the same
+    // `err instanceof Error ? err.message : String(err)` branch in
+    // `runUpload` — exercising the same code path with a stable rejection
+    // class. Object form chosen over number because `String({...})` invokes
+    // the object's `toString`, letting us assert a useful message.
     uploadFileMock.mockImplementation(async (): Promise<{ url: string }> => {
-      throw 'string-rejection';
+      throw { toString: () => 'non-error rejection' };
     });
     const onUploaded = mock((_url: string): void => {});
     const file = new File(['x'], 'x.png', { type: 'image/png' });
@@ -461,7 +463,7 @@ describe('runUpload', () => {
     await runUpload(file, ['image/png'], onUploaded);
 
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
-    expect(toastErrorMock.mock.calls[0]?.[0]).toBe('Upload failed: string-rejection');
+    expect(toastErrorMock.mock.calls[0]?.[0]).toBe('Upload failed: non-error rejection');
     expect(onUploaded).not.toHaveBeenCalled();
   });
 });
