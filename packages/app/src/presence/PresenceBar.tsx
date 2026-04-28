@@ -72,8 +72,8 @@ function HumanAvatar({
   tabCount: number;
 }) {
   // Git-config users (principalId present) always render initials — never the
-  // animal icon, even if user.name's second word coincidentally matches one
-  // (D1: source-gating via principalId presence avoids the 'John Bird' quirk).
+  // animal icon, even if user.name's second word happens to match an animal name
+  // (e.g. a real user named "John Bird" would otherwise get a bird icon).
   const hasPrincipalId = typeof user.principalId === 'string' && user.principalId.length > 0;
   const animal = hasPrincipalId ? undefined : user.name.split(' ')[1];
   const AnimalIcon = animal ? ANIMAL_ICON_MAP[animal] : undefined;

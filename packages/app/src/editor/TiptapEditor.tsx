@@ -642,10 +642,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   }, [provider.document]);
 
   // Set awareness state on mount (user identity + mode).
-  // FR3 three-state merge: (a) no principal → random fallback; (b) git-config → real
-  // name + deterministic color + principalId; (c) synthesized → random name + deterministic
-  // color, no principalId (FR9 — avoids cross-browser-profile false dedupe).
-  // Every payload must include type: 'human' as const — usePresence filters on this.
+  // Three-state merge depending on principal resolution:
+  //   (a) no principal yet → random-fallback name + random color, no principalId
+  //   (b) git-config source → display_name + deterministic color + principalId
+  //   (c) synthesized source → random-fallback name + deterministic color, no principalId
+  //       (omitting principalId avoids false deduplication when two browser profiles
+  //        share the same synthesized principal.id but have different random names)
+  // type: 'human' as const is mandatory in every branch — usePresence filters on it.
   // coeditor is always explicit — no ...spread that could accidentally drop it.
   useEffect(() => {
     const awareness = provider.awareness;

@@ -49,8 +49,8 @@ import { z } from 'zod';
  *
  * Mirrors the `Principal` type in `packages/core/src/types/principal.ts`.
  * `.loose()` preserves unknown fields for forward-compat — new server
- * fields don't break older clients. Parse failures route to the silent
- * fallback path (FR8).
+ * fields don't break older clients. Parse failures fall back silently to
+ * the random-identity fallback; presence remains functional.
  */
 export const PrincipalSchema = z
   .object({

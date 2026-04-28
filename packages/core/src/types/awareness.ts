@@ -11,11 +11,19 @@ export interface AwarenessUser {
   coeditor?: string;
   tabId: string;
   /**
-   * Stable per-principal identifier published only by git-config users.
-   * Synthesized-source users do NOT publish this field (FR9) — avoids
-   * cross-browser-profile dedupe when two profiles share the same synthesized
-   * principal.id but have distinct localStorage random names. Wire-format
-   * door (D10): keep optional forever; never narrow to required.
+   * Stable per-principal identifier, published only when the server principal
+   * has `source === 'git-config'`. Synthesized-source users omit this field to
+   * prevent cross-browser-profile false deduplication — two browser profiles
+   * may share the same synthesized `principal.id` while having distinct
+   * localStorage random names.
+   *
+   * Client-published and loopback-trusted: the server is loopback-only and does
+   * not validate this field. If non-loopback connections ever ship, the
+   * publication site must switch to server-authoritative attribution
+   * (server sets `awareness.user.principalId` from `ctx.principalId` at
+   * `onAuthenticate` time rather than trusting the client payload).
+   *
+   * Wire-format contract: keep optional forever; never narrow to required.
    */
   principalId?: string;
 }

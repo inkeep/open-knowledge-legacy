@@ -19,8 +19,8 @@ import type { AwarenessState, AwarenessUser } from './identity.ts';
  * collaboration-cursor`.
  *
  * `tabCount` is 1 for non-deduped entries and ≥2 when multiple clientIds
- * share the same `principalId` (FR4 multi-tab dedupe). The tooltip in
- * PresenceBar uses this to show "Name · N tabs" when N > 1.
+ * share the same `principalId` (multi-tab dedupe for git-config users). The
+ * tooltip in PresenceBar uses this to show "Name · N tabs" when N > 1.
  */
 export interface HumanParticipant {
   kind: 'human';
