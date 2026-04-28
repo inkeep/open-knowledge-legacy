@@ -1,10 +1,12 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
+  colorFromSeed,
   sharedExtensions as coreExtensions,
   deriveIconColor,
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
+  HUMAN_COLORS,
   hasNewEntries,
   MarkdownManager,
 } from '@inkeep/open-knowledge-core';
@@ -34,6 +36,7 @@ import {
   createClipboardTextSerializer,
   createHandlePaste,
 } from './clipboard/index.ts';
+import { useDocumentContext } from './DocumentContext';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
@@ -101,6 +104,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
+  const { principal } = useDocumentContext();
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
   // Use useState with a lazy initializer so the bundle is constructed once
@@ -637,19 +641,26 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     return () => metaMap.unobserve(observer);
   }, [provider.document]);
 
-  // Set awareness state on mount (user identity + mode)
+  // Set awareness state on mount (user identity + mode).
+  // FR3 three-state merge: (a) no principal → random fallback; (b) git-config → real
+  // name + deterministic color + principalId; (c) synthesized → random name + deterministic
+  // color, no principalId (FR9 — avoids cross-browser-profile false dedupe).
+  // Every payload must include type: 'human' as const — usePresence filters on this.
+  // coeditor is always explicit — no ...spread that could accidentally drop it.
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
+    const isGitConfig = principal?.source === 'git-config';
     awareness.setLocalStateField('user', {
-      name: identity.name,
-      color: identity.color,
       type: 'human' as const,
+      name: isGitConfig ? principal.display_name : identity.name,
+      color: principal ? colorFromSeed(principal.id, HUMAN_COLORS) : identity.color,
       coeditor: identity.coeditor,
       tabId: identity.tabId,
+      ...(isGitConfig ? { principalId: principal.id } : {}),
     });
     awareness.setLocalStateField('mode', 'wysiwyg');
-  }, [provider, identity]);
+  }, [provider, identity, principal]);
 
   // Data attributes are set once on initial render; the flash useEffect updates them
   // imperatively via wrapperRef to avoid triggering React re-renders during typing.
