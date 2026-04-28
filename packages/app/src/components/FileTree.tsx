@@ -207,6 +207,53 @@ function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): strin
   return 'Open Containing Folder';
 }
 
+/**
+ * File-tree menu row that opens the OS file manager with the target file/folder
+ * selected. Hidden entirely on the web variant (no useful no-op without a host
+ * filesystem) — the disabled-with-hint pattern used by `OpenInAgentContextSubmenu`
+ * doesn't apply here because reveal has no cross-host fallback. When present but
+ * the workspace metadata hasn't resolved yet, renders disabled with a "No workspace"
+ * affordance mirroring the handoff submenu's pattern.
+ */
+function RevealInFileManagerMenuItem({
+  item,
+  workspace,
+  onClose,
+}: {
+  item: ContextMenuItem;
+  workspace: WorkspaceInfo | null;
+  onClose: () => void;
+}) {
+  const bridge = typeof window !== 'undefined' ? window.okDesktop : undefined;
+  if (!bridge) return null;
+  const label = revealInFileManagerLabel(bridge.platform);
+  const hint = !workspace ? 'No workspace' : null;
+  return (
+    <DropdownMenuItem
+      disabled={!workspace}
+      onSelect={() => {
+        if (!workspace) return;
+        onClose();
+        const full = joinWorkspacePath(
+          workspace.contentDir,
+          relativePathForTreeItem(item),
+          workspace.pathSeparator,
+        );
+        void bridge.shell.showItemInFolder(full);
+      }}
+      aria-label={hint ? `${label}, ${hint}` : label}
+    >
+      <FolderOpen aria-hidden="true" />
+      <span className="flex-1">{label}</span>
+      {hint ? (
+        <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
+          {hint}
+        </span>
+      ) : null}
+    </DropdownMenuItem>
+  );
+}
+
 interface FileTreeMenuProps {
   item: ContextMenuItem;
   context: ContextMenuOpenContext;
@@ -363,43 +410,7 @@ function FileTreeMenu({
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        {/*
-          Hide-on-web: a file-manager reveal has no useful no-op in the web
-          variant (no host filesystem to open), so we hide the row rather than
-          render disabled-with-hint like `OpenInAgentContextSubmenu`. The
-          handoff submenu always has a meaningful disabled state because some
-          targets (claude.ai web fallback) do work cross-host; reveal does not.
-        */}
-        {handoff.isElectronHost && window.okDesktop
-          ? (() => {
-              const label = revealInFileManagerLabel(window.okDesktop.platform);
-              const hint = !workspace ? 'No workspace' : null;
-              return (
-                <DropdownMenuItem
-                  disabled={!workspace}
-                  onSelect={() => {
-                    if (!workspace) return;
-                    close();
-                    const full = joinWorkspacePath(
-                      workspace.contentDir,
-                      relativePathForTreeItem(item),
-                      workspace.pathSeparator,
-                    );
-                    void window.okDesktop?.shell.showItemInFolder(full);
-                  }}
-                  aria-label={hint ? `${label}, ${hint}` : label}
-                >
-                  <FolderOpen aria-hidden="true" />
-                  <span className="flex-1">{label}</span>
-                  {hint ? (
-                    <span aria-hidden="true" className="ml-2 text-muted-foreground text-xs">
-                      {hint}
-                    </span>
-                  ) : null}
-                </DropdownMenuItem>
-              );
-            })()
-          : null}
+        <RevealInFileManagerMenuItem item={item} workspace={workspace} onClose={close} />
         {!isFolder && (
           <OpenInAgentContextSubmenu
             input={handoffInput}
