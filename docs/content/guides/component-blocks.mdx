@@ -20,18 +20,22 @@ byte-identically on pristine save.
 | Component | Category | Markdown form | MDX form |
 |---|---|---|---|
 | `Callout` | Content | `> [!NOTE]\nText` (GFM alerts; `+`/`-` suffix for foldable) | `<Callout type="note" title="…" icon="lucide:…" color="#…" collapsible defaultOpen>…</Callout>` |
-| `Image` | Media | `![alt](src)` (standard CommonMark) | `<Image src="…" alt="…" width={…} height={…} caption="…" title="…" loading="lazy" zoom />` |
-| `Video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<Video src="…" poster="…" autoPlay muted loop playsInline controls preload="…" />` |
-| `Audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<Audio src="…" autoPlay loop muted preload="…" />` |
+| `img` | Media | `![alt](src)` (standard CommonMark) | `<img src="…" alt="…" width={…} height={…} loading="lazy" srcset="…" sizes="…" />` |
+| `video` | Media | *(no markdown form — HTML5 `<video>` passthrough)* | `<video src="…" controls autoplay muted loop playsinline poster="…" preload="…" width={…} height={…} />` |
+| `audio` | Media | *(no markdown form — HTML5 `<audio>` passthrough)* | `<audio src="…" controls autoplay loop muted preload="…" />` |
 | `Accordion` | Content | `<details open><summary>X</summary>Y</details>` | `<Accordion title="X" defaultOpen icon="lucide:…" description="…" id="…" name="…">Y</Accordion>` |
 
 > **Prop counts in this section** include `children` for components
 > that accept it (`Callout` and `Accordion`). The `Props (N)` count
 > matches the number of typed entries in the component's prop panel +
 > the children slot, so you can read it as "everything that lands in
-> the editor surface." `Image`, `Video`, and `Audio` have no children
+> the editor surface." `img`, `video`, and `audio` have no children
 > slot (they're self-closing leaves), so their counts reflect only
-> typed props.
+> typed props. The PropPanel partitions HTML-native attrs into a
+> collapsed **Advanced** section by default — common props (e.g. `src`,
+> `alt`, `width`, `height`) stay flat; `srcset` / `sizes` / `decoding`
+> / `fetchpriority` / `crossorigin` / `referrerpolicy` live under
+> Advanced.
 
 ### Callout
 
@@ -98,20 +102,35 @@ notation.
 
 ### Image
 
-Click-to-zoom image with optional caption, explicit dimensions, and
-loading strategy.
+Lowercase HTML `<img>` canonical with click-to-zoom always on.
 
-**Props** (8): `src` (required), `alt`, `width` (number), `height`
-(number), `caption` (string), `title` (native HTML `title` tooltip),
-`loading` (`'eager'` \| `'lazy'`, default `'lazy'`), `zoom` (boolean,
-default `true`).
+**Common props** (4): `src` (required), `alt`, `width` (number),
+`height` (number).
 
-```mdx title="Full Image with caption + zoom"
-<Image
+**Advanced props** (8, collapsed in PropPanel by default): `srcset`,
+`sizes`, `loading` (`'eager'` \| `'lazy'`, default `'lazy'`), `title`
+(native HTML `title` tooltip), `decoding` (`'sync'` \| `'async'` \|
+`'auto'`, default `'auto'`), `fetchpriority` (`'high'` \| `'low'` \|
+`'auto'`, default `'auto'`), `crossorigin` (`'anonymous'` \|
+`'use-credentials'`), `referrerpolicy`. Attribute names are HTML-spec
+lowercase so emitted MDX matches the HTML spec exactly; React
+translates to camelCase at the JSX boundary.
+
+```mdx title="img with width + lazy load"
+<img
   src="/assets/diagram.png"
   alt="Architecture"
   width={640}
-  caption="Service topology"
+  loading="lazy"
+/>
+```
+
+```mdx title="Responsive img with srcset + sizes"
+<img
+  src="/assets/diagram.png"
+  alt="Architecture"
+  srcset="/assets/diagram@1x.png 1x, /assets/diagram@2x.png 2x"
+  sizes="(max-width: 600px) 400px, 800px"
 />
 ```
 
@@ -119,43 +138,47 @@ default `true`).
 ![Architecture](/assets/diagram.png)
 ```
 
-When `caption` is set, the renderer wraps the image in a `<figure>`
-with a `<figcaption>`. Click-to-zoom uses `react-medium-image-zoom`
-with a native `<dialog>` modal; the library honors
-`prefers-reduced-motion` internally. Opt out of zoom with
-`zoom={false}`.
+Click-to-zoom uses `react-medium-image-zoom` with a native `<dialog>`
+modal; the library honors `prefers-reduced-motion` internally. Zoom
+is always on at the descriptor level — a future Frame v2 wrapper
+(`<Frame zoom={false}><img/></Frame>`) is the planned opt-out path.
 
-**Authoring forms.** Both CommonMark `![alt](src)` and the `<Image>`
-MDX form render through the same descriptor — click-to-zoom is on by
-default in both cases. The difference is the prop surface: CommonMark
-carries `src`, `alt`, and `title` (via `![alt](src "title")`); the MDX
-form additionally exposes `width`, `height`, `caption`, `loading`, and
-`zoom`. Use the MDX form when you want a caption (the `<figure>` +
-`<figcaption>` wrapper only appears when `caption` is set), explicit
-dimensions, or to opt out of zoom with `zoom={false}`. Both forms
-round-trip byte-identical on pristine save. Obsidian `![[file.ext]]`
-wiki-embed is a separate parse path with its own renderer (out of
-scope for this guide).
+**Authoring forms.** Both CommonMark `![alt](src)` and the lowercase
+`<img>` MDX form render through descriptors — `![alt](src)` parses
+through the read-only `CommonMarkImage` compat descriptor and round-
+trips byte-identical, while `<img>` is the canonical lowercase form
+with the full HTML-attribute surface. Click-to-zoom is on by default
+in both cases. To convert an existing CommonMark image and unlock
+the full attribute surface, click the image, open the PropPanel, and
+press **Convert to Image** — the PM node flips to the canonical `img`
+descriptor on save. Both forms round-trip byte-identical until the
+moment you edit. Obsidian `![[file.ext]]` wiki-embed is a separate
+parse path with its own renderer (out of scope for this guide).
 
 ### Video
 
 Pure HTML5 `<video>` wrapper with native controls. Self-closing leaf
-(symmetric with Image). Matches Mintlify's explicit-iframe pattern for
-embedded services: **no YouTube / Vimeo URL auto-promotion**, no iframe
-emission. Authors embedding service videos write a raw `<iframe>` in
-MDX directly.
+(symmetric with `<img>`). Matches Mintlify's explicit-iframe pattern
+for embedded services: **no YouTube / Vimeo URL auto-promotion**, no
+iframe emission. Authors embedding service videos write a raw
+`<iframe>` in MDX directly.
 
-**Props** (9): `src` (required), `title` (tooltip), `controls`
-(default `true`), `autoPlay`, `muted`, `loop`, `playsInline`, `poster`,
-`preload` (`'none'` \| `'metadata'` \| `'auto'`).
+**Common props** (6): `src` (required), `controls` (default `true`),
+`autoplay`, `poster`, `width` (number), `height` (number).
 
-```mdx title="Video with poster + autoplay"
-<Video src="/clip.mp4" poster="/p.jpg" autoPlay muted loop />
+**Advanced props** (5, collapsed in PropPanel by default): `title`
+(tooltip), `muted`, `loop`, `playsinline`, `preload` (`'none'` \|
+`'metadata'` \| `'auto'`). Attribute names are HTML-spec lowercase
+(`autoplay`, `playsinline`); React maps to camelCase
+(`autoPlay`, `playsInline`) at the JSX boundary.
+
+```mdx title="video with poster + autoplay"
+<video src="/clip.mp4" poster="/p.jpg" autoplay muted loop />
 ```
 
 **Captions and codec fallback.** For `<track>` caption sources or
-`<source>` codec fallbacks, write a raw HTML5 `<video>` element in MDX
-directly:
+`<source>` codec fallbacks, write a raw HTML5 `<video>` element with
+children in MDX directly:
 
 ```html title="Raw HTML5 video with captions (flows through rawMdxFallback)"
 <video src="/clip.mp4" controls>
@@ -166,27 +189,30 @@ directly:
 
 This takes the rawMdxFallback path — bytes preserved on disk, editable
 as MDX source, renders natively in the browser. A typed `tracks` +
-`sources` array prop on the `<Video>` descriptor is tracked as future
+`sources` array prop on the `video` descriptor is tracked as future
 work when ProseMirror's descriptor system grows an array-of-structured-
 records prop type.
 
 ### Audio
 
-HTML5 `<audio>` wrapper with native controls always on (no way to hide
-the chrome — per the "no confidently-broken UI" rule). Self-closing
-leaf (symmetric with Video).
+HTML5 `<audio>` wrapper. Self-closing leaf (symmetric with `<video>`).
 
-**Props** (6): `src` (required), `title`, `autoPlay`, `loop`, `muted`,
-`preload` (`'none'` \| `'metadata'` \| `'auto'`).
+**Common props** (3): `src` (required), `controls` (default `true`),
+`autoplay`. Set `controls={false}` for chrome-less playback (rare,
+mostly for hero loops).
 
-```mdx title="Audio with preload hint"
-<Audio src="/clip.mp3" autoPlay loop preload="metadata" />
+**Advanced props** (4, collapsed in PropPanel by default): `title`,
+`muted`, `loop`, `preload` (`'none'` \| `'metadata'` \| `'auto'`).
+Attribute names are HTML-spec lowercase; React maps `autoplay` to
+`autoPlay` at the JSX boundary.
+
+```mdx title="audio with preload hint"
+<audio src="/clip.mp3" autoplay loop preload="metadata" />
 ```
 
-Authors who want background audio with no visible controls, or who need
-`<source>` codec fallback elements, write a raw `<audio>` element in
-MDX (same escape hatch as Video above) — the descriptor-dispatched
-`<Audio>` always renders controls and has no children slot.
+For `<source>` codec fallback elements, write a raw `<audio>` element
+in MDX (same escape hatch as `<video>` above) — descriptor-dispatched
+`<audio>` has no children slot.
 
 ### Accordion
 
@@ -352,7 +378,7 @@ The raw source never disappears.
 Earlier versions shipped non-functional placeholders for `<Mermaid />`
 and `<AudioPlaceholder />`. Those stubs were removed; existing content
 auto-converts to the editable source fallback on first open. Rename
-`<AudioPlaceholder />` to `<Audio />` to pick up the built-in
+`<AudioPlaceholder />` to `<audio />` to pick up the built-in
 audio-player descriptor.
 
 ## Authoring via MCP / agents

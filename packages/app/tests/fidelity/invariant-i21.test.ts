@@ -1,14 +1,13 @@
 /**
- * I21 — CommonMark `image` → `<Image>` round-trip (M15 remediation).
+ * I21 — CommonMark `image` → `<img>` round-trip (M15 remediation).
  *
- * Delivers the G2 "MDX as a strict superset of the markdown form"
- * invariant for Image — parallels I18 (GFM alerts → Callout) and I19
- * (HTML5 <details> → Accordion). See SPEC 2026-04-23-cb-v2-md-foundation
- * §1 + §5 + pre-QA review M15.
+ * Delivers the "MDX as a strict superset of the markdown form" invariant
+ * for media — parallels I18 (GFM alerts → Callout) and I19 (HTML5
+ * <details> → Accordion).
  *
  * Invariant: a block-context CommonMark image (a paragraph whose single
  * inline child is an `image` node) parses to the same PM tree shape as
- * the equivalent `<Image src=... alt=...>` MDX JSX form.
+ * the equivalent `<img src=... alt=...>` MDX JSX form.
  *
  * γ preservation: the promoter copies the paragraph's `.position` onto
  * the emitted `mdxJsxFlowElement`, so Phase B's position-slice walker
@@ -44,8 +43,8 @@ function findFirstJsxComponent(
   return null;
 }
 
-describe('I21: CommonMark `![alt](src)` → `<Image>` block-context promotion', () => {
-  test('bare image paragraph → jsxComponent(Image)', () => {
+describe('I21: CommonMark `![alt](src)` → `<img>` block-context promotion', () => {
+  test('bare image paragraph → jsxComponent(CommonMarkImage)', () => {
     const json = mdManager.parse('![Architecture](/assets/diagram.png)\n');
     const image = findFirstJsxComponent(json);
     expect(image).not.toBeNull();
@@ -77,19 +76,19 @@ describe('I21: CommonMark `![alt](src)` → `<Image>` block-context promotion', 
     expect(props?.alt).toBeUndefined();
   });
 
-  test('CommonMark image props === MDX JSX Image props (render-time equivalence)', () => {
-    // Post canonical/compat split: CommonMark `![alt](src)` parses to
-    // `componentName: 'CommonMarkImage'` (compat) while MDX `<Image ...>`
-    // parses to `componentName: 'Image'` (canonical). Both render through
-    // the same React component via `rendersAs: 'Image'` on CommonMarkImage,
-    // so the load-bearing equivalence is the props bag — not byte-equal
-    // PM trees. Source-form preservation is the whole point of the split.
+  test('CommonMark image props === MDX JSX <img> props (render-time equivalence)', () => {
+    // CommonMark `![alt](src)` parses to `componentName: 'CommonMarkImage'`
+    // (compat) while MDX `<img ...>` parses to `componentName: 'img'`
+    // (canonical). Both render through the same React component via
+    // `rendersAs: 'img'` on CommonMarkImage; the load-bearing equivalence is
+    // the props bag — not byte-equal PM trees. Source-form preservation is
+    // the whole point of the split.
     const fromCommonMark = mdManager.parse('![Arc](/a.png "X")\n');
-    const fromMdxJsx = mdManager.parse('<Image src="/a.png" alt="Arc" title="X" />\n');
+    const fromMdxJsx = mdManager.parse('<img src="/a.png" alt="Arc" title="X" />\n');
     const cmImage = findFirstJsxComponent(fromCommonMark);
     const mdxImage = findFirstJsxComponent(fromMdxJsx);
     expect(cmImage?.attrs?.componentName).toBe('CommonMarkImage');
-    expect(mdxImage?.attrs?.componentName).toBe('Image');
+    expect(mdxImage?.attrs?.componentName).toBe('img');
     const cmProps = cmImage?.attrs?.props as Record<string, unknown> | undefined;
     const mdxProps = mdxImage?.attrs?.props as Record<string, unknown> | undefined;
     expect(cmProps?.src).toBe(mdxProps?.src);

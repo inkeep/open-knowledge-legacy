@@ -174,20 +174,20 @@ for (const defaultOpen of [true, false] as const) {
   }
 }
 
-// ── VR-IMAGE: Image with caption + zoom modal ──────────────────
+// ── VR-IMAGE: lowercase <img> with always-on zoom (no figcaption) ──
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`VR-IMAGE-${theme}: Image with caption + figure in ${theme} mode`, async ({ page, api }) => {
+  test(`VR-IMAGE-${theme}: <img> with always-on zoom in ${theme} mode`, async ({ page, api }) => {
     await seedAndNavigate(
       page,
       api,
-      '<Image src="/placeholder.png" alt="Placeholder" width={400} caption="Caption text" />',
+      '<img src="/placeholder.png" alt="Placeholder" width={400} />',
     );
     await waitForDocSeeded(page);
     await setTheme(page, theme);
     await deselectAll(page);
     const component = page.locator('[data-jsx-component]').first();
-    await expect(component).toHaveScreenshot(`image-caption-${theme}-unselected.png`, {
+    await expect(component).toHaveScreenshot(`image-${theme}-unselected.png`, {
       maxDiffPixelRatio: 0.02, // slightly higher for image-driven pixel variance
     });
   });
@@ -197,7 +197,7 @@ for (const theme of ['light', 'dark'] as const) {
 
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-VIDEO-${theme}: Video with poster in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(page, api, '<Video src="/sample.mp4" poster="/placeholder.png" />');
+    await seedAndNavigate(page, api, '<video src="/sample.mp4" poster="/placeholder.png" />');
     await waitForDocSeeded(page);
     await setTheme(page, theme);
     await deselectAll(page);
@@ -212,7 +212,7 @@ for (const theme of ['light', 'dark'] as const) {
 
 for (const theme of ['light', 'dark'] as const) {
   test(`VR-AUDIO-${theme}: Audio native chrome in ${theme} mode`, async ({ page, api }) => {
-    await seedAndNavigate(page, api, '<Audio src="/sample.mp3" />');
+    await seedAndNavigate(page, api, '<audio src="/sample.mp3" />');
     await waitForDocSeeded(page);
     await setTheme(page, theme);
     await deselectAll(page);
@@ -309,7 +309,7 @@ for (const theme of ['light', 'dark'] as const) {
         '',
         '</Callout>',
         '',
-        '<Image src="/placeholder.png" alt="Diagram" caption="Service topology" />',
+        '<img src="/placeholder.png" alt="Diagram" />',
         '',
         '<Accordion title="Advanced" defaultOpen>',
         '',
@@ -321,9 +321,9 @@ for (const theme of ['light', 'dark'] as const) {
         '',
         '</Accordion>',
         '',
-        '<Video src="/sample.mp4" />',
+        '<video src="/sample.mp4" />',
         '',
-        '<Audio src="/sample.mp3" />',
+        '<audio src="/sample.mp3" />',
       ].join('\n'),
     );
     // Mixed doc: require at least 6 top-level blocks (heading + 5 components).

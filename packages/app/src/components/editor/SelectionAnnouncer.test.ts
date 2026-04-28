@@ -94,7 +94,7 @@ describe('formatSelectionMessage', () => {
     // Outer Callout at pos 0; three inner Image children; select second Image.
     // (Both Callout + Image are registered 5-pack descriptors post-US-003 —
     // pre-cut this test used Cards/Card which are now unregistered.)
-    const callout = jsx('Callout', [jsx('Image'), jsx('Image'), jsx('Image')]);
+    const callout = jsx('Callout', [jsx('img'), jsx('img'), jsx('img')]);
     const doc = schema.node('doc', null, [callout]);
     // Second Image pos = 1 (inside callout) + first Image nodeSize (2) = 3.
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 3) });
@@ -104,7 +104,7 @@ describe('formatSelectionMessage', () => {
       selectedBlockId: 'image-b2',
       ancestorChain: [
         { bridgeId: 'callout-b1', componentName: 'Callout', pos: 0 },
-        { bridgeId: 'image-b2', componentName: 'Image', pos: 3 },
+        { bridgeId: 'image-b2', componentName: 'img', pos: 3 },
       ],
       selectionOrigin: 'pointer',
       isDragging: false,
@@ -115,7 +115,7 @@ describe('formatSelectionMessage', () => {
   });
 
   test('nested chain with unresolvable pos falls back to no-index form', () => {
-    const callout = jsx('Callout', [jsx('Image')]);
+    const callout = jsx('Callout', [jsx('img')]);
     const doc = schema.node('doc', null, [callout]);
     const state = EditorState.create({ doc });
     // biome-ignore lint/suspicious/noExplicitAny: formatSelectionMessage only touches editor.state.doc.resolve
@@ -125,7 +125,7 @@ describe('formatSelectionMessage', () => {
       ancestorChain: [
         { bridgeId: 'callout-b1', componentName: 'Callout', pos: 0 },
         // Pos 99999 is past end of doc — resolve() throws.
-        { bridgeId: 'image-b2', componentName: 'Image', pos: 99999 },
+        { bridgeId: 'image-b2', componentName: 'img', pos: 99999 },
       ],
       selectionOrigin: 'pointer',
       isDragging: false,

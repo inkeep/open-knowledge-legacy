@@ -43,9 +43,12 @@ function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
 // biome-ignore lint/suspicious/noExplicitAny: Component props are heterogeneous across the 5-pack + transitional shim imports; no single prop type covers all
 export const componentMap: Record<string, React.ComponentType<any>> = {
   Callout,
-  Image,
-  Video,
-  Audio,
+  // Lowercase media canonicals — descriptor names are HTML-tag-spelled
+  // (`img` / `video` / `audio`); React component file names stay PascalCase
+  // per React convention. The split lives only at this registration boundary.
+  img: Image,
+  video: Video,
+  audio: Audio,
   Accordion,
   '*': UnregisteredBadgeRender,
 };

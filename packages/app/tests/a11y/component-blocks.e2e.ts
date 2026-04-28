@@ -276,7 +276,7 @@ test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contra
     '',
     '</Callout>',
     '',
-    '<Image src="/placeholder.png" alt="Architecture diagram" caption="Figure 1: topology" />',
+    '<img src="/placeholder.png" alt="Architecture diagram" />',
     '',
     '<Accordion title="Details" defaultOpen>',
     '',
@@ -288,9 +288,9 @@ test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contra
     '',
     '</Accordion>',
     '',
-    '<Video src="/sample.mp4" />',
+    '<video src="/sample.mp4" />',
     '',
-    '<Audio src="/sample.mp3" />',
+    '<audio src="/sample.mp3" />',
     '',
     'Some paragraph with normal text.',
   ].join('\n');
@@ -330,17 +330,13 @@ test('A11Y10: Zero axe-core violations on 5-pack fixture (excluding color-contra
 // wired end-to-end (props → React render → DOM attribute).
 
 test('A11Y11: javascript:/data: URL props render inert in the DOM', async ({ page, api }) => {
-  // US-013: pre-US-013 this test used `<Card href>` anchors. Post-narrow,
-  // `href` isn't a 5-pack URL-typed descriptor prop; `Image src`, `Video src`,
-  // `Audio src` are. The XSS mitigation flows through the SAME
-  // `sanitizeComponentProps` pass — test rewritten around `<Image src>` to
-  // exercise the same sanitizer-boundary invariant. Any URL-typed prop with
-  // a `javascript:` / `vbscript:` / `data:` scheme must be stripped before
-  // reaching the DOM attribute.
+  // URL-typed descriptor props (`<img src>`, `<video src>`, `<audio src>`)
+  // route through `sanitizeComponentProps` — any `javascript:` / `vbscript:` /
+  // `data:` scheme must be stripped before reaching the DOM attribute.
   const malicious = [
-    '<Image src="javascript:fetch(`/nope`)" alt="xss-image" />',
+    '<img src="javascript:fetch(`/nope`)" alt="xss-image" />',
     '',
-    '<Image src="https://example.com/safe.png" alt="safe-image" />',
+    '<img src="https://example.com/safe.png" alt="safe-image" />',
   ].join('\n');
   await setupDoc(page, api, malicious);
   // Wait until both <img> elements render — we assert on the two src values.

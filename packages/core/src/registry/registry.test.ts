@@ -75,13 +75,18 @@ describe('createRegistry', () => {
   test('registry.has returns true for registered, false for unknown', () => {
     const registry = createRegistry();
     expect(registry.has('Callout')).toBe(true);
-    expect(registry.has('Image')).toBe(true);
-    expect(registry.has('Video')).toBe(true);
-    expect(registry.has('Audio')).toBe(true);
+    expect(registry.has('img')).toBe(true);
+    expect(registry.has('video')).toBe(true);
+    expect(registry.has('audio')).toBe(true);
     expect(registry.has('Accordion')).toBe(true);
     expect(registry.has('*')).toBe(true);
-    // Cut-in-US-003 descriptors (Steps, Cards, Tabs, etc.) are no longer registered —
-    // user content using those names falls through to wildcard via `getOrWildcard`.
+    // Lowercase media canonicals — capitalized forms now fall through to the
+    // wildcard. User content authored before the pivot would render with
+    // generic chrome but isn't registered as a fresh-insert canonical.
+    expect(registry.has('Image')).toBe(false);
+    expect(registry.has('Video')).toBe(false);
+    expect(registry.has('Audio')).toBe(false);
+    // Other unregistered descriptors fall through to wildcard via getOrWildcard.
     expect(registry.has('Steps')).toBe(false);
     expect(registry.has('DataViz')).toBe(false);
   });
@@ -193,176 +198,178 @@ describe('builtInComponents manifest', () => {
     );
   });
 
-  test('Image exposes the 8-prop FR-2 surface', () => {
-    // US-006 widens the Image descriptor from the pre-narrow 5 props
-    // (src/alt/width/height/children) to the FR-2 8-prop shape. `caption`
-    // becomes a typed string (not a reactnode) so γ round-trips it through
-    // PropPanel edits byte-identical; `loading` is an `'eager'|'lazy'` enum;
-    // `zoom` is a boolean with default `true` driving the click-to-zoom
-    // wrapper. Order-insensitive — a future reshuffle should not break this.
-    const image = builtInComponents.find((m) => m.name === 'Image');
-    expect(image).toBeDefined();
-    if (!image) return;
-    const propNames = image.props.map((p) => p.name).sort();
+  test('img exposes the 12-prop HTML-native surface (4 common + 8 advanced)', () => {
+    // Lowercase media canonical pivot. Drops the OK-specific `caption` and
+    // `zoom` props from the descriptor — caption belongs on a future Frame
+    // wrapper; zoom is always-on inside the Image React component.
+    // Common: src + alt + width + height. Advanced: srcset + sizes + loading
+    // + title + decoding + fetchpriority + crossorigin + referrerpolicy.
+    // Order-insensitive — a future reshuffle should not break this.
+    const img = builtInComponents.find((m) => m.name === 'img');
+    expect(img).toBeDefined();
+    if (!img) return;
+    const propNames = img.props.map((p) => p.name).sort();
     expect(propNames).toEqual(
-      ['alt', 'caption', 'height', 'loading', 'src', 'title', 'width', 'zoom'].sort(),
+      [
+        'src',
+        'alt',
+        'width',
+        'height',
+        'srcset',
+        'sizes',
+        'loading',
+        'title',
+        'decoding',
+        'fetchpriority',
+        'crossorigin',
+        'referrerpolicy',
+      ].sort(),
     );
   });
 
-  test('Image has `loading` as a 2-value enum with lazy default', () => {
-    const image = builtInComponents.find((m) => m.name === 'Image');
-    const loading = image?.props.find((p) => p.name === 'loading');
+  test('img has `loading` as a 2-value enum with lazy default (advanced-tagged)', () => {
+    const img = builtInComponents.find((m) => m.name === 'img');
+    const loading = img?.props.find((p) => p.name === 'loading');
     expect(loading).toBeDefined();
     if (loading?.type === 'enum') {
       expect([...loading.enumValues].sort()).toEqual(['eager', 'lazy'].sort());
       expect(loading.defaultValue).toBe('lazy');
+      expect(loading.advanced).toBe(true);
     } else {
-      throw new Error('Image.loading must be an enum');
+      throw new Error('img.loading must be an enum');
     }
   });
 
-  test('Image has `zoom` as a boolean with `true` default', () => {
-    const image = builtInComponents.find((m) => m.name === 'Image');
-    const zoom = image?.props.find((p) => p.name === 'zoom');
-    expect(zoom).toBeDefined();
-    if (zoom?.type === 'boolean') {
-      expect(zoom.defaultValue).toBe(true);
-    } else {
-      throw new Error('Image.zoom must be a boolean');
-    }
+  test('img drops the `zoom` and `caption` props (Frame v2 will host)', () => {
+    // Greenfield pivot: zoom is now always-on inside the Image React
+    // component; caption belongs on a compositional Frame wrapper.
+    const img = builtInComponents.find((m) => m.name === 'img');
+    expect(img?.props.find((p) => p.name === 'zoom')).toBeUndefined();
+    expect(img?.props.find((p) => p.name === 'caption')).toBeUndefined();
   });
 
-  test('Image stays `isSelfClosing: true` after US-006 widen (caption is a typed string, not a reactnode)', () => {
-    // D-MF15: `caption` round-trips as a typed string prop, not a React node,
-    // so γ + PropPanel can edit it losslessly. The descriptor MUST NOT flip
-    // `hasChildren: true` / drop `isSelfClosing` — that would make the
-    // CommonMark image bridge (NG23 / PR #270 consolidation) treat Image as
-    // a compound container.
-    const image = builtInComponents.find((m) => m.name === 'Image');
-    expect(image?.hasChildren).toBe(false);
-    expect(image?.isSelfClosing).toBe(true);
+  test('img stays `isSelfClosing: true` (no children slot)', () => {
+    // The CommonMark image bridge (NG23) requires the canonical descriptor
+    // to declare `hasChildren: false` + `isSelfClosing: true` so the
+    // promotion path can map paragraph>image into a leaf descriptor cleanly.
+    const img = builtInComponents.find((m) => m.name === 'img');
+    expect(img?.hasChildren).toBe(false);
+    expect(img?.isSelfClosing).toBe(true);
   });
 
-  test('Video exposes the 9-prop FR-3 surface', () => {
-    // US-007 adds Video as the first pure-HTML5 descriptor (D-MF12 —
-    // no URL sniffing, no iframe emission, no `start` prop). The 9 props
-    // mirror the native <video> attrs consumers expect: src, title,
-    // controls (default true), autoPlay, muted, loop, playsInline, poster,
-    // preload. Order-insensitive — a future PropPanel reshuffle should
-    // not break this guard.
-    const video = builtInComponents.find((m) => m.name === 'Video');
+  test('video exposes the 11-prop HTML-native surface (6 common + 5 advanced)', () => {
+    // Lowercase media canonical pivot. Adds `width` / `height` (today's
+    // canonical lacked them); HTML-attr lowercase names (`autoplay`,
+    // `playsinline`) so the rendered MDX matches the spec exactly.
+    // Order-insensitive — a future reshuffle should not break this guard.
+    const video = builtInComponents.find((m) => m.name === 'video');
     expect(video).toBeDefined();
     if (!video) return;
     const propNames = video.props.map((p) => p.name).sort();
     expect(propNames).toEqual(
       [
         'src',
-        'title',
         'controls',
-        'autoPlay',
+        'autoplay',
+        'poster',
+        'width',
+        'height',
+        'title',
         'muted',
         'loop',
-        'playsInline',
-        'poster',
+        'playsinline',
         'preload',
       ].sort(),
     );
   });
 
-  test('Video has `controls` as a boolean with `true` default', () => {
+  test('video has `controls` as a boolean with `true` default', () => {
     // The default matches browser HTML5 authoring intuition — a video
     // inserted via slash-menu renders with controls visible. Authors who
     // want a chrome-less video (background loop, hero autoplay) set
     // controls={false} explicitly.
-    const video = builtInComponents.find((m) => m.name === 'Video');
+    const video = builtInComponents.find((m) => m.name === 'video');
     const controls = video?.props.find((p) => p.name === 'controls');
     expect(controls).toBeDefined();
     if (controls?.type === 'boolean') {
       expect(controls.defaultValue).toBe(true);
     } else {
-      throw new Error('Video.controls must be a boolean');
+      throw new Error('video.controls must be a boolean');
     }
   });
 
-  test('Video has `preload` as a 3-value enum (none|metadata|auto)', () => {
-    const video = builtInComponents.find((m) => m.name === 'Video');
+  test('video has `preload` as a 3-value enum (advanced-tagged)', () => {
+    const video = builtInComponents.find((m) => m.name === 'video');
     const preload = video?.props.find((p) => p.name === 'preload');
     expect(preload).toBeDefined();
     if (preload?.type === 'enum') {
       expect([...preload.enumValues].sort()).toEqual(['auto', 'metadata', 'none'].sort());
+      expect(preload.advanced).toBe(true);
     } else {
-      throw new Error('Video.preload must be an enum');
+      throw new Error('video.preload must be an enum');
     }
   });
 
-  test('Video is a self-closing leaf (no PM children; NG31 for tracks/sources)', () => {
-    // Per FR-3 post-QA-resolution: Video is a self-closing leaf descriptor
-    // symmetric with Image. HTML5 `<track>` / `<source>` require direct-
-    // child placement under `<video>`, but PM NodeViews mandate a wrapper
-    // DOM element — the two contracts are structurally incompatible, so
-    // promising children passthrough was a category error. Authors who
-    // need captions / codec fallback write raw `<video>` + `<track>` HTML
-    // in MDX, which flows through rawMdxFallback. NG31 (Future Work)
-    // tracks the additive replacement: typed `tracks` / `sources` props
-    // gated on an `array` PropDef extension.
-    const video = builtInComponents.find((m) => m.name === 'Video');
+  test('video is a self-closing leaf (no PM children)', () => {
+    // HTML5 `<track>` / `<source>` require direct-child placement under
+    // `<video>`, but PM NodeViews mandate a wrapper DOM element — the two
+    // contracts are structurally incompatible. Authors who need captions /
+    // codec fallback write raw `<video>` + `<track>` HTML in MDX, which
+    // flows through rawMdxFallback.
+    const video = builtInComponents.find((m) => m.name === 'video');
     expect(video?.hasChildren).toBe(false);
     expect(video?.isSelfClosing).toBe(true);
   });
 
-  test('Video has no `start` prop (D-MF12 — matches Mintlify / Fumadocs)', () => {
-    // Runtime seek is not a persisted authoring concern. NG27 / NG28 cover
-    // future extensions (YouTube/Vimeo auto-embed, rich iframe UX);
-    // schema-add-only makes additive props free later.
-    const video = builtInComponents.find((m) => m.name === 'Video');
+  test('video has no `start` prop (matches Mintlify / Fumadocs)', () => {
+    // Runtime seek is not a persisted authoring concern.
+    const video = builtInComponents.find((m) => m.name === 'video');
     const start = video?.props.find((p) => p.name === 'start');
     expect(start).toBeUndefined();
   });
 
-  test('Audio exposes the 6-prop FR-4 surface', () => {
-    // Post-QA-resolution: Audio is a self-closing leaf descriptor (6 props).
-    // Drops `children` from the prop list alongside the Video refactor —
-    // see the hasChildren/isSelfClosing test below for rationale.
-    // Order-insensitive — a future PropPanel reshuffle should not break
-    // this guard. Fix-pass 2 (post-Pass-1 review) standardized on
-    // camelCase `autoPlay` to match Video (FR-3) + React MDX-JSX canon.
-    const audio = builtInComponents.find((m) => m.name === 'Audio');
+  test('audio exposes the 7-prop HTML-native surface (3 common + 4 advanced)', () => {
+    // Lowercase media canonical pivot. `controls` is now an explicit prop
+    // (default true) — Audio.tsx no longer hardcodes always-on; authors who
+    // want a chrome-less audio set controls={false} from the descriptor.
+    const audio = builtInComponents.find((m) => m.name === 'audio');
     expect(audio).toBeDefined();
     if (!audio) return;
     const propNames = audio.props.map((p) => p.name).sort();
-    expect(propNames).toEqual(['src', 'title', 'autoPlay', 'loop', 'muted', 'preload'].sort());
+    expect(propNames).toEqual(
+      ['src', 'controls', 'autoplay', 'title', 'muted', 'loop', 'preload'].sort(),
+    );
   });
 
-  test('Audio has `preload` as a 3-value enum (none|metadata|auto)', () => {
-    const audio = builtInComponents.find((m) => m.name === 'Audio');
+  test('audio has `preload` as a 3-value enum (advanced-tagged)', () => {
+    const audio = builtInComponents.find((m) => m.name === 'audio');
     const preload = audio?.props.find((p) => p.name === 'preload');
     expect(preload).toBeDefined();
     if (preload?.type === 'enum') {
       expect([...preload.enumValues].sort()).toEqual(['auto', 'metadata', 'none'].sort());
+      expect(preload.advanced).toBe(true);
     } else {
-      throw new Error('Audio.preload must be an enum');
+      throw new Error('audio.preload must be an enum');
     }
   });
 
-  test('Audio is a self-closing leaf (symmetric with Video; NG31 for sources)', () => {
-    // Audio follows the same self-closing contract as Video — see the
-    // corresponding Video test above for the PM-vs-HTML5-direct-child
-    // rationale. The pre-QA state declared `hasChildren: true` but the
-    // shipped rendering path couldn't deliver native `<source>` as a
-    // direct child of `<audio>` through the PM NodeView wrapper; the
-    // descriptor is now honest about the contract.
-    const audio = builtInComponents.find((m) => m.name === 'Audio');
+  test('audio is a self-closing leaf (symmetric with video)', () => {
+    const audio = builtInComponents.find((m) => m.name === 'audio');
     expect(audio?.hasChildren).toBe(false);
     expect(audio?.isSelfClosing).toBe(true);
   });
 
-  test('Audio has no `controls` prop (FR-4 — controls always on, NG7)', () => {
-    // Per FR-4: controls are ALWAYS on (NG7 "no confidently-broken chrome").
-    // Authors who want a chrome-less audio write raw <audio> in MDX; the
-    // descriptor-dispatched Audio is always a visible player.
-    const audio = builtInComponents.find((m) => m.name === 'Audio');
+  test('audio has `controls` as a boolean with `true` default (was hardcoded always-on)', () => {
+    // Lowercase pivot promotes controls to an explicit prop. Default true
+    // preserves the prior always-on behavior for the common case.
+    const audio = builtInComponents.find((m) => m.name === 'audio');
     const controls = audio?.props.find((p) => p.name === 'controls');
-    expect(controls).toBeUndefined();
+    expect(controls).toBeDefined();
+    if (controls?.type === 'boolean') {
+      expect(controls.defaultValue).toBe(true);
+    } else {
+      throw new Error('audio.controls must be a boolean');
+    }
   });
 
   test('Accordion exposes the 6-prop FR-5 surface', () => {

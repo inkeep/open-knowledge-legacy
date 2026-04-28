@@ -33,8 +33,12 @@ describe('canonical/compat split — registry shape', () => {
 
   test('exactly 5 canonical descriptors (5-pack foundation)', () => {
     expect(canonicalDescriptors.length).toBe(5);
+    // Media canonicals are lowercase HTML-tag names (img/video/audio); non-
+    // media stays capitalized because HTML has no primitive rich enough to
+    // converge with (Callout) or only a structural subset (Accordion vs
+    // <details>).
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Audio', 'Callout', 'Image', 'Video'].sort(),
+      ['Accordion', 'Callout', 'audio', 'img', 'video'].sort(),
     );
   });
 
@@ -92,7 +96,7 @@ describe('compat descriptors — contract invariants', () => {
       compatDescriptors.map((m) => [m.name, m.convertibleTo?.target] as const),
     );
     expect(targets.get('GFMCallout')).toBe('Callout');
-    expect(targets.get('CommonMarkImage')).toBe('Image');
+    expect(targets.get('CommonMarkImage')).toBe('img');
     expect(targets.get('HtmlDetailsAccordion')).toBe('Accordion');
   });
 
@@ -118,11 +122,11 @@ describe('compat descriptors — prop-set is a subset of canonical', () => {
     }
   });
 
-  test('CommonMarkImage props are a subset of Image props', () => {
-    const image = canonicalDescriptors.find((m) => m.name === 'Image');
+  test('CommonMarkImage props are a subset of img props', () => {
+    const img = canonicalDescriptors.find((m) => m.name === 'img');
     const cm = compatDescriptors.find((m) => m.name === 'CommonMarkImage');
-    if (!image || !cm) throw new Error('Missing descriptor');
-    const canonicalNames = new Set(image.props.map((p) => p.name));
+    if (!img || !cm) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(img.props.map((p) => p.name));
     for (const p of cm.props) {
       expect(canonicalNames.has(p.name)).toBe(true);
     }

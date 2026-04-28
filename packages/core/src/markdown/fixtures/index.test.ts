@@ -18,9 +18,9 @@ describe('fixture loaders — count + shape contracts', () => {
     //   - 6 Callout fixtures (base + self-closing + info-alias + boolean-shorthand
     //     + widened-foldable + color-override)
     //   - 3 Accordion fixtures (title-only + name-grouping + defaultOpen-id)
-    //   - 2 Image fixtures (basic + widened-caption-zoom)
-    //   - 2 Video fixtures (basic + with-poster-autoplay)
-    //   - 2 Audio fixtures (basic + widened-preload)
+    //   - 2 img fixtures (basic + with-srcset-loading)
+    //   - 2 video fixtures (basic + with-poster-autoplay)
+    //   - 2 audio fixtures (basic + widened-preload)
     //   - 5 nested-composition fixtures (D-MF18 I16: Callout>Accordion,
     //     Accordion>Callout, Accordion>Accordion, Callout>Callout,
     //     Callout-collapsible>Accordion)

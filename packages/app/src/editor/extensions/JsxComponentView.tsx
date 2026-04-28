@@ -90,8 +90,9 @@ interface ComponentErrorBoundaryProps {
    *  (show "failed to render" hint, offer copy-source / delete affordances
    *  via the stuck-state UI). */
   onError: (error: Error) => void;
-  /** Registered descriptor name ('Callout', 'Image', …, or 'wildcard').
-   *  Low-cardinality label — safe for telemetry aggregation. */
+  /** Registered descriptor name ('Callout', 'img', 'video', 'audio',
+   *  'Accordion', or 'wildcard'). Low-cardinality label — safe for
+   *  telemetry aggregation. */
   descriptorName: string;
   /** Raw user-authored component name; may be arbitrary MDX text. Kept in
    *  a separate field (not a label) so telemetry aggregation does not

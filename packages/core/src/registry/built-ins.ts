@@ -112,237 +112,6 @@ const calloutProps: PropDef[] = [
   },
 ];
 
-// ── Image (US-003 rename from ImageZoom; US-006 widens to FR-2 8-prop shape) ─
-//
-// FR-2 surface: `src` + `alt` + `width` + `height` + `caption` + `title` +
-// `loading` + `zoom` (8 typed props). Superset of CommonMark `![alt](src)` —
-// MDX JSX adds dimensions, caption, loading strategy, and zoom override.
-// Children slot is NOT declared on the descriptor (isSelfClosing stays true);
-// `caption` is a typed string prop rather than a reactnode so it round-trips
-// through γ + PropPanel cleanly.
-//
-// Rendering (Image.tsx):
-//   - `caption` set   → <figure> → <Zoom wrapElement="span"><img></Zoom>
-//                     → <figcaption>{caption}</figcaption> → </figure>
-//   - `caption` unset → <Zoom wrapElement="span"><img></Zoom>
-//   - `zoom: false`   → skip Zoom wrapper; bare <img> (still inside <figure>
-//                       when caption present)
-//
-// `loading` defaults to `'lazy'` at the renderer for consistency with the
-// native img contract; an explicit `'eager'` author-override preserves.
-
-const imageProps: PropDef[] = [
-  {
-    name: 'src',
-    type: 'string',
-    required: true,
-    description: 'Image source URL',
-  },
-  {
-    name: 'alt',
-    type: 'string',
-    required: false,
-    defaultValue: '',
-    description: 'Alt text',
-  },
-  {
-    name: 'width',
-    type: 'number',
-    required: false,
-    description: 'Image width',
-  },
-  {
-    name: 'height',
-    type: 'number',
-    required: false,
-    description: 'Image height',
-  },
-  {
-    name: 'caption',
-    type: 'string',
-    required: false,
-    description: 'Optional caption rendered below the image in a <figcaption>',
-  },
-  {
-    name: 'title',
-    type: 'string',
-    required: false,
-    description: 'Tooltip text (rendered as the native HTML title attribute)',
-  },
-  {
-    name: 'loading',
-    type: 'enum',
-    enumValues: ['eager', 'lazy'],
-    defaultValue: 'lazy',
-    required: false,
-    description: 'Native img loading strategy (defaults to lazy)',
-  },
-  {
-    name: 'zoom',
-    type: 'boolean',
-    defaultValue: true,
-    required: false,
-    description: 'When true (default), click the image to open a full-viewport zoom modal',
-  },
-];
-
-// ── Video (US-007) ───────────────────────────────────────────────────────────
-//
-// FR-3 (SPEC 2026-04-23-cb-v2-md-foundation): pure HTML5 `<video>` wrapper per
-// D-MF12 — matches Mintlify's explicit-iframe pattern (Fumadocs has no Video
-// component at all). 8-prop self-closing leaf: `src` + `title` + `controls`
-// (default true) + `autoPlay` + `muted` + `loop` + `playsInline` + `poster` +
-// `preload` (enum).
-//
-// Self-closing, no children slot. The HTML5 spec requires `<track>` and
-// `<source>` as direct children of `<video>`, but ProseMirror NodeViews
-// mandate a wrapper DOM element to host the content hole — the two
-// contracts are structurally incompatible. Rather than pretend otherwise,
-// Video is a leaf descriptor symmetric with Image. Authors who need
-// captions or codec fallback sources write raw `<video>` + `<track>` HTML
-// in MDX, which flows through the wildcard / rawMdxFallback path
-// (byte-preserving, editable).
-//
-// Explicitly out-of-scope (per D-MF12 / NG27 / NG28 / NG31):
-//   - YouTube / Vimeo URL sniffing → users author raw `<iframe>` for service
-//     embeds; future NG27 promotes auto-detection when authoring friction
-//     surfaces. Cheap to add later (~40 LoC render-time URL sniff) and
-//     strictly additive — no descriptor shape change.
-//   - `start` seek prop → Mintlify + Fumadocs both omit; video seeking is
-//     runtime behavior, not a persisted authoring prop.
-//   - Custom player chrome → HTML5 native controls are the UX; matches the
-//     NG7 "no confidently-broken chrome" rule.
-//   - Typed `tracks: Array<TrackDef>` / `sources: Array<SourceDef>` props
-//     → NG31 Future Work; requires extending PropDef with an `array` type
-//     of structured records (PropPanel UX, γ serialization, empty-array
-//     default all need design). Ship today: raw-HTML escape hatch.
-
-const videoProps: PropDef[] = [
-  {
-    name: 'src',
-    type: 'string',
-    required: true,
-    description: 'Video source URL',
-  },
-  {
-    name: 'title',
-    type: 'string',
-    required: false,
-    description: 'Tooltip text (native HTML title attribute)',
-  },
-  {
-    name: 'controls',
-    type: 'boolean',
-    required: false,
-    defaultValue: true,
-    description: 'Show native HTML5 video controls (defaults to true)',
-  },
-  {
-    name: 'autoPlay',
-    type: 'boolean',
-    required: false,
-    description: 'Begin playback as soon as possible',
-  },
-  {
-    name: 'muted',
-    type: 'boolean',
-    required: false,
-    description: 'Mute audio on load (required for autoPlay in most browsers)',
-  },
-  {
-    name: 'loop',
-    type: 'boolean',
-    required: false,
-    description: 'Restart from the beginning when playback ends',
-  },
-  {
-    name: 'playsInline',
-    type: 'boolean',
-    required: false,
-    description: 'Play inline on iOS rather than entering fullscreen',
-  },
-  {
-    name: 'poster',
-    type: 'string',
-    required: false,
-    description: 'Poster image URL shown before playback',
-  },
-  {
-    name: 'preload',
-    type: 'enum',
-    enumValues: ['none', 'metadata', 'auto'],
-    required: false,
-    description: 'Hint for how much of the video to preload',
-  },
-];
-
-// ── Audio (US-008) ───────────────────────────────────────────────────────────
-//
-// FR-4 (SPEC 2026-04-23-cb-v2-md-foundation): HTML5 `<audio>` wrapper with
-// native controls always on (NG7 "no confidently-broken chrome"). 6-prop
-// self-closing leaf: `src` + `title` + `autoPlay` + `loop` + `muted` +
-// `preload` (enum).
-//
-// No `controls` prop — per FR-4, controls are always on. Authors who want a
-// chrome-less audio (background loop) would need to write a raw `<audio>`
-// element in MDX; descriptor-dispatched Audio always renders controls.
-//
-// Self-closing, no children slot (symmetric with Video — see Video's comment
-// block for the full PM-vs-HTML5-direct-child rationale). Authors who need
-// `<source>` codec fallback write raw `<audio>` + `<source>` HTML in MDX,
-// which flows through the wildcard / rawMdxFallback path. Typed `sources:
-// Array<SourceDef>` is NG31 Future Work (paired with Video tracks).
-
-const audioProps: PropDef[] = [
-  {
-    name: 'src',
-    type: 'string',
-    required: true,
-    description: 'Audio source URL',
-  },
-  {
-    name: 'title',
-    type: 'string',
-    required: false,
-    description: 'Tooltip text (rendered as the native HTML title attribute)',
-  },
-  // `autoPlay` matches the Video descriptor's camelCase convention (FR-3) and
-  // React's MDX-JSX attr canon; the spec's FR-4 originally called for
-  // lowercase `autoplay` (HTML5 attr form) but that split the 5-pack's two
-  // media descriptors across two casings for no authoring benefit. Per D-MF7
-  // greenfield (no migration) we standardize on camelCase here; the renderer
-  // passes `autoPlay={props.autoPlay}` straight through.
-  // WYH2 review fix: declare in the same `autoPlay → muted → loop` order
-  // as the Video descriptor (built-ins.ts L232-251) so the auto-generated
-  // PropPanel column order is consistent across the two media primitives.
-  // No runtime semantic change — purely a presentation alignment.
-  {
-    name: 'autoPlay',
-    type: 'boolean',
-    required: false,
-    description: 'Begin playback as soon as possible (usually requires muted)',
-  },
-  {
-    name: 'muted',
-    type: 'boolean',
-    required: false,
-    description: 'Mute audio on load',
-  },
-  {
-    name: 'loop',
-    type: 'boolean',
-    required: false,
-    description: 'Restart from the beginning when playback ends',
-  },
-  {
-    name: 'preload',
-    type: 'enum',
-    enumValues: ['none', 'metadata', 'auto'],
-    required: false,
-    description: 'Hint for how much of the audio to preload',
-  },
-];
-
 // ── Lowercase HTML media canonicals — htmlImgProps / htmlVideoProps / htmlAudioProps ──
 //
 // Replaces the capitalized `imageProps` / `videoProps` / `audioProps` above
@@ -385,7 +154,6 @@ const audioProps: PropDef[] = [
 //   [1] alt         [5] sizes           [9]  fetchpriority
 //   [2] width       [6] loading         [10] crossorigin
 //   [3] height      [7] title           [11] referrerpolicy
-// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical img descriptor in US-007 (flip step)
 const htmlImgProps: PropDef[] = [
   // common
   { name: 'src', type: 'string', required: true, description: 'Image source URL' },
@@ -471,7 +239,6 @@ const htmlImgProps: PropDef[] = [
 //
 // Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps to
 // React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
-// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical video descriptor in US-007 (flip step)
 const htmlVideoProps: PropDef[] = [
   // common
   { name: 'src', type: 'string', required: true, description: 'Video source URL' },
@@ -542,7 +309,6 @@ const htmlVideoProps: PropDef[] = [
 // `controls` is now an explicit prop (default true) — Audio.tsx no longer
 // hardcodes always-on. Authors who want a chrome-less audio set
 // `controls={false}` instead of escaping to raw HTML.
-// biome-ignore lint/correctness/noUnusedVariables: consumed by canonical audio descriptor in US-007 (flip step)
 const htmlAudioProps: PropDef[] = [
   // common
   { name: 'src', type: 'string', required: true, description: 'Audio source URL' },
@@ -694,10 +460,17 @@ const gfmCalloutProps: PropDef[] = [
 ];
 
 const commonMarkImageProps: PropDef[] = [
-  // `![alt](src "title")` — three native fields.
-  imageProps[0], // src
-  imageProps[1], // alt
-  imageProps[5], // title
+  // `![alt](src "title")` — three native fields. Identity-shared with
+  // htmlImgProps so a future change to `src` / `alt` / `title` PropDef
+  // metadata applies to both the canonical and the compat in lockstep.
+  // `title` carries `advanced: true` from htmlImgProps[7] — in
+  // CommonMarkImage's PropPanel `title` appears under Advanced, consistent
+  // with how it appears under `<img>`. Acceptable because authors rarely
+  // edit CommonMark image titles, and consistency across the canonical /
+  // compat pair outweighs surfacing it flat.
+  htmlImgProps[0], // src
+  htmlImgProps[1], // alt
+  htmlImgProps[7], // title (advanced via shared identity)
 ];
 
 const htmlDetailsAccordionProps: PropDef[] = [
@@ -728,6 +501,17 @@ function escapeHtmlText(value: string): string {
 }
 
 // ── Manifest ─────────────────────────────────────────────────────────────────
+//
+// Rule for choosing canonical descriptor casing:
+//
+//   Lowercase (HTML-tag) when (a) the HTML primitive carries an attribute set
+//   complete enough that nothing OK-specific needs to live as a prop AND
+//   (b) compositional wrappers (Frame, Figure, etc.) are the canonical home
+//   for OK-specific affordances around the primitive.
+//
+//   Capitalized when (a) HTML has no primitive that covers the surface
+//   (e.g., Callout) OR (b) the closest HTML primitive is structurally a
+//   subset of the descriptor (e.g., Accordion vs <details>).
 
 export const builtInComponents: JsxComponentMeta[] = [
   // Content
@@ -745,45 +529,49 @@ export const builtInComponents: JsxComponentMeta[] = [
     serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx),
   },
 
-  // Media
+  // Media — lowercase per the rule above. HTML's `<img>` / `<video>` /
+  // `<audio>` carry attribute sets complete enough that no OK-specific prop
+  // belongs on the primitive; caption / Frame-style decorations belong on a
+  // compositional wrapper (Frame v2). `displayName` stays capitalized for
+  // slash-menu and PropPanel header readability.
   {
-    name: 'Image',
+    name: 'img',
     surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
-    props: imageProps,
+    props: htmlImgProps,
     icon: 'ZoomIn',
     category: 'media',
     displayName: 'Image',
-    description: 'Image with optional caption, explicit dimensions, and click-to-zoom',
-    searchTerms: ['image', 'zoom', 'picture', 'photo', 'figure', 'caption'],
-    serialize: (node, ctx) => emitMdxJsx('Image', node, ctx),
+    description: 'Image with click-to-zoom and HTML-native attributes',
+    searchTerms: ['image', 'zoom', 'picture', 'photo'],
+    serialize: (node, ctx) => emitMdxJsx('img', node, ctx),
   },
   {
-    name: 'Video',
+    name: 'video',
     surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
-    props: videoProps,
+    props: htmlVideoProps,
     icon: 'Film',
     category: 'media',
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
-    serialize: (node, ctx) => emitMdxJsx('Video', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('video', node, ctx),
   },
   {
-    name: 'Audio',
+    name: 'audio',
     surface: 'canonical',
     hasChildren: false,
     isSelfClosing: true,
-    props: audioProps,
+    props: htmlAudioProps,
     icon: 'Volume2',
     category: 'media',
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
-    serialize: (node, ctx) => emitMdxJsx('Audio', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx),
   },
 
   // Content
@@ -879,10 +667,10 @@ export const builtInComponents: JsxComponentMeta[] = [
     category: 'media',
     displayName: 'CommonMark Image',
     description:
-      'CommonMark image (`![alt](src "title")`) — read-only compat. Convert to Image for caption / dimensions / zoom props.',
-    rendersAs: 'Image',
+      'CommonMark image (`![alt](src "title")`) — read-only compat. Convert to Image for the full HTML-native attribute surface.',
+    rendersAs: 'img',
     translateProps: (props) => props,
-    convertibleTo: { target: 'Image', remap: (props) => props },
+    convertibleTo: { target: 'img', remap: (props) => props },
     serialize: (node) => {
       const p = node.attrs.props as { src?: string; alt?: string; title?: string } | undefined;
       const image = {

@@ -1501,7 +1501,7 @@ button:active:not(:disabled) {
  * border, so no inset/radius override is needed. Cards/Steps per-type rules
  * were removed in US-004 alongside the fumadocs cherry-pick — those
  * descriptor names fall through to the '*' wildcard now. */
-.ProseMirror .jsx-component-wrapper[data-component-type="image"] {
+.ProseMirror .jsx-component-wrapper[data-component-type="img"] {
   --selection-halo-inset: -2px;
   --selection-halo-radius: calc(0.375rem + 2px);
 }
