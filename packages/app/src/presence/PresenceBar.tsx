@@ -72,6 +72,10 @@ export const ANIMAL_ICON_NAMES = Object.freeze([...Object.keys(ANIMAL_ICON_MAP)]
  *      it matches an animal-icon key, render that icon; otherwise fall back
  *      to initials.
  *
+ * Cross-file contract: step 1 holds only because the awareness publish site
+ * in `TiptapEditor.tsx` omits `principalId` for synthesized users. If that
+ * contract changes, gate on `user.source` instead of `user.principalId`.
+ *
  * Pure function — exported for unit testing in `PresenceBar.test.ts`.
  */
 type HumanAvatarKind = { kind: 'initials' } | { kind: 'animal'; animal: string };

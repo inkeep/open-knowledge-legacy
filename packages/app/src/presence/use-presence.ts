@@ -71,6 +71,10 @@ let warnedOnMalformedAwareness = false;
  * changing what the bar looks like. Used to short-circuit the 1 Hz TTL
  * tick's `setState` when no peer actually changed — React Compiler cannot
  * elide this because every tick produces a fresh object reference.
+ *
+ * `user.principalId` is not compared directly; principalId changes are
+ * covered indirectly because color is seeded from principalId — a
+ * principalId transition (e.g. boot-race resolution) always changes color.
  */
 export function participantsEqual(a: Participant[], b: Participant[]): boolean {
   if (a.length !== b.length) return false;
