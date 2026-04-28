@@ -12,7 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
-import { getFrontmatterMap, type Principal } from '@inkeep/open-knowledge-core';
+import {
+  getFrontmatterMap,
+  type Principal,
+  parseFrontmatterYaml,
+  unwrapFrontmatterFences,
+} from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   AgentSessionManager,
@@ -794,6 +799,120 @@ describe('POST /api/frontmatter-patch — comment preservation on legacy mirror'
       expect(legacy).toContain('author: Bob');
       expect(legacy).toContain('version: 1');
       expect(legacy).not.toContain('author: Alice');
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('POST /api/frontmatter-patch — legacy mirror is rebuildable from per-key state', () => {
+  // Regression invariant for the transition pattern: every write surface
+  // that touches metaMap must leave the legacy `'frontmatter'` slot in a
+  // state where parsing it yields a value-map equal to `getFrontmatterMap`.
+  // The slot is observable (carries comments + source order) but NOT
+  // authoritative — per-key entries are. If a future writer drifts the
+  // legacy slot from per-key, this test catches it before that mirror
+  // becomes the source.
+
+  function assertMirrorRebuildable(
+    session: { dc: { document: { getMap: (k: string) => { get: (k: string) => unknown } } } },
+    label: string,
+  ): void {
+    const doc = session.dc.document as unknown as Parameters<typeof getFrontmatterMap>[0];
+    const map = getFrontmatterMap(doc);
+    const legacy = session.dc.document.getMap('metadata').get('frontmatter');
+    if (Object.keys(map).length === 0) {
+      expect(legacy, `${label}: empty per-key map → no legacy slot`).toBeUndefined();
+      return;
+    }
+    expect(legacy, `${label}: legacy slot must exist when per-key has entries`).toBeDefined();
+    expect(typeof legacy, `${label}: legacy slot must be string`).toBe('string');
+    const parsed = parseFrontmatterYaml(unwrapFrontmatterFences(legacy as string));
+    expect(parsed.map, `${label}: legacy slot parses to a valid map`).not.toBeNull();
+    expect(parsed.map, `${label}: legacy slot parsed map equals per-key map`).toEqual(map);
+  }
+
+  test('mirror invariant holds across set, create, and delete patches in sequence', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+      // Seed via agent-write (existing transition pattern).
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Seed\nstatus: draft\n---\n# Body\n',
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+      assertMirrorRebuildable(session, 'after agent seed');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { title: 'Renamed' },
+      });
+      assertMirrorRebuildable(session, 'after MCP set');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { author: 'Sarah', version: 1 },
+        source: 'form',
+        op: 'add',
+      });
+      assertMirrorRebuildable(session, 'after form add (multi-key)');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { status: null },
+        source: 'form',
+        op: 'remove',
+      });
+      assertMirrorRebuildable(session, 'after form delete');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('mirror invariant holds when all keys are deleted (legacy slot cleared)', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(session.dc.document, '---\nonly: here\n---\n# Body\n', 'replace');
+      }, AGENT_WRITE_ORIGIN);
+      assertMirrorRebuildable(session, 'before drain');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { only: null },
+        source: 'form',
+        op: 'remove',
+      });
+      assertMirrorRebuildable(session, 'after drain');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('mirror invariant holds for list-shape values (per-key array equality)', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { tags: ['a', 'b', 'c'], draft: true, version: 1 },
+        source: 'form',
+        op: 'add',
+      });
+      assertMirrorRebuildable(session, 'mixed shapes');
+
+      await callApi(hocuspocus, sessionManager, contentDir, '/api/frontmatter-patch', {
+        docName: 'test-doc',
+        patch: { tags: ['x'] },
+        source: 'form',
+        op: 'set',
+      });
+      assertMirrorRebuildable(session, 'list replacement');
     } finally {
       await cleanup();
     }

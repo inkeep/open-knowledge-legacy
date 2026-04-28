@@ -254,10 +254,10 @@ function findLooksLikeFrontmatter(find: string): boolean {
   return false;
 }
 
-// `reorder` is intentionally absent from the runtime accept-set: D31/NG13
-// dropped reorder from MVP and no UI emits it, so accepting it here would
-// fire `frontmatter.form_write` with an op the system doesn't actually
-// implement. The type retains the variant for spec parity (SPEC §6 FR11);
+// `reorder` is intentionally absent from the runtime accept-set: reorder is
+// deferred from MVP and no UI emits it, so accepting it here would fire
+// `frontmatter.form_write` with an op the system doesn't actually
+// implement. The type retains the variant for forward compatibility;
 // re-add to this set together with the UI implementation when it lands.
 const FORM_OPS: ReadonlySet<FrontmatterFormOp> = new Set(['set', 'add', 'remove', 'rename']);
 

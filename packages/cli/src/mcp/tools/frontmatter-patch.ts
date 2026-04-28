@@ -38,7 +38,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `docName` — Document name. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `patch` — Object whose keys are property names. Each value is the new value (string, number, boolean, or array of strings) to **set or create** the key, or `null` to **delete** the key. Keys not present in `patch` are unchanged.',
-  '- `types` (optional) — Per-key type override map. Useful when an ISO 8601 string should be stored as plain text instead of a date, or when a number-shaped string should keep its text type. Values: `"text" | "number" | "boolean" | "date" | "list"`. Inferred from value shape when omitted.',
+  '- `types` (optional) — Per-key widget-type hint. Currently shape-validated server-side but not persisted (declared types are session-local on the client today; type is inferred from value shape on read). Values: `"text" | "number" | "boolean" | "date" | "list"`.',
   '- `summary` — Optional one-line user-outcome description (≤80 chars). Prefer outcome phrasing ("Marked spec as approved") over structural ("Set status field"). Avoid secrets / PII — summaries persist to git history.',
   '',
   '**Atomicity:** any value failing schema validation rejects the WHOLE patch (HTTP 400 with per-key error report). Either every change commits or none do.',
