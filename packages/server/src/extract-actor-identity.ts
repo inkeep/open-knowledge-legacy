@@ -51,7 +51,7 @@ function resolveAgentType(clientName: string | undefined): string {
 }
 
 /**
- * Identity boundary for rename + rollback handlers (D22-A, D-A1, D-A8, D-A11).
+ * Identity boundary for rename + rollback handlers.
  *
  * Routing:
  *   body.agentId valid + non-empty → 'agent'    (writerId = agent-<id>)
@@ -60,8 +60,8 @@ function resolveAgentType(clientName: string | undefined): string {
  *
  * The 'agent' branch ALSO populates `actor.principalId` from getPrincipal() so the
  * agent-on-behalf-of-principal audit trail mirrors `buildAgentActor` for non-rename
- * writes (D-A8). Body-supplied `principalId` is intentionally never read — server's
- * getPrincipal() is the only source of principal identity (D-A11 trust boundary).
+ * writes. Body-supplied `principalId` is intentionally never read — server's
+ * getPrincipal() is the only source of principal identity (HTTP body is unauthenticated).
  */
 export function extractActorIdentity(
   body: Record<string, unknown>,

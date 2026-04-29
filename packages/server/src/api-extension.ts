@@ -3485,9 +3485,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Identity routing (D22-A): body agentId → agent contributor; absent →
-    // server-side getPrincipal() fallback to principal contributor; neither →
-    // anonymous (D22 invariant for the bootstrap-failure case).
     const bodyObj = body as Record<string, unknown>;
     const actor = extractActorIdentity(bodyObj, getPrincipal);
     if (actor.kind === 'invalid-summary') {
@@ -4289,9 +4286,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
         return;
       }
-      // Case-only rename guard (D-A9): on a case-insensitive filesystem
-      // (macOS APFS default, Windows NTFS) the move would no-op or behave
-      // unpredictably. Out of scope here.
+      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
+      // a case-only move would no-op or behave unpredictably; reject explicitly.
       if (fromPath.toLowerCase() === toPath.toLowerCase()) {
         json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;

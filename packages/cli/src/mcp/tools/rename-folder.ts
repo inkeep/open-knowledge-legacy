@@ -58,6 +58,7 @@ export const DESCRIPTION = [
   '',
   '**Errors:**',
   '- 400 — case-only renames (e.g. `Articles` → `articles`) are not supported.',
+  '- 400 — destination folder is excluded by the workspace `content.include` / `content.exclude` config.',
   '- 404 — source folder does not exist.',
   '- 409 — destination folder already exists or rename would collide.',
 ].join('\n');

@@ -60,6 +60,12 @@ export const DESCRIPTION = [
   '- `docName` — Current document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `newDocName` — New document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `summary` — Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline. If omitted, a default like "Renamed X → Y" is generated. Provide your own summary to explain the why. Avoid including secrets or PII — summaries are persisted to git history.',
+  '',
+  '**Errors:**',
+  '- 400 — case-only renames (e.g. `Auth` → `auth`) are not supported.',
+  '- 400 — destination document is excluded by the workspace `content.include` / `content.exclude` config.',
+  '- 404 — source document does not exist.',
+  '- 409 — destination document already exists.',
 ].join('\n');
 
 function parseRenameMappings(value: unknown): RenameDocumentMapping[] {
