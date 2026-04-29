@@ -161,15 +161,37 @@ describe('bindConfigDoc — patch()', () => {
     binding.dispose();
   });
 
-  test('rejects YAML_PARSE on broken existing Y.Text content', () => {
-    doc.getText('source').insert(0, 'mcp:\n  autoStart: [unclosed');
+  test('self-heals from corrupt Y.Text — patch lands on a fresh doc, dropping the bad bytes', () => {
+    // Duplicate top-level keys is one of the few yaml@2 hard parse errors.
+    // Without self-heal this would lock the user out of the Settings pane —
+    // every patch fails YAML_PARSE because the existing content can't be
+    // round-tripped. Self-heal mirrors L3's revert-to-LKG semantics for
+    // the patch path.
+    doc.getText('source').insert(0, 'theme: light\nappearance:\ntheme: light\n');
     const binding = bindConfigDoc(provider, 'workspace');
 
     const result = binding.patch({ mcp: { autoStart: true } });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected err');
-    if (!isKnownConfigError(result.error)) throw new Error('not known error');
-    expect(result.error.code).toBe('YAML_PARSE');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected self-heal recovery');
+    // Y.Text now contains only the patch — corrupt bytes dropped.
+    const after = doc.getText('source').toString();
+    expect(after).toContain('mcp:');
+    expect(after).toContain('autoStart: true');
+    // Duplicate `theme:` lines are gone.
+    expect(after.match(/^theme:/gm)?.length ?? 0).toBe(0);
+    binding.dispose();
+  });
+
+  test('self-heals from non-mapping top-level (e.g., scalar or array)', () => {
+    doc.getText('source').insert(0, '- not a mapping\n- also not\n');
+    const binding = bindConfigDoc(provider, 'workspace');
+
+    const result = binding.patch({ mcp: { autoStart: true } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected self-heal recovery');
+    const after = doc.getText('source').toString();
+    expect(after).toContain('mcp:');
+    expect(after).not.toContain('not a mapping');
     binding.dispose();
   });
 

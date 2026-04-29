@@ -215,24 +215,30 @@ function bindConfigDocInner(
     }
 
     const currentContent = ytext.toString();
-    const doc = parseDocument(currentContent);
-    if (doc.errors.length > 0) {
-      return err({
-        code: 'YAML_PARSE',
-        detail: doc.errors.map((e) => e.message).join('; '),
-      });
-    }
+    let doc = parseDocument(currentContent);
 
-    // Empty Y.Text → empty Document. setIn requires a top-level map to
-    // create nested paths; createNode({}) gives us one. Mirrors the
-    // writeConfigPatch contents-null branch.
+    // Self-heal: if the existing Y.Text is unparseable (duplicate keys, tab
+    // indentation, etc.) or has a non-mapping top-level, drop it and apply
+    // the patch onto a fresh empty document. The corrupt content was already
+    // dead weight — every subsequent patch would fail YAML_PARSE until
+    // someone cleared it manually. Surface via telemetry so we still notice;
+    // user-visible behavior becomes "next click recovers" instead of a
+    // permanent lockout.
+    //
+    // Mirrors L3's revert-to-LKG semantics, but L3 only fires after a
+    // successful Y.Text write — without this branch a corrupt seed leaves
+    // patchInner permanently failing.
+    const topLevelNonMap = doc.contents !== null && !isMap(doc.contents);
+    if (doc.errors.length > 0 || topLevelNonMap) {
+      addConfigSpanEvent('config.corrupt-ytext-reset', {
+        'config.scope': scope,
+        'config.parse.errorCount': doc.errors.length,
+        'config.parse.topLevelNonMap': topLevelNonMap,
+      });
+      doc = parseDocument('');
+    }
     if (doc.contents === null) {
       doc.contents = doc.createNode({}) as ParsedNode;
-    } else if (!isMap(doc.contents)) {
-      return err({
-        code: 'YAML_PARSE',
-        detail: 'Top-level YAML value must be a mapping (object)',
-      });
     }
 
     const appliedPaths = applyPatchToDocument(doc, patch);
