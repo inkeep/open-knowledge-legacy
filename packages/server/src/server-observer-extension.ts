@@ -5,7 +5,8 @@
  * extends Y.Doc). This avoids openDirectConnection's connection-count increment
  * which would prevent documents from unloading during server shutdown.
  *
- * Skips __system__ docs via isSystemDoc().
+ * Skips __system__ and config docs (markdown bridge is markdown-only;
+ * config docs are Y.Text-only per D41/FR-30).
  *
  * @see specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md §7b
  */
@@ -13,7 +14,7 @@ import type { Extension } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { incrementServerObserverError } from './metrics.ts';
 import { setupServerObservers } from './server-observers.ts';
 import type { ShadowRef } from './shadow-repo.ts';
@@ -47,7 +48,7 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
 
   return {
     async afterLoadDocument({ documentName, document }) {
-      if (isSystemDoc(documentName)) return;
+      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
       if (cleanups.has(documentName)) return;
 
       const doc = document as unknown as Y.Doc;

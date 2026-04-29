@@ -27,7 +27,7 @@ import type { JSONContent } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   contributorCount,
@@ -631,7 +631,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
-      if (isSystemDoc(documentName)) return;
+      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
       ensureHistograms();
       const started = Date.now();
       return withSpan(
@@ -746,7 +746,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       lastTransactionOrigin,
       lastContext: _lastContext,
     }) {
-      if (isSystemDoc(documentName)) return;
+      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
       if (isBatchInProgress()) return;
       ensureHistograms();
       const started = Date.now();

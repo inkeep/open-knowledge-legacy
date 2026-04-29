@@ -410,8 +410,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // Only the __system__ CC1 DirectConnection — no content documents loaded.
-    // flushAllStoresAndWait runs (documents.size === 1 for __system__), but completes fast.
+    // Only the boot-admitted synthetic DirectConnections — no content
+    // documents loaded. flushAllStoresAndWait runs over them but the
+    // persistence config-doc/system-doc short-circuits make each flush a
+    // no-op. The short-circuit path completes fast.
     const startedAt = Date.now();
     await server.destroy();
     const elapsed = Date.now() - startedAt;
@@ -422,10 +424,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // timeout" — 2s still proves the short-circuit fired.
     expect(elapsed).toBeLessThan(2_000);
 
-    // Shutdown log still emitted — documentCount is 1 (__system__ CC1 doc)
+    // Shutdown log still emitted — documentCount counts the boot-admitted
+    // synthetic docs (__system__, __config__/workspace, __user__/config.yml).
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(1);
+    expect(shutdownLogs[0].payload.documentCount).toBe(3);
   });
 
   test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
@@ -475,10 +478,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(await readFile(join(tmpDir, 'doc-b.md'), 'utf-8')).toContain('content B');
     expect(await readFile(join(tmpDir, 'doc-c.md'), 'utf-8')).toContain('content C');
 
-    // Shutdown log reports documentCount === 4 (3 content docs + __system__ CC1 doc)
+    // Shutdown log reports documentCount === 6 (3 content docs +
+    // __system__ + 2 boot-admitted config docs).
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(4);
+    expect(shutdownLogs[0].payload.documentCount).toBe(6);
   });
 });
 
@@ -583,6 +587,111 @@ describe('createServer() degraded signal', () => {
     srv.degraded = [];
 
     await srv.ready;
+    await srv.destroy();
+  });
+});
+
+// ─── US-005: config-doc admission + bridge bypass ──────────────────────────
+//
+// Spec: D39/D40/FR-29 (synthetic config docs admitted Y.Text-only at boot)
+//       + D41/FR-30 (markdown observer bridge bypass for non-content docs).
+// Subsystem short-circuits (persistence, agent-sessions, file-watcher,
+// content-filter, etc.) are unit-tested in their respective files. This
+// suite proves the boot-time admission + the bridge bypass end-to-end
+// against a real Hocuspocus instance.
+
+describe('createServer() — config-doc admission (US-005)', () => {
+  let testProjectDir: string;
+
+  beforeEach(() => {
+    testProjectDir = mkdtempSync(resolve(tmpdir(), 'ok-config-admission-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(testProjectDir, { recursive: true, force: true });
+  });
+
+  test('boot admits both config docs alongside __system__', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+
+    await srv.ready;
+
+    expect(srv.hocuspocus.documents.has('__system__')).toBe(true);
+    expect(srv.hocuspocus.documents.has('__config__/workspace')).toBe(true);
+    expect(srv.hocuspocus.documents.has('__user__/config.yml')).toBe(true);
+    // Admission failures would surface as `degraded` entries — none expected
+    // for a clean init.
+    expect(srv.degraded.filter((s) => s.startsWith('config-doc:'))).toEqual([]);
+
+    await srv.destroy();
+  });
+
+  test('Y.Text mutation on a config doc does NOT engage the markdown bridge (D41)', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+
+    await srv.ready;
+
+    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    expect(configDoc).toBeDefined();
+    if (!configDoc) return;
+
+    // Bridge contract: Observer B (Y.Text → XmlFragment) would populate the
+    // 'default' XmlFragment from a Y.Text mutation. With the bypass in
+    // server-observer-extension.ts, the bridge never attaches for config
+    // docs, so the XmlFragment stays empty regardless of Y.Text content.
+    const ytext = configDoc.getText('source');
+    const xmlFragment = configDoc.getXmlFragment('default');
+    expect(xmlFragment.length).toBe(0);
+
+    configDoc.transact(() => {
+      ytext.insert(0, 'theme: dark\n');
+    });
+
+    // Allow any debounced observer scheduling to settle (bridge would fire
+    // synchronously inside the transact, but await one microtask round to
+    // be safe).
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(ytext.toString()).toBe('theme: dark\n');
+    // Bridge bypass verified: the XmlFragment was never populated.
+    expect(xmlFragment.length).toBe(0);
+
+    await srv.destroy();
+  });
+
+  test('connecting a transient client to a config doc succeeds via existing collab WS (D49)', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+    });
+
+    await srv.ready;
+
+    // openDirectConnection is the in-process equivalent of a client
+    // attaching over the collab WS — it goes through the same auth
+    // extension. No additional gating needed for config docs (D49).
+    const conn = await srv.hocuspocus.openDirectConnection('__config__/workspace');
+    try {
+      const document = conn.document;
+      expect(document).toBeDefined();
+      const text = document.getText('source');
+      expect(typeof text.toString()).toBe('string');
+    } finally {
+      await conn.disconnect();
+    }
+
     await srv.destroy();
   });
 });

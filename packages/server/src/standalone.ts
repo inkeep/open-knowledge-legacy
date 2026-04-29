@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
-import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { CONFIG_DOC_NAMES, type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -13,7 +13,7 @@ import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import { CC1Broadcaster, isConfigDoc, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
@@ -559,6 +559,15 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
+  // Config doc connections (US-005, D39/D40/FR-29). Held open for the
+  // server's lifetime so the synthetic Y.Docs stay materialized — clients
+  // (Settings pane + chrome controls) attach via WS. The bridge bypass
+  // (D41) is in `server-observer-extension.ts`; persistence/file-watcher/
+  // agent-sessions short-circuits in their respective modules.
+  const configDocConnections = new Map<
+    string,
+    Awaited<ReturnType<Hocuspocus['openDirectConnection']>>
+  >();
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
@@ -934,7 +943,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         const rescueFailed: string[] = [];
         if (shadowRef.current) {
           for (const docName of stillLoaded) {
-            if (isSystemDoc(docName)) continue;
+            if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
@@ -1072,6 +1081,17 @@ export function createServer(options: ServerOptions): ServerInstance {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
             }
+            for (const [docName, connection] of configDocConnections) {
+              try {
+                await connection.disconnect();
+              } catch (configErr) {
+                log.warn(
+                  { err: configErr, docName },
+                  `[server] failed to disconnect ${docName} during shutdown`,
+                );
+              }
+            }
+            configDocConnections.clear();
           } catch (err) {
             phaseErrors.push({
               phase: 'cc1-teardown',
@@ -1370,6 +1390,25 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('cc1-push');
     }
 
+    // Pre-materialize config Y.Docs (D39/D40/FR-29 — US-005). One per
+    // well-known synthetic name. Connections held for the server's
+    // lifetime so the docs stay loaded — Settings pane + chrome controls
+    // attach via the existing collab WS. Bridge bypass + agent-session
+    // short-circuits live in the respective modules; admission failure
+    // is non-fatal (Settings pane's first connect would re-materialize).
+    for (const configDocName of CONFIG_DOC_NAMES) {
+      try {
+        const connection = await hocuspocus.openDirectConnection(configDocName);
+        configDocConnections.set(configDocName, connection);
+      } catch (err) {
+        log.error(
+          { err, docName: configDocName },
+          `[server] failed to open ${configDocName} direct connection — config bind degraded`,
+        );
+        degraded.push(`config-doc:${configDocName}`);
+      }
+    }
+
     // Reset branch-scoped state to match THIS project's current HEAD before
     // anything reads/writes it. `persistence.activeBranch` and the
     // `BacklinkIndex.activeBranch` are mutable state; in single-process test
@@ -1420,7 +1459,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               : currentBranch;
             const docs: ParkableDoc[] = [];
             for (const [docName, document] of hocuspocus.documents) {
-              if (isSystemDoc(docName)) continue;
+              if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
               // Wrap in doc.transact so Y.js serializes snapshot capture atomically
               // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
               let markdown: string | null = null;
@@ -1484,7 +1523,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
-              if (isSystemDoc(docName)) continue;
+              if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
               try {
                 const filePath = safeContentPath(docName, contentDir);
                 if (!existsSync(filePath)) {
@@ -1554,7 +1593,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
-                if (isSystemDoc(docName)) continue;
+                if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
                 try {
                   const parked = await readParkedState(
                     shadowRef.current,

@@ -8,6 +8,7 @@ import {
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
   CC1ServerInfoPayloadSchema,
+  CONFIG_DOC_NAMES,
   type DerivedViewChannel,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
@@ -35,6 +36,25 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export function isSystemDoc(documentName: string): boolean {
   return documentName === SYSTEM_DOC_NAME;
+}
+
+const CONFIG_DOC_NAME_SET: ReadonlySet<string> = new Set(CONFIG_DOC_NAMES);
+
+/**
+ * True for the bounded set of well-known config document names
+ * (`__config__/workspace`, `__user__/config.yml`).
+ *
+ * Subsystems keyed off `documentName` MUST short-circuit on this predicate
+ * the same way they do on `isSystemDoc`. Config docs are admitted Y.Text-only
+ * via `hocuspocus.openDirectConnection()`; the markdown observer bridge,
+ * agent-session bookkeeping, file-watcher content classification, derived-
+ * index updates, and reconciliation paths all bypass.
+ *
+ * The membership set is a public contract per spec D39/D40 — adding more
+ * names requires explicit re-decision (ASK_FIRST per spec §16).
+ */
+export function isConfigDoc(documentName: string): boolean {
+  return CONFIG_DOC_NAME_SET.has(documentName);
 }
 
 export class CC1Broadcaster {

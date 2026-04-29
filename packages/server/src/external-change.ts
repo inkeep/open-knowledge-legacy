@@ -10,7 +10,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
@@ -59,7 +59,7 @@ export function applyExternalChange(
   docName: string,
   content: string,
 ): void {
-  if (isSystemDoc(docName)) return;
+  if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
   const { frontmatter, body } = stripFrontmatter(content);

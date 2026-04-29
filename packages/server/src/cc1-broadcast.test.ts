@@ -8,9 +8,12 @@ import {
   CC1BranchSwitchedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAMES,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
-import { CC1Broadcaster, isSystemDoc } from './cc1-broadcast.ts';
+import { CC1Broadcaster, isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
 describe('isSystemDoc', () => {
@@ -25,12 +28,51 @@ describe('isSystemDoc', () => {
     expect(isSystemDoc('test-doc')).toBe(false);
   });
 
+  test('returns false for config doc names', () => {
+    // Predicates are disjoint by design — every callsite ORs them, never trades them.
+    expect(isSystemDoc(CONFIG_DOC_NAME_WORKSPACE)).toBe(false);
+    expect(isSystemDoc(CONFIG_DOC_NAME_USER)).toBe(false);
+  });
+
   test('SYSTEM_DOC_NAME matches expected value', () => {
     expect(SYSTEM_DOC_NAME).toBe('__system__');
   });
 
   test('CC1_CONTRACT_VERSION is 1', () => {
     expect(CC1_CONTRACT_VERSION).toBe(1);
+  });
+});
+
+describe('isConfigDoc', () => {
+  test('returns true for the well-known workspace config doc', () => {
+    expect(isConfigDoc('__config__/workspace')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_WORKSPACE)).toBe(true);
+  });
+
+  test('returns true for the well-known user-global config doc', () => {
+    expect(isConfigDoc('__user__/config.yml')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_USER)).toBe(true);
+  });
+
+  test('returns false for system doc and regular content names', () => {
+    expect(isConfigDoc(SYSTEM_DOC_NAME)).toBe(false);
+    expect(isConfigDoc('notes/intro')).toBe(false);
+    expect(isConfigDoc('')).toBe(false);
+  });
+
+  test('membership is exact — lookalikes do NOT match', () => {
+    // STOP rule: the admission set is a public contract per spec §16.
+    // Substring matches and prefix variants are deliberately rejected.
+    expect(isConfigDoc('__config__/workspace.md')).toBe(false);
+    expect(isConfigDoc('__config__/user')).toBe(false);
+    expect(isConfigDoc('__config__/')).toBe(false);
+    expect(isConfigDoc('__user__/config.yml.md')).toBe(false);
+    expect(isConfigDoc('__user__/auth.yml')).toBe(false);
+    expect(isConfigDoc('a__config__/workspace')).toBe(false);
+  });
+
+  test('CONFIG_DOC_NAMES contains exactly the two well-known names', () => {
+    expect([...CONFIG_DOC_NAMES].sort()).toEqual(['__config__/workspace', '__user__/config.yml']);
   });
 });
 
