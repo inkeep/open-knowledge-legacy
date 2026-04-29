@@ -35,6 +35,7 @@ export default {
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
+    'docs/content/guides/component-blocks.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
@@ -45,11 +46,7 @@ export default {
     // and co-located test files become unreachable. Each workspace below
     // explicitly adds them to `entry` to restore pre-#320 reachability.
     'packages/app': {
-      entry: [
-        'src/**/*.test.{ts,tsx}',
-        'tests/**/*.{test,e2e}.ts',
-        'tests/integration/idb-preload.ts', // bunfig.toml `[test] preload`
-      ],
+      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts'],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
