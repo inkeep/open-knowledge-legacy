@@ -4239,6 +4239,11 @@ Homepage: https://github.com/remarkjs/remark-gfm
 
 Copyright (c) Titus Wormer <tituswormer@gmail.com>
 
+### `remark-github-alerts@0.1.1`
+Homepage: https://github.com/hyoban/remark-github-alerts#readme
+
+Copyright (c) 2023 Stephen Zhou <https://github.com/hyoban>
+
 ### `remark-parse@11.0.0`
 Homepage: https://remark.js.org
 
@@ -4836,6 +4841,11 @@ Homepage: https://yjs.dev
 
 Copyright (c) 2014 - Kevin Jahns <kevin.jahns@rwth-aachen.de>. - Chair of Computer Science 5 (Databases & Information Systems), RWTH Aachen University, Germany
 
+### `y-prosemirror@1.3.7`
+Homepage: https://github.com/yjs/y-prosemirror#readme
+
+Copyright (c) 2019 Kevin Jahns <kevin.jahns@protonmail.com>.
+
 ### `y-protocols@1.0.7`
 Homepage: https://github.com/yjs/y-protocols#readme
 
@@ -5285,6 +5295,11 @@ Copyright (c) 2016, Daniel Wirtz  All rights reserved.
 Homepage: https://github.com/ljharb/qs
 
 Copyright (c) 2014, Nathan LaFreniere and other [contributors](https://github.com/ljharb/qs/graphs/contributors)
+
+### `react-medium-image-zoom@5.4.3`
+Homepage: https://github.com/rpearce/react-medium-image-zoom
+
+Copyright (c) 2020, Robert Pearce
 
 ### `secure-json-parse@4.1.0`
 Homepage: https://github.com/fastify/secure-json-parse#readme

@@ -23,6 +23,7 @@
  * content-B is present. Any reintroduction of the stale-client merge path
  * trips this red.
  */
+import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,7 +57,7 @@ afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
   }
-});
+}, 30_000);
 
 describe('T9: External disk edit during server restart', () => {
   test('REPRO: disk flipped from A to B during downtime, tab open — no content-A bleed', async () => {

@@ -28,7 +28,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
   ASSET_EXTENSIONS,
@@ -212,7 +212,7 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
  * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -229,7 +229,7 @@ export const ROLLBACK_ORIGIN = {
  * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -759,7 +759,13 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  const relativePath = kind === 'file' ? `${path}${getDocExtension(path)}` : path;
+  // When kind is 'file': if the caller passed an explicit supported extension,
+  // use the path verbatim — this is how the rename handler signals an
+  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
+  // Extension-less paths fall through to getDocExtension() + the registered
+  // extension map so legacy callers keep the source's existing extension.
+  const relativePath =
+    kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
   if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
@@ -944,6 +950,12 @@ export interface ApiExtensionOptions {
    * fake so the endpoint doesn't shell out.
    */
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
+  /**
+   * Explicit document unload hook. `createServer()` suppresses Hocuspocus's
+   * automatic unload-on-disconnect to avoid reload + IDB duplication, so API
+   * paths that intentionally retire a document must opt into unload here.
+   */
+  forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -1060,6 +1072,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getPrincipal,
     installedAgentsProbe,
     contentFilter,
+    forceUnloadDocument,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
@@ -1295,7 +1308,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       deleteReconciledBase(docName);
       if (!document) continue;
       hocuspocus.closeConnections(docName);
-      await hocuspocus.unloadDocument(document);
+      await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(document);
     }
 
     return liveContents;
@@ -2045,6 +2058,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const index = getFileIndex();
       const documents: {
         docName: string;
+        docExt: string;
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -2056,8 +2070,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
+        // getDocExtension() returns the registered on-disk extension for the
+        // docName (or `.md` by default when nothing is yet recorded). Surfacing
+        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
+        // faithfully instead of hard-coding `.md`.
+        const docExt = getDocExtension(docName);
+
         documents.push({
           docName,
+          docExt,
           size: entry.size,
           modified: entry.modified,
           isSymlink: false,
@@ -2071,6 +2092,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
             docName: alias,
+            docExt,
             size: entry.size,
             modified: entry.modified,
             isSymlink: true,
@@ -2879,7 +2901,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const doc = hocuspocus.documents.get(docName);
-      if (doc) await hocuspocus.unloadDocument(doc);
+      if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
       writeFileSync(filePath, '', 'utf-8');
       if (backlinkIndex) {
         backlinkIndex.deleteDocument(docName);
@@ -4223,6 +4245,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
+      // Handles the case where the client sends an explicit extension that
+      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
+      // the file is already `foo.md`) — `docName !== newDocName` textually
+      // but the on-disk paths resolve to the same file. Treat as no-op,
+      // mirroring the extension-less `docName === newDocName` short-circuit
+      // above.
+      if (sourcePath === destinationPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
       if (!existsSync(sourcePath)) {
         json(res, 404, { ok: false, error: 'Document does not exist' });
         return;
@@ -4527,17 +4559,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      const pages: {
+        docName: string;
+        title: string;
+        docExt: string;
+        size: number;
+        modified: string;
+      }[] = [];
       for (const [docName, entry] of index) {
         let title = docName;
+        const docExt = getDocExtension(docName);
         try {
-          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
+          const filePath = resolve(contentDir, `${docName}${docExt}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title, size: entry.size, modified: entry.modified });
+        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
@@ -4619,7 +4658,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
 
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    // Identity extracted from query params (multipart body precludes JSON).
     extractAgentIdentity(
       Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
     );
@@ -4743,12 +4782,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // SPEC §6 FR-2: same-dir sha256 dedup. Bounded scan over destDir,
-    // skipped entirely when upload.dedup.mode === 'off'. The dedup test
-    // happens BEFORE filename synthesis so a duplicate paste preserves
-    // the existing on-disk basename instead of producing a fresh
-    // pasted-<ts>.png stub. Server returns { deduped: true } so the
-    // client surfaces a toast (DEFAULT_DEDUP_UI).
+    // Same-dir sha256 dedup. Bounded scan over destDir, skipped entirely
+    // when DEFAULT_DEDUP_MODE === 'off'. The dedup test happens BEFORE
+    // filename synthesis so a duplicate paste preserves the existing
+    // on-disk basename instead of producing a fresh pasted-<ts>.png stub.
+    // Server returns { deduped: true } so the client surfaces a toast.
     //
     // The hash + size come from the streaming pipeline (no buffer). On a
     // dedup hit the tempfile is unlinked and we short-circuit without
@@ -4771,12 +4809,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           '[upload] dedup hit',
         );
-        // SPEC §6 FR-2 + Major-1 fix: include the contentDir-relative
-        // `path` in the response so the client honors non-default
-        // `attachmentFolderPath`. Without this the client assumes the
-        // asset is co-located with the parent doc and emits a broken
-        // relative ref when operators configure attachmentFolderPath:
-        // 'attachments' (Obsidian-style global path) or similar.
+        // Include the contentDir-relative `path` in the response so the
+        // client honors non-default `attachmentFolderPath`. Without this
+        // the client assumes the asset is co-located with the parent doc
+        // and emits a broken relative ref when operators configure
+        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
+        // or similar.
         json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
         return;
       }

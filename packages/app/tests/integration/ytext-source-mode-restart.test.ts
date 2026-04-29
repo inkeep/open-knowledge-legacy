@@ -16,6 +16,7 @@
  * — pre-fix, both Y.Text and XmlFragment showed doubled content on fast
  * restart. Post-fix, neither surface duplicates and the two stay in sync.
  */
+import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -51,7 +52,7 @@ afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
   }
-});
+}, 30_000);
 
 describe('T10: Y.Text (source-mode) duplication on restart', () => {
   test('REPRO: fast restart — Y.Text and XmlFragment both preserve content once', async () => {

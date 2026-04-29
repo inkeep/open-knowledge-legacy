@@ -7,6 +7,12 @@ import { deriveKnownFolderPaths } from './navigation-targets';
 export interface PageMeta {
   size: number;
   modified: string;
+  /**
+   * On-disk extension — `.md` or `.mdx`. Surfaced by `/api/pages` so
+   * the editor header can render `foo.mdx` vs `foo.md` faithfully
+   * instead of hard-coding `.md`. Optional for backward compat.
+   */
+  docExt?: string;
 }
 
 interface PageListContextValue {
@@ -44,6 +50,7 @@ interface PageSummary {
   title: string;
   size: number;
   modified: string;
+  docExt?: string;
 }
 
 export function mergePageSets(
@@ -120,7 +127,11 @@ export function PageListProvider({ children }: { children: ReactNode }) {
         setServerPageMeta(
           new Map(
             pageSummaries.map(
-              (page) => [page.docName, { size: page.size, modified: page.modified }] as const,
+              (page) =>
+                [
+                  page.docName,
+                  { size: page.size, modified: page.modified, docExt: page.docExt },
+                ] as const,
             ),
           ),
         );

@@ -6,6 +6,22 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
   'image/svg+xml',
 ] as const;
 
+export const ALLOWED_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm', 'video/ogg'] as const;
+
+// `audio/webm` is intentionally absent: file-type@22's magic-byte detection
+// returns `video/webm` for any WebM/Matroska container regardless of whether
+// the stream is audio-only. Listing `audio/webm` here would never match the
+// MIME `fileTypeFromBuffer` returns and would 400 every audio-only-webm
+// upload that reached the allowlist check.
+//
+// These three arrays survive PR #270's accept-all server pipeline as
+// declarative metadata only — consumed by `<input accept>` in PropPanel's
+// file picker (UX hint to the OS file dialog) and by built-ins.ts as data
+// values on `htmlImgProps[0].accept` / `htmlVideoProps[0].accept` /
+// `htmlAudioProps[0].accept`. The server itself is accept-all (D-M LOCKED);
+// these arrays are picker-side filters, not security boundaries.
+export const ALLOWED_AUDIO_MIME_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg'] as const;
+
 /**
  * Canonical image-extension set. One source of truth for every dispatch
  * question: client emit-shape (`pickInsertShape`), server mdast→PM

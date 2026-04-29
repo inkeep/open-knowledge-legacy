@@ -987,6 +987,117 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     });
   });
 
+  // localStorage-persistence path for the server instance ID associated with
+  // hydrated IDB state. This is intentionally separate from
+  // `cachedServerInstanceId`, which tracks the live server. The page-reload
+  // duplication fix depends on preserving the stale IDB-associated ID even when
+  // the boot `/api/server-info` fetch observes the fresh server before open().
+  describe('server-instance-id localStorage persistence', () => {
+    const IDB_SYNCED_SERVER_INSTANCE_ID_KEY = 'ok-idb-synced-server-instance-id';
+
+    function makeStubStorage(): {
+      stub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+      store: Map<string, string>;
+    } {
+      const store = new Map<string, string>();
+      return {
+        stub: {
+          getItem: (k: string) => store.get(k) ?? null,
+          setItem: (k: string, v: string) => {
+            store.set(k, v);
+          },
+          removeItem: (k: string) => {
+            store.delete(k);
+          },
+        },
+        store,
+      };
+    }
+
+    test('setExpectedServerInstanceId does not overwrite IDB-associated storage', () => {
+      const { stub, store } = makeStubStorage();
+      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setExpectedServerInstanceId('new-server');
+      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('old-server');
+    });
+
+    test('pre-seeded storage value wins over fast boot fetch on first open()', () => {
+      // The core page-reload regression guard: session-1 persisted instance ID
+      // 'old-server', Vite restarts (new process → new instance ID), the page
+      // reloads, and the fast localhost `/api/server-info` boot fetch observes
+      // 'new-server' before the first document provider opens. The auth token
+      // must still carry `expectedServerInstanceId=old-server` so the server's
+      // onAuthenticate rejects on mismatch and triggers the IDB-clearing recycle.
+      const { stub, store } = makeStubStorage();
+      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setExpectedServerInstanceId('new-server');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedServerInstanceId).toBe('old-server');
+    });
+
+    test('clean synced provider writes current server ID to storage', () => {
+      const { stub, store } = makeStubStorage();
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setExpectedServerInstanceId('server-current');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      entry.observerCleanup = () => {};
+      entry.provider.emit('synced', { state: true });
+      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('server-current');
+    });
+
+    test('server-instance-mismatch clears stale storage but preserves fresh current ID', async () => {
+      const { stub, store } = makeStubStorage();
+      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
+      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
+      pool.setExpectedServerInstanceId('new-server');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      pool.setActive('doc1');
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
+
+      expect(store.has(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe(false);
+      const replaced = pool.getActive();
+      if (!replaced) throw new Error('expected replaced entry');
+      const parsed = parseHocuspocusAuthToken(replaced.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedServerInstanceId).toBe('new-server');
+    });
+
+    test('storage.setItem throw is non-fatal — in-memory current ID still works', () => {
+      const throwingStub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error('synthetic quota error');
+        },
+        removeItem: () => {},
+      };
+      pool = new ProviderPool(3, DUMMY_WS, { storage: throwingStub });
+      pool.setExpectedServerInstanceId('server-instance-abc');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+    });
+
+    test('null storage — pool runs without persistence', () => {
+      pool = new ProviderPool(3, DUMMY_WS, { storage: null });
+      pool.setExpectedServerInstanceId('server-instance-abc');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
+      if (!parsed) throw new Error('expected valid token');
+      expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+    });
+  });
+
   test('setExpectedServerInstanceId affects future opens, not existing providers', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setTabIdentity({ principalId: 'p-1', tabSessionId: 's-1' });
@@ -1052,7 +1163,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     expect(pool.getActiveDocName()).toBe('doc1');
   });
 
-  test("reason 'server-instance-mismatch' nulls the cached instance ID", async () => {
+  test("reason 'server-instance-mismatch' clears the stale current instance claim", async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
@@ -1111,6 +1222,92 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     await wait(50);
     const postSecond = pool.entries.get('doc1');
     expect(postSecond?.provider).toBe(postFirstProvider);
+  });
+
+  test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
+    __resetSyncPromiseCache();
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    let resolveClear: () => void = () => {};
+    entry.persistence.clearData = mock(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClear = resolve;
+        }),
+    );
+
+    syncPromise('doc1', entry.provider).catch(() => {});
+    expect(__syncPromiseCacheSize()).toBe(1);
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+
+    expect(__syncPromiseCacheSize()).toBe(0);
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'clearing-local-cache',
+      docNames: ['doc1'],
+    });
+
+    resolveClear();
+    await wait(50);
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames: ['doc1'],
+    });
+
+    const replacement = pool.getActive();
+    if (!replacement) throw new Error('expected replacement');
+    replacement.observerCleanup = () => {};
+    replacement.provider.emit('synced', { state: true });
+
+    expect(pool.getServerRestartRecoveryState()).toEqual({ kind: 'idle' });
+    __resetSyncPromiseCache();
+  });
+
+  test('active doc clearData failure exposes targeted recovery failure state', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+    const originalProvider = entry.provider;
+    entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(50);
+
+    expect(pool.getActive()?.provider).toBe(originalProvider);
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-failed',
+      docNames: ['doc1'],
+      failedDocNames: ['doc1'],
+    });
+  });
+
+  test('active doc clearData timeout exposes targeted timeout state', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+    entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(30);
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-timeout',
+      docNames: ['doc1'],
+      failedDocNames: ['doc1'],
+    });
   });
 });
 
@@ -1597,10 +1794,10 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
   // pool must still recycle the cleared entries (their IDB is empty + safe
   // to recycle into) while leaving failed entries inert. An all-or-none
   // gate would re-open the duplication class for the cleared docs because
-  // `cachedServerInstanceId` is nulled at the mismatch-handler entry —
-  // the next reconnect carries no claim, the server accepts on the legacy
-  // path, and Yjs additively merges pre-restart-clientID items into the
-  // post-restart server state.
+  // the stale instance claim is cleared at the mismatch-handler entry —
+  // the next reconnect no longer rejects before stale IDB can be wiped, and
+  // Yjs additively merges pre-restart-clientID items into the post-restart
+  // server state.
   test('server-instance-mismatch with partial clearData failure recycles cleared entries only', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId('server-old');
@@ -1658,6 +1855,47 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     // doc3 was non-active and was destroyed, so there's no post-state ref
     // to compare against.
     void preProvider3;
+  });
+
+  test('partial clearData with timeout preserves timeout reason after active reconnect syncs', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 15 });
+    pool.setExpectedServerInstanceId('server-old');
+    const docActive = uniqueDocName('pp-partial-timeout-active');
+    const docHung = uniqueDocName('pp-partial-timeout-hung');
+    const ea = pool.open(docActive);
+    const eb = pool.open(docHung);
+    if (!ea?.persistence || !eb?.persistence) {
+      throw new Error('expected persistences');
+    }
+    pool.setActive(docActive);
+    ea.observerCleanup = () => {};
+    eb.observerCleanup = () => {};
+
+    ea.persistence.clearData = mock(async () => {});
+    eb.persistence.clearData = mock(() => new Promise<void>(() => {}));
+
+    ea.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(60);
+
+    const postActive = pool.entries.get(docActive);
+    if (!postActive || postActive.kind !== 'active')
+      throw new Error('expected active doc post-recycle');
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames: [docActive],
+      failedDocNames: [docHung],
+      clearFailureReason: 'clear-data-timeout',
+    });
+
+    postActive.provider.emit('synced', { state: true });
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-timeout',
+      docNames: [docHung],
+      failedDocNames: [docHung],
+    });
   });
 });
 

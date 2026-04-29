@@ -50,16 +50,26 @@ interface ContentConfig {
   exclude: string[];
 }
 
-function resolveContentConfig(): ContentConfig {
-  const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
-  const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
+// Exported for unit testing. Matches `api-config-handler.ts:computeDevApiConfigResponse`
+// extraction pattern — keep the pure logic reachable from a test harness so the
+// defaults-fallback path gets regression coverage without spinning up Vite.
+export function resolveContentConfig(projectRoot: string): ContentConfig {
+  // Defaults must stay in sync with `packages/cli/src/config/schema.ts` —
+  // admitting both `.md` and `.mdx` is the path contract the rest of the
+  // stack (file watcher, content filter, doc-extensions) already expects.
+  const defaults: ContentConfig = {
+    dir: projectRoot,
+    include: ['**/*.md', '**/*.mdx'],
+    exclude: [],
+  };
+  const configPath = resolve(projectRoot, '.open-knowledge/config.yml');
   if (existsSync(configPath)) {
     try {
       const raw = readFileSync(configPath, 'utf-8');
       const parsed = parseYaml(raw) as Record<string, unknown> | null;
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
-        defaults.dir = resolve(PROJECT_ROOT, content.dir);
+        defaults.dir = resolve(projectRoot, content.dir);
       }
       if (Array.isArray(content?.include)) {
         const valid = (content.include as unknown[]).filter(
@@ -80,7 +90,7 @@ function resolveContentConfig(): ContentConfig {
   return defaults;
 }
 
-const contentConfig = resolveContentConfig();
+const contentConfig = resolveContentConfig(PROJECT_ROOT);
 // `realpathSync` resolves macOS /tmp → /private/tmp so the watcher and
 // persistence layer agree on canonical paths inside test tmpdirs.
 const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
@@ -100,8 +110,12 @@ const gitEnabledForTest = isTestIsolated && process.env.OK_TEST_GIT_ENABLED === 
 const KEEPALIVE_GRACE_MS = 10_000;
 
 // Gate the process.once('exit', ...) registration to avoid tripping
-// MaxListenersExceededWarning after ~10 Vite restarts.
+// MaxListenersExceededWarning after ~10 Vite restarts. The exit handler
+// reads `latestLockDir` inside its closure so a Vite restart that swaps
+// the resolved lockDir (content.dir edit, env flip) still releases the
+// current server's lock rather than the first invocation's.
 let exitHandlerRegistered = false;
+let latestLockDir: string | null = null;
 
 export function hocuspocusPlugin(): Plugin {
   return {
@@ -148,14 +162,17 @@ export function hocuspocusPlugin(): Plugin {
         quiet: true,
       });
 
+      latestLockDir = currentSrv.lockDir;
       if (!exitHandlerRegistered) {
         exitHandlerRegistered = true;
-        const lockDir = currentSrv.lockDir;
         // Fires for non-graceful exits where the close handler's
-        // `srv.destroy()` never runs. Ownership-guarded.
+        // `srv.destroy()` never runs. Ownership-guarded. Reads
+        // `latestLockDir` from module scope so a Vite restart that swapped
+        // the lockDir still releases the current server's lock.
         process.once('exit', () => {
+          if (latestLockDir === null) return;
           try {
-            releaseServerLock(lockDir);
+            releaseServerLock(latestLockDir);
           } catch {
             // Already released by close handler's destroy — fine.
           }

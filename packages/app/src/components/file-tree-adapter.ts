@@ -1,14 +1,35 @@
 import type { ContextMenuItem, FileTreeDropTarget } from '@pierre/trees';
 import type { DocEntry } from '@/components/file-tree-utils';
 
-const TREE_MARKDOWN_EXTENSION = '.md';
+const DEFAULT_TREE_EXTENSION = '.md';
+const TREE_EXTENSION_PATTERN = /\.(md|mdx)$/i;
 
-export function docNameToTreePath(docName: string): string {
-  return `${docName}${TREE_MARKDOWN_EXTENSION}`;
+/**
+ * Map a docName to the tree path the @pierre/trees model uses. `docExt`
+ * carries the actual on-disk extension (`.md` / `.mdx`) — defaults to `.md`
+ * for sites that don't have it yet. Two files with the same docName but
+ * different extensions are distinct file system entries; passing the wrong
+ * extension breaks tree-model mapping.
+ */
+export function docNameToTreePath(
+  docName: string,
+  docExt: string = DEFAULT_TREE_EXTENSION,
+): string {
+  return `${docName}${docExt}`;
 }
 
 export function treeFilePathToDocName(treePath: string): string {
-  return stripTrailingSlash(treePath).replace(/\.md$/i, '');
+  return stripTrailingSlash(treePath).replace(TREE_EXTENSION_PATTERN, '');
+}
+
+/**
+ * Detect the markdown extension on a tree path. Returns `.md` or `.mdx`
+ * (lowercased) when the path ends with one; undefined when neither matches
+ * (e.g., a folder path).
+ */
+function detectTreePathExtension(treePath: string): string | undefined {
+  const match = stripTrailingSlash(treePath).match(TREE_EXTENSION_PATTERN);
+  return match ? `.${match[1].toLowerCase()}` : undefined;
 }
 
 export function treeDirectoryPathToFolderPath(treePath: string): string {
@@ -27,7 +48,7 @@ export function treePathToAppPath(treePath: string): string {
 }
 
 export function documentsToTreePaths(documents: readonly DocEntry[]): string[] {
-  return documents.map((doc) => docNameToTreePath(doc.docName));
+  return documents.map((doc) => docNameToTreePath(doc.docName, doc.docExt));
 }
 
 export function treePathSignature(paths: readonly string[]): string {
@@ -51,7 +72,7 @@ export function collectTreeFolderPathsFromDocuments(documents: readonly DocEntry
 
 export function computeTreeAncestorPaths(path: string | null): string[] {
   if (!path) return [];
-  const normalized = stripTrailingSlash(path.replace(/\.md$/i, ''));
+  const normalized = stripTrailingSlash(path.replace(TREE_EXTENSION_PATTERN, ''));
   const segments = normalized.split('/').filter(Boolean);
   const ancestors: string[] = [];
   const folderSegmentCount = path.endsWith('/') ? segments.length : segments.length - 1;
@@ -66,16 +87,19 @@ export function treeItemToTarget(item: ContextMenuItem): {
   name: string;
   path: string;
   treePath: string;
+  docExt?: string;
 } {
   const isFolder = item.kind === 'directory';
   const appPath = isFolder
     ? treeDirectoryPathToFolderPath(item.path)
     : treeFilePathToDocName(item.path);
+  const docExt = isFolder ? undefined : detectTreePathExtension(item.path);
   return {
     kind: isFolder ? 'folder' : 'file',
-    name: stripTrailingSlash(getTreeBasename(item.path)).replace(/\.md$/i, ''),
+    name: stripTrailingSlash(getTreeBasename(item.path)).replace(TREE_EXTENSION_PATTERN, ''),
     path: appPath,
     treePath: normalizeTreePathForKind(item.path, isFolder),
+    docExt,
   };
 }
 
@@ -85,7 +109,9 @@ export function relativePathForTreeItem(item: ContextMenuItem): string {
 
 export function normalizeTreePathForKind(path: string, isFolder: boolean): string {
   if (isFolder) return folderPathToTreeDirectoryPath(path);
-  return path.endsWith(TREE_MARKDOWN_EXTENSION) ? path : `${path}${TREE_MARKDOWN_EXTENSION}`;
+  // Already-extended paths pass through (preserves authored .md/.mdx); bare
+  // names get the default extension appended for new-file placeholders.
+  return TREE_EXTENSION_PATTERN.test(path) ? path : `${path}${DEFAULT_TREE_EXTENSION}`;
 }
 
 export function createTreePlaceholder(
@@ -98,13 +124,13 @@ export function createTreePlaceholder(
   for (let i = 0; i < 100; i++) {
     const suffix = i === 0 ? '' : ` ${i + 1}`;
     if (kind === 'file') {
-      const candidate = `${parent}Untitled${suffix}${TREE_MARKDOWN_EXTENSION}`;
+      const candidate = `${parent}Untitled${suffix}${DEFAULT_TREE_EXTENSION}`;
       if (!existing.has(candidate)) return { addPath: candidate, renamePath: candidate };
       continue;
     }
 
     const directory = `${parent}New Folder${suffix}/`;
-    const indexFile = `${directory}index${TREE_MARKDOWN_EXTENSION}`;
+    const indexFile = `${directory}index${DEFAULT_TREE_EXTENSION}`;
     if (!existing.has(indexFile) && !existing.has(directory)) {
       return { addPath: indexFile, renamePath: directory };
     }
@@ -118,7 +144,7 @@ export function createPagePathFromTreeDestination(
   destinationTreePath: string,
 ): string {
   if (kind === 'file') return normalizeTreePathForKind(destinationTreePath, false);
-  return `${treeDirectoryPathToFolderPath(destinationTreePath)}/index${TREE_MARKDOWN_EXTENSION}`;
+  return `${treeDirectoryPathToFolderPath(destinationTreePath)}/index${DEFAULT_TREE_EXTENSION}`;
 }
 
 export function computeTreeDropDestinationPath(

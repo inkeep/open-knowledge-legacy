@@ -10,16 +10,26 @@
  *   meaningless to external destinations.
  *
  * - `mdxJsxFlowElement` → `<pre class="mdx-component"><code>{escaped raw}
- *   </code></pre>`. The raw source (`data.sourceRaw`) is injected as a
- *   hast `text` node so `rehype-stringify` auto-escapes the literal `<`,
- *   `>`, `&`, `"`, `'` — never as hast `html` (which passes through
- *   unescaped). This is the security boundary for FR-20: any adversarial
- *   content inside a JSX component survives verbatim but NEVER re-enters
- *   the HTML-parse world with special meaning.
+ *   </code></pre>` for capitalized JSX. Lowercase HTML primitives whose
+ *   name matches a registered tag (`img` / `video` / `audio`) take a
+ *   different path: they emit a native hast element with the JSX
+ *   attributes as hast properties, so cross-app paste targets render
+ *   real images / video / audio instead of an escaped MDX source block.
+ *   URL-scheme sanitization downstream (mdast-to-html.ts:rehypeSanitizeUrls)
+ *   strips `javascript:` / `data:` / etc. from `src`, preserving the
+ *   FR-20 boundary even for native emission.
  *
- * - `mdxJsxTextElement` → `<span class="mdx-inline">{escaped raw}</span>`.
- *   Same escape discipline as the flow element — inline JSX appears as
- *   a readable-but-inert span in external destinations (Gmail, Slack).
+ *   The `<pre>` fallback shape injects `data.sourceRaw` as a hast `text`
+ *   node so `rehype-stringify` auto-escapes the literal `<`, `>`, `&`,
+ *   `"`, `'` — never as hast `html` (which passes through unescaped).
+ *   Adversarial content inside a capitalized JSX component survives
+ *   verbatim but NEVER re-enters the HTML-parse world with special
+ *   meaning.
+ *
+ * - `mdxJsxTextElement` → `<span class="mdx-inline">{escaped raw}</span>`,
+ *   with the same lowercase HTML-primitive carve-out as the flow handler.
+ *   Inline JSX appears as a readable-but-inert span in external
+ *   destinations (Gmail, Slack); inline `<img>` emits as native `<img>`.
  *
  * - `rawMdxFallback` → `<!-- Parse error: {reason} -->` + `<pre class=
  *   "mdx-fallback"><code>{escaped raw}</code></pre>`. The leading
@@ -33,7 +43,7 @@
  * fuzz test across 100+ random payloads.
  */
 
-import type { Comment, Element, ElementContent } from 'hast';
+import type { Comment, Element, ElementContent, Properties } from 'hast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { toWikiLinkSlug } from '../utils/slug.ts';
@@ -43,6 +53,56 @@ import type {
   WikiLinkEmbedMdast,
   WikiLinkMdast,
 } from './mdast-augmentation.ts';
+
+/**
+ * MDX JSX element names that map 1:1 to an HTML primitive emit native hast
+ * elements instead of the `<pre class="mdx-component">` source-as-code
+ * fallback shape. Adding a new lowercase canonical descriptor whose name
+ * matches an HTML tag requires appending it here so its descriptor identity
+ * survives clipboard emission to cross-app destinations. Capitalized JSX
+ * names (Callout, Accordion, custom components) and lowercase tags NOT in
+ * this set fall through to the `<pre>` shape — the gate is set-membership,
+ * not lowercase detection.
+ *
+ * Sister set in `autolink-void-html-guard.ts` — `LOWERCASE_JSX_CANONICAL_TAGS` —
+ * gates which lowercase tags reach remark-mdx as JSX (vs PUA-protected as
+ * raw HTML text). The two sets currently coincide for the v1 5-pack but
+ * serve distinct purposes; a tag is membership-relevant here only if it
+ * already passes through that PUA-guard exemption.
+ */
+const HTML_PRIMITIVE_TAGS = new Set(['img', 'video', 'audio']);
+
+/**
+ * Try to render an MDX JSX element as its native HTML primitive (real
+ * `<img>` / `<video>` / `<audio>`). Returns null when the element name
+ * isn't a registered primitive, OR when any attribute is a spread
+ * (`{...rest}`) or expression value (`width={400}`) — those can't faithfully
+ * render as static HTML attributes, so we fall back to the `<pre>` shape
+ * which preserves the source bytes verbatim. URL-scheme sanitization runs
+ * as a downstream rehype plugin, so dangerous `src` schemes are stripped
+ * after this helper returns the hast element.
+ */
+function tryNativeHtmlPrimitive(node: MdxJsxFlowElement | MdxJsxTextElement): Element | null {
+  const name = node.name;
+  if (!name || !HTML_PRIMITIVE_TAGS.has(name)) return null;
+  // hast property keys carry the MDX-JSX attribute name verbatim (`autoPlay`,
+  // `playsInline`, `crossOrigin`). hast-util-to-html's html schema looks each
+  // one up in property-information's table and emits the canonical lowercase
+  // HTML attribute (`autoplay`, `playsinline`, `crossorigin`) at serialize
+  // time, so we don't pre-translate here.
+  const properties: Properties = {};
+  for (const attr of node.attributes) {
+    if (attr.type !== 'mdxJsxAttribute') return null;
+    if (attr.value === null) {
+      properties[attr.name] = true;
+    } else if (typeof attr.value === 'string') {
+      properties[attr.name] = attr.value;
+    } else {
+      return null;
+    }
+  }
+  return { type: 'element', tagName: name, properties, children: [] };
+}
 
 /**
  * Build the href for a wikiLink. Target slug + optional anchor fragment.
@@ -104,13 +164,19 @@ const wikiLinkEmbedHandler: Handler = (state, node) => {
 };
 
 /**
- * mdxJsxFlowElement → `<pre class="mdx-component"><code>{escaped raw}</code></pre>`.
- * The raw JSX source lives in `data.sourceRaw` per US-005. We render it
- * inside a `<code>` inside a `<pre>` so external destinations show a
- * legible monospaced block.
+ * mdxJsxFlowElement → either a native HTML primitive (when the element
+ * name is in HTML_PRIMITIVE_TAGS) or the `<pre class="mdx-component">`
+ * source-as-code fallback shape for capitalized JSX. The native path
+ * makes lowercase media descriptors paste as real images / video / audio
+ * in cross-app destinations.
  */
 const mdxJsxFlowHandler: Handler = (state, node) => {
   const jsx = node as MdxJsxFlowElement;
+  const native = tryNativeHtmlPrimitive(jsx);
+  if (native) {
+    state.patch(node, native);
+    return state.applyData(node, native);
+  }
   const raw = typeof jsx.data?.sourceRaw === 'string' ? jsx.data.sourceRaw : '';
   const code: Element = {
     type: 'element',
@@ -132,13 +198,18 @@ const mdxJsxFlowHandler: Handler = (state, node) => {
 };
 
 /**
- * mdxJsxTextElement → `<span class="mdx-inline">{escaped raw}</span>`.
- * Inline variant: we can't use a `<pre>` in phrasing context. The span
- * preserves the raw text inline; external destinations render it as
- * readable-but-inert source.
+ * mdxJsxTextElement → either a native HTML primitive (lowercase media)
+ * or the `<span class="mdx-inline">` fallback for capitalized inline
+ * JSX. The span preserves the raw text inline as readable-but-inert
+ * source for external destinations.
  */
 const mdxJsxTextHandler: Handler = (state, node) => {
   const jsx = node as MdxJsxTextElement;
+  const native = tryNativeHtmlPrimitive(jsx);
+  if (native) {
+    state.patch(node, native);
+    return state.applyData(node, native);
+  }
   const raw = typeof jsx.data?.sourceRaw === 'string' ? jsx.data.sourceRaw : '';
   const span: Element = {
     type: 'element',

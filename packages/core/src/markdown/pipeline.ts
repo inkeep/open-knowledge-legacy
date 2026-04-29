@@ -5,7 +5,13 @@
  *   [R23 `protectFromMdx` pre-pass on source bytes]
  *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
  *     → remark-gfm → remarkWikiLink
+ *     → remarkGithubAlerts → `calloutTransformerPlugin`
+ *        (US-010 / FR-7: GFM-alerts + Obsidian foldable → Callout mdxJsxFlow)
  *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
+ *     → `detailsAccordionPromoterPlugin`
+ *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
+ *     → `imagePromoterPlugin`
+ *        (CommonMark `![alt](src)` → `<CommonMarkImage>` mdxJsxFlow compat)
  *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
  *        doc-start thematic fix + position slice + unknown-mdast guard)
  *     → `ensureNonEmptyDoc` → remarkProseMirror
@@ -42,6 +48,7 @@ import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Root as MdastRoot } from 'mdast';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
+import remarkGithubAlerts from 'remark-github-alerts';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, unified } from 'unified';
@@ -50,6 +57,9 @@ import { VFile } from 'vfile';
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
+import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
+import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
+import { imagePromoterPlugin } from './image-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -142,7 +152,30 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
     .use(remarkWikiLink)
+    // US-010 / FR-7: GFM-alerts + Obsidian foldable parse path. The upstream
+    // plugin tags blockquotes starting with `[!TYPE]` (data.hName+class) and
+    // strips the opener line; our downstream transformer consumes that output
+    // and emits `mdxJsxFlowElement(Callout, ...)` in the blockquote's place,
+    // copying `.position` so Phase B's position-slice walker attaches the
+    // original source bytes as `data.sourceRaw` (γ pristine preservation).
+    .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
+    .use(calloutTransformerPlugin)
     .use(restoreFromMdx) // Phase A
+    // US-011 / FR-8: HTML5 <details> → Accordion mdast promoter. Must run
+    // AFTER Phase A so the `<` sentinels have been restored to literal
+    // characters in text nodes (the recognizer regexes key off literal
+    // `<details>` / `</details>`); and BEFORE Phase B so position-slice
+    // attaches data.sourceRaw onto the emitted mdxJsxFlowElement using its
+    // copied opener..closer position span.
+    .use(detailsAccordionPromoterPlugin)
+    // CommonMark `![alt](src)` → `<CommonMarkImage>` promoter.
+    // Both authoring forms land on a jsxComponent PM node — `<img>` via
+    // the canonical descriptor, `![alt](src)` via the CommonMarkImage
+    // compat. γ sourceRaw keeps `![alt](src)` byte-identical on disk.
+    // Runs after details promoter so image nodes inside a <details> body
+    // (already shallow-wrapped into the Accordion's children) get
+    // promoted in the accordion's subtree too.
+    .use(imagePromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

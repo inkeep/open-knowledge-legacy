@@ -48,24 +48,29 @@ import type * as Y from 'yjs';
  * watcher's `BRIDGE_ENFORCING_ORIGINS` set is identity-based — a string
  * literal would silently fail to match the production tx.origin object.
  *
+ * `as const satisfies` (Matt Pocock's "deeply read-only config" pattern)
+ * produces a `Readonly<...>` sentinel whose field types are all narrow
+ * literals — makes the singleton-immutability intent explicit at the type
+ * level alongside the identity-match guarantee.
+ *
  * Kept for identity-stable membership in the enforcing set even though
  * client observers no longer write the derived CRDT (precedent #14).
  */
 export const ORIGIN_TREE_TO_TEXT = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'sync-from-tree' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Transaction origin for Observer B (historical text → tree direction).
  * See `ORIGIN_TREE_TO_TEXT` JSDoc for the identity rationale.
  */
 export const ORIGIN_TEXT_TO_TREE = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'sync-from-text' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 // ─────────────────────────────────────────────────────────────
 // Typing state (agent-presence guard consumer — SystemDocSubscriber)

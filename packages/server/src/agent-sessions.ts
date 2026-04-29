@@ -62,7 +62,7 @@ export interface AgentDirectConnection extends DirectConnection {
  * prevention).
  */
 export const AGENT_WRITE_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'agent-write', paired: true },
 } as const satisfies PairedWriteOrigin;

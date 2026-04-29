@@ -258,7 +258,13 @@ function recomputeRelativeMarkdownHref(
     relativePath = posix.basename(newDocName);
   }
 
-  if (pathPart.endsWith('.md')) {
+  // Preserve whatever supported doc extension the authored link carried.
+  // The canonical list lives at `packages/server/src/doc-extensions.ts`; this
+  // function is called in tight loops per link-rewrite so it inlines the
+  // two-case check rather than importing `isSupportedDocFile`.
+  if (pathPart.endsWith('.mdx')) {
+    relativePath += '.mdx';
+  } else if (pathPart.endsWith('.md')) {
     relativePath += '.md';
   }
 

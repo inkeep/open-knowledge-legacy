@@ -86,7 +86,7 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ## Architectural precedents
 
-28 numbered rules govern how work lands here; code cites them as `precedent #N` across \~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
+37 numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands here; code cites them as `precedent #N` across ~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
 
 ## Packages
 
@@ -274,10 +274,10 @@ Rule of thumb: if the "why" is the task ticket, a review suggestion, or a spec p
 ## See also
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full system design (CRDT bridge, observers, markdown pipeline)
-- [`PRECEDENTS.md`](./PRECEDENTS.md) — 27 numbered architectural precedents + rationale
+- [`PRECEDENTS.md`](./PRECEDENTS.md) — 36 numbered architectural precedents + rationale
 - Per-package docs — [`packages/server/README.md`](packages/server/README.md), [`packages/desktop/README.md`](packages/desktop/README.md), [`packages/core/src/bridge/README.md`](packages/core/src/bridge/README.md), `packages/core/tests/{health,perf}/README.md`, `packages/app/tests/perf/README.md`
 - [`reports/CATALOGUE.md`](reports/CATALOGUE.md) — \~130 prior-art research reports
-- `specs/` — per-feature specs (e.g. `2026-04-14-bridge-convergence-under-concurrent-writes/`, `2026-04-16-bridge-correctness/`, `2026-04-18-agent-identity-attribution-foundation/`, `2026-04-19-ci-signal-quality/`, `2026-04-21-agent-write-summaries/`)
+- `specs/` — per-feature specs (datestamped subdirs)
 - `stories/`, `projects/`, `strategy/` — product planning surfaces
 
 ## Open Knowledge MCP

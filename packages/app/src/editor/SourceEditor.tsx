@@ -1,45 +1,28 @@
 import { indentWithTab } from '@codemirror/commands';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createCodeFenceTracker } from '@inkeep/open-knowledge-core';
-import { GFM } from '@lezer/markdown';
-import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
+import {
+  createNestedCMExtensions,
+  darkTheme,
+  lightTheme,
+} from '@/editor/extensions/nested-cm-extensions';
 import type { RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { createSourceClipboardExtension } from './clipboard/index.ts';
 import { type CmCacheEntry, mountCmEditor, parkCmEditor } from './editor-cache';
-import { codeLanguages } from './markdown-code-languages';
 import { markUserTyping } from './observers';
-import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
-import { createMdLinkSourceExtension } from './plugins/md-link-source';
-import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
 import {
   clearPendingSourceNavigation,
   consumePendingSourceNavigation,
 } from './source-editor-navigation';
 import { createSourcePolishExtension } from './source-polish';
-
-// Customize the dark editor surface colors here.
-const darkTheme = basicDarkInit({
-  settings: {
-    background: 'var(--background)',
-    gutterBackground: 'var(--background)',
-  },
-});
-
-const lightTheme = basicLightInit({
-  settings: {
-    background: 'var(--background)',
-    gutterBackground: 'var(--background)',
-  },
-});
 
 interface SourceEditorProps {
   docName: string;
@@ -48,9 +31,6 @@ interface SourceEditorProps {
   placeholder?: string;
   isSourceModeActive: boolean;
 }
-
-const themeCompartment = new Compartment();
-const placeholderCompartment = new Compartment();
 
 function applyOutlineNavigation(view: EditorView, detail: OutlineNavDetail): void {
   const doc = view.state.doc;
@@ -109,6 +89,13 @@ export function SourceEditor({
 }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Per-instance Compartments. `createNestedCMExtensions`'s header requires
+  // this shape ("Module-scoped theme singletons cause cross-instance
+  // reconfigure conflicts"). Two concurrent SourceEditor instances can
+  // coexist under React 19 StrictMode double-mount and under the Activity-
+  // pool dual-editor mount pattern — module-scope singletons race.
+  const themeCompartmentRef = useRef(new Compartment());
+  const placeholderCompartmentRef = useRef(new Compartment());
   // Mount failures rethrow into DocumentErrorBoundary (review Minor #26).
   const [mountError, setMountError] = useState<Error | null>(null);
   if (mountError) throw mountError;
@@ -124,7 +111,7 @@ export function SourceEditor({
   // V2 EDITOR CACHE WIRING (US-008)
   //
   // Replaces the inline `new EditorView({ parent })` + `view.destroy()` on
-  // unmount with mountCmEditor + parkCmEditor (precedent #18(g) — H1 12/12
+  // unmount with mountCmEditor + parkCmEditor (precedent #27(a) — H1 12/12
   // probe). The view's DOM is reparented across Activity flips instead of
   // being destroyed, which preserves selection / undo / yCollab binding /
   // Y.Text identity / scroll position (cm6-reparent-contract.md §7).
@@ -149,7 +136,7 @@ export function SourceEditor({
     const container = containerRef.current;
     if (!container) return;
 
-    const docName = provider.configuration.name ?? '';
+    const resolvedDocName = provider.configuration.name ?? '';
 
     let entry: CmCacheEntry | null = null;
     const mark = () => markUserTyping();
@@ -162,7 +149,7 @@ export function SourceEditor({
       const bytes = ytext.length;
       const sizeStats = { viewCount: 0, bytes };
       entry = mountCmEditor({
-        docName,
+        docName: resolvedDocName,
         container,
         sizeStats,
         factory: (el) => {
@@ -178,17 +165,25 @@ export function SourceEditor({
             doc: ytext.toString(),
             extensions: [
               basicSetup,
+              // Tab inserts indentation instead of escaping focus. CM6's default is
+              // to let Tab move focus (WCAG "no keyboard trap") — for a code-style
+              // editor this is unexpected UX. Users who need to escape focus can
+              // press Esc → Tab, or Ctrl+M (Shift+Alt+M on macOS) to toggle tab-
+              // focus mode. Upstream convention per codemirror.net/examples/tab/.
               keymap.of([indentWithTab]),
-              markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
               yCollab(ytext, provider.awareness),
-              createAgentFlashSourceExtension(provider.document),
-              createWikiLinkSourceExtension(),
-              createMdLinkSourceExtension(),
+              // Nested-CM / SourceEditor convergence: the factory provides markdown
+              // (with GFM + codeLanguages), wiki-link + md-link decorations,
+              // agent-flash, theme compartment, line-wrapping. Source mode adds the
+              // extras below (source-polish, placeholder, full-height theme).
+              ...createNestedCMExtensions({
+                themeCompartment: themeCompartmentRef.current,
+                resolvedTheme,
+                ydoc: provider.document,
+              }),
               createSourcePolishExtension(),
               sourceClipboard,
-              themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
-              placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
-              EditorView.lineWrapping,
+              placeholderCompartmentRef.current.of(cmPlaceholder(placeholder ?? '')),
               EditorView.theme({
                 '&': {
                   height: '100%',
@@ -243,15 +238,20 @@ export function SourceEditor({
 
   useEffect(() => {
     if (!viewRef.current) return;
+    // Reconfigure the theme via the per-instance compartment. The factory
+    // internally held a snapshot of the current theme at mount time; this
+    // effect hot-swaps on theme change without re-running the mount effect.
     viewRef.current.dispatch({
-      effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+      effects: themeCompartmentRef.current.reconfigure(
+        resolvedTheme === 'dark' ? darkTheme : lightTheme,
+      ),
     });
   }, [resolvedTheme]);
 
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: placeholderCompartment.reconfigure(cmPlaceholder(placeholder ?? '')),
+      effects: placeholderCompartmentRef.current.reconfigure(cmPlaceholder(placeholder ?? '')),
     });
   }, [placeholder]);
 

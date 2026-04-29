@@ -24,7 +24,9 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export {
+  ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_VIDEO_MIME_TYPES,
   ASSET_EXTENSIONS,
   DEFAULT_ATTACHMENT_FOLDER_PATH,
   DEFAULT_DEDUP_MODE,
@@ -104,12 +106,36 @@ export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
+  incrementJsxAutoConvertFailed,
+  incrementJsxAutoConvertSucceeded,
+  incrementJsxMoveFailed,
+  incrementJsxPropDropped,
+  incrementJsxRenderFailure,
+  incrementJsxStuckCopyFailed,
+  incrementJsxStuckDeleteFailed,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,
   incrementYpsMismatchInline,
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+// Registry
+export {
+  builtInComponents,
+  type ComponentRegistry,
+  createRegistry,
+  wildcardMeta,
+} from './registry/index.ts';
+export type {
+  JsxComponentMeta,
+  PropDef,
+  PropDefBase,
+  PropDefBoolean,
+  PropDefEnum,
+  PropDefNumber,
+  PropDefReactNode,
+  PropDefString,
+} from './registry/types.ts';
 export {
   type PrincipalResponse,
   PrincipalResponseSchema,
