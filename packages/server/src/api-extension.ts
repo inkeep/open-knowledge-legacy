@@ -1610,15 +1610,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  async function _performManagedRename(
-    sourceDocName: string,
-    destinationDocName: string,
-  ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
-    return _performManagedRenameForDocs(sourceDocName, destinationDocName, 'file', [
-      { from: sourceDocName, to: destinationDocName },
-    ]);
-  }
-
   const AGENT_NAME_MAX_LEN = 128;
 
   /**
@@ -3561,8 +3552,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // when no agent-supplied summary was given; the default goes through
       // `normalizeSummary` so the 80-char cap covers it. When the default
       // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
-      // chars, but symmetric with `handleRename` where defaults frequently
-      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
+      // chars, but symmetric with the rename default where deeply-nested doc
+      // paths frequently overflow), we strip `truncatedFrom` +
       // `hint` from the response so the truncation message doesn't misattribute
       // blame to the caller. The principal path records the contributor with
       // the rollback subject but does NOT generate a default summary bullet —
@@ -4208,172 +4199,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleRename(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const {
-        agentId: renameAgentId,
-        agentName: renameAgentName,
-        colorSeed: renameColorSeed,
-        clientName: renameClientName,
-        clientVersion: renameClientVersion,
-        label: renameLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { docName, newDocName } = body as Record<string, unknown>;
-      if (typeof docName !== 'string' || typeof newDocName !== 'string') {
-        json(res, 400, { ok: false, error: 'docName and newDocName are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(docName) || !isValidRelativeContentPath(newDocName)) {
-        json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
-        return;
-      }
-      if (
-        isSystemDoc(docName) ||
-        isSystemDoc(newDocName) ||
-        isConfigDoc(docName) ||
-        isConfigDoc(newDocName)
-      ) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      if (docName === newDocName) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index unavailable' });
-        return;
-      }
-
-      // D22 LOCKED 1-way door: only attribute when the caller explicitly
-      // supplies agentId. Any future UI-driven rename (no agentId) stays
-      // anonymous as today — even though the rename handler has no existing
-      // UI call site, adding the guard up front keeps the pattern uniform
-      // with `handleRollback` and prevents `extractAgentIdentity` defaults
-      // from silently attributing future UI paths to Claude.
-      //
-      // Validation runs unconditionally (independent of `hasAgentId`) so a
-      // malformed `summary: 42` returns 400 even when identity is absent —
-      // this surfaces MCP-client identity-passthrough regressions loudly
-      // instead of silently dropping the summary on the floor. The
-      // attribution semantics (D22) are unchanged.
-      const bodyObj = body as Record<string, unknown>;
-      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-      const normalizedSummary = normalizeSummary(bodyObj.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
-      // Handles the case where the client sends an explicit extension that
-      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
-      // the file is already `foo.md`) — `docName !== newDocName` textually
-      // but the on-disk paths resolve to the same file. Treat as no-op,
-      // mirroring the extension-less `docName === newDocName` short-circuit
-      // above.
-      if (sourcePath === destinationPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: 'Document does not exist' });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const result = await _performManagedRename(docName, newDocName);
-
-      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
-      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
-      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
-      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
-      // avoid "Claude renamed X → Y" noise on every inbound doc.
-      //
-      // When the default "Renamed X → Y" template overflows the 80-char cap
-      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
-      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
-      // response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" hint would misattribute blame
-      // to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior,
-      // not server-template width.
-      let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          newDocName as string,
-          renameAgentId,
-          renameAgentName,
-          renameColorSeed,
-          formatRenameSubject(docName as string, newDocName as string),
-          buildAgentActor({
-            clientName: renameClientName,
-            clientVersion: renameClientVersion,
-            label: renameLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
-        // pendingContributors entry into its own L2 shadow commit. Parallels
-        // the `flushDocToGit(...)` call in `handleRollback` above; uses
-        // `flushDocToGit(newDocName, ...)` because the source doc may no
-        // longer be open after `_performManagedRename` closed it.
-        flushDocToGit(newDocName as string, 'rename');
-      }
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename]', e);
-      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
-    }
-  }
-
   async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4419,6 +4244,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
         json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
+        return;
+      }
+      if (kind === 'file' && (isSystemDoc(fromPath) || isSystemDoc(toPath))) {
+        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
       if (fromPath === toPath) {
@@ -4545,7 +4374,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rename-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to rename path' });
+      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
     }
   }
 
@@ -6210,7 +6039,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
-    '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload': handleUploadImage,

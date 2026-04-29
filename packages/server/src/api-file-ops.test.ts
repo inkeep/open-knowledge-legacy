@@ -160,11 +160,12 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -208,11 +209,12 @@ describe('file operation API routes', () => {
     try {
       const result = await callApi(
         dir,
-        '/api/rename',
+        '/api/rename-path',
         'POST',
         {
-          docName: 'notes',
-          newDocName: 'renamed-notes',
+          kind: 'file',
+          fromPath: 'notes',
+          toPath: 'renamed-notes',
         },
         {
           backlinkIndex: buildBacklinkIndex(dir),
@@ -238,11 +240,12 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -263,11 +266,12 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
       {
-        docName: 'notes',
-        newDocName: 'notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'notes',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -287,11 +291,12 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
       {
-        docName: 'notes',
-        newDocName: '__system__',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: '__system__',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -308,11 +313,12 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -320,7 +326,7 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(404);
     expect(JSON.parse(result.body)).toEqual({
       ok: false,
-      error: 'Document does not exist',
+      error: 'file does not exist',
     });
   });
 
@@ -337,11 +343,12 @@ describe('file operation API routes', () => {
 
       const result = await callApi(
         contentDir,
-        '/api/rename',
+        '/api/rename-path',
         'POST',
         {
-          docName: 'safe',
-          newDocName: 'evil/captured',
+          kind: 'file',
+          fromPath: 'safe',
+          toPath: 'evil/captured',
         },
         { backlinkIndex: buildBacklinkIndex(contentDir) },
       );
@@ -510,9 +517,9 @@ describe('file operation API routes', () => {
 
     const result = await callApi(
       dir,
-      '/api/rename',
+      '/api/rename-path',
       'POST',
-      { docName: 'old-name', newDocName: 'new-name' },
+      { kind: 'file', fromPath: 'old-name', toPath: 'new-name' },
       { backlinkIndex: buildBacklinkIndex(dir), projectDir: dir },
     );
 

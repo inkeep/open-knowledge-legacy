@@ -753,19 +753,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const endpoint = event.isFolder ? '/api/rename-path' : '/api/rename';
       const payload = event.isFolder
         ? {
-            kind: 'folder',
+            kind: 'folder' as const,
             fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
             toPath: treeDirectoryPathToFolderPath(destinationTreePath),
           }
         : {
-            docName: treeFilePathToDocName(sourceTreePath),
-            newDocName: treeFilePathToDocName(destinationTreePath),
+            kind: 'file' as const,
+            fromPath: treeFilePathToDocName(sourceTreePath),
+            toPath: treeFilePathToDocName(destinationTreePath),
           };
 
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -812,19 +812,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       let renamed: RenamedDocMapping[] = [];
       for (const operation of operations) {
         const isFolder = operation.sourcePath.endsWith('/');
-        const endpoint = isFolder ? '/api/rename-path' : '/api/rename';
         const payload = isFolder
           ? {
-              kind: 'folder',
+              kind: 'folder' as const,
               fromPath: treeDirectoryPathToFolderPath(operation.sourcePath),
               toPath: treeDirectoryPathToFolderPath(operation.destinationTreePath),
             }
           : {
-              docName: treeFilePathToDocName(operation.sourcePath),
-              newDocName: treeFilePathToDocName(operation.destinationTreePath),
+              kind: 'file' as const,
+              fromPath: treeFilePathToDocName(operation.sourcePath),
+              toPath: treeFilePathToDocName(operation.destinationTreePath),
             };
 
-        const res = await fetch(endpoint, {
+        const res = await fetch('/api/rename-path', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),

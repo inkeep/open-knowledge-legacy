@@ -83,12 +83,13 @@ describe('T8: Managed-rename with populated target', () => {
     const preClientIdSize = preDoc.store.clients.size;
 
     // Attempt rename via API. Expect 409.
-    const res = await fetch(`http://localhost:${server.port}/api/rename`, {
+    const res = await fetch(`http://localhost:${server.port}/api/rename-path`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        docName: 'source-doc',
-        newDocName: 'target-doc',
+        kind: 'file',
+        fromPath: 'source-doc',
+        toPath: 'target-doc',
       }),
     });
 

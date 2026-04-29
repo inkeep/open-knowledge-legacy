@@ -53,7 +53,7 @@ interface RenameDocumentError {
 }
 
 export const DESCRIPTION = [
-  '[Requires: Hocuspocus server] Rename a document through the managed rename flow at `POST /api/rename`.',
+  '[Requires: Hocuspocus server] Rename a document through the managed rename flow at `POST /api/rename-path` (kind: file).',
   'Renames the target document and rewrites inbound wiki-links plus supported internal inline Markdown links in affected docs.',
   '',
   '**Parameters:**',
@@ -126,9 +126,10 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       if (!normalizedNewDoc.ok) return textResult(normalizedNewDoc.error, true);
 
       const identity = deps.identityRef?.current;
-      const result = await httpPost(url, '/api/rename', {
-        docName: normalizedDoc.docName,
-        newDocName: normalizedNewDoc.docName,
+      const result = await httpPost(url, '/api/rename-path', {
+        kind: 'file',
+        fromPath: normalizedDoc.docName,
+        toPath: normalizedNewDoc.docName,
         ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {

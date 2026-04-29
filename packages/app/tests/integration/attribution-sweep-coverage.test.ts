@@ -21,7 +21,6 @@ const REQUIRED_HANDLERS = [
   'handleSaveVersion',
   'handleRollback',
   'handleCreatePage',
-  'handleRename',
   'handleRenamePath',
   'handleDeletePath',
   // Single unified upload handler — `/api/upload` (accept-all by extension).

@@ -227,10 +227,10 @@ export function EditorHeader({
     setRenameError(null);
 
     try {
-      const res = await fetch('/api/rename', {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: docName, newDocName }),
+        body: JSON.stringify({ kind: 'file', fromPath: docName, toPath: newDocName }),
       });
 
       // Post-await cancel check: if the user navigated while the fetch was in

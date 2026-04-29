@@ -160,9 +160,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
   test('no agentId (UI-shape body) → rename succeeds with ZERO contributor entries', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'notes',
-      newDocName: 'renamed-notes',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
     });
 
     expect(response.status).toBe(200);
@@ -177,9 +178,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'notes',
-      newDocName: 'renamed-notes',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
       agentId: 'claude-1',
       agentName: 'Claude',
     });
@@ -203,9 +205,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
   test('with agentId + provided summary → uses provided summary (not default)', async () => {
     writeFileSync(join(tmpDir, 'old.md'), '# Old\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'old',
-      newDocName: 'new',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'old',
+      toPath: 'new',
       agentId: 'claude-1',
       agentName: 'Claude',
       summary: 'Aligned naming with module layout',
@@ -221,16 +224,17 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
   test('with agentId, wrong-type summary → 400, no rename side-effects, no counters', async () => {
     writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'src',
-      newDocName: 'dst',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'src',
+      toPath: 'dst',
       agentId: 'claude-1',
       summary: { not: 'a string' },
     });
 
     expect(response.status).toBe(400);
     expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
-    // File must NOT have been renamed (guard runs before _performManagedRename)
+    // File must NOT have been renamed (guard runs before the spine fires)
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(formatContributors()).toBe('');
@@ -240,9 +244,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     writeFileSync(join(tmpDir, 'x.md'), '# X\n', 'utf-8');
 
     const long = 'w'.repeat(100);
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'x',
-      newDocName: 'y',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'x',
+      toPath: 'y',
       agentId: 'claude-1',
       summary: long,
     });
@@ -264,9 +269,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     const long = 'a'.repeat(50);
     writeFileSync(join(tmpDir, `${long}.md`), '# Long\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: long,
-      newDocName: `${long}-v2`,
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: long,
+      toPath: `${long}-v2`,
       agentId: 'claude-1',
       agentName: 'Claude',
     });
@@ -294,9 +300,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     // summary silently ignored.
     writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'src',
-      newDocName: 'dst',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'src',
+      toPath: 'dst',
       summary: 42,
     });
 
@@ -377,16 +384,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
   // `flushGitCommit?.()` to drain any pending L2 timer synchronously —
   // ensuring the rename/rollback's own commit carries its own attribution.
 
-  test('handleRename with agentId triggers flushGitCommit after recordContributor', async () => {
+  test('handleRenamePath (file) with agentId triggers flushGitCommit after recordContributor', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
         agentId: 'claude-1',
         agentName: 'Claude',
       },
@@ -403,16 +411,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     expect(spy.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('handleRename WITHOUT agentId does NOT trigger flushGitCommit (no attribution → no flush needed)', async () => {
+  test('handleRenamePath (file) WITHOUT agentId does NOT trigger flushGitCommit (no attribution → no flush needed)', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
       },
       undefined,
       spy.fn,
@@ -427,16 +436,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     expect(spy.calls.length).toBe(0);
   });
 
-  test('handleRename WITH wrong-type summary does NOT trigger flushGitCommit (early-return 400)', async () => {
+  test('handleRenamePath (file) WITH wrong-type summary does NOT trigger flushGitCommit (early-return 400)', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
         agentId: 'claude-1',
         summary: 42,
       },

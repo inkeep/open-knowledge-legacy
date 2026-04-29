@@ -270,7 +270,7 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
         docName: 'old',
         newDocName: 'new',
       });
-      expect(recordedRequest?.url).toBe('/api/rename');
+      expect(recordedRequest?.url).toBe('/api/rename-path');
       expect(recordedRequest?.body.agentId).toBe('claude-1');
       expect(recordedRequest?.body.agentName).toBe('Claude');
       expect(recordedRequest?.body.colorSeed).toBe('test-seed');
