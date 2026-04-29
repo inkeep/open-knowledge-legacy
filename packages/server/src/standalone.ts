@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { Extension } from '@hocuspocus/server';
+import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import { type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -291,6 +291,11 @@ export function createServer(options: ServerOptions): ServerInstance {
   let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
   // Mutable principal holder — populated by the async load in initAsync.
   let loadedPrincipal: Principal | null = null;
+  const forceUnloadSet = new Set<Document>();
+  let shutdownAllowsUnload = false;
+  // Assigned synchronously in the init `try` immediately after `new Hocuspocus` (before the try
+  // completes or awaits). Call sites (disk reconcile, API extension) only run after boot returns.
+  let forceUnloadDocument!: (document: Document) => Promise<void>;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -337,6 +342,27 @@ export function createServer(options: ServerOptions): ServerInstance {
       maxDebounce,
       extensions: [persistence.extension],
     });
+
+    // Hocuspocus unloads documents as soon as the last WebSocket disconnects.
+    // That is unsafe with client-side y-indexeddb: a browser refresh leaves a
+    // durable client copy of the same Yjs items, while the server rebuilds a
+    // fresh Y.Doc from markdown. The next sync union-merges both item sets and
+    // duplicates the document. Keep normal user docs resident for the server
+    // lifetime; explicit lifecycle paths opt into unload via `forceUnloadDocument`.
+    const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
+    hocuspocus.shouldUnloadDocument = (document) =>
+      (shutdownAllowsUnload || forceUnloadSet.has(document)) &&
+      defaultShouldUnloadDocument(document);
+
+    forceUnloadDocument = async (document: Document): Promise<void> => {
+      forceUnloadSet.add(document);
+      try {
+        await hocuspocus.unloadDocument(document);
+      } finally {
+        forceUnloadSet.delete(document);
+      }
+    };
+
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
     agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
     agentPresenceBroadcaster = new AgentPresenceBroadcaster(hocuspocus);
@@ -514,6 +540,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       localOpCliArgs,
       projectDir,
       getPrincipal: () => loadedPrincipal,
+      forceUnloadDocument,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -530,6 +557,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     releaseServerLock(lockDir);
     throw err;
   }
+
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
@@ -755,7 +783,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
-          await hocuspocus.unloadDocument(document);
+          await forceUnloadDocument(document);
           signalChannel('files');
           signalChannel('backlinks');
           signalChannel('graph');
@@ -866,6 +894,29 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.closeConnections();
     hocuspocus.flushPendingStores();
 
+    // shouldUnloadDocument blocks normal unloads while the server is running.
+    // `destroy()` assigns `shutdownAllowsUnload = true` synchronously at the
+    // start of its async IIFE (before the first await), so by the time this
+    // flush runs, explicit `unloadDocument` calls below are allowed through.
+    // Clients that disconnected before destroy() was called (e.g. pool.dispose()
+    // in test teardown) will have left documents resident with 0 connections.
+    // closeConnections() above is a no-op for those docs, so no unload events
+    // fire. Explicitly unload any document with no remaining connections so
+    // afterUnloadDocument can resolve.
+    for (const doc of hocuspocus.documents.values()) {
+      if (doc.getConnectionsCount() === 0) {
+        void hocuspocus.unloadDocument(doc).catch((err: unknown) => {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-shutdown-unload-document-failed',
+              docName: doc.name,
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        });
+      }
+    }
+
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<void>((_, reject) => {
       timeoutId = setTimeout(() => {
@@ -961,6 +1012,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     inflightDestroy = (async () => {
       const t0 = Date.now();
       const phaseErrors: Array<{ phase: string; error: string }> = [];
+      shutdownAllowsUnload = true;
 
       // Wait for async init to complete before cleanup — prevents leaked watcher
       // subscriptions if destroy() is called during startup (e.g., Ctrl+C).

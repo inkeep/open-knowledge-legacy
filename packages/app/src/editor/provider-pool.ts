@@ -29,6 +29,26 @@ import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sy
 export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
+export type ServerRestartRecoveryState =
+  | { kind: 'idle' }
+  | {
+      kind: 'recovering';
+      phase: 'clearing-local-cache' | 'reconnecting';
+      docNames: readonly string[];
+      failedDocNames: readonly string[];
+      startedAt: number;
+      /** Present when `failedDocNames` is non-empty — survives until active doc syncs. */
+      clearFailureReason?: 'clear-data-failed' | 'clear-data-timeout';
+    }
+  | {
+      kind: 'failed';
+      reason: 'clear-data-failed' | 'clear-data-timeout';
+      docNames: readonly string[];
+      failedDocNames: readonly string[];
+      startedAt: number;
+    };
+
+const IDLE_SERVER_RESTART_RECOVERY: ServerRestartRecoveryState = Object.freeze({ kind: 'idle' });
 
 /**
  * Pool entries follow a two-state lifecycle modeled as a discriminated
@@ -140,6 +160,17 @@ const editorSchema = getSchema(sharedExtensions);
  * Validated by the Liveblocks `lostConnectionTimeout` pattern (default 5s).
  */
 const RECYCLE_DEBOUNCE_MS = 4_000;
+const CLEAR_DATA_TIMEOUT_MS = 10_000;
+
+class ClientPersistenceClearTimeoutError extends Error {
+  constructor(
+    readonly docName: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`client persistence clearData timed out for ${docName} after ${timeoutMs}ms`);
+    this.name = 'ClientPersistenceClearTimeoutError';
+  }
+}
 
 /**
  * localStorage key for the persisted last-observed git branch. Used by
@@ -150,6 +181,17 @@ const RECYCLE_DEBOUNCE_MS = 4_000;
  * branch is global to the project.
  */
 const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
+/**
+ * localStorage key for the server instance ID associated with this tab's
+ * hydrated IndexedDB Y.Doc state. Persisted across page reloads so that after
+ * a full server-process restart (e.g. `vite.config.ts` touch → Vite restarts
+ * the dev server), the first provider open claims the stale ID even if the
+ * boot `/api/server-info` fetch has already observed the fresh server ID. The
+ * server sees the mismatch and rejects, triggering the clearData + recycle
+ * flow BEFORE any Yjs sync can union-merge IDB items with the freshly-loaded
+ * server state.
+ */
+const IDB_SYNCED_SERVER_INSTANCE_ID_KEY = 'ok-idb-synced-server-instance-id';
 
 /**
  * Periodic full-sync nudge for HocuspocusProvider. Secondary defense against
@@ -278,24 +320,27 @@ export class ProviderPool {
   private readonly maxSize: number;
   private readonly wsUrl: string;
   private readonly recycleDebounceMs: number;
+  private readonly clearDataTimeoutMs: number;
   private onChange: PoolChangeCallback | null = null;
   private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
+  private serverRestartRecoveryState: ServerRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
   /**
-   * Last-observed server instance ID. Set at boot via
-   * `DocumentContext`'s one-shot `GET /api/server-info` fetch, and refreshed
-   * on every `__system__` CC1 `server-info` broadcast arriving through
-   * `SystemDocSubscriber`. When non-null, included in the auth token's
-   * `expectedServerInstanceId` field on every `open()`. When the server
-   * rejects with `reason: 'server-instance-mismatch'`, the
-   * `authenticationFailed` handler nulls this field so the recycled
-   * providers re-open with an anonymous claim and resync cleanly.
-   *
-   * Null-by-default: preserves the backward-compat path where a client that
-   * never reached `/api/server-info` (endpoint 404, fetch blocked, boot
-   * race) simply doesn't claim an instance ID — server treats this as a
-   * legacy token and accepts.
+   * Last server instance ID observed from `/api/server-info` or CC1
+   * `server-info`. This is the live-server fallback claim for empty-IDB /
+   * post-clear opens. It is deliberately NOT persisted to localStorage:
+   * persisting the boot fetch's fresh ID before the first document provider
+   * opens would overwrite the stale IDB-associated value and mask the restart.
    */
   private cachedServerInstanceId: string | null = null;
+
+  /**
+   * Server instance ID associated with the hydrated client-side IDB data.
+   * Lazily loaded from storage and preferred over `cachedServerInstanceId` in
+   * auth tokens. Updated only after a provider has synced cleanly to the
+   * current server, and cleared before mismatch recycle wipes IDB.
+   */
+  private idbSyncedServerInstanceId: string | null = null;
+  private idbSyncedServerInstanceIdInitialized = false;
   /**
    * Unsynced-edit buffer captured per-doc during a `server-instance-mismatch`
    * recycle. Populated right before `clearData()` wipes IDB; drained at the
@@ -321,6 +366,7 @@ export class ProviderPool {
     wsUrl: string,
     options?: {
       recycleDebounceMs?: number;
+      clearDataTimeoutMs?: number;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
     },
   ) {
@@ -330,6 +376,7 @@ export class ProviderPool {
     // before the pool is instantiated. Callers must not pass an empty string.
     this.wsUrl = wsUrl;
     this.recycleDebounceMs = options?.recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+    this.clearDataTimeoutMs = options?.clearDataTimeoutMs ?? CLEAR_DATA_TIMEOUT_MS;
     if (options?.storage !== undefined) {
       this.storage = options.storage;
     } else {
@@ -352,18 +399,17 @@ export class ProviderPool {
   }
 
   /**
-   * Update the cached server instance ID the pool will claim in every future
-   * provider's auth token. Pass `null` to clear (used by the auth-failure
-   * recycle path and by the boot fetch on network failure).
-   *
-   * Idempotent: if the new ID matches the cached one, no-op. Does NOT
-   * recycle existing providers — the claim only affects new `open()` calls.
-   * The auth-failure path is what flips stale pools to the new ID via
-   * recycle on server-side rejection.
+   * Update the live server instance ID observed from `/api/server-info` or CC1
+   * `server-info`. Does NOT overwrite the storage-backed IDB-associated ID:
+   * a fast boot fetch after server restart must not mask stale IDB contents
+   * before the first document provider opens.
    */
   setExpectedServerInstanceId(id: string | null): void {
-    if (this.cachedServerInstanceId === id) return;
     this.cachedServerInstanceId = id;
+  }
+
+  getServerRestartRecoveryState(): ServerRestartRecoveryState {
+    return this.serverRestartRecoveryState;
   }
 
   /**
@@ -494,6 +540,133 @@ export class ProviderPool {
     } catch {
       // Storage write failures are non-fatal — see read-side comment.
     }
+  }
+
+  /** Lazy-init the IDB-associated server instance ID from `this.storage`. */
+  private getOrInitIdbSyncedServerInstanceId(): string | null {
+    if (this.idbSyncedServerInstanceIdInitialized) return this.idbSyncedServerInstanceId;
+    this.idbSyncedServerInstanceIdInitialized = true;
+    try {
+      const stored = this.storage?.getItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY) ?? null;
+      if (stored !== null && stored.length > 0) {
+        this.idbSyncedServerInstanceId = stored;
+      }
+    } catch {
+      // Storage access can throw in private-mode browsers / sandboxed iframes.
+    }
+    return this.idbSyncedServerInstanceId;
+  }
+
+  /**
+   * Persist the server instance ID associated with the current IDB contents.
+   * This must not be called from `setExpectedServerInstanceId`; only a clean
+   * provider sync proves the IDB state belongs to the current server.
+   */
+  private persistIdbSyncedServerInstanceId(id: string | null): void {
+    this.idbSyncedServerInstanceId = id;
+    this.idbSyncedServerInstanceIdInitialized = true;
+    try {
+      if (id === null || id.length === 0) {
+        this.storage?.removeItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY);
+      } else {
+        this.storage?.setItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, id);
+      }
+    } catch {
+      // Storage write failures are non-fatal.
+    }
+  }
+
+  private getServerInstanceIdForAuth(): string | null {
+    return this.getOrInitIdbSyncedServerInstanceId() ?? this.cachedServerInstanceId;
+  }
+
+  private withClearDataTimeout(docName: string, promise: Promise<void>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new ClientPersistenceClearTimeoutError(docName, this.clearDataTimeoutMs));
+      }, this.clearDataTimeoutMs);
+      promise.then(
+        () => {
+          clearTimeout(timeout);
+          resolve();
+        },
+        (err: unknown) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      );
+    });
+  }
+
+  private beginServerRestartRecovery(docNames: readonly string[], startedAt: number): void {
+    this.serverRestartRecoveryState = {
+      kind: 'recovering',
+      phase: 'clearing-local-cache',
+      docNames,
+      failedDocNames: [],
+      startedAt,
+    };
+    for (const docName of docNames) {
+      invalidateSyncPromise(docName);
+    }
+    this.notify();
+  }
+
+  private enterServerRestartReconnect(
+    docNames: readonly string[],
+    failedDocNames: readonly string[],
+    startedAt: number,
+    failureReason: 'clear-data-failed' | 'clear-data-timeout',
+  ): void {
+    if (docNames.length === 0) {
+      this.serverRestartRecoveryState =
+        failedDocNames.length === 0
+          ? IDLE_SERVER_RESTART_RECOVERY
+          : {
+              kind: 'failed',
+              reason: failureReason,
+              docNames: failedDocNames,
+              failedDocNames,
+              startedAt,
+            };
+      this.notify();
+      return;
+    }
+
+    this.serverRestartRecoveryState = {
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames,
+      failedDocNames,
+      startedAt,
+      ...(failedDocNames.length > 0 ? { clearFailureReason: failureReason } : {}),
+    };
+    this.notify();
+  }
+
+  private markServerRestartRecoverySynced(docName: string): void {
+    const state = this.serverRestartRecoveryState;
+    if (state.kind !== 'recovering' || state.phase !== 'reconnecting') return;
+    if (!state.docNames.includes(docName)) return;
+
+    const remaining = state.docNames.filter((candidate) => candidate !== docName);
+    if (remaining.length > 0) {
+      this.serverRestartRecoveryState = { ...state, docNames: remaining };
+      return;
+    }
+
+    if (state.failedDocNames.length > 0) {
+      this.serverRestartRecoveryState = {
+        kind: 'failed',
+        reason: state.clearFailureReason ?? 'clear-data-failed',
+        docNames: state.failedDocNames,
+        failedDocNames: state.failedDocNames,
+        startedAt: state.startedAt,
+      };
+      return;
+    }
+
+    this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
   }
 
   /**
@@ -654,9 +827,10 @@ export class ProviderPool {
       this.evictLru();
     }
 
+    const expectedServerInstanceId = this.getServerInstanceIdForAuth();
     const token = buildAuthToken(
       this.tabIdentity,
-      this.cachedServerInstanceId,
+      expectedServerInstanceId,
       this.getOrInitObservedBranch(),
     );
     const provider = new HocuspocusProvider({
@@ -716,11 +890,18 @@ export class ProviderPool {
       // the delta between this and the doc's current state is what the
       // `server-instance-mismatch` recycle buffers before calling clearData.
       entry.lastServerSyncedSV = captureStateVector(provider.document);
+      if (this.cachedServerInstanceId !== null) {
+        // Only persist after observing a concrete server instance ID. If the
+        // boot/server-info path is unavailable, keep the legacy no-claim path
+        // rather than pinning an unknown IDB association.
+        this.persistIdbSyncedServerInstanceId(this.cachedServerInstanceId);
+      }
       // Cancel pending recycle — provider reconnected successfully
       if (entry.pendingRecycleTimer) {
         clearTimeout(entry.pendingRecycleTimer);
         entry.pendingRecycleTimer = null;
       }
+      this.markServerRestartRecoverySynced(docName);
       this.notify();
 
       // Set up bidirectional observers once after first sync. A throw here
@@ -806,8 +987,9 @@ export class ProviderPool {
     //      bytes back onto the Y.Doc so the user's unsynced edits survive.
     //
     // Idempotence: after a server restart, every open provider fires
-    // authenticationFailed in quick succession. The first call nulls the
-    // cached ID; subsequent calls find it already null and short-circuit.
+    // authenticationFailed in quick succession. The first call clears the
+    // IDB-associated claim; sibling failures with the same stale claim then
+    // short-circuit while preserving any already-observed fresh server ID.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
       // Trust-boundary narrow: `reason` is a wire-foreign string from
       // Hocuspocus. Inlined (not imported from the server's runtime
@@ -834,8 +1016,27 @@ export class ProviderPool {
       }
       const typed = reason as HocuspocusAuthRejectionReason;
       if (typed === 'server-instance-mismatch') {
-        if (this.cachedServerInstanceId === null) return;
-        this.cachedServerInstanceId = null;
+        // `expectedServerInstanceId` is the claim this provider actually sent.
+        // If it came from stale IDB storage, clear only that storage-backed
+        // claim and preserve a newer live-server ID learned from a fast boot
+        // fetch so the post-clear recycle can reconnect without another
+        // mismatch. If the live cache itself was the stale claim, clear it too.
+        if (expectedServerInstanceId === null) {
+          return;
+        }
+        // Sibling provider already cleared IDB-backed storage (`persistIdbSyncedServerInstanceId(null)`)
+        // while `cachedServerInstanceId` moved to the fresh server — this handler is a duplicate
+        // `authenticationFailed` for the same mismatch round; skip so we do not double-enter recycle.
+        if (
+          this.getOrInitIdbSyncedServerInstanceId() === null &&
+          this.cachedServerInstanceId !== expectedServerInstanceId
+        ) {
+          return;
+        }
+        this.persistIdbSyncedServerInstanceId(null);
+        if (this.cachedServerInstanceId === expectedServerInstanceId) {
+          this.cachedServerInstanceId = null;
+        }
         this.handleServerInstanceMismatch();
         return;
       }
@@ -919,6 +1120,26 @@ export class ProviderPool {
     // Snapshot entries BEFORE any async work — subsequent recycle mutates
     // the map via destroyEntry → delete → re-open.
     const snapshot = Array.from(this.entries.entries());
+    const startedAt = Date.now();
+    const recoveryActiveDocName = this.activeDocName;
+    // Recovery UI (spinner + failure panel) only tracks the foreground doc.
+    // Background pool entries still recycle and clear IDB on mismatch; if
+    // clearData fails there, the provider stays inert until a later reconnect
+    // retries — no separate banner per background tab by design.
+    const activeRecoveryDocNames =
+      recoveryActiveDocName !== null &&
+      snapshot.some(
+        ([docName, poolEntry]) => docName === recoveryActiveDocName && poolEntry.kind === 'active',
+      )
+        ? [recoveryActiveDocName]
+        : [];
+
+    this.beginServerRestartRecovery(activeRecoveryDocNames, startedAt);
+    for (const [docName, poolEntry] of snapshot) {
+      if (poolEntry.kind === 'active' && !activeRecoveryDocNames.includes(docName)) {
+        invalidateSyncPromise(docName);
+      }
+    }
 
     for (const [docName, poolEntry] of snapshot) {
       if (poolEntry.kind !== 'active') continue;
@@ -966,16 +1187,23 @@ export class ProviderPool {
       // null. BridgeFailed entries (Active with bridgeSetupFailed=true)
       // still have persistence attached and SHOULD be cleared.
       if (poolEntry.kind !== 'active') continue;
-      clears.push({ docName, promise: poolEntry.persistence.clearData() });
+      clears.push({
+        docName,
+        promise: this.withClearDataTimeout(docName, poolEntry.persistence.clearData()),
+      });
     }
 
     void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
       const failed: string[] = [];
       const cleared: string[] = [];
+      let sawClearTimeout = false;
       results.forEach((result, i) => {
         const docName = clears[i]?.docName ?? '<unknown>';
         if (result.status === 'rejected') {
           failed.push(docName);
+          if (result.reason instanceof ClientPersistenceClearTimeoutError) {
+            sawClearTimeout = true;
+          }
           console.warn(
             JSON.stringify({
               event: 'ok-client-persistence-clear-failed',
@@ -988,14 +1216,16 @@ export class ProviderPool {
           cleared.push(docName);
         }
       });
+      const reconnectDocNames = cleared.filter((docName) => docName === recoveryActiveDocName);
       if (failed.length > 0) {
+        const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
+          ? 'clear-data-timeout'
+          : 'clear-data-failed';
         // Per-doc recycle. An all-or-none gate would re-open the
-        // duplication class for the cleared docs: their providers will
-        // reconnect (`cachedServerInstanceId` was nulled at the
-        // mismatch-handler entry, so the next auth carries no claim and
-        // is accepted on the legacy path), then Yjs sync runs against
-        // the still-pre-restart Y.Doc and additively merges with post-
-        // restart server state — exactly the bug class clearData was
+        // duplication class for the cleared docs: their providers would
+        // reconnect after the stale claim has been cleared, then Yjs sync
+        // would run against the still-pre-restart Y.Doc and additively
+        // merge with post-restart server state — exactly the bug class clearData was
         // supposed to prevent. Recycle the cleared entries (their IDB
         // is empty, their fresh providers will sync cleanly) and leave
         // the failed entries inert. The failed entries' un-cleared
@@ -1009,11 +1239,14 @@ export class ProviderPool {
             clearedDocs: cleared,
           }),
         );
+        this.enterServerRestartReconnect(reconnectDocNames, failed, startedAt, failureReason);
         for (const docName of cleared) {
           this.recycleDisconnectedEntry(docName);
         }
         return;
       }
+      // `failureReason` is only read when `failedDocNames` is non-empty; this branch is all clears OK.
+      this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, 'clear-data-failed');
       this.recycleAllEntries();
     });
   }
@@ -1199,7 +1432,10 @@ export class ProviderPool {
     this.onBranchMismatch = null;
     this.branchMismatchInFlight = null;
     this.evictListeners.clear();
+    this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
     this.cachedServerInstanceId = null;
+    this.idbSyncedServerInstanceId = null;
+    this.idbSyncedServerInstanceIdInitialized = false;
     this.tabIdentity = null;
   }
 
