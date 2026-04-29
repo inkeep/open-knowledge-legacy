@@ -150,6 +150,17 @@ const RECYCLE_DEBOUNCE_MS = 4_000;
  * branch is global to the project.
  */
 const LAST_OBSERVED_BRANCH_KEY = 'ok-last-observed-branch';
+/**
+ * localStorage key for the server instance ID associated with this tab's
+ * hydrated IndexedDB Y.Doc state. Persisted across page reloads so that after
+ * a full server-process restart (e.g. `vite.config.ts` touch → Vite restarts
+ * the dev server), the first provider open claims the stale ID even if the
+ * boot `/api/server-info` fetch has already observed the fresh server ID. The
+ * server sees the mismatch and rejects, triggering the clearData + recycle
+ * flow BEFORE any Yjs sync can union-merge IDB items with the freshly-loaded
+ * server state.
+ */
+const IDB_SYNCED_SERVER_INSTANCE_ID_KEY = 'ok-idb-synced-server-instance-id';
 
 /**
  * Periodic full-sync nudge for HocuspocusProvider. Secondary defense against
@@ -281,21 +292,22 @@ export class ProviderPool {
   private onChange: PoolChangeCallback | null = null;
   private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
   /**
-   * Last-observed server instance ID. Set at boot via
-   * `DocumentContext`'s one-shot `GET /api/server-info` fetch, and refreshed
-   * on every `__system__` CC1 `server-info` broadcast arriving through
-   * `SystemDocSubscriber`. When non-null, included in the auth token's
-   * `expectedServerInstanceId` field on every `open()`. When the server
-   * rejects with `reason: 'server-instance-mismatch'`, the
-   * `authenticationFailed` handler nulls this field so the recycled
-   * providers re-open with an anonymous claim and resync cleanly.
-   *
-   * Null-by-default: preserves the backward-compat path where a client that
-   * never reached `/api/server-info` (endpoint 404, fetch blocked, boot
-   * race) simply doesn't claim an instance ID — server treats this as a
-   * legacy token and accepts.
+   * Last server instance ID observed from `/api/server-info` or CC1
+   * `server-info`. This is the live-server fallback claim for empty-IDB /
+   * post-clear opens. It is deliberately NOT persisted to localStorage:
+   * persisting the boot fetch's fresh ID before the first document provider
+   * opens would overwrite the stale IDB-associated value and mask the restart.
    */
   private cachedServerInstanceId: string | null = null;
+
+  /**
+   * Server instance ID associated with the hydrated client-side IDB data.
+   * Lazily loaded from storage and preferred over `cachedServerInstanceId` in
+   * auth tokens. Updated only after a provider has synced cleanly to the
+   * current server, and cleared before mismatch recycle wipes IDB.
+   */
+  private idbSyncedServerInstanceId: string | null = null;
+  private idbSyncedServerInstanceIdInitialized = false;
   /**
    * Unsynced-edit buffer captured per-doc during a `server-instance-mismatch`
    * recycle. Populated right before `clearData()` wipes IDB; drained at the
@@ -352,17 +364,12 @@ export class ProviderPool {
   }
 
   /**
-   * Update the cached server instance ID the pool will claim in every future
-   * provider's auth token. Pass `null` to clear (used by the auth-failure
-   * recycle path and by the boot fetch on network failure).
-   *
-   * Idempotent: if the new ID matches the cached one, no-op. Does NOT
-   * recycle existing providers — the claim only affects new `open()` calls.
-   * The auth-failure path is what flips stale pools to the new ID via
-   * recycle on server-side rejection.
+   * Update the live server instance ID observed from `/api/server-info` or CC1
+   * `server-info`. Does NOT overwrite the storage-backed IDB-associated ID:
+   * a fast boot fetch after server restart must not mask stale IDB contents
+   * before the first document provider opens.
    */
   setExpectedServerInstanceId(id: string | null): void {
-    if (this.cachedServerInstanceId === id) return;
     this.cachedServerInstanceId = id;
   }
 
@@ -494,6 +501,44 @@ export class ProviderPool {
     } catch {
       // Storage write failures are non-fatal — see read-side comment.
     }
+  }
+
+  /** Lazy-init the IDB-associated server instance ID from `this.storage`. */
+  private getOrInitIdbSyncedServerInstanceId(): string | null {
+    if (this.idbSyncedServerInstanceIdInitialized) return this.idbSyncedServerInstanceId;
+    this.idbSyncedServerInstanceIdInitialized = true;
+    try {
+      const stored = this.storage?.getItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY) ?? null;
+      if (stored !== null && stored.length > 0) {
+        this.idbSyncedServerInstanceId = stored;
+      }
+    } catch {
+      // Storage access can throw in private-mode browsers / sandboxed iframes.
+    }
+    return this.idbSyncedServerInstanceId;
+  }
+
+  /**
+   * Persist the server instance ID associated with the current IDB contents.
+   * This must not be called from `setExpectedServerInstanceId`; only a clean
+   * provider sync proves the IDB state belongs to the current server.
+   */
+  private persistIdbSyncedServerInstanceId(id: string | null): void {
+    this.idbSyncedServerInstanceId = id;
+    this.idbSyncedServerInstanceIdInitialized = true;
+    try {
+      if (id === null || id.length === 0) {
+        this.storage?.removeItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY);
+      } else {
+        this.storage?.setItem(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, id);
+      }
+    } catch {
+      // Storage write failures are non-fatal.
+    }
+  }
+
+  private getServerInstanceIdForAuth(): string | null {
+    return this.getOrInitIdbSyncedServerInstanceId() ?? this.cachedServerInstanceId;
   }
 
   /**
@@ -654,9 +699,10 @@ export class ProviderPool {
       this.evictLru();
     }
 
+    const expectedServerInstanceId = this.getServerInstanceIdForAuth();
     const token = buildAuthToken(
       this.tabIdentity,
-      this.cachedServerInstanceId,
+      expectedServerInstanceId,
       this.getOrInitObservedBranch(),
     );
     const provider = new HocuspocusProvider({
@@ -716,6 +762,9 @@ export class ProviderPool {
       // the delta between this and the doc's current state is what the
       // `server-instance-mismatch` recycle buffers before calling clearData.
       entry.lastServerSyncedSV = captureStateVector(provider.document);
+      if (this.cachedServerInstanceId !== null) {
+        this.persistIdbSyncedServerInstanceId(this.cachedServerInstanceId);
+      }
       // Cancel pending recycle — provider reconnected successfully
       if (entry.pendingRecycleTimer) {
         clearTimeout(entry.pendingRecycleTimer);
@@ -806,8 +855,9 @@ export class ProviderPool {
     //      bytes back onto the Y.Doc so the user's unsynced edits survive.
     //
     // Idempotence: after a server restart, every open provider fires
-    // authenticationFailed in quick succession. The first call nulls the
-    // cached ID; subsequent calls find it already null and short-circuit.
+    // authenticationFailed in quick succession. The first call clears the
+    // IDB-associated claim; sibling failures with the same stale claim then
+    // short-circuit while preserving any already-observed fresh server ID.
     const onAuthenticationFailed = ({ reason }: { reason: string }): void => {
       // Trust-boundary narrow: `reason` is a wire-foreign string from
       // Hocuspocus. Inlined (not imported from the server's runtime
@@ -834,8 +884,22 @@ export class ProviderPool {
       }
       const typed = reason as HocuspocusAuthRejectionReason;
       if (typed === 'server-instance-mismatch') {
-        if (this.cachedServerInstanceId === null) return;
-        this.cachedServerInstanceId = null;
+        // `expectedServerInstanceId` is the claim this provider actually sent.
+        // If it came from stale IDB storage, clear only that storage-backed
+        // claim and preserve a newer live-server ID learned from a fast boot
+        // fetch so the post-clear recycle can reconnect without another
+        // mismatch. If the live cache itself was the stale claim, clear it too.
+        if (
+          expectedServerInstanceId === null ||
+          (this.getOrInitIdbSyncedServerInstanceId() === null &&
+            this.cachedServerInstanceId !== expectedServerInstanceId)
+        ) {
+          return;
+        }
+        this.persistIdbSyncedServerInstanceId(null);
+        if (this.cachedServerInstanceId === expectedServerInstanceId) {
+          this.cachedServerInstanceId = null;
+        }
         this.handleServerInstanceMismatch();
         return;
       }
@@ -990,12 +1054,10 @@ export class ProviderPool {
       });
       if (failed.length > 0) {
         // Per-doc recycle. An all-or-none gate would re-open the
-        // duplication class for the cleared docs: their providers will
-        // reconnect (`cachedServerInstanceId` was nulled at the
-        // mismatch-handler entry, so the next auth carries no claim and
-        // is accepted on the legacy path), then Yjs sync runs against
-        // the still-pre-restart Y.Doc and additively merges with post-
-        // restart server state — exactly the bug class clearData was
+        // duplication class for the cleared docs: their providers would
+        // reconnect after the stale claim has been cleared, then Yjs sync
+        // would run against the still-pre-restart Y.Doc and additively
+        // merge with post-restart server state — exactly the bug class clearData was
         // supposed to prevent. Recycle the cleared entries (their IDB
         // is empty, their fresh providers will sync cleanly) and leave
         // the failed entries inert. The failed entries' un-cleared
@@ -1200,6 +1262,8 @@ export class ProviderPool {
     this.branchMismatchInFlight = null;
     this.evictListeners.clear();
     this.cachedServerInstanceId = null;
+    this.idbSyncedServerInstanceId = null;
+    this.idbSyncedServerInstanceIdInitialized = false;
     this.tabIdentity = null;
   }
 

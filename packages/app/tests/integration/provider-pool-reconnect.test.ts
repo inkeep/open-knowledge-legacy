@@ -131,6 +131,80 @@ describe('ProviderPool reconnects', () => {
     expect((afterReload.match(/\[\[test-doc\]\]/g) ?? []).length).toBe(baselineLinks);
   }, 20_000);
 
+  // Page-reload-after-server-restart: the Vite-restart duplication scenario.
+  //
+  // When the browser page reloads (Vite restarts the dev server), a fresh
+  // ProviderPool is created with cachedServerInstanceId=null in-memory, IDB
+  // still holds Y.Doc items from the prior session, and the server has a new
+  // instanceId. Without the localStorage fix, the client sends no claim, the
+  // server accepts unconditionally, and IDB merges with the freshly-loaded
+  // server Y.Doc → duplication. With the fix, the pool reads the stale ID
+  // from storage, sends it as expectedServerInstanceId, the server rejects
+  // with server-instance-mismatch, and clearData runs before any Yjs sync.
+  test('page reload after server restart: pool reads stale instance ID from storage and triggers recycle', async () => {
+    let server = await createRestartableServer();
+    cleanups.push(() => server.shutdown());
+
+    const docName = 'page-reload-doc';
+    writeFileSync(join(server.contentDir, `${docName}.md`), SMALL_FIXTURE, 'utf-8');
+
+    // Shared storage stub — simulates localStorage persisting across page loads.
+    const storageMap = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => storageMap.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        storageMap.set(k, v);
+      },
+      removeItem: (k: string) => {
+        storageMap.delete(k);
+      },
+    };
+
+    // Session 1: pool connects, syncs, persists the IDB-associated server ID
+    // to storage.
+    const firstPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`, { storage });
+    const firstServerId = await seedPoolServerInstanceId(server, firstPool);
+    await seedAndSyncSingleClient(server, firstPool, docName);
+    await wait(300);
+    expect(storageMap.get('ok-idb-synced-server-instance-id')).toBe(firstServerId);
+
+    const baseline = readFileSync(join(server.contentDir, `${docName}.md`), 'utf-8');
+    const baselineHeadings = (baseline.match(/# Test Document/g) ?? []).length;
+    const baselineLinks = (baseline.match(/\[\[test-doc\]\]/g) ?? []).length;
+    expect(baselineHeadings).toBe(2);
+    expect(baselineLinks).toBe(1);
+
+    // Page reload: destroy the pool (but IDB survives in fake-indexeddb).
+    firstPool.dispose();
+    await wait(50);
+
+    // Server restarts with a new instanceId.
+    server = await server.killAndRestartOnSamePort({ downtimeMs: 500 });
+    cleanups.unshift(() => server.shutdown());
+
+    // Session 2: fresh pool simulating a post-reload page. Storage still has
+    // the old instanceId, but the boot `/api/server-info` fetch wins the race
+    // and observes the new instanceId before the document provider opens.
+    const secondPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`, { storage });
+    cleanups.push(() => secondPool.dispose());
+    const secondServerId = await seedPoolServerInstanceId(server, secondPool);
+    expect(secondServerId).not.toBe(firstServerId);
+    expect(storageMap.get('ok-idb-synced-server-instance-id')).toBe(firstServerId);
+    secondPool.open(docName);
+    secondPool.setActive(docName);
+    await pollUntil(() => secondPool.getActive()?.provider.isSynced === true, 10_000, 50);
+    await wait(300);
+
+    const afterReload = await pollDiskContentStable(
+      join(server.contentDir, `${docName}.md`),
+      (c) => c.includes('# Test Document') && c.includes('[[test-doc]]'),
+      { timeoutMs: 5000, settleMs: 400 },
+    );
+
+    expect((afterReload.match(/# Test Document/g) ?? []).length).toBe(baselineHeadings);
+    expect((afterReload.match(/\[\[test-doc\]\]/g) ?? []).length).toBe(baselineLinks);
+  }, 30_000);
+
   // T3 — Slow restart >4s: pool.RECYCLE_DEBOUNCE_MS fires, provider is rebuilt,
   //      fresh Y.Doc replaces the stale one, and sync with the fresh server
   //      produces canonical on-disk content.
