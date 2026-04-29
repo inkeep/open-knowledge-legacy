@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { OK_DIR } from '../constants.ts';
-import { initContent } from './init.ts';
+import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import { buildConfigYmlContent, initContent, packageVersionMajorMinor } from './init.ts';
 
 describe('initContent', () => {
   let testDir: string;
@@ -91,6 +91,26 @@ describe('initContent', () => {
       .map((l) => l.trim())
       .filter((l) => l.length > 0 && !l.startsWith('#'));
     expect(activeLines).toEqual([]);
+  });
+
+  it('config.yml first line is the version-pinned $schema magic comment (FR-17)', () => {
+    initContent(testDir);
+    const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
+    const firstLine = configYml.split('\n')[0];
+    // AC #6: line 1 matches the FR-17 contract verbatim — version pinned to
+    // running CLI's MAJOR.MINOR; URL is unpkg-hosted; ends in dist/config-schema.json.
+    expect(firstLine).toMatch(
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@\d+\.\d+\/dist\/config-schema\.json$/,
+    );
+    // Embedded MAJOR.MINOR matches the running PACKAGE_VERSION's first two segments.
+    const expectedMajorMinor = packageVersionMajorMinor(PACKAGE_VERSION);
+    expect(firstLine).toContain(`@inkeep/open-knowledge@${expectedMajorMinor}/`);
+    // Existing # Open Knowledge — workspace configuration header is preserved
+    // immediately below the magic comment.
+    expect(configYml.split('\n')[1]).toBe('# Open Knowledge — workspace configuration');
+    // Existing schema-reference prose comment is preserved (human-readable
+    // hint for editors without an LSP — both directives coexist).
+    expect(configYml).toContain('# Schema reference: packages/cli/src/config/schema.ts');
   });
 
   it('config.yml scaffold includes Karpathy starter + picomatch nuance doc (US-006 / QA-009)', () => {
@@ -215,5 +235,42 @@ describe('committed .open-knowledge/.gitignore matches scaffold output', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('packageVersionMajorMinor', () => {
+  it('extracts MAJOR.MINOR from a 3-part semver', () => {
+    expect(packageVersionMajorMinor('1.2.3')).toBe('1.2');
+    expect(packageVersionMajorMinor('0.2.0')).toBe('0.2');
+    expect(packageVersionMajorMinor('10.20.30')).toBe('10.20');
+  });
+
+  it('drops prerelease suffixes from the minor segment (split-on-dot only consumes the first two)', () => {
+    // npm publish typically strips prerelease suffixes from the URL path; we
+    // pass the raw split result through. Acceptable since unpkg resolves the
+    // `@<MAJOR.MINOR>` selector against the latest matching published version.
+    expect(packageVersionMajorMinor('1.2.0-rc.1')).toBe('1.2');
+  });
+
+  it('falls back to 0.0 when the input is malformed', () => {
+    expect(packageVersionMajorMinor('')).toBe('0.0');
+  });
+});
+
+describe('buildConfigYmlContent', () => {
+  it('templates the magic comment with the supplied version', () => {
+    const out = buildConfigYmlContent('3.5.0');
+    expect(out.split('\n')[0]).toBe(
+      '# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@3.5/dist/config-schema.json',
+    );
+  });
+
+  it('produces a file with NO uncommented top-level keys (idempotent at parse)', () => {
+    const out = buildConfigYmlContent('1.0.0');
+    const activeLines = out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+    expect(activeLines).toEqual([]);
   });
 });

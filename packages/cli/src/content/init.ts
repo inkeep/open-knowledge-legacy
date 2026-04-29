@@ -1,8 +1,30 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { CACHE_DIR, CONFIG_FILENAME, OK_DIR } from '../constants.ts';
+import { CACHE_DIR, CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
-const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+/**
+ * Pin the `$schema` URL to the running CLI's MAJOR.MINOR so the user's IDE
+ * autocomplete surface stays in lockstep with what they wrote against
+ * (FR-17 / D21). Mirrors the [Biome `$schema` URL precedent](https://biomejs.dev/guides/configure-biome/)
+ * — `https://biomejs.dev/schemas/<version>/schema.json` — adapted for unpkg.
+ *
+ * On upgrade, the user re-runs `ok init` (or extends `ok config migrate`) to
+ * bump the URL alongside any field migrations.
+ */
+export function packageVersionMajorMinor(version: string): string {
+  // Default-on-undefined ([major = '0']) doesn't kick in for empty strings —
+  // ''.split('.') returns [''], not []. Coerce empty segments to '0' so a
+  // malformed version still yields a parsable URL slug.
+  const [rawMajor = '0', rawMinor = '0'] = version.split('.');
+  const major = rawMajor.length > 0 ? rawMajor : '0';
+  const minor = rawMinor.length > 0 ? rawMinor : '0';
+  return `${major}.${minor}`;
+}
+
+export function buildConfigYmlContent(version: string): string {
+  const majorMinor = packageVersionMajorMinor(version);
+  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@${majorMinor}/dist/config-schema.json
+# Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below
 # is commented out and shows its current default value. Uncomment any key
@@ -122,6 +144,7 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #       description: Canonical knowledge committed after a team decision. Produced by the \`consolidate\` tool with a \`supersedes:\` chain tying back to the research that preceded it.
 #       tags: [article, canonical, layer-consolidate]
 `;
+}
 
 function writeIfMissing(filePath: string, content: string): boolean {
   if (existsSync(filePath)) return false;
@@ -214,7 +237,7 @@ export function initContent(projectDir: string): {
   }
 
   // config.yml: writeIfMissing — user customizations win.
-  if (writeIfMissing(join(okDir, CONFIG_FILENAME), CONFIG_YML_CONTENT)) {
+  if (writeIfMissing(join(okDir, CONFIG_FILENAME), buildConfigYmlContent(PACKAGE_VERSION))) {
     created.push(CONFIG_FILENAME);
   } else {
     skipped.push(CONFIG_FILENAME);

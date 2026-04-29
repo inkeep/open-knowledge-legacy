@@ -72,6 +72,8 @@
     "@types/node": "^24.7.0",
     "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
