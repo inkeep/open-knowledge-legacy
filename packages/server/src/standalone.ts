@@ -9,8 +9,8 @@ import {
   CONFIG_DOC_NAMES,
   type Principal,
   prependFrontmatter,
-  resolveConfigPath,
 } from '@inkeep/open-knowledge-core';
+import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';

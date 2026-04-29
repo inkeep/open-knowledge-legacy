@@ -13,12 +13,8 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import {
-  type ConfigPatch,
-  humanFormat,
-  resolveConfigPath,
-  writeConfigPatch,
-} from '@inkeep/open-knowledge-core';
+import { type ConfigPatch, humanFormat } from '@inkeep/open-knowledge-core';
+import { resolveConfigPath, writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import { Command } from 'commander';
 import { parseDocument } from 'yaml';
 import { loadConfig } from '../config/loader.ts';

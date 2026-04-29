@@ -26,8 +26,8 @@ import {
   type ConfigValidationError,
   humanFormat,
   locateIssue,
-  readConfigSafely,
 } from '@inkeep/open-knowledge-core';
+import { readConfigSafely } from '@inkeep/open-knowledge-core/server';
 import { type Document, parseDocument } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';

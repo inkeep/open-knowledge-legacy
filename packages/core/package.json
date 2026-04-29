@@ -13,6 +13,11 @@
       "development": "./src/shadow-repo-layout.ts",
       "types": "./src/shadow-repo-layout.ts",
       "default": "./dist/shadow-repo-layout.mjs"
+    },
+    "./server": {
+      "development": "./src/server.ts",
+      "types": "./src/server.ts",
+      "default": "./dist/server.mjs"
     }
   },
   "files": [

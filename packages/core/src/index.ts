@@ -12,13 +12,6 @@ export {
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
 // Headless config writers (US-003 — D5 reshape Part B / D38 reshaped / D63).
-// Node-only: import yaml@2 and node:fs. NOT browser-safe.
-export {
-  type ApplyFolderRulesUpsertOptions,
-  type ApplyFolderRulesUpsertResult,
-  applyFolderRulesUpsert,
-  type FolderRuleUpsert,
-} from './config/apply-folder-rules-upsert.ts';
 // UI ConfigBinding (US-008 — D5 reshape Part A / FR-33 / D48 / D59).
 // Browser+node compatible — no Node deps; structural ConfigDocProvider type
 // keeps `@hocuspocus/provider` out of core's runtime deps.
@@ -53,16 +46,6 @@ export {
   fieldRegistry,
   getFieldMeta,
 } from './config/field-registry.ts';
-export {
-  type ConfigPathPresence,
-  type InspectConfigPathsOptions,
-  inspectConfigPaths,
-} from './config/inspect-config-paths.ts';
-export {
-  type ReadConfigSafelyOptions,
-  type ReadConfigSafelyResult,
-  readConfigSafely,
-} from './config/read-config-safely.ts';
 export type { Err, Ok, Result } from './config/result.ts';
 // Config (config-edit-paths spec — D44/D50/FR-31, US-001)
 // Schema, error envelope, and Result helper. Browser+node compatible.
@@ -92,14 +75,6 @@ export {
   withConfigSpan,
   withConfigSpanSync,
 } from './config/telemetry.ts';
-export {
-  resolveConfigPath,
-  type WriteConfigPatchOptions,
-  type WriteConfigPatchResult,
-  type WriteConfigPatchSuccess,
-  writeConfigPatch,
-} from './config/write-config-patch.ts';
-
 // Constants
 export {
   ACTIVITY_TTL_MS,

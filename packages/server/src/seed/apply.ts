@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { applyFolderRulesUpsert, humanFormat } from '@inkeep/open-knowledge-core';
+import { humanFormat } from '@inkeep/open-knowledge-core';
+import { applyFolderRulesUpsert } from '@inkeep/open-knowledge-core/server';
 import { LOG_MD_TEMPLATE } from './starter.ts';
 import type { ApplyError, ApplyResult, FileEntry, ScaffoldPlan, SeedOptions } from './types.ts';
 

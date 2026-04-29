@@ -19,11 +19,11 @@
  */
 
 import {
-  applyFolderRulesUpsert,
   ConfigValidationErrorSchema,
   FolderFrontmatterSchema,
   humanFormat,
 } from '@inkeep/open-knowledge-core';
+import { applyFolderRulesUpsert } from '@inkeep/open-knowledge-core/server';
 import { z } from 'zod';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';
 import {

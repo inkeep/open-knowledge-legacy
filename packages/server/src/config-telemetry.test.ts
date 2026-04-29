@@ -18,8 +18,8 @@ import {
   CONFIG_DOC_NAME_WORKSPACE,
   type ConfigDocProvider,
   type ConfigPatch,
-  writeConfigPatch,
 } from '@inkeep/open-knowledge-core';
+import { writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import { context, metrics, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import {

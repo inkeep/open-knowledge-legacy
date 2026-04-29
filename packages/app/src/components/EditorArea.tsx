@@ -137,7 +137,6 @@ function EditorAreaInner({
     );
   }
 
-
   if (activeTarget?.kind === 'folder') {
     return <FolderOverview folderPath={activeTarget.folderPath} />;
   }

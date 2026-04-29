@@ -33,10 +33,9 @@ import {
   type FieldMeta,
   getLeafFieldMeta,
   humanFormat,
-  inspectConfigPaths,
   type WriteScope,
-  writeConfigPatch,
 } from '@inkeep/open-knowledge-core';
+import { inspectConfigPaths, writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import { z } from 'zod';
 import { ConfigSchema } from '../../config/schema.ts';
 import type { ConfigOrResolver, ServerInstance } from './shared.ts';

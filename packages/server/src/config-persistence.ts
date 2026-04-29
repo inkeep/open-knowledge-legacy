@@ -28,10 +28,10 @@ import {
   ConfigSchema,
   type ConfigValidationError,
   isKnownConfigError,
-  resolveConfigPath,
   withConfigSpan,
   withConfigSpanSync,
 } from '@inkeep/open-knowledge-core';
+import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { parseDocument, stringify } from 'yaml';
 import type * as Y from 'yjs';
 import {
