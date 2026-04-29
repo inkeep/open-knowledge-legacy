@@ -12,6 +12,8 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  parseRenameCollidingPairs,
+  type RenameCollisionPair,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   summaryArgSchema,
@@ -47,17 +49,11 @@ interface RenameDocumentSuccess {
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
-interface RenameDocumentCollision {
-  existing: string;
-  incoming: string;
-  to: string;
-}
-
 interface RenameDocumentError {
   ok: false;
   error: string;
   /** Server-supplied structured collision list when 409 is a rename-map collision. */
-  colliding?: RenameDocumentCollision[];
+  colliding?: RenameCollisionPair[];
 }
 
 export const DESCRIPTION = [
@@ -94,17 +90,6 @@ function parseRewrittenDocs(value: unknown): RenameDocumentRewrittenDoc[] {
     const { docName, rewrites } = entry as Record<string, unknown>;
     return typeof docName === 'string' && typeof rewrites === 'number'
       ? [{ docName, rewrites }]
-      : [];
-  });
-}
-
-function parseCollidingPairs(value: unknown): RenameDocumentCollision[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object') return [];
-    const { existing, incoming, to } = entry as Record<string, unknown>;
-    return typeof existing === 'string' && typeof incoming === 'string' && typeof to === 'string'
-      ? [{ existing, incoming, to }]
       : [];
   });
 }
@@ -168,7 +153,7 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
 
       if (!result.ok) {
         const error = typeof result.error === 'string' ? result.error : 'Rename failed';
-        const colliding = parseCollidingPairs(result.colliding);
+        const colliding = parseRenameCollidingPairs(result.colliding);
         const structured: RenameDocumentError = {
           ok: false,
           error,

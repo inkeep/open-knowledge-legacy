@@ -12,6 +12,8 @@ import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './sh
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
+  parseRenameCollidingPairs,
+  type RenameCollisionPair,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   SUMMARY_TRANSPORT_CAP,
@@ -42,18 +44,12 @@ interface RenameFolderSuccess {
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
-interface RenameFolderCollision {
-  existing: string;
-  incoming: string;
-  to: string;
-}
-
 interface RenameFolderError {
   ok: false;
   error: string;
   /** Server-supplied structured collision list when 409 is a rename-map collision.
    *  Empty/absent for other 4xx error classes (validation, missing source, etc.). */
-  colliding?: RenameFolderCollision[];
+  colliding?: RenameCollisionPair[];
 }
 
 export const DESCRIPTION = [
@@ -97,17 +93,6 @@ function parseRewrittenDocs(value: unknown): RenameFolderRewrittenDoc[] {
     const { docName, rewrites } = entry as Record<string, unknown>;
     return typeof docName === 'string' && typeof rewrites === 'number'
       ? [{ docName, rewrites }]
-      : [];
-  });
-}
-
-function parseCollidingPairs(value: unknown): RenameFolderCollision[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object') return [];
-    const { existing, incoming, to } = entry as Record<string, unknown>;
-    return typeof existing === 'string' && typeof incoming === 'string' && typeof to === 'string'
-      ? [{ existing, incoming, to }]
       : [];
   });
 }
@@ -173,7 +158,7 @@ export function register(server: ServerInstance, deps: RenameFolderDeps): void {
 
       if (!result.ok) {
         const error = typeof result.error === 'string' ? result.error : 'Folder rename failed';
-        const colliding = parseCollidingPairs(result.colliding);
+        const colliding = parseRenameCollidingPairs(result.colliding);
         const structured: RenameFolderError = {
           ok: false,
           error,
