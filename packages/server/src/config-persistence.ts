@@ -22,11 +22,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
+  addConfigSpanEvent,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAME_WORKSPACE,
+  type ConfigIssue,
   ConfigSchema,
   type ConfigValidationError,
+  isKnownConfigError,
   resolveConfigPath,
+  withConfigSpan,
+  withConfigSpanSync,
 } from '@inkeep/open-knowledge-core';
 import { parseDocument, stringify } from 'yaml';
 import type * as Y from 'yjs';
@@ -35,6 +40,37 @@ import {
   CONFIG_VALIDATION_REVERT_ORIGIN,
 } from './config-edit-origin.ts';
 import { tracedRename, tracedWriteFile } from './fs-traced.ts';
+
+/**
+ * Map a documentName to the OTel `config.scope` enum attribute.
+ * Returns `undefined` for non-config docs (caller should never invoke this
+ * helper for those; config-persistence's branches are isConfigDoc-gated).
+ */
+function configScopeAttr(documentName: string): 'user' | 'workspace' | undefined {
+  if (documentName === CONFIG_DOC_NAME_WORKSPACE) return 'workspace';
+  if (documentName === CONFIG_DOC_NAME_USER) return 'user';
+  return undefined;
+}
+
+/**
+ * Emit one span event per Zod issue when validation fails with SCHEMA_INVALID.
+ * Bounded enum attributes only on the parent span; per-issue paths land in
+ * span events to keep cardinality bounded (`concerns/observability.md`).
+ *
+ * The narrowing dance via `isKnownConfigError` is the canonical pattern for
+ * the discriminated-union-plus-forward-compat-tail shape — without it, TS
+ * sees `error.issues` as `unknown` because the tail variant doesn't carry it.
+ */
+function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
+  if (!isKnownConfigError(error)) return;
+  if (error.code !== 'SCHEMA_INVALID') return;
+  for (const issue of error.issues as ConfigIssue[]) {
+    addConfigSpanEvent('config.validation.issue', {
+      'issue.path': issue.path.map((p) => String(p)).join('.'),
+      'issue.message': issue.message,
+    });
+  }
+}
 
 export interface ConfigPersistenceCtx {
   /** Project root — workspace config resolves to `<projectDir>/.open-knowledge/config.yml`. */
@@ -211,6 +247,30 @@ export async function storeConfigDoc(
   lastTransactionOrigin: unknown,
   ctx: ConfigPersistenceCtx,
 ): Promise<StoreConfigDocOutcome> {
+  return withConfigSpan(
+    'config.persist',
+    { 'config.scope': configScopeAttr(documentName), 'config.transport': 'fs' },
+    async (span) => {
+      const outcome = await storeConfigDocInner(document, documentName, lastTransactionOrigin, ctx);
+      span.setAttribute('config.outcome', persistOutcomeAttr(outcome));
+      return outcome;
+    },
+  );
+}
+
+function persistOutcomeAttr(outcome: StoreConfigDocOutcome): 'success' | 'reverted' | 'rejected' {
+  // 'persisted' → success; 'reverted' → reverted; 'no-op' renders as success
+  // (no failure occurred — a no-op is a successful completion of the hook).
+  if (outcome === 'reverted') return 'reverted';
+  return 'success';
+}
+
+async function storeConfigDocInner(
+  document: Y.Doc,
+  documentName: string,
+  lastTransactionOrigin: unknown,
+  ctx: ConfigPersistenceCtx,
+): Promise<StoreConfigDocOutcome> {
   if (lastTransactionOrigin === CONFIG_VALIDATION_REVERT_ORIGIN) return 'no-op';
 
   const ytext = document.getText('source');
@@ -221,17 +281,33 @@ export async function storeConfigDoc(
   const lkg = ctx.lkgCache.get(documentName);
   if (lkg !== undefined && content === lkg) return 'no-op';
 
-  const validation = validateConfigYaml(content);
+  const scope = configScopeAttr(documentName);
+  const validation = withConfigSpanSync(
+    'config.validate',
+    { 'config.scope': scope, 'config.validation.layer': 'L3' },
+    (validateSpan) => {
+      const r = validateConfigYaml(content);
+      validateSpan.setAttribute('config.outcome', r.ok ? 'success' : 'rejected');
+      if (!r.ok) emitSchemaInvalidIssueEvents(r.error);
+      return r;
+    },
+  );
   if (!validation.ok) {
-    const fallbackLkg = lkg ?? serializedDefaults();
-    document.transact(() => {
-      if (ytext.length > 0) ytext.delete(0, ytext.length);
-      ytext.insert(0, fallbackLkg);
-    }, CONFIG_VALIDATION_REVERT_ORIGIN);
-    if (lkg === undefined) {
-      ctx.lkgCache.set(documentName, fallbackLkg);
-    }
-    ctx.onConfigRejected?.(documentName, validation.error);
+    await withConfigSpan(
+      'config.revert',
+      { 'config.scope': scope, 'config.outcome': 'reverted' },
+      async () => {
+        const fallbackLkg = lkg ?? serializedDefaults();
+        document.transact(() => {
+          if (ytext.length > 0) ytext.delete(0, ytext.length);
+          ytext.insert(0, fallbackLkg);
+        }, CONFIG_VALIDATION_REVERT_ORIGIN);
+        if (lkg === undefined) {
+          ctx.lkgCache.set(documentName, fallbackLkg);
+        }
+        ctx.onConfigRejected?.(documentName, validation.error);
+      },
+    );
     return 'reverted';
   }
 
@@ -287,7 +363,17 @@ export function applyExternalConfigChange(
   const lkg = ctx.lkgCache.get(documentName);
   if (lkg !== undefined && lkg === content) return 'no-op';
 
-  const validation = validateConfigYaml(content);
+  const scope = configScopeAttr(documentName);
+  const validation = withConfigSpanSync(
+    'config.validate',
+    { 'config.scope': scope, 'config.validation.layer': 'L3' },
+    (validateSpan) => {
+      const r = validateConfigYaml(content);
+      validateSpan.setAttribute('config.outcome', r.ok ? 'success' : 'rejected');
+      if (!r.ok) emitSchemaInvalidIssueEvents(r.error);
+      return r;
+    },
+  );
   if (!validation.ok) {
     ctx.onConfigRejected?.(documentName, validation.error);
     return 'rejected';

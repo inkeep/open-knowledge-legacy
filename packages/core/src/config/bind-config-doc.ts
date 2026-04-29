@@ -27,6 +27,7 @@ import type * as Y from 'yjs';
 import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
+import { addConfigSpanEvent, withConfigSpanSync } from './telemetry.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 /**
@@ -165,6 +166,18 @@ export function bindConfigDoc(
   scope: 'workspace' | 'user',
   options: BindConfigDocOptions = {},
 ): ConfigBinding {
+  return withConfigSpanSync(
+    'config.bind',
+    { 'config.scope': scope, 'config.transport': 'ytext' },
+    () => bindConfigDocInner(provider, scope, options),
+  );
+}
+
+function bindConfigDocInner(
+  provider: ConfigDocProvider,
+  scope: 'workspace' | 'user',
+  options: BindConfigDocOptions,
+): ConfigBinding {
   const { ytextKey = DEFAULT_YTEXT_KEY } = options;
   const ydoc = provider.document;
   const ytext = ydoc.getText(ytextKey);
@@ -194,64 +207,96 @@ export function bindConfigDoc(
   // produces a delta is idempotent in React (state-equality bailout).
   provider.on('synced', fireListeners);
 
+  function patchInner(patch: ConfigPatch): ConfigBindingPatchResult {
+    if (disposed) {
+      return err({
+        code: 'WRITE_ERROR',
+        detail: `ConfigBinding (${scope}) has been disposed`,
+      });
+    }
+
+    const currentContent = ytext.toString();
+    const doc = parseDocument(currentContent);
+    if (doc.errors.length > 0) {
+      return err({
+        code: 'YAML_PARSE',
+        detail: doc.errors.map((e) => e.message).join('; '),
+      });
+    }
+
+    // Empty Y.Text → empty Document. setIn requires a top-level map to
+    // create nested paths; createNode({}) gives us one. Mirrors the
+    // writeConfigPatch contents-null branch.
+    if (doc.contents === null) {
+      doc.contents = doc.createNode({}) as ParsedNode;
+    } else if (!isMap(doc.contents)) {
+      return err({
+        code: 'YAML_PARSE',
+        detail: 'Top-level YAML value must be a mapping (object)',
+      });
+    }
+
+    const appliedPaths = applyPatchToDocument(doc, patch);
+    const merged = doc.toJSON() ?? {};
+    // L1 of the three-layer defense (D45). Wrapped in a config.validate span
+    // with `validation.layer: 'L1'` so traces correlate the client-side gate
+    // with the L2 (writeConfigPatch) and L3 (persistence-hook) passes.
+    const parsed = withConfigSpanSync(
+      'config.validate',
+      { 'config.scope': scope, 'config.validation.layer': 'L1' },
+      (validateSpan) => {
+        const r = ConfigSchema.safeParse(merged);
+        validateSpan.setAttribute('config.outcome', r.success ? 'success' : 'rejected');
+        if (!r.success) {
+          for (const issue of r.error.issues) {
+            addConfigSpanEvent('config.validation.issue', {
+              'issue.path': issue.path.map((p) => String(p)).join('.'),
+              'issue.message': issue.message,
+            });
+          }
+        }
+        return r;
+      },
+    );
+    if (!parsed.success) {
+      return err({
+        code: 'SCHEMA_INVALID',
+        issues: parsed.error.issues.map(toConfigIssue),
+      });
+    }
+
+    // Serialize and replace Y.Text content atomically. The transaction
+    // has no marked origin — propagates through Hocuspocus normally so
+    // the persistence-hook (L3) and any other connected clients see the
+    // update.
+    const newContent = doc.toString();
+    ydoc.transact(() => {
+      if (ytext.length > 0) ytext.delete(0, ytext.length);
+      ytext.insert(0, newContent);
+    });
+
+    return ok({
+      effective: parsed.data,
+      appliedPaths,
+    });
+  }
+
   return {
     current(): Config {
       return readCurrent(ytext);
     },
 
     patch(patch: ConfigPatch): ConfigBindingPatchResult {
-      if (disposed) {
-        return err({
-          code: 'WRITE_ERROR',
-          detail: `ConfigBinding (${scope}) has been disposed`,
-        });
-      }
-
-      const currentContent = ytext.toString();
-      const doc = parseDocument(currentContent);
-      if (doc.errors.length > 0) {
-        return err({
-          code: 'YAML_PARSE',
-          detail: doc.errors.map((e) => e.message).join('; '),
-        });
-      }
-
-      // Empty Y.Text → empty Document. setIn requires a top-level map to
-      // create nested paths; createNode({}) gives us one. Mirrors the
-      // writeConfigPatch contents-null branch.
-      if (doc.contents === null) {
-        doc.contents = doc.createNode({}) as ParsedNode;
-      } else if (!isMap(doc.contents)) {
-        return err({
-          code: 'YAML_PARSE',
-          detail: 'Top-level YAML value must be a mapping (object)',
-        });
-      }
-
-      const appliedPaths = applyPatchToDocument(doc, patch);
-      const merged = doc.toJSON() ?? {};
-      const parsed = ConfigSchema.safeParse(merged);
-      if (!parsed.success) {
-        return err({
-          code: 'SCHEMA_INVALID',
-          issues: parsed.error.issues.map(toConfigIssue),
-        });
-      }
-
-      // Serialize and replace Y.Text content atomically. The transaction
-      // has no marked origin — propagates through Hocuspocus normally so
-      // the persistence-hook (L3) and any other connected clients see the
-      // update.
-      const newContent = doc.toString();
-      ydoc.transact(() => {
-        if (ytext.length > 0) ytext.delete(0, ytext.length);
-        ytext.insert(0, newContent);
-      });
-
-      return ok({
-        effective: parsed.data,
-        appliedPaths,
-      });
+      return withConfigSpanSync(
+        'config.patch',
+        { 'config.scope': scope, 'config.transport': 'ytext' },
+        (patchSpan) => {
+          const result = patchInner(patch);
+          patchSpan.setAttribute('config.outcome', result.ok ? 'success' : 'rejected');
+          if (!result.ok) patchSpan.setAttribute('config.error.code', result.error.code);
+          return result;
+        },
+      );
     },
 
     subscribe(listener: (config: Config) => void): Unsubscribe {

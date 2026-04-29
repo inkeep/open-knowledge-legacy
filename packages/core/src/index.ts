@@ -77,6 +77,21 @@ export {
 } from './config/schema.ts';
 export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
 export { type LocateOptions, locateIssue } from './config/source-locator.ts';
+// OTel helpers for config-edit spans (US-014 / FR-38 / D53). Browser+node
+// compatible — imports only `@opentelemetry/api`. Spans are inert no-ops
+// when no SDK is registered (server: OTEL_SDK_DISABLED gate; app:
+// VITE_OTEL_ENABLED gate).
+export {
+  addConfigSpanEvent,
+  type ConfigOutcome,
+  type ConfigScopeAttr,
+  type ConfigSpanAttributes,
+  type ConfigTransport,
+  type ConfigValidationLayer,
+  setConfigOutcome,
+  withConfigSpan,
+  withConfigSpanSync,
+} from './config/telemetry.ts';
 export {
   resolveConfigPath,
   type WriteConfigPatchOptions,

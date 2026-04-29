@@ -25,6 +25,7 @@ import { OK_DIR } from '../constants/ok-dir.ts';
 import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
+import { addConfigSpanEvent, withConfigSpan, withConfigSpanSync } from './telemetry.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 /** Filename of the workspace + user config under `.open-knowledge/`. */
@@ -166,6 +167,21 @@ async function atomicWrite(absPath: string, content: string): Promise<void> {
 export async function writeConfigPatch(
   opts: WriteConfigPatchOptions,
 ): Promise<WriteConfigPatchResult> {
+  return withConfigSpan(
+    'config.patch',
+    { 'config.scope': opts.scope, 'config.transport': 'fs' },
+    async (span) => {
+      const result = await writeConfigPatchInner(opts);
+      span.setAttribute('config.outcome', result.ok ? 'success' : 'rejected');
+      if (!result.ok) span.setAttribute('config.error.code', result.error.code);
+      return result;
+    },
+  );
+}
+
+async function writeConfigPatchInner(
+  opts: WriteConfigPatchOptions,
+): Promise<WriteConfigPatchResult> {
   const { cwd, scope, patch, homedirOverride, firstWriteHeader } = opts;
   const absPath = resolveConfigPath(scope, cwd, homedirOverride);
 
@@ -212,11 +228,27 @@ export async function writeConfigPatch(
 
   // Step 4: serialize to JS for safeParse (validation), and to string for
   // write. The Document layer's `toJSON()` produces a plain JS object
-  // suitable for Zod parsing.
+  // suitable for Zod parsing. L2 of the three-layer defense (D45).
   const merged = doc.toJSON();
-  const parsed = ConfigSchema.safeParse(merged);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map(toConfigIssue);
+  const parseResult = withConfigSpanSync(
+    'config.validate',
+    { 'config.scope': scope, 'config.validation.layer': 'L2' },
+    (validateSpan) => {
+      const r = ConfigSchema.safeParse(merged);
+      validateSpan.setAttribute('config.outcome', r.success ? 'success' : 'rejected');
+      if (!r.success) {
+        for (const issue of r.error.issues) {
+          addConfigSpanEvent('config.validation.issue', {
+            'issue.path': issue.path.map((p) => String(p)).join('.'),
+            'issue.message': issue.message,
+          });
+        }
+      }
+      return r;
+    },
+  );
+  if (!parseResult.success) {
+    const issues = parseResult.error.issues.map(toConfigIssue);
     return err({ code: 'SCHEMA_INVALID', issues });
   }
 
@@ -254,7 +286,7 @@ export async function writeConfigPatch(
   }
 
   return ok({
-    effective: parsed.data,
+    effective: parseResult.data,
     appliedPaths,
     path: absPath,
     created: !fileExists,
