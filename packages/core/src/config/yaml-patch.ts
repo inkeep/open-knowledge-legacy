@@ -7,9 +7,31 @@
  * No Node deps — pure yaml@2 + Zod. Safe to import from browser-bundled code.
  */
 
-import type { Document, ParsedNode } from 'yaml';
+import { type Document, isCollection, type ParsedNode } from 'yaml';
 import type { ConfigIssue } from './errors.ts';
 import type { ConfigPatch } from './schema.ts';
+
+/**
+ * Replace any non-collection ancestor on `path` with an empty Map so that
+ * `setIn` can descend through it. yaml@2's `setIn` auto-creates *missing*
+ * intermediates as Maps but throws "Expected YAML collection at <key>" when
+ * an intermediate already exists as a Scalar (e.g., `appearance:` with no
+ * body parses as `Scalar(null)`, and `appearance: ~` likewise). This shape
+ * is reachable via hand-edits, deletions that leave the parent key, and any
+ * config previously scaffolded with empty section headers.
+ */
+function ensureCollectionAncestors(
+  doc: Document.Parsed<ParsedNode>,
+  path: (string | number)[],
+): void {
+  for (let i = 1; i < path.length; i++) {
+    const ancestor = path.slice(0, i);
+    if (!doc.hasIn(ancestor)) continue;
+    const node = doc.getIn(ancestor, true);
+    if (isCollection(node)) continue;
+    doc.deleteIn(ancestor);
+  }
+}
 
 /**
  * Walk a deep-partial patch tree and apply each leaf to the YAML Document.
@@ -32,6 +54,7 @@ export function applyPatchToDocument(
       return;
     }
     if (Array.isArray(value)) {
+      ensureCollectionAncestors(doc, path);
       doc.setIn(path, value);
       applied.push(path.join('.'));
       return;
@@ -42,6 +65,7 @@ export function applyPatchToDocument(
       }
       return;
     }
+    ensureCollectionAncestors(doc, path);
     doc.setIn(path, value);
     applied.push(path.join('.'));
   }
