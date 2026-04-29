@@ -2496,6 +2496,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               : issue.message;
           }
         }
+        // **Error envelope convention extension.** This is the precedent for
+        // per-field validation errors: `{ ok: false, error: <human msg>,
+        // fieldErrors: Record<key, msg> }`. Future validation-heavy
+        // endpoints should reuse `fieldErrors` (NOT invent
+        // `validationErrors` / `details` / similar) so MCP clients can
+        // depend on one shape. The form panel already keys off this in
+        // `commitPatch` (PropertyPanel.tsx).
         json(res, 400, { ok: false, error: 'Invalid patch payload', fieldErrors });
         return;
       }
@@ -2603,9 +2610,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             {
               attributes: {
                 'doc.name': docName,
-                'patch.keys_count': patchKeysCount,
-                'patch.ops_set': opsSetCount,
-                'patch.ops_delete': opsDeleteCount,
+                'frontmatter.patch_keys_count': patchKeysCount,
+                'frontmatter.patch_ops_set': opsSetCount,
+                'frontmatter.patch_ops_delete': opsDeleteCount,
                 'frontmatter.source': editSurfaceLabel,
               },
             },
@@ -2729,10 +2736,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
 
           if (unsupportedFmDetected) {
+            // Persona-neutral: this error reaches both UI form callers
+            // (form panel) and MCP agents. Source mode is UI-only — agents
+            // need their own actionable path (write_document with
+            // position:replace rewrites the whole document).
             json(res, 400, {
               ok: false,
               error:
-                'Document frontmatter contains values not supported by frontmatter_patch (nested objects or non-string arrays). Edit the YAML directly in source mode to simplify these values, then frontmatter_patch will work normally.',
+                'Document frontmatter contains values not supported by frontmatter_patch (nested objects or non-string arrays). Simplify the values to supported shapes (string, number, boolean, string[]) — in the editor use source mode; via MCP use write_document with position:replace to rewrite the document.',
             });
             return;
           }
@@ -3679,10 +3690,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // per-key state — `composeFrontmatterForStore` then re-synthesizes
         // from per-key on the next L1 flush, overwriting disk with the
         // pre-rollback FM despite the legacy slot being correct.
-        const fmOk = writeFrontmatterDualSlot(document, frontmatter);
-        if (!fmOk) {
+        const fmResult = writeFrontmatterDualSlot(document, frontmatter);
+        if (!fmResult.ok) {
           console.warn(
-            `[rollback] Malformed YAML in restored snapshot for ${docName} — per-key entries unchanged; legacy slot mirrored as-supplied`,
+            `[rollback] Malformed YAML in restored snapshot for ${docName} (${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
           );
         }
       }, ROLLBACK_ORIGIN);

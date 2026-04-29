@@ -247,6 +247,7 @@ export {
   type Scheduler,
   setFrontmatterFromYaml,
   setFrontmatterProperty,
+  type WriteFrontmatterResult,
   writeFrontmatterDualSlot,
 } from './bridge/index.ts';
 export {

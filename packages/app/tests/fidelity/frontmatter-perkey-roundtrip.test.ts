@@ -244,11 +244,11 @@ describe('AC #6 — substrate bridge invariant under per-key writes', () => {
     // a form-write or `frontmatter_patch` call lands on (US-005): metaMap-only
     // writes, no XmlFragment touch, no direct Y.Text mutation.
     doc.transact(() => {
-      const ok = setFrontmatterFromYaml(
+      const result = setFrontmatterFromYaml(
         doc,
         'title: From Form\nstatus: published\ntags:\n  - docs\n  - crdt\n',
       );
-      expect(ok).toBe(true);
+      expect(result.ok).toBe(true);
     });
 
     // Body content lives in Y.Text (the source-mode mirror that Observer A

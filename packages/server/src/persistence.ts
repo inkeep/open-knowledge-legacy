@@ -718,10 +718,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             // affordance only and goes away once all readers migrate to
             // `getFrontmatter(doc)`.
             document.transact(() => {
-              const ok = writeFrontmatterDualSlot(document, frontmatter);
-              if (!ok) {
+              const fmResult = writeFrontmatterDualSlot(document, frontmatter);
+              if (!fmResult.ok) {
                 log.warn(
-                  { documentName },
+                  { documentName, parseError: fmResult.parseError },
                   '[persistence] Malformed YAML on load — per-key entries unchanged; legacy slot mirrored as-supplied',
                 );
               }

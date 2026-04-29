@@ -17,6 +17,7 @@ export {
   getFrontmatterMap,
   setFrontmatterFromYaml,
   setFrontmatterProperty,
+  type WriteFrontmatterResult,
   writeFrontmatterDualSlot,
 } from './frontmatter-y.ts';
 export {

@@ -6,6 +6,7 @@ import {
   getFrontmatterMap,
   setFrontmatterFromYaml,
   setFrontmatterProperty,
+  writeFrontmatterDualSlot,
 } from './frontmatter-y.ts';
 
 function makeDoc(): Y.Doc {
@@ -159,8 +160,8 @@ describe('setFrontmatterProperty', () => {
 describe('setFrontmatterFromYaml', () => {
   test('writes per-key entries from a YAML body', () => {
     const doc = makeDoc();
-    const ok = setFrontmatterFromYaml(doc, 'title: Hello\ncount: 42\ntags: [a, b]\n');
-    expect(ok).toBe(true);
+    const result = setFrontmatterFromYaml(doc, 'title: Hello\ncount: 42\ntags: [a, b]\n');
+    expect(result.ok).toBe(true);
     expect(getFrontmatterMap(doc)).toEqual({
       title: 'Hello',
       count: 42,
@@ -196,12 +197,16 @@ describe('setFrontmatterFromYaml', () => {
     expect(changeCount).toBe(0);
   });
 
-  test('returns false on malformed YAML and leaves state unchanged', () => {
+  test('returns { ok: false, parseError } on malformed YAML and leaves state unchanged', () => {
     const doc = makeDoc();
     setFrontmatterFromYaml(doc, 'title: Hello\n');
     const before = getFrontmatterMap(doc);
-    const ok = setFrontmatterFromYaml(doc, 'title: [unterminated');
-    expect(ok).toBe(false);
+    const result = setFrontmatterFromYaml(doc, 'title: [unterminated');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(typeof result.parseError).toBe('string');
+      expect(result.parseError.length).toBeGreaterThan(0);
+    }
     expect(getFrontmatterMap(doc)).toEqual(before);
   });
 
@@ -268,5 +273,70 @@ describe('composeFrontmatterForStore', () => {
     metaMap.set('title', 'Recovered');
     const composed = composeFrontmatterForStore(doc);
     expect(composed).toContain('title: Recovered');
+  });
+});
+
+describe('writeFrontmatterDualSlot', () => {
+  // The helper is the consolidation point used at every FM-touching
+  // server-side write surface (persistence, external-change, agent-sessions
+  // ×2, server-observers ×2, rollback). It atomically writes both
+  // representations: per-key Y.Map entries (via setFrontmatterFromYaml)
+  // and the legacy single-string slot. These tests pin the asymmetric
+  // contract — when YAML is malformed, per-key state stays unchanged but
+  // the legacy slot is mirrored as-supplied — so a future refactor can't
+  // silently regress to the rollback-class bug.
+
+  test('valid fenced YAML: writes per-key entries AND mirrors legacy slot verbatim', () => {
+    const doc = makeDoc();
+    const fenced = '---\ntitle: Hello\ncount: 42\n---\n';
+    const result = writeFrontmatterDualSlot(doc, fenced);
+    expect(result.ok).toBe(true);
+    expect(getFrontmatterMap(doc)).toEqual({ title: 'Hello', count: 42 });
+    expect(doc.getMap('metadata').get('frontmatter')).toBe(fenced);
+  });
+
+  test('malformed fenced YAML: per-key unchanged, legacy slot mirrored, parseError surfaced', () => {
+    const doc = makeDoc();
+    // Seed valid per-key state.
+    writeFrontmatterDualSlot(doc, '---\ntitle: Stable\n---\n');
+    const beforePerKey = getFrontmatterMap(doc);
+    const malformed = '---\ntitle: [unterminated\n---\n';
+    const result = writeFrontmatterDualSlot(doc, malformed);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(typeof result.parseError).toBe('string');
+      expect(result.parseError.length).toBeGreaterThan(0);
+    }
+    // Per-key entries kept their last valid state — this is what prevents
+    // composeFrontmatterForStore from silently overwriting disk with stale
+    // values on the next persistence cycle.
+    expect(getFrontmatterMap(doc)).toEqual(beforePerKey);
+    // Legacy slot got the malformed string verbatim — the documented
+    // contract: keep last valid per-key state, mirror as-supplied.
+    expect(doc.getMap('metadata').get('frontmatter')).toBe(malformed);
+  });
+
+  test('empty string: per-key cleared, legacy slot set to empty', () => {
+    const doc = makeDoc();
+    writeFrontmatterDualSlot(doc, '---\ntitle: Hello\nrole: editor\n---\n');
+    expect(Object.keys(getFrontmatterMap(doc))).toHaveLength(2);
+    const result = writeFrontmatterDualSlot(doc, '');
+    expect(result.ok).toBe(true);
+    expect(getFrontmatterMap(doc)).toEqual({});
+    expect(doc.getMap('metadata').get('frontmatter')).toBe('');
+  });
+
+  test('caller-side rollback contract: stale per-key never wins composeFrontmatterForStore', () => {
+    // Regression guard for the Phase 8 rollback bug — pre-fix,
+    // handleRollback wrote only the legacy slot. composeFrontmatterForStore
+    // sees per-key/legacy divergence and re-synthesizes from per-key,
+    // overwriting disk with the stale pre-rollback FM. With the helper,
+    // both representations land in lockstep.
+    const doc = makeDoc();
+    writeFrontmatterDualSlot(doc, '---\ntitle: Original\nstatus: draft\n---\n');
+    // Simulate a rollback writing new FM via the helper.
+    writeFrontmatterDualSlot(doc, '---\ntitle: Rolled\nstatus: published\n---\n');
+    expect(getFrontmatterMap(doc)).toEqual({ title: 'Rolled', status: 'published' });
+    expect(composeFrontmatterForStore(doc)).toBe('---\ntitle: Rolled\nstatus: published\n---\n');
   });
 });

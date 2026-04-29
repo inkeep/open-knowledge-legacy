@@ -177,10 +177,10 @@ function applyAgentMarkdownWriteInner(
     //    `metaMap.get('frontmatter')` directly. Same pattern as
     //    `external-change.ts` and `persistence.ts:onLoadDocument`.
     if (finalFm !== existingFm) {
-      const fmOk = writeFrontmatterDualSlot(document, finalFm);
-      if (!fmOk) {
+      const fmResult = writeFrontmatterDualSlot(document, finalFm);
+      if (!fmResult.ok) {
         log.warn(
-          { docName: document.name },
+          { docName: document.name, parseError: fmResult.parseError },
           '[agent-session] Malformed YAML in agent-write — per-key entries unchanged; legacy slot mirrored as-supplied',
         );
       }
@@ -283,10 +283,10 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
     // metaMap). In the common case both are reverted in lockstep and this
     // is a no-op.
     if (newFm && newFm !== existingFm) {
-      const fmOk = writeFrontmatterDualSlot(document, finalFm);
-      if (!fmOk) {
+      const fmResult = writeFrontmatterDualSlot(document, finalFm);
+      if (!fmResult.ok) {
         log.warn(
-          { docName: document.name },
+          { docName: document.name, parseError: fmResult.parseError },
           '[agent-session] Malformed YAML in agent-undo — per-key entries unchanged; legacy slot mirrored as-supplied',
         );
       }

@@ -207,9 +207,9 @@ describe('POST /api/frontmatter-patch — telemetry (US-012)', () => {
     expect(patchSpans).toHaveLength(1);
     const patchSpan = patchSpans[0];
     expect(patchSpan.attributes['doc.name']).toBe('test-doc');
-    expect(patchSpan.attributes['patch.keys_count']).toBe(3);
-    expect(patchSpan.attributes['patch.ops_set']).toBe(2);
-    expect(patchSpan.attributes['patch.ops_delete']).toBe(1);
+    expect(patchSpan.attributes['frontmatter.patch_keys_count']).toBe(3);
+    expect(patchSpan.attributes['frontmatter.patch_ops_set']).toBe(2);
+    expect(patchSpan.attributes['frontmatter.patch_ops_delete']).toBe(1);
     expect(patchSpan.attributes['frontmatter.source']).toBe('mcp-patch');
 
     // No frontmatter.form_write span — MCP path doesn't emit one.

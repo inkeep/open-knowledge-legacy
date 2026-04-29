@@ -572,10 +572,10 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const currentFm = metaMap.get('frontmatter');
         if ((currentFm ?? '') !== frontmatter) {
           doc.transact(() => {
-            const fmOk = writeFrontmatterDualSlot(doc, frontmatter);
-            if (!fmOk) {
+            const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
+            if (!fmResult.ok) {
               console.warn(
-                '[Server Observer B] Malformed YAML in source-mode FM (early-exit branch) — per-key entries unchanged; legacy slot mirrored as-supplied',
+                `[Server Observer B] Malformed YAML in source-mode FM (early-exit branch, ${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
               );
             }
           }, OBSERVER_SYNC_ORIGIN);
@@ -613,10 +613,10 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         // Malformed YAML keeps last valid per-key state (helper returns false
         // and logs); the legacy slot still tracks the verbatim Y.Text FM
         // string for the transition window.
-        const fmOk = writeFrontmatterDualSlot(doc, frontmatter);
-        if (!fmOk) {
+        const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
+        if (!fmResult.ok) {
           console.warn(
-            '[Server Observer B] Malformed YAML in source-mode FM (parse branch) — per-key entries unchanged; legacy slot mirrored as-supplied',
+            `[Server Observer B] Malformed YAML in source-mode FM (parse branch, ${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
           );
         }
       }, OBSERVER_SYNC_ORIGIN);

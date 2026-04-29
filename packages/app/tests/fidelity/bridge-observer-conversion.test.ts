@@ -1143,8 +1143,8 @@ describe('Chain D — per-key frontmatter equivalence (US-013)', () => {
           const yamlBody = unwrapFrontmatterFences(frontmatter);
           const doc = new Y.Doc();
           doc.transact(() => {
-            const ok = setFrontmatterFromYaml(doc, yamlBody);
-            expect(ok).toBe(true);
+            const result = setFrontmatterFromYaml(doc, yamlBody);
+            expect(result.ok).toBe(true);
           });
           const composedFm = getFrontmatter(doc);
           const fullOut = prependFrontmatter(composedFm, body);
@@ -1197,8 +1197,8 @@ describe('Chain D — per-key frontmatter equivalence (US-013)', () => {
     expect(yamlBody).toBe('');
     const doc = new Y.Doc();
     doc.transact(() => {
-      const ok = setFrontmatterFromYaml(doc, yamlBody);
-      expect(ok).toBe(true);
+      const result = setFrontmatterFromYaml(doc, yamlBody);
+      expect(result.ok).toBe(true);
     });
     expect(getFrontmatterMap(doc)).toEqual({});
     expect(getFrontmatter(doc)).toBe('');

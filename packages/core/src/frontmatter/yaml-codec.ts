@@ -21,17 +21,26 @@ const STRINGIFY_OPTIONS: ToStringOptions = {
   lineWidth: 0,
 };
 
-/** Result of a parse attempt — `null` map when the YAML is malformed or empty. */
+/**
+ * Result of a parse attempt — `null` map when the YAML is malformed or fails
+ * `FrontmatterMapSchema`. `parseError` carries a short human-readable reason
+ * when `map === null` so server-side callers can include the cause in their
+ * log output (this module is in `@inkeep/open-knowledge-core` so it's
+ * browser+Node and can't depend on a logger directly). On success
+ * `parseError` is `undefined`.
+ */
 export type ParsedFrontmatter = {
   doc: Document;
   map: FrontmatterMap | null;
+  parseError?: string;
 };
 
 /**
  * Parse a YAML *body* (the content between the `---` fences, no fences) into
  * a `Document` (preserving comments + source order) and a typed `FrontmatterMap`
  * snapshot. Returns `map: null` if the YAML is malformed or its top-level value
- * is not a mapping or contains values outside the supported shapes.
+ * is not a mapping or contains values outside the supported shapes; in that
+ * case `parseError` describes which check failed.
  *
  * Empty / whitespace-only input is valid: returns an empty map plus a fresh
  * Document (the caller can populate it).
@@ -43,19 +52,31 @@ export function parseFrontmatterYaml(yaml: string): ParsedFrontmatter {
   let doc: Document;
   try {
     doc = parseDocument(yaml);
-  } catch {
-    return { doc: new Document({}), map: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { doc: new Document({}), map: null, parseError: `parse threw: ${msg}` };
   }
   if (doc.errors.length > 0) {
-    return { doc, map: null };
+    // First error is the most actionable — yaml@2 surfaces line/column in
+    // the message already.
+    return { doc, map: null, parseError: doc.errors[0]?.message ?? 'yaml parse errors' };
   }
   const json = doc.toJS();
   if (json == null || typeof json !== 'object' || Array.isArray(json)) {
-    return { doc, map: null };
+    return { doc, map: null, parseError: 'top-level value is not a mapping' };
   }
   const result = FrontmatterMapSchema.safeParse(json);
   if (!result.success) {
-    return { doc, map: null };
+    const issue = result.error.issues[0];
+    const path = issue && Array.isArray(issue.path) ? issue.path.join('.') : '';
+    const reason = issue?.message ?? 'unknown';
+    return {
+      doc,
+      map: null,
+      parseError: path
+        ? `value at "${path}" failed schema: ${reason}`
+        : `schema validation failed: ${reason}`,
+    };
   }
   return { doc, map: result.data };
 }

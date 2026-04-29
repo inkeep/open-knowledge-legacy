@@ -38,7 +38,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `docName` — Document name. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `patch` — Object whose keys are property names. Each value is the new value (string, number, boolean, or array of strings) to **set or create** the key, or `null` to **delete** the key. Keys not present in `patch` are unchanged.',
-  '- `types` (optional) — Per-key widget-type hint. Currently shape-validated server-side but not persisted (declared types are session-local on the client today; type is inferred from value shape on read). Values: `"text" | "number" | "boolean" | "date" | "list"`.',
+  '- `types` (optional) — **Currently ignored.** Shape-validated for forward-compat but not persisted server-side; type is inferred from value shape on read. Reserved for a future per-key widget-type override (`text | number | boolean | date | list`) once persistence ships.',
   '- `summary` — Optional one-line user-outcome description (≤80 chars). Prefer outcome phrasing ("Marked spec as approved") over structural ("Set status field"). Avoid secrets / PII — summaries persist to git history.',
   '',
   '**Atomicity:** any value failing schema validation rejects the WHOLE patch (HTTP 400 with per-key error report). Either every change commits or none do.',
@@ -68,12 +68,13 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
       patch: z
         .record(z.string(), PatchValueSchema)
         .describe('JSON Merge Patch — `{key: value}` sets, `{key: null}` deletes'),
-      types: z
-        .record(z.string(), z.enum(FRONTMATTER_TYPES))
-        .optional()
-        .describe(
-          'Optional per-key widget-type override (text|number|boolean|date|list). Defaults: shape-based inference.',
-        ),
+      types: z.record(z.string(), z.enum(FRONTMATTER_TYPES)).optional().describe(
+        // Currently shape-validated server-side but NOT persisted — the
+        // override is silently dropped on the next session. Don't waste
+        // tokens reasoning about whether to send this. Server-side
+        // persistence is tracked as a follow-up.
+        'Currently ignored (shape-validated for forward-compat but not persisted). Type is inferred from value shape on read. Will become a real per-key widget-type override (text|number|boolean|date|list) once persistence lands.',
+      ),
       summary: summaryArgSchema,
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },

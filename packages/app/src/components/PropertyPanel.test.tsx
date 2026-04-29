@@ -2,7 +2,19 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { renderToString } from 'react-dom/server';
 import * as Y from 'yjs';
+import { PropertyProvider } from './PropertyContext';
 import { PropertyPanel } from './PropertyPanel';
+
+// Renders PropertyPanel inside PropertyProvider — the panel reads
+// `useProperties()` for the cross-tree add-property signal and would throw
+// "must be used within <PropertyProvider />" without this wrapper.
+function renderPanel(provider: HocuspocusProvider): string {
+  return renderToString(
+    <PropertyProvider>
+      <PropertyPanel provider={provider} />
+    </PropertyProvider>,
+  );
+}
 
 const DUMMY_WS = 'ws://localhost:1/collab';
 
@@ -35,14 +47,14 @@ function seedMetaMap(provider: HocuspocusProvider, entries: Record<string, unkno
 describe('PropertyPanel', () => {
   test('renders nothing when the doc has no frontmatter', () => {
     const provider = makeProvider('empty-doc');
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toBe('');
   });
 
   test('renders Properties header + one row per per-key entry', () => {
     const provider = makeProvider('populated-doc');
     seedMetaMap(provider, { title: 'Hello', draft: false, version: 3 });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('>Properties<');
     expect(html).toContain('data-testid="property-panel"');
     expect(html).toContain('data-key="title"');
@@ -56,7 +68,7 @@ describe('PropertyPanel', () => {
       title: 'Just title',
       frontmatter: '---\ntitle: Just title\n---\n',
     });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('>Properties<');
     expect(html).toContain('data-key="title"');
     expect(html).not.toContain('data-key="frontmatter"');
@@ -65,21 +77,21 @@ describe('PropertyPanel', () => {
   test('renders nothing when only the legacy single-string slot is set', () => {
     const provider = makeProvider('legacy-only-doc');
     seedMetaMap(provider, { frontmatter: '---\ntitle: Foo\n---\n' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toBe('');
   });
 
   test('panel header is an aria-expanded button (collapse affordance)', () => {
     const provider = makeProvider('collapsible-doc');
     seedMetaMap(provider, { title: 'Hello' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('aria-expanded="true"');
   });
 
   test('rows are visible by default (panel mounts expanded)', () => {
     const provider = makeProvider('default-expanded-doc');
     seedMetaMap(provider, { title: 'Hello' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-row"');
   });
 });
@@ -88,7 +100,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('text-shape value renders TextWidget', () => {
     const provider = makeProvider('text-doc');
     seedMetaMap(provider, { title: 'My Title' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="text"');
     expect(html).toContain('data-testid="text-widget"');
     expect(html).toContain('value="My Title"');
@@ -97,7 +109,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('number-shape value renders NumberWidget', () => {
     const provider = makeProvider('number-doc');
     seedMetaMap(provider, { version: 7 });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="number"');
     expect(html).toContain('data-testid="number-widget"');
     expect(html).toContain('type="number"');
@@ -106,7 +118,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('boolean-shape value renders BooleanWidget (Switch)', () => {
     const provider = makeProvider('boolean-doc');
     seedMetaMap(provider, { draft: false });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="boolean"');
     expect(html).toContain('data-testid="boolean-widget"');
   });
@@ -114,7 +126,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('ISO date string renders DateWidget', () => {
     const provider = makeProvider('date-doc');
     seedMetaMap(provider, { published: '2026-04-24' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="date"');
     expect(html).toContain('data-testid="date-widget"');
     expect(html).toContain('Apr 24, 2026');
@@ -123,7 +135,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('list-shape value renders ListWidget with chips', () => {
     const provider = makeProvider('list-doc');
     seedMetaMap(provider, { tags: ['docs', 'crdt', 'mcp'] });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="list"');
     expect(html).toContain('data-testid="list-widget"');
     expect(html).toContain('data-index="0"');
@@ -137,14 +149,14 @@ describe('PropertyPanel widget routing (US-008)', () => {
   test('value-shape wins: array always renders as list, even if declared was text', () => {
     const provider = makeProvider('shape-wins-doc');
     seedMetaMap(provider, { topics: ['a', 'b'] });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="list"');
   });
 
   test('type icon button is per-row + matches inferred type', () => {
     const provider = makeProvider('type-icon-doc');
     seedMetaMap(provider, { title: 'Hello', count: 5 });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     const iconMatches = html.match(/data-testid="type-icon-button"/g) ?? [];
     // One per row + one in the (possibly hidden) AddPropertyRow if present;
     // with no add-row open, only per-row icons render.
@@ -160,7 +172,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
     provider.document.transact(() => {
       metaMap.set('title', new Y.Text('YText title'));
     });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('value="YText title"');
     expect(html).toContain('data-widget-type="text"');
   });
@@ -170,7 +182,7 @@ describe('PropertyPanel row chrome (US-009)', () => {
   test('each row renders a remove button with key-scoped aria-label', () => {
     const provider = makeProvider('chrome-remove-doc');
     seedMetaMap(provider, { title: 'A', status: 'draft' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     const trashMatches = html.match(/data-testid="property-remove-button"/g) ?? [];
     expect(trashMatches.length).toBe(2);
     expect(html).toContain('aria-label="Remove title"');
@@ -180,7 +192,7 @@ describe('PropertyPanel row chrome (US-009)', () => {
   test('property name renders as a button (rename affordance)', () => {
     const provider = makeProvider('chrome-rename-doc');
     seedMetaMap(provider, { title: 'A' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-name-button"');
     expect(html).toContain('data-key="title"');
   });
@@ -190,7 +202,7 @@ describe('PropertyPanel add-property trigger (US-009)', () => {
   test('persistent add-property button at the bottom of the expanded panel', () => {
     const provider = makeProvider('add-trigger-doc');
     seedMetaMap(provider, { title: 'A' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-testid="add-property-trigger"');
     expect(html).toContain('Add property');
   });
@@ -200,7 +212,7 @@ describe('PropertyPanel add-property trigger (US-009)', () => {
     // is only visible when rows already exist; the toolbar trigger in
     // EditorHeader handles the empty-state init path.
     const provider = makeProvider('add-trigger-empty-doc');
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toBe('');
   });
 });
@@ -222,7 +234,7 @@ describe('PropertyPanel error rendering (US-010)', () => {
   test('rows render with no error subline by default', () => {
     const provider = makeProvider('no-error-doc');
     seedMetaMap(provider, { title: 'Hello' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).not.toContain('data-testid="property-error"');
     expect(html).not.toContain('data-error="');
   });
@@ -234,7 +246,7 @@ describe('PropertyPanel error rendering (US-010)', () => {
     // omits the attribute entirely.
     const provider = makeProvider('error-slot-doc');
     seedMetaMap(provider, { title: 'Hello' });
-    const html = renderToString(<PropertyPanel provider={provider} />);
+    const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-row"');
     expect(html).toContain('data-key="title"');
   });

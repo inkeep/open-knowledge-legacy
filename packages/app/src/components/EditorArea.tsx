@@ -5,7 +5,7 @@ import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
-import { BEGIN_ADD_EVENT } from '@/components/PropertyPanel';
+import { PropertyProvider, useProperties } from '@/components/PropertyContext';
 
 // Lazy-load Settings — pulls ToggleGroup + the schema-driven form which add
 // ~330kB gzipped to the main bundle. Settings is opened on demand via Cmd-,
@@ -37,7 +37,15 @@ interface EditorAreaProps {
 export function EditorArea(props: EditorAreaProps) {
   return (
     <ProfilerBoundary name="editor-area">
-      <EditorAreaInner {...props} />
+      {/* PropertyProvider scopes the cross-tree property-panel signal bus
+          to the editor surface — both the toolbar (button → dispatcher)
+          and EditorActivityPool's PropertyPanel mounts (consumers) live
+          underneath. Replaces the prior `BEGIN_ADD_EVENT` window event,
+          whose global broadcast leaked across hidden Activity boundaries.
+          See PropertyContext.tsx for the design notes. */}
+      <PropertyProvider>
+        <EditorAreaInner {...props} />
+      </PropertyProvider>
     </ProfilerBoundary>
   );
 }
@@ -53,6 +61,7 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
     docPanelExpandSignal,
   } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
+  const { requestAddProperty } = useProperties();
   const stats = useDocumentStats(activeProvider, activeDocName);
   // Shell-snap decoupling: `activeDocName` updates urgently across the tree
   // (sidebar aria-current, header title, tab panels — all read the urgent
@@ -165,12 +174,20 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
 
   function openAddPropertyForm() {
     if (!activeDocName) return;
-    window.dispatchEvent(new CustomEvent(BEGIN_ADD_EVENT));
+    // Routed through PropertyContext — only the panel for `activeDocName`
+    // reacts (it watches the per-doc counter). Hidden Activity panels for
+    // other docs see no signal change.
+    requestAddProperty(activeDocName);
   }
 
   const toggleButton = (
     <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-      {showAddPropertiesButton && (
+      {!isSourceMode && (
+        // PropertyPanel only mounts in WYSIWYG mode (gated in
+        // EditorActivityPool). Hiding the button in source mode prevents
+        // the click → CustomEvent → no-listener no-op that surfaces as
+        // unresponsive UI. Source-mode users edit FM directly in the
+        // CodeMirror YAML.
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

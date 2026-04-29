@@ -91,10 +91,10 @@ export function applyExternalChange(
     // (`agent-sessions.ts`, `server-observers.ts`, `api-extension.ts`).
     // Returns false when YAML is malformed — per-key state stays at last
     // valid value (documented contract); we surface the divergence in logs.
-    const fmOk = writeFrontmatterDualSlot(document, frontmatter);
-    if (!fmOk) {
+    const fmResult = writeFrontmatterDualSlot(document, frontmatter);
+    if (!fmResult.ok) {
       console.warn(
-        `[file-watcher] Malformed YAML frontmatter on disk for ${docName} — per-key entries unchanged; legacy slot mirrored as-supplied`,
+        `[file-watcher] Malformed YAML frontmatter on disk for ${docName} (${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
       );
     }
 

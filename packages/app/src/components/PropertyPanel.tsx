@@ -8,6 +8,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useProperties } from '@/components/PropertyContext';
 import {
   BooleanWidget,
   coerceValue,
@@ -33,12 +34,6 @@ const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
   date: '',
   list: [],
 };
-
-/** Cross-tree signal: the EditorArea ListPlus button dispatches this to open
- * the AddPropertyRow form (whose name input is auto-focused on mount). The two
- * components live in separate subtrees, so a window event avoids prop-drilling
- * through EditorActivityPool. */
-export const BEGIN_ADD_EVENT = 'ok:property-panel:begin-add';
 
 export function PropertyPanel({ provider }: PropertyPanelProps) {
   const map = useFrontmatterMap(provider);
@@ -149,19 +144,30 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     setCollapsed(false);
   }
 
+  // Cross-tree signal from the toolbar's "Add Properties" button. The button
+  // calls `requestAddProperty(docName)` which bumps the per-doc counter; we
+  // react to each tick by opening the AddPropertyRow form.
+  //
+  // Counter (not boolean) so consecutive clicks still fire when the user
+  // cancels the previous add without committing.
+  //
+  // Each PropertyPanel only watches its own doc's counter, so hidden Activity
+  // panels for other docs see no signal change — no ghost-state leak (the
+  // bug the prior window-event approach had before scoping was added).
+  const { addPropertySignal, clearAddProperty } = useProperties();
+  const addSignal = addPropertySignal.get(docName) ?? 0;
   useEffect(() => {
-    // Mirrors `beginAdd` above. Inlined (not a delegating closure) because
-    // referencing `beginAdd` directly trips
-    // `useExhaustiveDependencies`/React Compiler — each render gets a fresh
-    // closure, and adding it to the dep array thrashes the listener every
-    // render. Keep the two bodies in sync.
-    const handler = () => {
+    if (addSignal > 0) {
       setAdding({ name: '', type: 'text', value: '', error: null });
       setCollapsed(false);
-    };
-    window.addEventListener(BEGIN_ADD_EVENT, handler);
-    return () => window.removeEventListener(BEGIN_ADD_EVENT, handler);
-  }, []);
+    }
+  }, [addSignal]);
+  // Drop the per-doc entry on unmount so a re-mount (e.g., after pool
+  // eviction) starts fresh at 0 and doesn't replay the last counter value
+  // on cold mount.
+  useEffect(() => {
+    return () => clearAddProperty(docName);
+  }, [docName, clearAddProperty]);
 
   function changeAddType(nextType: FrontmatterType) {
     setAdding((prev) => {
@@ -189,7 +195,15 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setAdding({ ...adding, error: 'Name is required' });
       return;
     }
-    if (Object.hasOwn(map, trimmed) || trimmed === 'frontmatter') {
+    // 'frontmatter' is the reserved legacy single-string slot key
+    // (LEGACY_FRONTMATTER_KEY). Distinct error message from a real name
+    // collision so the user isn't confused by an "already exists" error
+    // for a name they don't see in the panel.
+    if (trimmed === 'frontmatter') {
+      setAdding({ ...adding, error: '"frontmatter" is a reserved property name' });
+      return;
+    }
+    if (Object.hasOwn(map, trimmed)) {
       setAdding({ ...adding, error: `Property "${trimmed}" already exists` });
       return;
     }
@@ -230,7 +244,11 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setRenaming(null);
       return;
     }
-    if (Object.hasOwn(map, trimmed) || trimmed === 'frontmatter') {
+    if (trimmed === 'frontmatter') {
+      setRenaming({ ...renaming, error: '"frontmatter" is a reserved property name' });
+      return;
+    }
+    if (Object.hasOwn(map, trimmed)) {
       setRenaming({ ...renaming, error: `Property "${trimmed}" already exists` });
       return;
     }

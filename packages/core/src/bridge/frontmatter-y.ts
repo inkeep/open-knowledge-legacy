@@ -100,6 +100,13 @@ export function getFrontmatter(doc: Y.Doc): string {
 }
 
 /**
+ * Outcome of a per-key write attempt. `ok === false` carries `parseError` from
+ * `parseFrontmatterYaml` so callers can include the cause in their log line
+ * (yaml@2 `doc.errors[0].message` already contains line/column).
+ */
+export type WriteFrontmatterResult = { ok: true } | { ok: false; parseError: string };
+
+/**
  * Replace the per-key entries in `Y.Map('metadata')` from a YAML string. Used
  * by `onLoadDocument` (eager-on-load migration), `applyExternalChange`, and
  * Observer B reconciliation. The caller is responsible for running this
@@ -111,15 +118,17 @@ export function getFrontmatter(doc: Y.Doc): string {
  *     keys are inserted; values that differ are set. Per-key (not bulk
  *     `clear()+setAll()`) preserves UndoManager attribution per property,
  *     so undoing one property reverts only that property.
- *   - Malformed YAML: no-op + returns `false` so the caller can keep last
- *     valid per-key state.
+ *   - Malformed YAML: no-op + returns `{ ok: false, parseError }` so the
+ *     caller can keep last valid per-key state and surface the cause.
  *
  * Removes the legacy `'frontmatter'` slot on success (the per-key entries
  * are now the source).
  */
-export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): boolean {
-  const { map } = parseFrontmatterYaml(yaml);
-  if (map === null) return false;
+export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): WriteFrontmatterResult {
+  const { map, parseError } = parseFrontmatterYaml(yaml);
+  if (map === null) {
+    return { ok: false, parseError: parseError ?? 'unknown parse failure' };
+  }
   const metaMap = doc.getMap('metadata');
   const desired = new Set(Object.keys(map));
   for (const existing of [...metaMap.keys()]) {
@@ -135,7 +144,7 @@ export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): boolean {
       metaMap.set(key, value);
     }
   }
-  return true;
+  return { ok: true };
 }
 
 /**
@@ -154,15 +163,14 @@ export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): boolean {
  * `fencedYaml` is the full fenced string (e.g. `---\ntitle: X\n---\n`) or
  * `''` for empty FM. Caller wraps in `doc.transact(fn, origin)`.
  *
- * Returns the `setFrontmatterFromYaml` boolean so callers can log when
- * malformed YAML left per-key state stale (callers still see the legacy
- * mirror updated — that's the documented contract: keep last valid per-key
- * state, mirror as-supplied).
+ * Returns `WriteFrontmatterResult` so callers can log the parse cause on
+ * failure (callers still see the legacy mirror updated — that's the
+ * documented contract: keep last valid per-key state, mirror as-supplied).
  */
-export function writeFrontmatterDualSlot(doc: Y.Doc, fencedYaml: string): boolean {
-  const ok = setFrontmatterFromYaml(doc, unwrapFrontmatterFences(fencedYaml));
+export function writeFrontmatterDualSlot(doc: Y.Doc, fencedYaml: string): WriteFrontmatterResult {
+  const result = setFrontmatterFromYaml(doc, unwrapFrontmatterFences(fencedYaml));
   doc.getMap('metadata').set(LEGACY_FRONTMATTER_KEY, fencedYaml);
-  return ok;
+  return result;
 }
 
 /**
