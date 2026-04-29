@@ -1,27 +1,12 @@
 /**
  * Regression coverage for two related bugs surfaced by sidebar inline rename:
- *
- * 1. **Data-loss in editor & on disk after rename** (FileTree fix).
- *    @pierre/trees fires `onSelectionChange` with the renamed item's new path
- *    BEFORE `onRename` fires our handler — and BEFORE `applyRenamedDocuments`
- *    updates the local `documents` list. The selection-driven navigation
- *    opens a HocuspocusProvider for the new docName before the file exists
- *    at the new path, producing an empty server-side Y.Doc that subsequently
- *    overwrites the file with 0 bytes via the persistence debounce.
- *    Fix: `handleSelectionChange` ignores selections whose docName isn't in
- *    `documents` yet — the rename flow updates `documents` and sets the hash
- *    explicitly via `applyRenamedDocuments` after the API succeeds.
- *
- * 2. **Phantom file creation from any openDirectConnection on a missing doc**
- *    (persistence fix). Opening a Y.Doc for a docName whose file doesn't
- *    exist would, on next debounced `onStoreDocument`, materialize a 0-byte
- *    file at that path. Reachable via `/api/document?docName=<missing>`,
- *    MCP queries on deleted docs, or any future code path that opens
- *    a connection without verifying the file exists.
- *    Fix: `onStoreDocument` refuses to write when there is no reconciled
- *    base (no successful onLoadDocument) AND the serialized markdown is
- *    empty. Legitimate first-writes are unaffected (`create-page`
- *    pre-creates the file; agent writes fill the fragment first).
+ *   1. Rename data-loss — see `handleSelectionChange` guard in
+ *      `packages/app/src/components/FileTree.tsx` for the mechanism.
+ *   2. Phantom file creation from openDirectConnection on a missing doc —
+ *      see `onStoreDocument` phantom-doc guard in
+ *      `packages/server/src/persistence.ts`. A Bun-tier deterministic test
+ *      lives at `packages/server/src/persistence-phantom-doc-guard.test.ts`;
+ *      the e2e here covers the live `/api/document` entry point.
  */
 
 import { existsSync, readFileSync } from 'node:fs';

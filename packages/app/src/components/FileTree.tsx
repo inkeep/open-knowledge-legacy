@@ -924,6 +924,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       // for legitimately-renamed docs is handled in applyRenamedDocuments
       // after the API succeeds, so dropping this transient event is safe.
       if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
+        // Visible at debug level for diagnosis if `documents` is ever stale
+        // for a non-rename reason — keeps the rename hot path silent without
+        // discarding the signal entirely.
+        console.debug('[FileTree] Dropped selection for unknown docName:', appPath);
         return;
       }
       navigateToWithPulse(appPath);
