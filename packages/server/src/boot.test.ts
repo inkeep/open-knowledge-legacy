@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { bootServer, parseKeepaliveConnectionId } from './boot.ts';
+import { ConfigSchema } from './config/schema.ts';
 
 const execFileAsync = promisify(execFile);
+const TEST_CONFIG = ConfigSchema.parse({});
 
 let tmpDir: string;
 
@@ -31,6 +33,7 @@ describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
 
     await expect(
       bootServer({
+        config: TEST_CONFIG,
         contentDir,
         port: 0,
         quiet: true,
@@ -53,6 +56,7 @@ describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
     const ensureProjectGitFn = mock(() => Promise.resolve({ didInit: true }));
 
     const booted = await bootServer({
+      config: TEST_CONFIG,
       contentDir,
       port: 0,
       quiet: true,
@@ -79,6 +83,7 @@ describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
     const autoInitFn = mock(() => true);
 
     const booted = await bootServer({
+      config: TEST_CONFIG,
       contentDir,
       port: 0,
       quiet: true,
@@ -105,6 +110,7 @@ describe('bootServer — ensureProjectGitFn wiring (US-001)', () => {
     await execFileAsync('git', ['init', '--initial-branch=main', contentDir]);
 
     const booted = await bootServer({
+      config: TEST_CONFIG,
       contentDir,
       port: 0,
       quiet: true,
@@ -198,6 +204,7 @@ describe('bootServer — parent-death watch', () => {
     const aliveCheck = mock((_pid: number) => parentAlive);
 
     const booted = await bootServer({
+      config: TEST_CONFIG,
       contentDir,
       projectDir: tmpDir,
       port: 0,
@@ -241,6 +248,7 @@ describe('bootServer — parent-death watch', () => {
     const aliveCheck = mock(() => false); // would tear down if invoked
 
     const booted = await bootServer({
+      config: TEST_CONFIG,
       contentDir,
       projectDir: tmpDir,
       port: 0,

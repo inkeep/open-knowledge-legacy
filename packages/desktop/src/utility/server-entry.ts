@@ -21,7 +21,11 @@
  */
 
 import { rename, writeFile } from 'node:fs/promises';
-import type { BootedServer, BootServerOptions } from '@inkeep/open-knowledge-server';
+import {
+  type BootedServer,
+  type BootServerOptions,
+  ConfigSchema,
+} from '@inkeep/open-knowledge-server';
 import { type KeyringSmokeResult, runKeyringSmoke } from './keyring-smoke.ts';
 
 export type { KeyringSmokeResult } from './keyring-smoke.ts';
@@ -250,8 +254,14 @@ export function setupUtility(deps: SetupUtilityDeps): UtilityHandle {
   async function handleInit(msg: UtilityInitMessage) {
     try {
       const server = await deps.importServer();
+      // Desktop does not yet read `.open-knowledge/config.yml` — bootServer's
+      // required `config` is filled with schema defaults so MCP tool handlers
+      // see the same shape as a freshly-initialized project. When desktop adds
+      // project-config loading, swap this for the loaded config.
+      const config = ConfigSchema.parse({});
       booted = await server.bootServer({
         ...msg.opts,
+        config,
         attachUiSibling: false, // D36 — no `ok ui` sibling under Electron
         idleShutdownMs: null, // D36 — BrowserWindow lifecycle owns utility lifetime
         skipAutoInit: false,

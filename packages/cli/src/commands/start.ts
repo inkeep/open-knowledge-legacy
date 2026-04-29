@@ -404,6 +404,7 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
   };
 
   const booted: BootedServer = await bootServer({
+    config,
     contentDir,
     projectDir: cwd,
     contentRoot: config.content.dir,

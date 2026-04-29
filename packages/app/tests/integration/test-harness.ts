@@ -33,6 +33,7 @@ import {
   sharedExtensions,
 } from '@inkeep/open-knowledge-core';
 import {
+  ConfigSchema,
   createMcpHttpHandler,
   createServer,
   ensureProjectGit,
@@ -159,9 +160,7 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   const mcpHttpHandler = createMcpHttpHandler({
     contentDir,
     projectDir: contentDir,
-    contentRoot: '.',
-    includePatterns: ['**/*.md', '**/*.mdx'],
-    excludePatterns: [],
+    config: ConfigSchema.parse({}),
     getServerUrl: () => `http://localhost:${port}`,
   });
 

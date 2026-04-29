@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { relative } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Config } from './config/schema.ts';
@@ -8,8 +7,6 @@ import { MCP_SERVER_NAME } from './constants.ts';
 import type { AgentIdentity } from './mcp/agent-identity.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
 import { RUNTIME_VERSION } from './version-constants.ts';
-
-const DEFAULT_INCLUDE = ['**/*.md', '**/*.mdx'];
 
 interface McpHttpSession {
   transport: StreamableHTTPServerTransport;
@@ -19,9 +16,15 @@ interface McpHttpSession {
 export interface McpHttpHandlerOptions {
   contentDir: string;
   projectDir?: string;
-  contentRoot?: string;
-  includePatterns?: string[];
-  excludePatterns?: string[];
+  /**
+   * The project's loaded `Config`. Tool handlers read settings off this object
+   * (e.g. `config.mcp.tools.read_document.historyDepth`,
+   * `config.mcp.tools.search.maxResults`, `config.content.include`,
+   * `config.folders`). The fields used downstream MUST match what the user
+   * wrote in `.open-knowledge/config.yml` — never fabricate a synthetic
+   * config here.
+   */
+  config: Config;
   /** Returns the base URL of this running HTTP server, without the `/mcp` suffix. */
   getServerUrl: () => string;
   log?: {
@@ -38,53 +41,6 @@ export interface McpHttpHandler {
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function contentDirForConfig(opts: McpHttpHandlerOptions): string {
-  if (opts.contentRoot) return opts.contentRoot;
-  const projectDir = opts.projectDir ?? opts.contentDir;
-  const rel = relative(projectDir, opts.contentDir);
-  if (!rel || rel === '') return '.';
-  return rel.startsWith('..') ? opts.contentDir : rel;
-}
-
-function buildMcpConfig(opts: McpHttpHandlerOptions): Config {
-  return {
-    content: {
-      dir: contentDirForConfig(opts),
-      include: opts.includePatterns ?? DEFAULT_INCLUDE,
-      exclude: opts.excludePatterns ?? [],
-    },
-    github: {
-      oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI',
-    },
-    sync: {
-      pushIntervalSeconds: 60,
-      pullIntervalSeconds: 30,
-      autoCommit: true,
-      autoPush: true,
-      autoPull: true,
-      commitMessage: 'auto',
-    },
-    server: {
-      port: 0,
-      host: 'localhost',
-      openOnAgentEdit: false,
-    },
-    persistence: {
-      debounceMs: 2000,
-      maxDebounceMs: 10000,
-    },
-    preview: {},
-    folders: [],
-    mcp: {
-      autoStart: true,
-      tools: {
-        read_document: { historyDepth: 5 },
-        search: { maxResults: 50 },
-      },
-    },
-  };
 }
 
 function buildInstructions(config: Config): string {
@@ -114,7 +70,7 @@ function createSessionServer(
   opts: McpHttpHandlerOptions,
   transport: StreamableHTTPServerTransport,
 ): McpHttpSession {
-  const config = buildMcpConfig(opts);
+  const config = opts.config;
   const server = new McpServer(
     {
       name: MCP_SERVER_NAME,

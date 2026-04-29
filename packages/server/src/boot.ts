@@ -22,6 +22,7 @@
  */
 import type { Server as HttpServer } from 'node:http';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import type { Config } from './config/schema.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { createMcpHttpHandler } from './mcp-http.ts';
@@ -61,6 +62,14 @@ export interface BootServerOptions
     | 'lockKind'
     | 'parentPid'
   > {
+  /**
+   * The project's loaded `Config` (parsed from `.open-knowledge/config.yml`,
+   * with schema defaults applied). Threaded into `createMcpHttpHandler` so
+   * MCP tool handlers see the user-configured values for `historyDepth`,
+   * `maxResults`, `folders`, `content.include`/`exclude`, etc. instead of
+   * fabricated defaults.
+   */
+  config: Config;
   /**
    * If false, `bootServer` does NOT run the pre-createServer `autoInitFn` or
    * invoke UI-sibling spawn logic. Default false.
@@ -272,9 +281,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const mcpHttpHandler = createMcpHttpHandler({
     contentDir: opts.contentDir,
     projectDir: opts.projectDir ?? opts.contentDir,
-    contentRoot: opts.contentRoot,
-    includePatterns: opts.includePatterns,
-    excludePatterns: opts.excludePatterns,
+    config: opts.config,
     getServerUrl: () => `http://${mcpHost}:${boundPort}`,
     log,
   });
