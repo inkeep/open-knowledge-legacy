@@ -13,7 +13,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { AwarenessUser } from '../../src/presence/identity';
-import { dedupeHumansByPrincipalId, type HumanParticipant } from '../../src/presence/use-presence';
+import {
+  dedupeHumansByPrincipalId,
+  type HumanParticipant,
+} from '../../src/presence/participant-model.ts';
 import { createTestClient, createTestServer, pollUntil, type TestServer } from './test-harness';
 
 let server: TestServer;

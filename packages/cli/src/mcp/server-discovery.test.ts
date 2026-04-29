@@ -7,9 +7,14 @@ import type { ServerLockMetadata } from '@inkeep/open-knowledge-server';
 import type { Config } from '../config/schema.ts';
 import {
   type AutoStartDecision,
+  classifyMcpLaunchPath,
   createProjectServerUrlResolver,
   decideAutoStart,
+  describeProtocolMismatchRemedy,
+  describeSpawnEnoentRemedy,
   ensureServerRunning,
+  isSpawnEnoentMessage,
+  type McpLaunchShape,
 } from './server-discovery.ts';
 
 const aliveLock: ServerLockMetadata = {
@@ -248,6 +253,7 @@ describe('server-discovery', () => {
         readLock: () => olderProtocolLock,
         isAlive: () => true,
         expectedProtocolVersion: 1,
+        launchPath: '/Users/x/.npm/_npx/abc/node_modules/@inkeep/open-knowledge/dist/cli.mjs',
       });
       expect(result.action).toBe('incompatible');
       if (result.action !== 'incompatible') throw new Error('expected incompatible');
@@ -255,6 +261,7 @@ describe('server-discovery', () => {
       expect(result.actualProtocolVersion).toBe(0);
       expect(result.message).toContain('protocol v0');
       expect(result.message).toContain('protocol v1');
+      expect(result.launchShape).toBe('npx-cache');
     });
 
     test('lock missing protocolVersion → incompatible (pre-version-field lock)', () => {
@@ -266,11 +273,81 @@ describe('server-discovery', () => {
         readLock: () => versionlessLock,
         isAlive: () => true,
         expectedProtocolVersion: 1,
+        launchPath: undefined,
       });
       expect(result.action).toBe('incompatible');
       if (result.action !== 'incompatible') throw new Error('expected incompatible');
       expect(result.actualProtocolVersion).toBeUndefined();
       expect(result.message).toContain('unknown');
+    });
+
+    test('incompatible diagnostic — npx-cache shape suggests stop-and-retry', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => olderProtocolLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+        launchPath: '/Users/x/.npm/_npx/abc123/node_modules/@inkeep/open-knowledge/dist/cli.mjs',
+      });
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.launchShape).toBe('npx-cache');
+      expect(result.message).toContain('package-manager cache');
+      expect(result.message).toContain('ok init --pin');
+    });
+
+    test('incompatible diagnostic — stable-shim shape suggests close-and-reopen', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => olderProtocolLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+        launchPath: '/usr/local/bin/ok',
+      });
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.launchShape).toBe('stable-shim');
+      expect(result.message).toContain('shim was likely upgraded');
+      expect(result.message).toContain('Close and reopen the project window');
+    });
+
+    test('incompatible diagnostic — absolute-pin shape suggests re-pin', () => {
+      const pinned = '/Users/x/work/open-knowledge/packages/cli/dist/cli.mjs';
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => olderProtocolLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+        launchPath: pinned,
+      });
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.launchShape).toBe('absolute-pin');
+      expect(result.message).toContain('pinned path');
+      expect(result.message).toContain(pinned);
+      expect(result.message).toContain('Re-run `ok init --pin`');
+    });
+
+    test('incompatible diagnostic — unknown shape falls back to generic remedy', () => {
+      const result = decideAutoStart({
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => olderProtocolLock,
+        isAlive: () => true,
+        expectedProtocolVersion: 1,
+        launchPath: '',
+      });
+      if (result.action !== 'incompatible') throw new Error('expected incompatible');
+      expect(result.launchShape).toBe('unknown');
+      expect(result.message).toContain('align CLI versions');
     });
 
     test('matching protocol → connect', () => {
@@ -284,6 +361,117 @@ describe('server-discovery', () => {
         expectedProtocolVersion: 1,
       });
       expect(result.action).toBe('connect');
+    });
+  });
+
+  describe('classifyMcpLaunchPath', () => {
+    const cases: Array<{ name: string; path: string | undefined; expected: McpLaunchShape }> = [
+      { name: 'undefined', path: undefined, expected: 'unknown' },
+      { name: 'empty string', path: '', expected: 'unknown' },
+      { name: 'relative path', path: 'dist/cli.mjs', expected: 'unknown' },
+      {
+        name: 'npx cache (npm)',
+        path: '/Users/x/.npm/_npx/abc/node_modules/@inkeep/open-knowledge/dist/cli.mjs',
+        expected: 'npx-cache',
+      },
+      {
+        name: 'npx cache (legacy /_npx/)',
+        path: '/var/folders/zz/_npx/123/node_modules/@inkeep/open-knowledge/dist/cli.mjs',
+        expected: 'npx-cache',
+      },
+      {
+        name: 'bunx cache',
+        path: '/Users/x/.bun/install/cache/@inkeep+open-knowledge@0.3.0/dist/cli.mjs',
+        expected: 'npx-cache',
+      },
+      { name: '/usr/local/bin/ok', path: '/usr/local/bin/ok', expected: 'stable-shim' },
+      { name: '/opt/homebrew/bin/ok', path: '/opt/homebrew/bin/ok', expected: 'stable-shim' },
+      {
+        name: 'in-bundle CLI',
+        path: '/Applications/Open Knowledge.app/Contents/Resources/cli/cli.mjs',
+        expected: 'stable-shim',
+      },
+      {
+        name: 'global npm bin',
+        path: '/Users/x/.npm-global/bin/ok',
+        expected: 'absolute-pin',
+      },
+      {
+        name: 'monorepo dist',
+        path: '/Users/x/work/open-knowledge/packages/cli/dist/cli.mjs',
+        expected: 'absolute-pin',
+      },
+      {
+        name: 'Linux path containing Applications segment is not bundle shim',
+        path: '/home/alice/Applications/ok',
+        expected: 'absolute-pin',
+      },
+    ];
+    for (const c of cases) {
+      test(c.name, () => {
+        expect(classifyMcpLaunchPath(c.path)).toBe(c.expected);
+      });
+    }
+  });
+
+  describe('describeProtocolMismatchRemedy', () => {
+    test('npx-cache mentions package-manager cache and --pin', () => {
+      expect(describeProtocolMismatchRemedy('npx-cache', undefined)).toContain(
+        'package-manager cache',
+      );
+      expect(describeProtocolMismatchRemedy('npx-cache', undefined)).toContain('ok init --pin');
+    });
+    test('stable-shim mentions close-and-reopen', () => {
+      expect(describeProtocolMismatchRemedy('stable-shim', '/usr/local/bin/ok')).toContain(
+        'Close and reopen',
+      );
+    });
+    test('absolute-pin embeds the path and suggests re-pin', () => {
+      const path = '/Users/x/.local/bin/ok';
+      const remedy = describeProtocolMismatchRemedy('absolute-pin', path);
+      expect(remedy).toContain(path);
+      expect(remedy).toContain('Re-run `ok init --pin`');
+    });
+    test('absolute-pin without a path omits the parenthetical', () => {
+      const remedy = describeProtocolMismatchRemedy('absolute-pin', undefined);
+      expect(remedy).not.toContain('()');
+      expect(remedy).toContain('pinned path');
+    });
+    test('unknown gives a generic remedy', () => {
+      expect(describeProtocolMismatchRemedy('unknown', undefined)).toContain('align CLI versions');
+    });
+  });
+
+  describe('isSpawnEnoentMessage', () => {
+    test('detects ENOENT in typical Node spawn errors', () => {
+      expect(isSpawnEnoentMessage('spawn ENOENT')).toBe(true);
+      expect(isSpawnEnoentMessage('ENOENT: no such file or directory')).toBe(true);
+      expect(isSpawnEnoentMessage('ENOENT')).toBe(true);
+    });
+    test('does not match permission errors', () => {
+      expect(isSpawnEnoentMessage('EACCES')).toBe(false);
+      expect(isSpawnEnoentMessage('')).toBe(false);
+    });
+  });
+
+  describe('describeSpawnEnoentRemedy', () => {
+    test('absolute-pin path gets reinstall / --pin guidance', () => {
+      const t = describeSpawnEnoentRemedy('/Users/x/.npm-global/bin/ok');
+      expect(t).toContain('ok init --pin');
+      expect(t).toContain('CLI entry script');
+    });
+    test('stable-shim shape mentions missing shim', () => {
+      expect(describeSpawnEnoentRemedy('/usr/local/bin/ok')).toContain('shim is missing');
+    });
+    test('npx-cache shape mentions cache', () => {
+      expect(
+        describeSpawnEnoentRemedy(
+          '/Users/x/.npm/_npx/abc/node_modules/@inkeep/open-knowledge/dist/cli.mjs',
+        ),
+      ).toContain('package-manager cache');
+    });
+    test('unknown shape is still actionable', () => {
+      expect(describeSpawnEnoentRemedy('dist/cli.mjs')).toContain('ok init --pin');
     });
   });
 
@@ -473,7 +661,7 @@ describe('server-discovery', () => {
           openErrorLog,
           closeFd: () => {},
         }),
-      ).rejects.toThrow(/Error: server did not start within.*stderr:/s);
+      ).rejects.toThrow(/server did not start within.*stderr:/s);
 
       // Confirm the content made it to the log.
       expect(readFileSync(errorLog, 'utf-8')).toContain('ENOENT');
@@ -496,7 +684,7 @@ describe('server-discovery', () => {
           pollIntervalMs: 1,
           timeoutMs: 3,
         }),
-      ).rejects.toThrow(/Error: server did not start within/);
+      ).rejects.toThrow(/server did not start within/);
     });
 
     test('sync spawn throw surfaces a spawn-failed error', async () => {
@@ -504,8 +692,8 @@ describe('server-discovery', () => {
         throw new Error('EACCES');
       }) as never;
 
-      await expect(
-        ensureServerRunning({
+      try {
+        await ensureServerRunning({
           lockDir,
           contentDir: tmpDir,
           host: 'localhost',
@@ -518,8 +706,15 @@ describe('server-discovery', () => {
           spawn: throwingSpawn,
           pollIntervalMs: 1,
           timeoutMs: 5,
-        }),
-      ).rejects.toThrow(/Error: spawn failed: EACCES/);
+        });
+        expect.unreachable('ensureServerRunning should throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(Error);
+        const msg = (e as Error).message;
+        expect(msg).toMatch(/spawn failed: EACCES/);
+        expect(msg).not.toContain('CLI entry script');
+        expect(msg).not.toContain('ok init --pin');
+      }
     });
 
     test('async spawn error events surface a spawn-failed error', async () => {
@@ -537,27 +732,30 @@ describe('server-discovery', () => {
       }) as never;
       let triggered = false;
 
-      await expect(
-        ensureServerRunning({
-          lockDir,
-          contentDir: tmpDir,
-          host: 'localhost',
-          portOverride: undefined,
-          envAutoStart: undefined,
-          configAutoStart: true,
-          readLock: () => null,
-          isAlive: () => false,
-          sleep: async () => {
-            if (!triggered) {
-              triggered = true;
-              emitError?.(new Error('ENOENT'));
-            }
-          },
-          spawn: eventingSpawn,
-          pollIntervalMs: 1,
-          timeoutMs: 5,
-        }),
-      ).rejects.toThrow(/Error: spawn failed: ENOENT/);
+      const pinned = '/Users/x/.npm-global/bin/ok';
+      const err = await ensureServerRunning({
+        lockDir,
+        contentDir: tmpDir,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        configAutoStart: true,
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {
+          if (!triggered) {
+            triggered = true;
+            emitError?.(new Error('ENOENT'));
+          }
+        },
+        spawn: eventingSpawn,
+        pollIntervalMs: 1,
+        timeoutMs: 5,
+        launchPath: pinned,
+      }).catch((e: unknown) => e as Error);
+
+      expect(err.message).toContain('spawn failed: ENOENT');
+      expect(err.message).toContain(describeSpawnEnoentRemedy(pinned));
     });
 
     test('--port override short-circuits spawn', async () => {
@@ -637,6 +835,24 @@ describe('server-discovery', () => {
           lockDir: '/workspace/b/knowledge-b/.open-knowledge',
         },
       ]);
+    });
+
+    test('forwards launchPath to ensureServerRunning', async () => {
+      let seenLaunchPath: string | undefined;
+      const resolver = createProjectServerUrlResolver({
+        startupCwd: '/workspace/a',
+        resolveConfig: async () => BASE_CONFIG,
+        host: 'localhost',
+        portOverride: undefined,
+        envAutoStart: undefined,
+        launchPath: '/custom/bin/ok',
+        ensureServerRunningFn: async (opts) => {
+          seenLaunchPath = opts.launchPath;
+          return { serverUrl: 'ws://localhost:45001', message: 'ok' };
+        },
+      });
+      await expect(resolver('/workspace/a')).resolves.toBe('ws://localhost:45001');
+      expect(seenLaunchPath).toBe('/custom/bin/ok');
     });
 
     test('uses startup cwd when the caller does not provide one', async () => {

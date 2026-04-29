@@ -10,7 +10,12 @@ import { useCollabUrl } from '@/lib/use-collab-url';
 import { getEditorForDoc } from './active-editor';
 import { handleBranchSwitched } from './branch-invalidation';
 import { subscribePoolEviction } from './editor-cache';
-import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
+import {
+  MAX_POOL,
+  ProviderPool,
+  type ServerRestartRecoveryState,
+  type SyncState,
+} from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 import { tabSessionId } from './tab-identity';
 
@@ -38,6 +43,7 @@ interface DocumentContextValue {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
+  serverRestartRecovery: ServerRestartRecoveryState;
   /**
    * All currently-pooled docs, sorted by `lastAccessedAt` descending (MRU first).
    * Drives `EditorActivityPool`'s ACTIVITY_MOUNT_LIMIT-bounded Activity rendering.
@@ -304,6 +310,7 @@ interface Snapshot {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
+  serverRestartRecovery: ServerRestartRecoveryState;
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
 }
 
@@ -311,6 +318,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   activeDocName: null,
   activeProvider: null,
   syncState: 'connecting',
+  serverRestartRecovery: { kind: 'idle' },
   poolEntries: [],
 };
 
@@ -332,6 +340,7 @@ function takeSnapshot(p: ProviderPool): Snapshot {
     activeDocName: p.getActiveDocName(),
     activeProvider: active?.provider ?? null,
     syncState: active?.syncState ?? 'connecting',
+    serverRestartRecovery: p.getServerRestartRecoveryState(),
     poolEntries,
   };
 }
@@ -549,6 +558,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
     syncState: snapshot.syncState,
+    serverRestartRecovery: snapshot.serverRestartRecovery,
     poolEntries: snapshot.poolEntries,
     openDocument,
     openDocumentTransition,
