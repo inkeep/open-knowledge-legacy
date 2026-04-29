@@ -44,6 +44,7 @@
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * for the un-deferral framework.
  */
+import type { Nodes as MdastNodes } from 'mdast';
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
@@ -510,6 +511,21 @@ const htmlDetailsAccordionProps: PropDef[] = [
   accordionProps[5],
 ];
 
+// WikiEmbed* compats expose only what `![[file.ext|alias]]` can encode — a
+// single editable string slot. Stored target / anchor stay on the prop bag
+// alongside `alias` so `serialize` can rebuild byte-identical source bytes,
+// but they are not surfaced in PropPanel (the parser owns them; the user
+// edits the alias and nothing else).
+const wikiEmbedImageProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Alt text (Obsidian alias syntax: `![[file.png|alt text]]`)',
+  },
+];
+
 // ── Compat serialize helpers ─────────────────────────────────────────────────
 
 /** Minimal HTML attribute-value escape (matches the lossiness of the parser). */
@@ -707,6 +723,43 @@ export const builtInComponents: JsxComponentMeta[] = [
         type: 'paragraph' as const,
         children: [image],
       };
+    },
+  },
+
+  {
+    name: 'WikiEmbedImage',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedImageProps,
+    icon: 'ZoomIn',
+    category: 'media',
+    displayName: 'Wiki Embed Image',
+    description:
+      'Obsidian-style `![[file.png]]` wiki-embed — read-only compat. Edit the alt-text via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'img',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        alt: alias ?? target,
+      };
+    },
+    serialize: (node) => {
+      const p = node.attrs.props as
+        | { target?: string; alias?: string | null; anchor?: string | null }
+        | undefined;
+      const target = p?.target ?? '';
+      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+      return {
+        type: 'wikiLinkEmbed' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
     },
   },
 
