@@ -54,6 +54,11 @@ export {
   getFieldMeta,
 } from './config/field-registry.ts';
 export {
+  type ConfigPathPresence,
+  type InspectConfigPathsOptions,
+  inspectConfigPaths,
+} from './config/inspect-config-paths.ts';
+export {
   type ReadConfigSafelyOptions,
   type ReadConfigSafelyResult,
   readConfigSafely,
@@ -70,6 +75,7 @@ export {
   type FolderRule,
   FolderRuleSchema,
 } from './config/schema.ts';
+export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
 export { type LocateOptions, locateIssue } from './config/source-locator.ts';
 export {
   resolveConfigPath,

@@ -239,8 +239,8 @@ export function wrapToolHandlerForLogging(
 }
 
 /**
- * Return a server instance whose `tool(...)` registration wraps handlers with
- * request-aware structured logging.
+ * Return a server instance whose `tool(...)` and `registerTool(...)`
+ * registration wraps handlers with request-aware structured logging.
  */
 export function createLoggedServer(
   server: ServerInstance,
@@ -251,6 +251,9 @@ export function createLoggedServer(
   const originalTool = (server as unknown as { tool: (...args: unknown[]) => unknown }).tool.bind(
     server,
   );
+  const originalRegisterTool = (
+    server as unknown as { registerTool: (...args: unknown[]) => unknown }
+  ).registerTool.bind(server);
   const wrapped = Object.create(server) as ServerInstance;
 
   (wrapped as unknown as { tool: typeof server.tool }).tool = ((...toolArgs: unknown[]) => {
@@ -267,6 +270,18 @@ export function createLoggedServer(
     );
     return originalTool(...nextArgs);
   }) as unknown as typeof server.tool;
+
+  (wrapped as unknown as { registerTool: typeof server.registerTool }).registerTool = ((
+    name: string,
+    config: unknown,
+    cb: AnyToolHandler,
+  ) => {
+    if (typeof cb !== 'function') {
+      return originalRegisterTool(name, config, cb);
+    }
+    const wrappedCb = wrapToolHandlerForLogging(name, cb, opts);
+    return originalRegisterTool(name, config, wrappedCb);
+  }) as unknown as typeof server.registerTool;
 
   return wrapped;
 }

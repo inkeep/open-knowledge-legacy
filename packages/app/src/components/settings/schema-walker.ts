@@ -6,10 +6,16 @@
  * `.nullable()`) are transparent.
  *
  * Pure functions — no React, no I/O. Settings pane components consume the
- * outputs (`buildPatch`, `getFieldDefault`, `pathHasValue`, `resolveLeafSchema`).
+ * outputs (`buildPatch`, `getFieldDefault`, `pathHasValue`).
+ *
+ * `resolveLeafSchema` lives in core (also used by MCP `set_config`) and
+ * is re-exported here for the existing call sites' import-path stability.
  */
 
+import { resolveLeafSchema } from '@inkeep/open-knowledge-core';
 import type { z } from 'zod';
+
+export { resolveLeafSchema };
 
 type AnyZ = z.ZodType<unknown>;
 
@@ -61,44 +67,10 @@ export function pathHasValue(value: unknown, path: readonly (string | number)[])
   return cur !== undefined;
 }
 
-/**
- * Descend into a `ZodObject` shape at `path` to retrieve the leaf schema.
- * Returns `undefined` if the path resolves to a non-object container or a
- * missing key. Does NOT unwrap `.default()` / `.optional()` — callers that
- * want the inner type should walk further via `_zod.def.innerType`.
- */
-export function resolveLeafSchema(
-  rootSchema: AnyZ,
-  path: readonly (string | number)[],
-): AnyZ | undefined {
-  let cur: unknown = rootSchema;
-  for (const seg of path) {
-    cur = unwrapToShape(cur);
-    const shape = (cur as { _zod?: { def?: { shape?: Record<string, AnyZ> } } })?._zod?.def?.shape;
-    if (!shape) return undefined;
-    cur = shape[String(seg)];
-    if (cur === undefined) return undefined;
-  }
-  return cur as AnyZ;
-}
-
-/**
- * Walk through `.default()` / `.optional()` / `.nullable()` wrappers to
- * find the underlying object schema (whose `_zod.def.shape` we can index
- * into). Bounded depth, mirrors `getFieldMeta`'s pattern.
- */
-function unwrapToShape(schema: unknown): unknown {
-  let cur: unknown = schema;
-  for (let depth = 0; depth < 16; depth++) {
-    if (cur === null || cur === undefined) return cur;
-    const shape = (cur as { _zod?: { def?: { shape?: unknown } } })?._zod?.def?.shape;
-    if (shape !== undefined) return cur;
-    const inner = (cur as { _zod?: { def?: { innerType?: unknown } } })?._zod?.def?.innerType;
-    if (inner === undefined) return cur;
-    cur = inner;
-  }
-  return cur;
-}
+// resolveLeafSchema lives in `@inkeep/open-knowledge-core/config/schema-leaf`
+// and is re-exported above so existing imports (`./schema-walker`) keep
+// working without churn. The MCP `set_config` tool imports it from core
+// directly.
 
 /**
  * If `schema` (or any inner-type ancestor) is a `ZodDefault`, invoke and
