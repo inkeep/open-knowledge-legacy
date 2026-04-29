@@ -251,9 +251,12 @@ export function createLoggedServer(
   const originalTool = (server as unknown as { tool: (...args: unknown[]) => unknown }).tool.bind(
     server,
   );
-  const originalRegisterTool = (
-    server as unknown as { registerTool: (...args: unknown[]) => unknown }
-  ).registerTool.bind(server);
+  // registerTool is the modern MCP SDK registration API; older mocks/test stubs may not
+  // expose it. Wrap only when present so consumers using the legacy `tool()` shape still work.
+  const rawRegisterTool = (server as unknown as { registerTool?: (...args: unknown[]) => unknown })
+    .registerTool;
+  const originalRegisterTool =
+    typeof rawRegisterTool === 'function' ? rawRegisterTool.bind(server) : undefined;
   const wrapped = Object.create(server) as ServerInstance;
 
   (wrapped as unknown as { tool: typeof server.tool }).tool = ((...toolArgs: unknown[]) => {
@@ -271,17 +274,19 @@ export function createLoggedServer(
     return originalTool(...nextArgs);
   }) as unknown as typeof server.tool;
 
-  (wrapped as unknown as { registerTool: typeof server.registerTool }).registerTool = ((
-    name: string,
-    config: unknown,
-    cb: AnyToolHandler,
-  ) => {
-    if (typeof cb !== 'function') {
-      return originalRegisterTool(name, config, cb);
-    }
-    const wrappedCb = wrapToolHandlerForLogging(name, cb, opts);
-    return originalRegisterTool(name, config, wrappedCb);
-  }) as unknown as typeof server.registerTool;
+  if (originalRegisterTool) {
+    (wrapped as unknown as { registerTool: typeof server.registerTool }).registerTool = ((
+      name: string,
+      config: unknown,
+      cb: AnyToolHandler,
+    ) => {
+      if (typeof cb !== 'function') {
+        return originalRegisterTool(name, config, cb);
+      }
+      const wrappedCb = wrapToolHandlerForLogging(name, cb, opts);
+      return originalRegisterTool(name, config, wrappedCb);
+    }) as unknown as typeof server.registerTool;
+  }
 
   return wrapped;
 }
