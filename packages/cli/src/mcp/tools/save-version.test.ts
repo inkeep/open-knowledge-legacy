@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { ConfigSchema } from '../../config/schema.ts';
+import { ConfigSchema } from '@inkeep/open-knowledge-server';
 import { register } from './save-version.ts';
 import type { ServerInstance } from './shared.ts';
 

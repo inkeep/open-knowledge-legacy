@@ -4,8 +4,8 @@
  * Delegates to POST /api/sync/trigger { op: 'pull' } when a live server is
  * running. Falls back to simple-git pull when no server is found.
  */
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import type { Config } from '../index.ts';
 import { runSync } from './sync.ts';
 
 export function pullCommand(getConfig: () => Config): Command {

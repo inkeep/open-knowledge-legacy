@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { FolderRule } from '../config/schema.ts';
+import type { FolderRule } from '@inkeep/open-knowledge-server';
 import { resolveFolderFrontmatter } from './folder-rules.ts';
 
 describe('resolveFolderFrontmatter', () => {

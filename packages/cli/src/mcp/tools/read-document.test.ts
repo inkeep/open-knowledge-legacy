@@ -3,8 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { buildReadResult, type ReadDocumentDeps, register } from './read-document.ts';
 import type { ServerInstance } from './shared.ts';
 

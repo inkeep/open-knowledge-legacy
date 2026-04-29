@@ -2,7 +2,7 @@
  * Tests for MCP shared helpers — textResult, routing helpers, httpGet, httpPost.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import type { Config } from '../../config/schema.ts';
+import type { Config } from '@inkeep/open-knowledge-server';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpGet,

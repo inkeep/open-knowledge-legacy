@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { Config } from '../../config/schema.ts';
+import type { Config } from '@inkeep/open-knowledge-server';
 import { DESCRIPTION, register } from './get-dead-links.ts';
 import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, textResult } from './shared.ts';

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR } from './shared.ts';
 import { DESCRIPTION, register, type SuggestLinksDeps } from './suggest-links.ts';

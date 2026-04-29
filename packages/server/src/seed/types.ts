@@ -1,32 +1,14 @@
 /**
  * Types for the `ok seed` scaffolder.
  *
- * `FolderRule` / `FolderFrontmatter` mirror the Zod schema shape in
- * `packages/cli/src/config/schema.ts:FolderRuleSchema`. The schema lives
- * in the CLI package alongside the rest of the config loader — this seed
- * module (in server) produces matching shapes structurally without
- * pulling Zod in. The CLI's config loader validates any data before it
- * reaches runtime consumers.
+ * `FolderRule` / `FolderFrontmatter` are re-exports of the Zod-inferred
+ * shapes from `../config/schema.ts:FolderRuleSchema`. Type-only imports
+ * keep the seed module free of any runtime Zod dependency while
+ * guaranteeing structural agreement with the validated config shape.
  */
+import type { FolderFrontmatter, FolderRule } from '../config/schema.ts';
 
-/**
- * Per-folder frontmatter fields written into `config.yml` `folders:` entries.
- * Matches `FolderFrontmatterSchema` structurally.
- */
-export interface FolderFrontmatter {
-  title?: string;
-  description?: string;
-  tags?: string[];
-}
-
-/**
- * A single `folders:` rule. Matches `FolderRuleSchema` structurally:
- *   `{ match: <glob>, frontmatter: FolderFrontmatter }`.
- */
-export interface FolderRule {
-  match: string;
-  frontmatter: FolderFrontmatter;
-}
+export type { FolderFrontmatter, FolderRule };
 
 /**
  * A filesystem entry that the scaffolder will create on apply.

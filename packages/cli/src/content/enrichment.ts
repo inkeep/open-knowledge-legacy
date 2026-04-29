@@ -16,8 +16,8 @@
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
+import type { FolderRule } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
-import type { FolderRule } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';

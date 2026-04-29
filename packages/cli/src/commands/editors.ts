@@ -7,7 +7,7 @@
  */
 import { homedir } from 'node:os';
 import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
-import { MCP_SERVER_NAME } from '../constants.ts';
+import { MCP_SERVER_NAME } from '@inkeep/open-knowledge-server';
 import { isObject } from '../utils/is-object.ts';
 
 export type EditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';

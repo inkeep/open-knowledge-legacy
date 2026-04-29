@@ -6,9 +6,10 @@
  * schema, and handler. `index.ts` aggregates all three into a single
  * `registerAllTools` function that `server.ts` calls during startup.
  */
+
+import type { Config } from '@inkeep/open-knowledge-server';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { Config } from '../../config/schema.ts';
 
 export type ServerInstance = McpServer;
 export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);

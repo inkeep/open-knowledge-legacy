@@ -3,9 +3,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
+import {
+  type Config,
+  ConfigSchema,
+  commitWip,
+  initShadowRepo,
+  type WriterIdentity,
+} from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
 import { buildExecResult, DESCRIPTION, type ExecStructuredResult } from './exec.ts';
 import { buildReadResult } from './read-document.ts';

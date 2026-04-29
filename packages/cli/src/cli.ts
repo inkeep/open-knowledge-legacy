@@ -14,6 +14,7 @@ if (process.argv.includes('--no-color')) {
   delete process.env.NO_COLOR;
 }
 
+import type { Config } from '@inkeep/open-knowledge-server';
 /**
  * CLI entry point for @inkeep/open-knowledge.
  *
@@ -37,7 +38,7 @@ import { stopCommand } from './commands/stop.ts';
 import { syncCommand } from './commands/sync.ts';
 import { uiCommand } from './commands/ui.ts';
 import { PACKAGE_VERSION } from './constants.ts';
-import { type Config, loadConfig } from './index.ts';
+import { loadConfig } from './index.ts';
 
 const program = new Command();
 

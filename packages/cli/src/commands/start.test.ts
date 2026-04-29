@@ -6,7 +6,7 @@ import { request as httpRequest } from 'node:http';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { type Config, ConfigSchema } from '../config/schema.ts';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import {
   awaitUiSiblingPort,
   type BootedStartServer,

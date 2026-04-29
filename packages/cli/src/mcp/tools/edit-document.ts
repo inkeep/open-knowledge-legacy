@@ -4,8 +4,9 @@
  * Sends a patch to Hocuspocus via POST /api/agent-patch, which finds the text
  * in the Y.Text and replaces it, propagating to all connected editors.
  */
+
+import { resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';

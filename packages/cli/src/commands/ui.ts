@@ -29,8 +29,8 @@
  */
 import type { Server as HttpServer, ServerResponse } from 'node:http';
 import { defaultScheduler, type Scheduler } from '@inkeep/open-knowledge-core';
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import type { Config } from '../config/schema.ts';
 import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
 
 /** 12 hours — D-025 default safety-net interval. */
@@ -111,7 +111,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     '@inkeep/open-knowledge-server'
   );
   const { default: sirv } = await import('sirv');
-  const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
+  const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
 
   const contentDir = resolveContentDir(opts.config, opts.cwd);
   const lockDir = resolveLockDir(contentDir);
@@ -513,7 +513,7 @@ export function uiCommand(getConfig: () => Config): Command {
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');
       const { UiLockCollisionError } = await import('@inkeep/open-knowledge-server');
-      const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
+      const { resolveContentDir, resolveLockDir } = await import('@inkeep/open-knowledge-server');
       const config = getConfig();
       // Undefined `host` triggers the default two-socket loopback mode in
       // startUiServer. Callers who pass `-H` get single-socket bind as-is.

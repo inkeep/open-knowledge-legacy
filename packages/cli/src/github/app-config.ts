@@ -1,4 +1,4 @@
-import type { Config } from '../config/schema.ts';
+import type { Config } from '@inkeep/open-knowledge-server';
 
 /**
  * Default GitHub OAuth App client ID for Open Knowledge.

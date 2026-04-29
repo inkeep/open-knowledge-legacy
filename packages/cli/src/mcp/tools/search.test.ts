@@ -3,8 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { buildSearchResult } from './search.ts';
 
 const DEFAULT_CONFIG: Config = ConfigSchema.parse({});

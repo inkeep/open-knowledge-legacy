@@ -4,8 +4,9 @@
  * Sends content to Hocuspocus via POST /api/agent-write-md, which applies it
  * through a DirectConnection and propagates to all connected editors in real-time.
  */
+
+import { resolveContentDir, resolveLockDir } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
-import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';

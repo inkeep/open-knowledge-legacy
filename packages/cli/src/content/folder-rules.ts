@@ -16,8 +16,8 @@
  * Pure: no I/O, does not mutate the input rules array.
  */
 
+import type { FolderFrontmatter, FolderRule } from '@inkeep/open-knowledge-server';
 import picomatch from 'picomatch';
-import type { FolderFrontmatter, FolderRule } from '../config/schema.ts';
 
 type Matcher = (path: string) => boolean;
 

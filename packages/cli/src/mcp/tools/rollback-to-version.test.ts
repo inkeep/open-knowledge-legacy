@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { type RollbackToVersionDeps, register } from './rollback-to-version.ts';
 import type { ServerInstance } from './shared.ts';
 

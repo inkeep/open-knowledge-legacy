@@ -5,11 +5,14 @@
  * delegates to POST /api/sync/trigger { op: 'sync' }. Falls back to a
  * one-shot simple-git workflow when no live server is found.
  */
-import { readServerLock } from '@inkeep/open-knowledge-server';
+import {
+  type Config,
+  readServerLock,
+  resolveContentDir,
+  resolveLockDir,
+} from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import simpleGit from 'simple-git';
-import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
-import type { Config } from '../index.ts';
 
 function emit(json: boolean, obj: Record<string, unknown>): void {
   if (json) process.stdout.write(`${JSON.stringify(obj)}\n`);

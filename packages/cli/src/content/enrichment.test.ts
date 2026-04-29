@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import type { FolderRule } from '@inkeep/open-knowledge-server';
 import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import type { FolderRule } from '../config/schema.ts';
 import { enrichDirectory, enrichPath } from './enrichment.ts';
 
 let tmpDir: string;

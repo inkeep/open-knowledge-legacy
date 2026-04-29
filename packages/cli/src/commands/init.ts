@@ -20,12 +20,13 @@ import {
   type InstallUserSkillOptions,
   type InstallUserSkillResult,
   installUserSkill,
+  MCP_SERVER_NAME,
   ProjectGitInitError,
 } from '@inkeep/open-knowledge-server';
 import checkbox from '@inquirer/checkbox';
 import { Command, Option } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
-import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
+import { OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
 import { accent, warning } from '../ui/colors.ts';
@@ -1051,7 +1052,7 @@ export function initCommand(): Command {
       try {
         const { previewContent } = await import('../content/preview.ts');
         const { loadConfig } = await import('../config/loader.ts');
-        const { resolveContentDir } = await import('../config/paths.ts');
+        const { resolveContentDir } = await import('@inkeep/open-knowledge-server');
         const { config } = loadConfig(cwd);
         const contentDir = resolveContentDir(config, cwd);
         result.preview = previewContent({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { register } from './ingest.ts';
 import type { ServerInstance } from './shared.ts';
 

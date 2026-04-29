@@ -56,6 +56,9 @@ export {
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';
+export { resolveContentDir, resolveLockDir } from './config/paths.ts';
+export { type Config, ConfigSchema } from './config/schema.ts';
+export { MCP_SERVER_NAME } from './constants.ts';
 export {
   type ContentFilter,
   type ContentFilterOptions,

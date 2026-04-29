@@ -12,11 +12,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { type Config, ConfigSchema } from '@inkeep/open-knowledge-server';
 import { parse as parseYaml } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
-import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
   config: Config;
