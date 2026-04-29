@@ -367,7 +367,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(false);
-      expect(parsed.error).toContain('FM patches forbidden');
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
       expect(parsed.error).toContain('frontmatter_patch');
 
       // Doc must be untouched — FM unchanged and body unchanged.
@@ -408,7 +408,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('FM patches forbidden');
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
 
       // FM still present — heuristic rejected before any state mutation.
       expect(metaMap.get('frontmatter')).toBe(existingFm);
@@ -447,7 +447,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('FM patches forbidden');
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
 
       // FM and body both unchanged — rollback is automatic since the
       // transact returned early without splicing.
@@ -522,7 +522,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
       expect(response.status).toBe(404);
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(false);
-      expect(parsed.error).not.toContain('FM patches forbidden');
+      expect(parsed.error).not.toContain('Frontmatter edits are not supported');
     } finally {
       await cleanup();
     }
@@ -554,12 +554,45 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('FM patches forbidden');
+      expect(parsed.error).toContain('Frontmatter edits are not supported');
 
       // Body untouched.
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('foo: bar appears here.');
       expect(ytext).not.toContain('baz: qux');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('does NOT precheck-reject body-only patch on bare-colon prose (`IMPORTANT:`, `Note:`)', async () => {
+    // Word-then-colon prose patterns like `IMPORTANT:` or `Note:` end at
+    // the colon with no value — they are NOT YAML key-value shapes. The
+    // doc-stateless heuristic precheck must let them through so the
+    // position-based check (which knows where the FM region ends) is the
+    // sole authority for whether the patch lands in body vs frontmatter.
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const session = await sessionManager.getSession('test-doc');
+
+      session.dc.document.transact(() => {
+        applyAgentMarkdownWrite(
+          session.dc.document,
+          '---\ntitle: Doc\n---\n# Body\n\nIMPORTANT: read this.\n',
+          'replace',
+        );
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: 'IMPORTANT:',
+        replace: 'NOTE:',
+      });
+
+      expect(response.status).toBe(200);
+      const ytext = session.dc.document.getText('source').toString();
+      expect(ytext).toContain('NOTE: read this.');
+      expect(ytext).not.toContain('IMPORTANT:');
     } finally {
       await cleanup();
     }

@@ -23,6 +23,9 @@ import { type AddressInfo, createServer as createNetServer, type Socket } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+
+export { wait };
+
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {

@@ -17,7 +17,7 @@
  */
 
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
-import { format, parseISO } from 'date-fns';
+import { format, parse, parseISO } from 'date-fns';
 import { Calendar as CalendarIcon, Hash, List, SquareCheck, Type, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,7 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       type="text"
       value={draft}
       placeholder="Empty"
+      aria-label={`${keyName} value`}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => {
         focusedRef.current = true;
@@ -105,6 +106,7 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
       data-key={keyName}
       type="number"
       value={draft}
+      aria-label={`${keyName} value`}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => {
         focusedRef.current = true;
@@ -197,6 +199,7 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         type="text"
         value={inputValue}
         placeholder="Empty"
+        aria-label={`${keyName} value`}
         onChange={(e) => {
           setInputValue(e.target.value);
           const parsed = parseFromInput(e.target.value);
@@ -264,15 +267,28 @@ function formatDateForInput(date: Date | undefined): string {
   return date ? format(date, INPUT_DATE_FORMAT) : '';
 }
 
-function parseFromInput(input: string): Date | undefined {
+// Explicit format strings parsed in local time. `new Date('2026-04-24')` would
+// interpret an ISO 8601 date-only string as UTC midnight; `format(d,'yyyy-MM-dd')`
+// then formats local — producing off-by-one days in negative-UTC-offset
+// timezones. `date-fns/parse` interprets every format in local time, matching
+// the rest of the widget's local-time presentation.
+const INPUT_PARSE_FORMATS = [
+  'MMM d, yyyy', // matches INPUT_DATE_FORMAT — calendar picks round-trip
+  'MMMM d, yyyy', // full month name
+  'yyyy-MM-dd', // ISO 8601 date
+  'M/d/yyyy', // US slashed (Apr 5 = "4/5/2026")
+  'MM/dd/yyyy', // zero-padded US
+] as const;
+
+export function parseFromInput(input: string): Date | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
-  // `new Date(string)` handles common human-typed formats (e.g. "Apr 24, 2026",
-  // "April 24, 2026", "4/24/2026", "2026-04-24"). Browser-level parsing — good
-  // enough for a free-text date field where the calendar picker is the primary
-  // affordance.
-  const d = new Date(trimmed);
-  return Number.isNaN(d.getTime()) ? undefined : d;
+  const reference = new Date();
+  for (const fmt of INPUT_PARSE_FORMATS) {
+    const d = parse(trimmed, fmt, reference);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return undefined;
 }
 
 export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<string[]>) {
@@ -318,6 +334,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         type="text"
         value={draft}
         placeholder={value.length === 0 ? 'Empty' : ''}
+        aria-label={`${keyName} value`}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {

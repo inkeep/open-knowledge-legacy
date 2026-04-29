@@ -973,3 +973,93 @@ describe('POST /api/frontmatter-patch — legacy mirror is rebuildable from per-
     }
   });
 });
+
+describe('POST /api/frontmatter-patch — unsupported frontmatter shapes', () => {
+  // Per-key Y.Map storage represents flat string/number/boolean/string[] values.
+  // YAML frontmatter with nested objects or non-string arrays cannot be patched
+  // through the per-key model without silently dropping the unsupported keys.
+  // The handler must reject up front so callers see a clear 4xx instead of
+  // their nested values disappearing on the next persistence cycle.
+  test('rejects patch on doc with nested-object frontmatter; nested values preserved', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(
+        sessionManager,
+        'test-doc',
+        '---\ntitle: Old\nauthor:\n  name: Alice\n  email: alice@example.com\n---\n',
+        '# Body\n',
+      );
+      const session = await sessionManager.getSession('test-doc');
+      const metaMap = session.dc.document.getMap('metadata');
+      const legacyBefore = metaMap.get('frontmatter') as string;
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(400);
+      const parsed = JSON.parse(response.body);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toMatch(/unsupported|nested/i);
+      // Doc unchanged — legacy slot still has nested values.
+      expect(metaMap.get('frontmatter')).toBe(legacyBefore);
+      const reparsed = parseFrontmatterYaml(unwrapFrontmatterFences(legacyBefore));
+      expect(reparsed.doc.toJS()).toEqual({
+        title: 'Old',
+        author: { name: 'Alice', email: 'alice@example.com' },
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('rejects patch on doc with non-string array frontmatter', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(
+        sessionManager,
+        'test-doc',
+        '---\nlevels:\n  - 1\n  - 2\n  - 3\n---\n',
+        '# Body\n',
+      );
+      const session = await sessionManager.getSession('test-doc');
+      const legacyBefore = session.dc.document.getMap('metadata').get('frontmatter') as string;
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(400);
+      expect(session.dc.document.getMap('metadata').get('frontmatter')).toBe(legacyBefore);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('flat-shape frontmatter is unaffected (regression guard for the new pre-flight)', async () => {
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      await seedDoc(sessionManager, 'test-doc', '---\ntitle: Old\n---\n', '# Body\n');
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/frontmatter-patch',
+        { docName: 'test-doc', patch: { title: 'New' } },
+      );
+
+      expect(response.status).toBe(200);
+    } finally {
+      await cleanup();
+    }
+  });
+});

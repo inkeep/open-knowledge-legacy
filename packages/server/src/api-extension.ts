@@ -247,10 +247,12 @@ function findLooksLikeFrontmatter(find: string): boolean {
   // text containing em-dash sequences or markdown thematic breaks embedded
   // in larger find strings) flows to the position-based check below.
   if (/(^|\n)---(\s|\n|$)/.test(find)) return true;
-  // YAML key-value shape — require an actual value (`\s+\S` after the colon
-  // or colon-then-end-of-line for empty-value keys) so prose like `Note:` /
-  // `IMPORTANT:` (no value) is left to the position-based check.
-  if (/^\s*[\w-]+:(\s+\S|\s*$)/.test(find)) return true;
+  // YAML key-value shape — require an actual value (`\s+\S` after the
+  // colon) so prose like `Note:` / `IMPORTANT:` / `Warning:` (no value)
+  // is left to the position-based check, which rejects only when the find
+  // actually lands inside the FM region. Empty-value YAML keys like
+  // `draft:` similarly fall through to position-based rejection.
+  if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
   return false;
 }
 
@@ -2196,7 +2198,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         agentPatchFmTouchCounter().add(1, { result: 'rejected' });
         json(res, 400, {
           ok: false,
-          error: 'FM patches forbidden; use frontmatter_patch MCP tool instead',
+          error:
+            'Frontmatter edits are not supported via edit_document; use the frontmatter_patch tool instead',
         });
         return;
       }
@@ -2355,7 +2358,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         agentPatchFmTouchCounter().add(1, { result: 'rejected' });
         json(res, 400, {
           ok: false,
-          error: 'FM patches forbidden; use frontmatter_patch MCP tool instead',
+          error:
+            'Frontmatter edits are not supported via edit_document; use the frontmatter_patch tool instead',
         });
         return;
       }
@@ -2573,6 +2577,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const patchStartMs = performance.now();
+      let unsupportedFmDetected = false;
       // Outer try-finally samples duration on every code path (success +
       // thrown error) so the histogram doesn't understate real-world
       // latency. Inner try-finally is the agent-write race-safety pattern
@@ -2619,6 +2624,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                   // the txn.
                   const preLegacy = metaMap.get(FRONTMATTER_PATCH_FM_KEY);
                   const preLegacyStr = typeof preLegacy === 'string' ? preLegacy : '';
+
+                  // Pre-flight inside the transact (atomic with the writes
+                  // below): if the legacy slot holds shapes that fail
+                  // FrontmatterMapSchema (nested objects, non-string arrays,
+                  // …), the per-key model can't represent them — patching
+                  // would silently drop them when we synthesize fenced YAML
+                  // from per-key state. Refuse the patch and leave the doc
+                  // unchanged so the caller sees a clear 4xx instead of
+                  // disappearing values on the next persistence cycle.
+                  if (preLegacyStr.length > 0) {
+                    const { map: preflightMap } = parseFrontmatterYaml(
+                      unwrapFrontmatterFences(preLegacyStr),
+                    );
+                    if (preflightMap === null) {
+                      unsupportedFmDetected = true;
+                      return;
+                    }
+                  }
 
                   // Per-key Merge Patch application. Each setFrontmatterProperty call
                   // writes a single slot — UM tracks per-property granularity.
@@ -2683,6 +2706,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               }
             },
           );
+
+          if (unsupportedFmDetected) {
+            json(res, 400, {
+              ok: false,
+              error:
+                'Document frontmatter contains values not supported by frontmatter_patch (nested objects or non-string arrays). Edit the YAML directly in source mode to simplify these values, then frontmatter_patch will work normally.',
+            });
+            return;
+          }
 
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(

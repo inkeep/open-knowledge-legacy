@@ -462,6 +462,7 @@ function RenameInput({
   onCommit,
   onCancel,
 }: RenameInputProps) {
+  const errorId = error ? `property-rename-error-${keyName}` : undefined;
   return (
     <div>
       <Input
@@ -470,7 +471,9 @@ function RenameInput({
         type="text"
         value={draft}
         autoFocus
+        aria-label={`Rename ${keyName}`}
         aria-invalid={error ? true : undefined}
+        aria-describedby={errorId}
         onChange={(e) => onChangeDraft(e.target.value)}
         onBlur={onCommit}
         onKeyDown={(e) => {
@@ -485,7 +488,11 @@ function RenameInput({
         className="h-7 border-transparent bg-transparent dark:bg-transparent px-2 text-sm shadow-none focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
       />
       {error ? (
-        <div data-testid="property-name-rename-error" className="text-[10px] text-destructive">
+        <div
+          id={errorId}
+          data-testid="property-name-rename-error"
+          className="text-[10px] text-destructive"
+        >
           {error}
         </div>
       ) : null}
@@ -510,6 +517,7 @@ function AddPropertyRow({
   onCommit,
   onCancel,
 }: AddPropertyRowProps) {
+  const errorId = draft.error ? 'add-property-error-id' : undefined;
   return (
     <div
       className="mt-1 rounded border border-dashed bg-background/40 p-1"
@@ -523,7 +531,9 @@ function AddPropertyRow({
           value={draft.name}
           autoFocus
           placeholder="Property name"
+          aria-label="New property name"
           aria-invalid={draft.error ? true : undefined}
+          aria-describedby={errorId}
           onChange={(e) => onChangeName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -567,7 +577,11 @@ function AddPropertyRow({
         </Button>
       </div>
       {draft.error ? (
-        <div data-testid="add-property-error" className="mt-0.5 pl-7 text-[10px] text-destructive">
+        <div
+          id={errorId}
+          data-testid="add-property-error"
+          className="mt-0.5 pl-7 text-[10px] text-destructive"
+        >
           {draft.error}
         </div>
       ) : null}
