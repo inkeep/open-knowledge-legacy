@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
+import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { clearContributors, formatContributors } from './contributor-tracker.ts';
@@ -105,6 +106,7 @@ async function callApi(
   body: unknown,
   backlinkIndex?: BacklinkIndex,
   flushGitCommit?: () => Promise<void>,
+  getPrincipal?: () => Principal | null,
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {
@@ -130,6 +132,7 @@ async function callApi(
     getFileIndex: () => buildFileIndex(contentDir),
     backlinkIndex: backlinkIndex ?? buildBacklinkIndex(contentDir),
     ...(flushGitCommit ? { flushGitCommit } : {}),
+    ...(getPrincipal ? { getPrincipal } : {}),
   });
   const req = makeReq(url, 'POST', body);
   const { res, captured } = makeRes();
@@ -448,16 +451,18 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
   });
 });
 
-describe('handleRename — extension change via explicit .md/.mdx in newDocName', () => {
-  test('same-base rename with .mdx in newDocName physically changes extension on disk', async () => {
-    // Gap B: without this, the rename handler re-appends the source's existing
-    // extension (via getDocExtension) regardless of what the user typed in
-    // newDocName, so `foo.md → foo.mdx` was a silent no-op end-to-end.
+describe('handleRenamePath (kind: file) — extension change via explicit .md/.mdx in toPath', () => {
+  test('same-base rename with .mdx in toPath physically changes extension on disk', async () => {
+    // Inherited from #373: `resolveContentEntryPath` honors an explicit
+    // supported extension on the destination path, so `toPath: "foo.mdx"`
+    // physically renames `foo.md → foo.mdx`. The consolidated endpoint
+    // preserves the same behavior for `kind: 'file'`.
     writeFileSync(join(tmpDir, 'foo.md'), '# Foo\n\nOriginal .md content.\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'foo',
-      newDocName: 'foo.mdx',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'foo',
+      toPath: 'foo.mdx',
     });
 
     expect(response.status).toBe(200);
@@ -470,9 +475,10 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
   test('name-and-ext change: rename bar.md → baz.mdx physically moves and renames', async () => {
     writeFileSync(join(tmpDir, 'bar.md'), '# Bar\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'bar',
-      newDocName: 'baz.mdx',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'bar',
+      toPath: 'baz.mdx',
     });
 
     expect(response.status).toBe(200);
@@ -480,16 +486,16 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
     expect(existsSync(join(tmpDir, 'bar.md'))).toBe(false);
   });
 
-  test('extension-less newDocName preserves source extension (backward compat)', async () => {
-    // The existing call-site contract: newDocName without an extension relies
-    // on getDocExtension() to re-derive the source's extension. Guards against
-    // a regression where adding explicit-extension handling breaks the
-    // pre-existing behavior.
+  test('extension-less toPath preserves source extension (backward compat)', async () => {
+    // Extension-less destinations rely on getDocExtension() to re-derive
+    // the source's extension. Guards against a regression where the
+    // explicit-extension handling above breaks the pre-existing behavior.
     writeFileSync(join(tmpDir, 'qux.md'), '# Qux\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'qux',
-      newDocName: 'renamed-qux',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'qux',
+      toPath: 'renamed-qux',
     });
 
     expect(response.status).toBe(200);
@@ -500,18 +506,252 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
 
   test('explicit extension matching the source (foo → foo.md when foo.md exists) is a no-op', async () => {
     // Edge case when the client preserves the typed extension and the user
-    // typed the same name as the source. Without the sourcePath===destination
-    // short-circuit this returns 409 Destination already exists.
+    // typed the same name as the source. Both the textual `fromPath === toPath`
+    // short-circuit and the on-disk `sourcePath === destinationPath` short-circuit
+    // must return 200 with renamed:[] rather than 409 Destination already exists.
     writeFileSync(join(tmpDir, 'stable.md'), '# Stable\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'stable',
-      newDocName: 'stable.md',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'stable',
+      toPath: 'stable.md',
     });
 
     expect(response.status).toBe(200);
     const parsed = JSON.parse(response.body);
     expect(parsed.renamed).toEqual([]);
     expect(existsSync(join(tmpDir, 'stable.md'))).toBe(true);
+  });
+});
+
+const fixturePrincipal: Principal = {
+  id: 'principal-rename-fixture-9999',
+  display_name: 'Miles',
+  display_email: 'miles@example.test',
+  source: 'git-config',
+  created_at: '2026-04-29T10:00:00.000Z',
+};
+
+describe('handleRenamePath — actor identity routing', () => {
+  test('UI-driven file rename (no agentId) with principal loaded → principal contributor', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed-notes' },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`"id":"${fixturePrincipal.id}"`);
+    expect(lines[0]).toContain('"docs":["renamed-notes"]');
+  });
+
+  test('UI-driven file rename (no agentId) with NO principal loaded → no contributor (anonymous)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+    });
+
+    expect(response.status).toBe(200);
+    expect(formatContributors()).toBe('');
+  });
+
+  test('agent file rename + principal loaded → agent contributor (agent wins)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      {
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
+        agentId: 'claude-1',
+        agentName: 'Claude',
+      },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"id":"agent-claude-1"');
+  });
+
+  test('file rename via consolidated endpoint rewrites inbound wiki-links (FR2/FR10)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+    });
+
+    expect(response.status).toBe(200);
+    expect(readFileSync(join(tmpDir, 'journal.md'), 'utf-8')).toContain('[[renamed-notes]]');
+    const parsed = JSON.parse(response.body);
+    expect(parsed.rewrittenDocs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ docName: 'journal' })]),
+    );
+  });
+
+  test('case-only rename returns 400', async () => {
+    writeFileSync(join(tmpDir, 'Notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'Notes',
+      toPath: 'notes',
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Case-only renames are not supported',
+    });
+  });
+
+  test('non-string summary returns 400 before rename', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+      summary: 42,
+    });
+
+    expect(response.status).toBe(400);
+    expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+  });
+
+  test('agent file rename with default summary "Renamed X → Y" lands on contributor entry', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+      agentId: 'claude-1',
+      agentName: 'Claude',
+    });
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    expect(body).toContain('"summaries":["Renamed notes → renamed-notes"]');
+  });
+
+  test('side-effect docs (backlink rewrites) stay anonymous (D-A2/NG8)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed-notes' },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    // Exactly one contributor entry — the renamed doc, NOT the rewritten journal.md
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"docs":["renamed-notes"]');
+    expect(lines[0]).not.toContain('journal');
+  });
+});
+
+describe('handleRenamePath — folder rename via consolidated endpoint', () => {
+  test('folder rename rewrites inbound wiki-links across affected docs (FR3)', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+      writeFileSync(join(setupDir, 'articles', 'login.md'), '# Login\n', 'utf-8');
+      writeFileSync(
+        join(setupDir, 'index.md'),
+        '# Index\n\nSee [[articles/auth]] and [[articles/login]].\n',
+        'utf-8',
+      );
+
+      const response = await callApi(setupDir, '/api/rename-path', {
+        kind: 'folder',
+        fromPath: 'articles',
+        toPath: 'essays',
+      });
+
+      expect(response.status).toBe(200);
+      const indexContent = readFileSync(join(setupDir, 'index.md'), 'utf-8');
+      expect(indexContent).toContain('[[essays/auth]]');
+      expect(indexContent).toContain('[[essays/login]]');
+      expect(indexContent).not.toContain('[[articles/');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
+  });
+
+  test('folder rename to nested non-existent destination parent succeeds (auto-create)', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+
+      const response = await callApi(setupDir, '/api/rename-path', {
+        kind: 'folder',
+        fromPath: 'articles',
+        toPath: '2026/essays',
+      });
+
+      expect(response.status).toBe(200);
+      expect(readFileSync(join(setupDir, '2026/essays/auth.md'), 'utf-8')).toBe('# Auth\n');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
+  });
+
+  test('UI folder rename (no agentId) with principal records principal contributor per affected doc', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+      writeFileSync(join(setupDir, 'articles', 'login.md'), '# Login\n', 'utf-8');
+
+      const response = await callApi(
+        setupDir,
+        '/api/rename-path',
+        { kind: 'folder', fromPath: 'articles', toPath: 'essays' },
+        undefined,
+        undefined,
+        () => fixturePrincipal,
+      );
+
+      expect(response.status).toBe(200);
+      const body = formatContributors();
+      expect(body).toContain(`"id":"${fixturePrincipal.id}"`);
+      expect(body).toContain('essays/auth');
+      expect(body).toContain('essays/login');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
   });
 });
