@@ -1113,6 +1113,10 @@ export class ProviderPool {
     // the map via destroyEntry → delete → re-open.
     const snapshot = Array.from(this.entries.entries());
     const startedAt = Date.now();
+    // Recovery UI (spinner + failure panel) only tracks the foreground doc.
+    // Background pool entries still recycle and clear IDB on mismatch; if
+    // clearData fails there, the provider stays inert until a later reconnect
+    // retries — no separate banner per background tab by design.
     const activeRecoveryDocNames =
       this.activeDocName !== null &&
       snapshot.some(
@@ -1183,13 +1187,13 @@ export class ProviderPool {
     void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
       const failed: string[] = [];
       const cleared: string[] = [];
-      let failureReason: 'clear-data-failed' | 'clear-data-timeout' = 'clear-data-failed';
+      let sawClearTimeout = false;
       results.forEach((result, i) => {
         const docName = clears[i]?.docName ?? '<unknown>';
         if (result.status === 'rejected') {
           failed.push(docName);
           if (result.reason instanceof ClientPersistenceClearTimeoutError) {
-            failureReason = 'clear-data-timeout';
+            sawClearTimeout = true;
           }
           console.warn(
             JSON.stringify({
@@ -1203,6 +1207,9 @@ export class ProviderPool {
           cleared.push(docName);
         }
       });
+      const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
+        ? 'clear-data-timeout'
+        : 'clear-data-failed';
       const reconnectDocNames = cleared.filter((docName) => docName === this.activeDocName);
       if (failed.length > 0) {
         // Per-doc recycle. An all-or-none gate would re-open the
