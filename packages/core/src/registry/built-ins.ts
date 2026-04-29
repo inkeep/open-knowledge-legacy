@@ -423,6 +423,35 @@ const mathProps: PropDef[] = [
 const dollarMathProps: PropDef[] = [mathProps[0]];
 const mathFenceProps: PropDef[] = [mathProps[0]];
 
+const mermaidProps: PropDef[] = [
+  {
+    name: 'chart',
+    type: 'string',
+    required: true,
+    autoFocus: true,
+    description:
+      'Mermaid chart source (graph / flowchart / sequenceDiagram / class / state / etc.)',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    description: 'HTML id attribute for deep-linking (e.g. `#system-arch-diagram`)',
+  },
+  {
+    name: 'theme',
+    type: 'enum',
+    enumValues: ['default', 'dark', 'forest', 'neutral'],
+    defaultValue: 'default',
+    required: false,
+    advanced: true,
+    description:
+      'Mermaid theme — default ships only `default` styling; alternates land alongside theme-switching infrastructure',
+  },
+];
+
+const mermaidFenceProps: PropDef[] = [mermaidProps[0]];
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -535,6 +564,35 @@ export const builtInComponents: JsxComponentMeta[] = [
     description: 'Block math equation rendered with KaTeX from a LaTeX source string',
     searchTerms: ['math', 'latex', 'equation', 'formula', 'katex', 'tex'],
     serialize: (node, ctx) => emitMdxJsx('Math', node, ctx, mathProps),
+  },
+
+  {
+    name: 'Mermaid',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mermaidProps,
+    icon: 'Workflow',
+    category: 'content',
+    displayName: 'Mermaid',
+    description:
+      'Diagram rendered from Mermaid source (flowchart, sequence, class, state, ER, gantt, pie)',
+    searchTerms: [
+      'mermaid',
+      'diagram',
+      'flowchart',
+      'graph',
+      'sequence',
+      'sequencediagram',
+      'class',
+      'state',
+      'er',
+      'erdiagram',
+      'gantt',
+      'pie',
+      'chart',
+    ],
+    serialize: (node, ctx) => emitMdxJsx('Mermaid', node, ctx, mermaidProps),
   },
 
   {
@@ -677,6 +735,83 @@ export const builtInComponents: JsxComponentMeta[] = [
   },
 
   {
+    name: 'DollarMath',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: dollarMathProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Dollar Math',
+    description:
+      'Block math via `$$…$$` syntax — read-only compat. Preserves `$$…$$` form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      // Emit `math` mdast — `mdast-util-math` (registered via `remarkMath`
+      // on the serialize side of pipeline.ts) re-stringifies it as `$$…$$`,
+      // closing the round-trip on the dirty path. Pristine path uses γ
+      // sourceRaw and never reaches this serialize fn.
+      return {
+        type: 'math' as const,
+        value: p?.formula ?? '',
+      };
+    },
+  },
+
+  {
+    name: 'MathFence',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mathFenceProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Math Fence',
+    description:
+      'Block math via ` ```math ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      // Emit `code` mdast with lang:'math' — remark-stringify's default code
+      // handler emits a fenced ` ```math `…``` ` block, closing the
+      // round-trip on the dirty path. Pristine path uses γ sourceRaw.
+      return {
+        type: 'code' as const,
+        lang: 'math',
+        meta: null,
+        value: p?.formula ?? '',
+      };
+    },
+  },
+
+  {
+    name: 'MermaidFence',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mermaidFenceProps,
+    icon: 'Workflow',
+    category: 'content',
+    displayName: 'Mermaid Fence',
+    description:
+      'Mermaid diagram via ` ```mermaid ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Mermaid block for the full prop surface (id, theme).',
+    rendersAs: 'Mermaid',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { chart?: string } | undefined;
+      return {
+        type: 'code' as const,
+        lang: 'mermaid',
+        meta: null,
+        value: p?.chart ?? '',
+      };
+    },
+  },
+
+  {
     name: 'HtmlDetailsAccordion',
     surface: 'compat',
     hasChildren: true,
@@ -712,49 +847,4 @@ export const builtInComponents: JsxComponentMeta[] = [
     },
   },
 
-  {
-    name: 'DollarMath',
-    surface: 'compat',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: dollarMathProps,
-    icon: 'Sigma',
-    category: 'content',
-    displayName: 'Dollar Math',
-    description:
-      'Block math via `$$…$$` syntax — read-only compat. Preserves `$$…$$` form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
-    rendersAs: 'Math',
-    translateProps: (props) => props,
-    serialize: (node) => {
-      const p = node.attrs.props as { formula?: string } | undefined;
-      return {
-        type: 'math' as const,
-        value: p?.formula ?? '',
-      } as unknown as MdastNodes;
-    },
-  },
-
-  {
-    name: 'MathFence',
-    surface: 'compat',
-    hasChildren: false,
-    isSelfClosing: true,
-    props: mathFenceProps,
-    icon: 'Sigma',
-    category: 'content',
-    displayName: 'Math Fence',
-    description:
-      'Block math via ` ```math ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
-    rendersAs: 'Math',
-    translateProps: (props) => props,
-    serialize: (node) => {
-      const p = node.attrs.props as { formula?: string } | undefined;
-      return {
-        type: 'code' as const,
-        lang: 'math',
-        meta: null,
-        value: p?.formula ?? '',
-      };
-    },
-  },
 ];

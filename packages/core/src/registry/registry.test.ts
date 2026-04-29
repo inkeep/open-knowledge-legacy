@@ -4,10 +4,10 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 6 canonical + 8 compat descriptors + wildcard', () => {
+  test('returns the 7 canonical + 9 compat descriptors + wildcard', () => {
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(15);
+    expect(entries.length).toBe(17);
   });
 
   test('get returns registered component by name', () => {
@@ -73,6 +73,7 @@ describe('createRegistry', () => {
     expect(registry.has('audio')).toBe(true);
     expect(registry.has('Accordion')).toBe(true);
     expect(registry.has('Math')).toBe(true);
+    expect(registry.has('Mermaid')).toBe(true);
     expect(registry.has('*')).toBe(true);
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
@@ -83,12 +84,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 6 canonical + 8 compat entries (canonical pack + source-form preservation + math syntax compats)', () => {
-    expect(builtInComponents.length).toBe(14);
+  test('contains 7 canonical + 9 compat entries (7-pack + source-form preservation + math/mermaid syntax compats)', () => {
+    expect(builtInComponents.length).toBe(16);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(6);
-    expect(compat.length).toBe(8);
+    expect(canonical.length).toBe(7);
+    expect(compat.length).toBe(9);
   });
 
   test('all entries have required fields', () => {
@@ -344,6 +345,75 @@ describe('builtInComponents manifest', () => {
   test('Accordion has no `emptyChildName` (D-MF16 — ships standalone, not compound)', () => {
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     expect(accordion?.emptyChildName).toBeUndefined();
+  });
+
+  test('Math exposes the 3-prop surface', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math).toBeDefined();
+    if (!math) return;
+    const propNames = math.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['formula', 'id', 'language'].sort());
+  });
+
+  test('Math has `formula` as a required string with autoFocus', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const formula = math?.props.find((p) => p.name === 'formula');
+    expect(formula).toBeDefined();
+    expect(formula?.type).toBe('string');
+    expect(formula?.required).toBe(true);
+    if (formula?.type === 'string') {
+      expect(formula.autoFocus).toBe(true);
+    }
+  });
+
+  test('Math is a self-closing leaf (no children slot)', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math?.hasChildren).toBe(false);
+    expect(math?.isSelfClosing).toBe(true);
+  });
+
+  test('Math has no `display` prop', () => {
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const display = math?.props.find((p) => p.name === 'display');
+    expect(display).toBeUndefined();
+  });
+
+  test('Mermaid exposes the 3-prop surface', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+    expect(mermaid).toBeDefined();
+    if (!mermaid) return;
+    const propNames = mermaid.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['chart', 'id', 'theme'].sort());
+  });
+
+  test('Mermaid has `chart` as a required string with autoFocus', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+    const chart = mermaid?.props.find((p) => p.name === 'chart');
+    expect(chart).toBeDefined();
+    expect(chart?.type).toBe('string');
+    expect(chart?.required).toBe(true);
+    if (chart?.type === 'string') {
+      expect(chart.autoFocus).toBe(true);
+    }
+  });
+
+  test('Mermaid has `theme` as a 4-value enum with `default` default (advanced-tagged)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+    const theme = mermaid?.props.find((p) => p.name === 'theme');
+    expect(theme).toBeDefined();
+    if (theme?.type === 'enum') {
+      expect([...theme.enumValues].sort()).toEqual(['dark', 'default', 'forest', 'neutral'].sort());
+      expect(theme.defaultValue).toBe('default');
+      expect(theme.advanced).toBe(true);
+    } else {
+      throw new Error('Mermaid.theme must be an enum');
+    }
+  });
+
+  test('Mermaid is a self-closing leaf (no children slot)', () => {
+    const mermaid = builtInComponents.find((m) => m.name === 'Mermaid');
+    expect(mermaid?.hasChildren).toBe(false);
+    expect(mermaid?.isSelfClosing).toBe(true);
   });
 
   test('each name is unique', () => {

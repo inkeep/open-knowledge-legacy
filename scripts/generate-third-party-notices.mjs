@@ -190,8 +190,25 @@ function readNoticeText(pkgDir) {
   return readTextOrNull(findFileCaseInsensitive(pkgDir, NOTICE_FILENAMES));
 }
 
-function normalizeSpdx(licenseField) {
-  if (!licenseField) return 'UNKNOWN';
+/**
+ * Per-package SPDX overrides for npm packages that ship without a `license`
+ * field in `package.json` but DO have a license file with verifiable text.
+ * Keep this list small and audited — every entry should cite the LICENSE
+ * file path that proved the override at the time of inclusion.
+ */
+const SPDX_OVERRIDES = {
+  // khroma's package.json has no `license` field, but `node_modules/khroma/license`
+  // contains the MIT permission notice ("The MIT License (MIT) ...").
+  // Confirmed 2026-04-29; pulled in transitively by mermaid for color
+  // manipulation in chart rendering.
+  khroma: 'MIT',
+};
+
+function normalizeSpdx(licenseField, pkgName) {
+  if (!licenseField) {
+    if (pkgName && Object.hasOwn(SPDX_OVERRIDES, pkgName)) return SPDX_OVERRIDES[pkgName];
+    return 'UNKNOWN';
+  }
   if (typeof licenseField === 'string') return licenseField.trim();
   if (Array.isArray(licenseField)) {
     return licenseField
@@ -397,7 +414,7 @@ function build() {
     const key = `${pkg.name}@${pkg.version}`;
     if (seenKeys.has(key)) continue;
     seenKeys.add(key);
-    const spdx = normalizeSpdx(pkg.license || pkg.licenses);
+    const spdx = normalizeSpdx(pkg.license || pkg.licenses, pkg.name);
     const category = categorize(spdx);
     const entry = {
       pkg,

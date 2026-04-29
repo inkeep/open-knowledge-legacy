@@ -22,6 +22,7 @@ import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts'
 import { imagePromoterPlugin } from './image-promoter.ts';
 import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
+import { mermaidPromoterPlugin } from './mermaid-promoter.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
@@ -65,6 +66,13 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(detailsAccordionPromoterPlugin)
     .use(imagePromoterPlugin)
     .use(mathPromoterPlugin)
+    // Re-introduces Mermaid support that was removed 2026-04-21 (the
+    // placeholder stub deleted per the greenfield directive). Promotes
+    // `code` mdast with `lang: 'mermaid'` to a `<MermaidFence>` compat
+    // descriptor that renders through the canonical `<Mermaid>` React
+    // component. Position is copied so γ pristine path keeps the original
+    // ` ```mermaid …``` ` bytes on disk via Phase B's position-slice walker.
+    .use(mermaidPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

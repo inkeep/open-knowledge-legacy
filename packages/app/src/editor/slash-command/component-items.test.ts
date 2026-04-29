@@ -5,7 +5,7 @@ describe('getComponentItems (descriptor-driven slash menu)', () => {
   test('returns exactly the canonical descriptors', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
-    expect(labels).toEqual(['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Video']);
+    expect(labels).toEqual(['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Mermaid', 'Video']);
   });
 
   test('every entry exposes the SlashCommandItem contract', () => {

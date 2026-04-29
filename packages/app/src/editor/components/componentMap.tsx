@@ -3,6 +3,7 @@ import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
 import { Image } from './Image.tsx';
 import { MathView } from './Math.tsx';
+import { MermaidView } from './Mermaid.tsx';
 import { Video } from './Video.tsx';
 
 function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
@@ -16,5 +17,6 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   audio: Audio,
   Accordion,
   Math: MathView,
+  Mermaid: MermaidView,
   '*': UnregisteredBadgeRender,
 };
