@@ -20,6 +20,7 @@ import {
   normalizeNullableString,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
+import { posToDOMRect } from '@tiptap/core';
 import {
   CircleAlert,
   ExternalLink,
@@ -368,9 +369,33 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     };
   }
 
+  // Floating-UI virtual reference. `posToDOMRect` is queried lazily on each
+  // autoUpdate tick so the panel tracks the chip across PM edits / scroll —
+  // matches the BubbleMenuBar pattern. `contextElement` lets autoUpdate
+  // discover the editor's overflow scroll ancestors automatically.
+  const triggerReference = {
+    getBoundingClientRect: () => {
+      const livePos = getPos();
+      if (typeof livePos !== 'number') return new DOMRect();
+      const liveNode = editor.state.doc.nodeAt(livePos);
+      if (!liveNode) return new DOMRect();
+      try {
+        return posToDOMRect(editor.view, livePos, livePos + liveNode.nodeSize);
+      } catch {
+        return new DOMRect();
+      }
+    },
+    contextElement: editor.view.dom,
+  };
+
   return (
     <>
-      <InteractionPropPanel kind="wiki-link" ariaLabel="Wiki link options" onDeactivate={onClose}>
+      <InteractionPropPanel
+        kind="wiki-link"
+        ariaLabel="Wiki link options"
+        onDeactivate={onClose}
+        triggerReference={triggerReference}
+      >
         <div className="mb-2 flex items-start gap-2 pr-8">
           <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
           <div className="flex-1 min-w-0">
