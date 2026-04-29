@@ -910,7 +910,23 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (suppressSelectionRef.current) return;
       const selected = selectedPaths[0];
       if (!selected) return;
-      navigateToWithPulse(treePathToAppPath(selected));
+      const appPath = treePathToAppPath(selected);
+      const isFolder = selected.endsWith('/');
+      // Don't navigate to a doc the rest of the app doesn't know about yet.
+      // @pierre/trees fires onSelectionChange synchronously when an inline
+      // rename commits — the renamed item's path updates in the tree model
+      // and the selection follows BEFORE onRename fires our `handleTreeRename`
+      // and BEFORE applyRenamedDocuments updates `documents`. Without this
+      // guard, the selection-driven navigation opens a HocuspocusProvider
+      // for the new docName before the file exists at the new path on disk,
+      // which produces an empty server-side Y.Doc that the persistence layer
+      // then writes back to disk as an empty file (data-loss bug). Navigation
+      // for legitimately-renamed docs is handled in applyRenamedDocuments
+      // after the API succeeds, so dropping this transient event is safe.
+      if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
+        return;
+      }
+      navigateToWithPulse(appPath);
     };
     handleRenameRef.current = handleTreeRename;
     handleDropCompleteRef.current = handleDropComplete;
