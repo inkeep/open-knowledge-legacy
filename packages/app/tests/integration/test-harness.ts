@@ -37,14 +37,15 @@ import {
   createMcpHttpHandler,
   createServer,
   ensureProjectGit,
+  getLogger,
   isPairedWriteOrigin,
+  mountMcpAndApi,
   OBSERVER_SYNC_ORIGIN,
   type ServerInstance,
   type ServerOptions,
 } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
-import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 import {
   ORIGIN_TEXT_TO_TREE,
@@ -164,107 +165,19 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     getServerUrl: () => `http://localhost:${port}`,
   });
 
-  // Wire up HTTP server + WebSocket (same pattern as packages/cli/src/commands/start.ts)
-  const httpServer = createHttpServer((req, res) => {
-    const url = req.url?.split('?')[0];
-    if (url === '/mcp') {
-      mcpHttpHandler.handle(req, res).catch((err) => {
-        console.error('[mcp] Unhandled HTTP MCP error:', err);
-        if (!res.writableEnded) {
-          res.writeHead(500);
-          res.end('Internal server error');
-        }
-      });
-      return;
-    }
-    if (url?.startsWith('/api/')) {
-      srv.hocuspocus
-        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-        .hooks('onRequest', { request: req, response: res } as any)
-        .then(() => {
-          if (res.writableEnded) return;
-          // Unhandled /api/* route — 404 JSON. Matches production CLI and
-          // dev-plugin behavior.
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
-        })
-        .catch((err) => {
-          console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
-            res.writeHead(500);
-            res.end('Internal server error');
-          }
-        });
-      return;
-    }
-    res.writeHead(404);
-    res.end('Not found');
-  });
-
-  const wss = new WebSocketServer({ noServer: true });
-  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 10_000;
-  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  httpServer.on('upgrade', (req, socket, head) => {
-    // D-034 keepalive route (mirrors boot.ts logic — configurable grace for tests).
-    if (req.url?.startsWith('/collab/keepalive')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        let connectionId: string | undefined;
-        try {
-          const sp = new URL(req.url ?? '', 'http://localhost').searchParams;
-          connectionId = sp.get('connectionId') ?? undefined;
-        } catch {
-          // ignore malformed URL
-        }
-        if (connectionId) {
-          const existing = keepaliveGraceTimers.get(connectionId);
-          if (existing !== undefined) {
-            clearTimeout(existing);
-            keepaliveGraceTimers.delete(connectionId);
-          }
-        }
-        ws.on('close', () => {
-          if (!connectionId) return;
-          const timer = setTimeout(async () => {
-            keepaliveGraceTimers.delete(connectionId as string);
-            try {
-              await srv.sessionManager.closeAllForAgent(connectionId as string);
-            } catch {
-              // best-effort
-            }
-            try {
-              srv.agentFocusBroadcaster?.clearFocus(connectionId as string);
-            } catch {
-              // best-effort
-            }
-          }, KEEPALIVE_GRACE_MS);
-          timer.unref?.();
-          keepaliveGraceTimers.set(connectionId, timer);
-        });
-        ws.on('error', () => ws.terminate());
-      });
-      return;
-    }
-    if (req.url?.startsWith('/collab')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = srv.hocuspocus.handleConnection(
-          ws as unknown as WebSocket,
-          req as unknown as Request,
-        );
-        ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
-        });
-        ws.on('close', (code: number, reason: Buffer) => {
-          clientConnection.handleClose({ code, reason: reason.toString() });
-        });
-        ws.on('error', () => {
-          ws.terminate();
-        });
-      });
-    }
+  // Wire up HTTP server + WebSocket via the canonical helper so the harness
+  // exercises the same routing + keepalive grace logic as production
+  // (packages/cli/src/commands/start.ts → bootServer).
+  const httpServer = createHttpServer();
+  const mount = mountMcpAndApi({
+    httpServer,
+    hocuspocus: srv.hocuspocus,
+    mcpHttpHandler,
+    log: getLogger('test-harness'),
+    sessionManager: srv.sessionManager,
+    agentFocusBroadcaster: srv.agentFocusBroadcaster,
+    agentPresenceBroadcaster: srv.agentPresenceBroadcaster,
+    keepaliveGraceMs: options.keepaliveGraceMs,
   });
 
   await new Promise<void>((resolve) => {
@@ -276,9 +189,10 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     contentDir,
     instance: srv,
     cleanup: async () => {
+      await mount.shutdown();
       await mcpHttpHandler.close();
       await srv.destroy();
-      wss.close();
+      mount.wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       if (!options.keepContentDir) {
         rmSync(contentDir, { recursive: true, force: true });
@@ -1298,98 +1212,26 @@ export async function createRestartableServer(
 
   // Track live sockets so killNetwork can force-destroy them for fast port release.
   const sockets = new Set<Socket>();
-  const httpServer = createHttpServer((req, res) => {
-    const url = req.url?.split('?')[0];
-    if (url?.startsWith('/api/')) {
-      srv.hocuspocus
-        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus hooks() has no exported payload type for onRequest
-        .hooks('onRequest', { request: req, response: res } as any)
-        .then(() => {
-          if (res.writableEnded) return;
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
-        })
-        .catch((err) => {
-          console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
-            res.writeHead(500);
-            res.end('Internal server error');
-          }
-        });
-      return;
-    }
-    res.writeHead(404);
-    res.end('Not found');
-  });
+  const httpServer = createHttpServer();
   httpServer.on('connection', (socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
   });
 
-  const wss = new WebSocketServer({ noServer: true });
-  const KEEPALIVE_GRACE_MS = options.keepaliveGraceMs ?? 10_000;
-  const keepaliveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  httpServer.on('upgrade', (req, socket, head) => {
-    if (req.url?.startsWith('/collab/keepalive')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        let connectionId: string | undefined;
-        try {
-          const sp = new URL(req.url ?? '', 'http://localhost').searchParams;
-          connectionId = sp.get('connectionId') ?? undefined;
-        } catch {
-          // ignore malformed URL
-        }
-        if (connectionId) {
-          const existing = keepaliveGraceTimers.get(connectionId);
-          if (existing !== undefined) {
-            clearTimeout(existing);
-            keepaliveGraceTimers.delete(connectionId);
-          }
-        }
-        ws.on('close', () => {
-          if (!connectionId) return;
-          const timer = setTimeout(async () => {
-            keepaliveGraceTimers.delete(connectionId as string);
-            try {
-              await srv.sessionManager.closeAllForAgent(connectionId as string);
-            } catch {
-              // best-effort
-            }
-            try {
-              srv.agentFocusBroadcaster?.clearFocus(connectionId as string);
-            } catch {
-              // best-effort
-            }
-          }, KEEPALIVE_GRACE_MS);
-          timer.unref?.();
-          keepaliveGraceTimers.set(connectionId, timer);
-        });
-        ws.on('error', () => ws.terminate());
-      });
-      return;
-    }
-    if (req.url?.startsWith('/collab')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = srv.hocuspocus.handleConnection(
-          ws as unknown as WebSocket,
-          req as unknown as Request,
-        );
-        ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
-        });
-        ws.on('close', (code: number, reason: Buffer) => {
-          clientConnection.handleClose({ code, reason: reason.toString() });
-        });
-        ws.on('error', () => {
-          ws.terminate();
-        });
-      });
-    }
+  // Mount /api/* + /collab + /collab/keepalive via the canonical helper.
+  // `createRestartableServer` skips `/mcp` because the fast-restart-on-same-port
+  // contract has no MCP component — pass `mcpHttpHandler: undefined`.
+  const mount = mountMcpAndApi({
+    httpServer,
+    hocuspocus: srv.hocuspocus,
+    mcpHttpHandler: undefined,
+    log: getLogger('restartable-server'),
+    sessionManager: srv.sessionManager,
+    agentFocusBroadcaster: srv.agentFocusBroadcaster,
+    agentPresenceBroadcaster: srv.agentPresenceBroadcaster,
+    keepaliveGraceMs: options.keepaliveGraceMs,
   });
+  const wss = mount.wss;
 
   // Bind with retry on EADDRINUSE — restart paths race TCP TIME_WAIT on the
   // same port. Use listen(port) first; on error, wait + retry up to 2500ms.
@@ -1431,11 +1273,12 @@ export async function createRestartableServer(
   const killNetwork = (): void => {
     if (networkKilled) return;
     networkKilled = true;
-    // Clear pending keepalive grace timers — they reference `srv` which we're
+    // Cancel pending keepalive grace timers — they reference `srv` which we're
     // leaving dangling; letting them fire would call closeAllForAgent on the
-    // abandoned ServerInstance and leak errors into later tests.
-    for (const timer of keepaliveGraceTimers.values()) clearTimeout(timer);
-    keepaliveGraceTimers.clear();
+    // abandoned ServerInstance and leak errors into later tests. Fire-and-forget
+    // here — `mount.shutdown()` returns a promise but killNetwork is a sync
+    // pre-restart fast path; the in-flight set is awaited in `shutdown()` below.
+    void mount.shutdown();
     // Terminate live WS clients so HocuspocusProvider observes the disconnect
     // immediately (rather than waiting on TCP keepalive).
     for (const client of wss.clients) {
@@ -1469,6 +1312,9 @@ export async function createRestartableServer(
 
   const shutdown = async (): Promise<void> => {
     if (!networkKilled) killNetwork();
+    // Wait for any in-flight keepalive grace cleanup to finish before tearing
+    // down the underlying ServerInstance.
+    await mount.shutdown();
     // Full destroy of this instance's ServerInstance.
     try {
       await srv.destroy();

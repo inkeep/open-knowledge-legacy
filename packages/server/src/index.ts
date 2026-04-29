@@ -37,12 +37,7 @@ export {
   ORPHAN_MODES,
   type OrphanMode,
 } from './backlink-index.ts';
-export {
-  type BootedServer,
-  type BootServerOptions,
-  bootServer,
-  parseKeepaliveConnectionId,
-} from './boot.ts';
+export { type BootedServer, type BootServerOptions, bootServer } from './boot.ts';
 export {
   type BuildSkillZipOptions,
   type BuildSkillZipResult,
@@ -130,6 +125,12 @@ export {
   type McpHttpHandler,
   type McpHttpHandlerOptions,
 } from './mcp-http.ts';
+export {
+  type MountMcpAndApiHandle,
+  type MountMcpAndApiOptions,
+  mountMcpAndApi,
+  parseKeepaliveConnectionId,
+} from './mcp-mount.ts';
 export {
   getMetrics,
   handleCollabSocketError,

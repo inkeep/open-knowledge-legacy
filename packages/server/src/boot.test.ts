@@ -5,8 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { bootServer, parseKeepaliveConnectionId } from './boot.ts';
+import { bootServer } from './boot.ts';
 import { ConfigSchema } from './config/schema.ts';
+import { parseKeepaliveConnectionId } from './mcp-mount.ts';
 
 const execFileAsync = promisify(execFile);
 const TEST_CONFIG = ConfigSchema.parse({});

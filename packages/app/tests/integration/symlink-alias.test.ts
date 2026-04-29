@@ -4,98 +4,26 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer as createHttpServer } from 'node:http';
-import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { createServer } from '@inkeep/open-knowledge-server';
-import { WebSocketServer } from 'ws';
-import { agentPatch, agentWriteMd, type TestServer } from './test-harness';
+import { agentPatch, agentWriteMd, createTestServer, type TestServer } from './test-harness';
 
 let server: TestServer;
 
-async function getFreePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const s = createNetServer();
-    s.listen(0, () => {
-      const port = (s.address() as AddressInfo).port;
-      s.close(() => resolve(port));
-    });
-  });
-}
-
 beforeAll(async () => {
-  // Create content dir with symlink BEFORE server startup so the seed walk indexes them
+  // Create content dir with symlink BEFORE server startup so the seed walk
+  // indexes them. `createTestServer({ contentDir })` then reuses the dir
+  // (its file watcher will pick up the seed files on first scan).
   const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-symlink-test-')));
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
   writeFileSync(join(contentDir, 'target.md'), '# Target\n', 'utf-8');
   symlinkSync('target.md', join(contentDir, 'foo.md'));
 
-  const port = await getFreePort();
-  const srv = createServer({
-    contentDir,
-    quiet: true,
-    debounce: 200,
-    maxDebounce: 1000,
-    gitEnabled: false,
-    enableTestRoutes: true,
-  });
-  await srv.ready;
-
-  const httpServer = createHttpServer((req, res) => {
-    const url = req.url?.split('?')[0];
-    if (url?.startsWith('/api/')) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-      srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-        if (!res.writableEnded) {
-          res.writeHead(500);
-          res.end('Internal server error');
-        }
-      });
-      return;
-    }
-    res.writeHead(404);
-    res.end('Not found');
-  });
-
-  const wss = new WebSocketServer({ noServer: true });
-  httpServer.on('upgrade', (req, socket, head) => {
-    if (req.url?.startsWith('/collab')) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = srv.hocuspocus.handleConnection(
-          ws as unknown as WebSocket,
-          req as unknown as Request,
-        );
-        ws.on('message', (data: ArrayBuffer | Buffer) => {
-          clientConnection.handleMessage(
-            data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
-          );
-        });
-        ws.on('close', (code: number, reason: Buffer) => {
-          clientConnection.handleClose({ code, reason: reason.toString() });
-        });
-        ws.on('error', () => ws.terminate());
-      });
-    }
-  });
-
-  await new Promise<void>((resolve) => httpServer.listen(port, () => resolve()));
-
-  server = {
-    port,
-    contentDir,
-    cleanup: async () => {
-      await srv.destroy();
-      wss.close();
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-      rmSync(contentDir, { recursive: true, force: true });
-    },
-  };
+  server = await createTestServer({ contentDir });
 });
 
 afterAll(async () => {
