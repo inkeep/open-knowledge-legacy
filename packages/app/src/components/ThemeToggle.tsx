@@ -1,6 +1,8 @@
+import { humanFormat } from '@inkeep/open-knowledge-core';
 import { Contrast, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import type { ComponentProps, FC } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,8 +21,8 @@ const themes: Array<{ value: 'light' | 'dark' | 'system'; label: string; icon: F
 
 /**
  * Chrome theme toggle — read from merged config, write through to the
- * user-binding (per D55 / FR-40 unified path: all theme writes flow
- * through `userBinding.patch()` so localStorage stays a derived cache).
+ * user-binding so all theme writes flow through one path and
+ * localStorage stays a derived cache.
  *
  * Falls back to next-themes' `theme` for the trigger icon when the
  * config bindings haven't synced yet (cold-mount, ~100-300ms). The
@@ -41,15 +43,21 @@ export const ThemeToggle: FC = () => {
   const handleChange = (raw: string): void => {
     if (raw !== 'light' && raw !== 'dark' && raw !== 'system') return;
     if (!userBinding) return; // bindings haven't synced yet — drop the click
-    userBinding.patch({ appearance: { theme: raw } });
-    // No setTheme() call — ConfigProvider's bridge will fire setTheme on
-    // the resulting Y.Text observer event, keeping a single source of truth.
+    const result = userBinding.patch({ appearance: { theme: raw } });
+    if (!result.ok) {
+      // Rare: corrupt Y.Text or disposed binding. Surface so the user
+      // knows the click didn't land. ConfigProvider's bridge will not
+      // fire on a failed patch, so the page color stays put.
+      toast.error(humanFormat(result.error));
+    }
+    // On success: no setTheme() call — ConfigProvider's bridge fires
+    // setTheme on the resulting Y.Text observer event, keeping a single
+    // source of truth.
   };
 
   // Trigger icon mirrors the user's explicit choice, not the resolved theme.
   // Showing Contrast when current === 'system' makes the three-state model
-  // visible and mitigates the system→explicit→OS-change mental-model trap
-  // (spec D15).
+  // visible and mitigates the system→explicit→OS-change mental-model trap.
   const TriggerIcon = current === 'system' ? Contrast : current === 'dark' ? Moon : Sun;
 
   return (

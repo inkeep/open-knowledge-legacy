@@ -23,7 +23,7 @@
 
 import { isMap, type ParsedNode, parseDocument } from 'yaml';
 import type * as Y from 'yjs';
-import type { ConfigValidationError } from './errors.ts';
+import type { ConfigValidationError, WriteScope } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
 import { addConfigSpanEvent, withConfigSpanSync } from './telemetry.ts';
@@ -125,28 +125,43 @@ function ok(value: ConfigBindingPatchSuccess): Ok<ConfigBindingPatchSuccess> {
 }
 
 /**
- * Schema defaults — single shared instance per process. `ConfigSchema.parse({})`
- * runs every `.default()` callback synchronously; the result is invariant for
- * a process lifetime.
+ * Schema defaults. Returns a fresh-parsed `Config` per call so consumers can
+ * mutate the result without poisoning future fallbacks. `ConfigSchema.parse({})`
+ * is fast enough that caching the object is not worth the aliasing footgun.
  */
-let cachedDefaults: Config | null = null;
 function schemaDefaults(): Config {
-  if (cachedDefaults === null) {
-    cachedDefaults = ConfigSchema.parse({});
-  }
-  return cachedDefaults;
+  return ConfigSchema.parse({});
 }
 
-function readCurrent(ytext: Y.Text): Config {
+function readCurrent(ytext: Y.Text, scope: WriteScope): Config {
   const content = ytext.toString();
   if (content.length === 0) return schemaDefaults();
 
   const doc = parseDocument(content);
-  if (doc.errors.length > 0) return schemaDefaults();
+  if (doc.errors.length > 0) {
+    // Fallback to defaults (no-throw contract) but emit a diagnostic so
+    // operators can trace "why are my settings showing defaults?". The
+    // patch path's self-heal will overwrite the corrupt content on the
+    // next mutation; until then `current()` callers see defaults.
+    console.warn(
+      `[bindConfigDoc:${scope}] Y.Text contains invalid YAML; returning schema defaults. Errors: ${doc.errors
+        .map((e) => e.message)
+        .join('; ')}`,
+    );
+    return schemaDefaults();
+  }
 
   const merged = doc.toJSON() ?? {};
   const result = ConfigSchema.safeParse(merged);
-  return result.success ? result.data : schemaDefaults();
+  if (!result.success) {
+    console.warn(
+      `[bindConfigDoc:${scope}] Y.Text content fails schema validation; returning schema defaults. First issue: ${
+        result.error.issues[0]?.message ?? '(unknown)'
+      }`,
+    );
+    return schemaDefaults();
+  }
+  return result.data;
 }
 
 /**
@@ -186,7 +201,7 @@ function bindConfigDocInner(
 
   function fireListeners(): void {
     if (disposed) return;
-    const config = readCurrent(ytext);
+    const config = readCurrent(ytext, scope);
     for (const listener of listeners) {
       try {
         listener(config);
@@ -288,7 +303,7 @@ function bindConfigDocInner(
 
   return {
     current(): Config {
-      return readCurrent(ytext);
+      return readCurrent(ytext, scope);
     },
 
     patch(patch: ConfigPatch): ConfigBindingPatchResult {

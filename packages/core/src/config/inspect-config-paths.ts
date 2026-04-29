@@ -66,11 +66,26 @@ function readJsonForScope(scope: 'user' | 'workspace', opts: InspectConfigPathsO
   let raw: string;
   try {
     raw = readFileSync(absPath, 'utf-8');
-  } catch {
+  } catch (e) {
+    // Permission denied / unreadable file. Treat as "not present" for scope
+    // inference, but warn so operators see the cause rather than silent
+    // mis-routing of writes (e.g., a workspace-locked field falling back
+    // to user scope because the workspace YAML couldn't be read).
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      console.warn(
+        `[inspectConfigPaths] could not read ${scope} config at ${absPath}: ${(e as Error).message ?? e}`,
+      );
+    }
     return null;
   }
   const doc = parseDocument(raw);
-  if (doc.errors.length > 0) return null;
+  if (doc.errors.length > 0) {
+    console.warn(
+      `[inspectConfigPaths] ${scope} config at ${absPath} has YAML parse errors; treating as absent for scope inference`,
+    );
+    return null;
+  }
   return doc.toJSON();
 }
 

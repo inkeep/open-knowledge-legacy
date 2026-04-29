@@ -205,13 +205,15 @@ async function writeConfigPatchInner(
 
   // Ensure the doc has a top-level map; an empty document parses with
   // `contents = null`. Replace with an empty map so setIn can create
-  // nested paths.
+  // nested paths. Top-level Seq (`- a\n- b`) is not a valid config shape
+  // either — letting it through would crash inside `applyPatchToDocument`
+  // when setIn descends with a string key into a Seq node.
   if (doc.contents === null) {
     doc.contents = doc.createNode({}) as ParsedNode;
-  } else if (!isMap(doc.contents) && !isSeq(doc.contents)) {
+  } else if (!isMap(doc.contents)) {
     return err({
       code: 'YAML_PARSE',
-      detail: 'Top-level YAML value must be a mapping (object), got scalar',
+      detail: `Top-level YAML value must be a mapping (object), got ${isSeq(doc.contents) ? 'sequence' : 'scalar'}`,
     });
   }
 

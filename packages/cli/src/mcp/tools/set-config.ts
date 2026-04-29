@@ -95,6 +95,7 @@ const SuccessOutputSchema = z.object({
   ok: z.literal(true),
   applied: z.array(z.string()),
   scope: z.enum(['user', 'workspace']),
+  path: z.string(),
   current: z.record(z.string(), z.unknown()),
 });
 
@@ -293,6 +294,7 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
           ok: true as const,
           applied: result.appliedPaths,
           scope: inference.scope,
+          path: result.path,
           current: result.effective as unknown as Record<string, unknown>,
         },
       };

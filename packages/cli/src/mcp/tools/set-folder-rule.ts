@@ -91,6 +91,7 @@ const SuccessOutputSchema = z.object({
   applied: z.array(z.string()),
   scope: z.literal('workspace'),
   path: z.string(),
+  current: z.record(z.string(), z.unknown()),
 });
 
 const ErrorOutputSchema = z.object({
@@ -159,6 +160,10 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
           applied: result.appliedPaths,
           scope: 'workspace' as const,
           path: result.path,
+          // Mirror set_config's shape: agents inspect the merged effective
+          // config (here, the post-upsert `folders[]` array among other
+          // fields) without a follow-up get_config roundtrip.
+          current: result.effective as unknown as Record<string, unknown>,
         },
       };
       return textPlusStructured(JSON.stringify(success.result, null, 2), success);

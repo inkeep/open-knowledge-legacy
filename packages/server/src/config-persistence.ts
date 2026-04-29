@@ -20,6 +20,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { getLogger } from './logger.ts';
 import {
   addConfigSpanEvent,
   CONFIG_DOC_NAME_USER,
@@ -332,6 +333,15 @@ async function storeConfigDocInner(
     await atomicWriteConfig(filePath, content);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
+    // Surface the write failure to operators in headless sessions where no
+    // Settings pane is mounted to observe the `onConfigRejected` callback.
+    // Disk-full / permissions / parent-replaced-by-file are otherwise
+    // invisible — the L3 hook returns silently and the next mutation
+    // re-attempts indefinitely.
+    getLogger('config-persistence').warn(
+      { docName: documentName, path: filePath, err: e },
+      `[config-persistence] write-failed at ${filePath}: ${detail}`,
+    );
     ctx.onConfigRejected?.(documentName, {
       code: 'WRITE_ERROR',
       detail: `Failed to persist config at ${filePath}: ${detail}`,

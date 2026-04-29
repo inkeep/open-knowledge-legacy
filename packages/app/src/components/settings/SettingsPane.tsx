@@ -573,8 +573,15 @@ function FieldControl({
   readonlyReason,
 }: FieldControlProps) {
   if (readonlyReason) {
+    // `id={fieldId}` so the parent `<label htmlFor={fieldId}>` resolves to
+    // something; `role="note"` so screen readers announce this as
+    // explanatory text rather than treating the dangling label as broken.
     return (
-      <div className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground">
+      <div
+        id={fieldId}
+        role="note"
+        className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
+      >
         {readonlyReason}
       </div>
     );
@@ -792,7 +799,7 @@ function EnumToggleControl({
 }) {
   const [savedTick, setSavedTick] = useState(false);
   return (
-    <div className="flex items-center gap-2" id={fieldId} aria-describedby={errorId}>
+    <div className="flex items-center gap-2" aria-describedby={errorId}>
       <ToggleGroup
         type="single"
         value={value}
@@ -806,8 +813,16 @@ function EnumToggleControl({
           if (onCommit(v)) flashSaved(setSavedTick);
         }}
       >
-        {options.map((opt) => (
-          <ToggleGroupItem key={opt} value={opt} className="text-xs capitalize">
+        {options.map((opt, idx) => (
+          // Put `id={fieldId}` on the first toggle button so the wrapping
+          // `<label htmlFor={fieldId}>` actually focuses something on click.
+          // (A label whose `htmlFor` points at a `<div>` is silently broken.)
+          <ToggleGroupItem
+            key={opt}
+            value={opt}
+            id={idx === 0 ? fieldId : undefined}
+            className="text-xs capitalize"
+          >
             {opt}
           </ToggleGroupItem>
         ))}

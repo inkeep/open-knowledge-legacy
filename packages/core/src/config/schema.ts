@@ -170,14 +170,13 @@ export const ConfigSchema = z.looseObject({
   // read localStorage as the cache; the first explicit Settings-pane write of
   // `appearance.*` canonicalizes the value into config.yml.
   //
-  // Both are USER-scope (not 'either'): theme is a personal preference, not a
-  // project-shared setting. A workspace `appearance.theme` would force every
-  // collaborator into the project owner's mode, which is a misuse pattern
-  // and not what users expect from the chrome toggle. The Settings pane
-  // hides these fields on the "This project" tab via `isFieldVisibleAtScope`;
-  // SchemaStore validation flags them in workspace YAML; chrome toggle
-  // always writes via `userBinding.patch()`. Supersedes D20/D55's "either"
-  // framing per user direction 2026-04-29.
+  // Both are USER-scope: theme is a personal preference, not a project-
+  // shared setting. A workspace `appearance.theme` would force every
+  // collaborator into the project owner's mode, which is a misuse
+  // pattern and not what users expect from the chrome toggle. The
+  // Settings pane hides these fields on the "This project" tab via
+  // `isFieldVisibleAtScope`; SchemaStore validation flags them in
+  // workspace YAML; chrome toggle always writes via `userBinding.patch()`.
   appearance: z
     .looseObject({
       theme: z

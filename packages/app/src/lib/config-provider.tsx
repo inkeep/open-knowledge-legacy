@@ -13,10 +13,10 @@
  * edit picked up by the chokidar watcher, or a CC1 broadcast from another
  * tab), this provider calls `setTheme()` so the page actually flips.
  *
- * Per FR-40 + D55, `appearance.theme` is dual-track: localStorage 'ok-theme-v1'
- * stays as the FOUC cache; config.yml is authoritative once set. Both writes
- * (chrome + Settings) flow through `userBinding.patch()` so the two stay
- * coherent.
+ * `appearance.theme` is dual-track: localStorage 'ok-theme-v1' stays as
+ * the FOUC cache; config.yml is authoritative once set. Both writes
+ * (chrome + Settings) flow through `userBinding.patch()` so the two
+ * stay coherent.
  */
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
@@ -29,7 +29,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { ConfigSchema } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
-import { createContext, type ReactNode, use, useEffect, useMemo, useState } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 
@@ -106,15 +106,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     };
   }, [collabUrl]);
 
-  const merged = useMemo<Config | null>(() => {
-    if (!userState || !workspaceState) return null;
-    return mergeLayered(userState.config, workspaceState.config);
-  }, [userState, workspaceState]);
+  // React Compiler memoizes — no manual `useMemo` per project convention.
+  const merged: Config | null =
+    userState && workspaceState ? mergeLayered(userState.config, workspaceState.config) : null;
 
-  // Bridge merged.appearance.theme → next-themes (FR-40 / D55 dual-track).
-  // Fires app-wide because this provider is mounted at the App root, above
-  // DocumentPane / chrome / SettingsPane. setTheme writes through to
-  // localStorage so the FOUC script reads the latest value on next reload.
+  // Bridge `appearance.theme` from the merged config into next-themes app-
+  // wide. setTheme writes through to localStorage so the FOUC script reads
+  // the latest value on next reload.
   const { setTheme } = useTheme();
   const themeValue = merged?.appearance?.theme;
   useEffect(() => {
@@ -123,16 +121,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, [themeValue, setTheme]);
 
-  const value = useMemo<ConfigContextValue>(
-    () => ({
-      userBinding: userState?.binding ?? null,
-      workspaceBinding: workspaceState?.binding ?? null,
-      userConfig: userState?.config ?? null,
-      workspaceConfig: workspaceState?.config ?? null,
-      merged,
-    }),
-    [userState, workspaceState, merged],
-  );
+  const value: ConfigContextValue = {
+    userBinding: userState?.binding ?? null,
+    workspaceBinding: workspaceState?.binding ?? null,
+    userConfig: userState?.config ?? null,
+    workspaceConfig: workspaceState?.config ?? null,
+    merged,
+  };
 
   return <ConfigContext value={value}>{children}</ConfigContext>;
 }
@@ -161,21 +156,26 @@ function mergeLayered(user: Config, workspace: Config): Config {
   return mergeDeep(user, workspace, []) as Config;
 }
 
-function mergeDeep(base: unknown, override: unknown, path: (string | number)[]): unknown {
-  if (override === undefined) return base;
-  // At a leaf path, ask the field registry whether the field is user-scope.
-  // If so, drop the workspace value entirely.
+function mergeDeep(user: unknown, workspace: unknown, path: (string | number)[]): unknown {
+  // Scope-aware leaf precedence. Each side's stale value is ignored when the
+  // field's registered scope rules it out, so a user-global YAML carrying a
+  // workspace-only field (e.g., `preview.baseUrl` left over from a prior
+  // workspace) doesn't leak into the merged view, and a workspace YAML
+  // carrying a user-only field (e.g., `appearance.theme` written under
+  // earlier 'either' semantics) doesn't override the user's choice.
   if (path.length > 0) {
     const meta = getLeafFieldMeta(ConfigSchema, path);
-    if (meta?.scope === 'user') return base;
+    if (meta?.scope === 'user') return user;
+    if (meta?.scope === 'workspace') return workspace ?? user;
   }
-  if (override === null) return null;
-  if (Array.isArray(override)) return override;
-  if (typeof override !== 'object') return override;
-  if (typeof base !== 'object' || base === null || Array.isArray(base)) return override;
-  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
-  for (const [key, value] of Object.entries(override as Record<string, unknown>)) {
-    out[key] = mergeDeep((base as Record<string, unknown>)[key], value, [...path, key]);
+  if (workspace === undefined) return user;
+  if (workspace === null) return null;
+  if (Array.isArray(workspace)) return workspace;
+  if (typeof workspace !== 'object') return workspace;
+  if (typeof user !== 'object' || user === null || Array.isArray(user)) return workspace;
+  const out: Record<string, unknown> = { ...(user as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(workspace as Record<string, unknown>)) {
+    out[key] = mergeDeep((user as Record<string, unknown>)[key], value, [...path, key]);
   }
   return out;
 }
