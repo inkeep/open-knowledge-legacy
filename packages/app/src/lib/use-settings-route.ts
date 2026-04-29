@@ -20,6 +20,15 @@ import { useEffect, useState } from 'react';
 
 export type SettingsScope = 'workspace' | 'user';
 
+/**
+ * Canonical hash literal for opening Settings via an entry point. Sets to the
+ * workspace tab via the bare-`#settings` synonym handled by `parseSettingsHash`.
+ * Mirrors the `INSTALL_DIALOG_HASH = '#install-claude-desktop'` precedent in
+ * App.tsx — entry points (HelpPopover, CommandPalette, Cmd-,, Electron menu)
+ * all funnel through this single literal.
+ */
+export const SETTINGS_OPEN_HASH = '#settings';
+
 interface SettingsRouteState {
   /** The active sub-tab when the pane is open; `null` when the pane is closed. */
   scope: SettingsScope | null;
@@ -27,6 +36,36 @@ interface SettingsRouteState {
   close: () => void;
   /** Switch sub-tab while the pane is open; updates the hash without adding history. */
   setScope: (next: SettingsScope) => void;
+}
+
+interface ShortcutEventLike {
+  // Duck-typed so the predicate is unit-testable without constructing real
+  // DOM events. Production callers pass KeyboardEvent which widens via cast.
+  // Mirrors the shape in NewItemDialog's `isNewItemShortcut`.
+  target: { tagName?: string; isContentEditable?: boolean } | null;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  key: string;
+}
+
+/**
+ * Cmd-, (macOS) / Ctrl-, (Windows/Linux) — the standard "open Settings" gesture.
+ *
+ * Suppresses on text inputs / textareas / contenteditable surfaces so a stray
+ * Cmd-held-while-typing-comma in a number field doesn't hijack focus to the
+ * Settings pane. The Electron menu accelerator (set in `desktop/menu.ts`)
+ * captures Cmd-, at the OS level for the Electron app and is independent of
+ * this predicate; this predicate is the BROWSER-mode fallback. Same shape as
+ * `isNewItemShortcut` in NewItemDialog.tsx.
+ */
+export function isSettingsShortcut(e: ShortcutEventLike): boolean {
+  const target = e.target;
+  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) {
+    return false;
+  }
+  const modKey = e.metaKey || e.ctrlKey;
+  return Boolean(modKey && !e.altKey && e.key === ',');
 }
 
 export function parseSettingsHash(hash: string): SettingsScope | null {

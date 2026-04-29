@@ -1,10 +1,11 @@
-import { BookOpen, CircleHelp, Download, Globe } from 'lucide-react';
+import { BookOpen, CircleHelp, Download, Globe, Settings } from 'lucide-react';
 import type { ComponentProps, FC } from 'react';
 import { useState } from 'react';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { LinkedinIcon } from './icons/linkedin';
 import { XTwitterIcon } from './icons/x-twitter';
 
@@ -52,6 +53,25 @@ export const HelpPopover: FC = () => {
             Setup
           </p>
           <ul className="mb-3 space-y-0.5">
+            <li>
+              <button
+                type="button"
+                data-testid="help-popover-settings"
+                onClick={() => {
+                  setPopoverOpen(false);
+                  // Same hash-routed open contract used by the CommandPalette
+                  // entry, the Cmd-, shortcut, and the Electron menu — see
+                  // App.tsx + use-settings-route.ts (US-010).
+                  if (window.location.hash !== SETTINGS_OPEN_HASH) {
+                    window.location.hash = SETTINGS_OPEN_HASH;
+                  }
+                }}
+                className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-azure-900/5 dark:hover:bg-white/20 hover:text-primary"
+              >
+                <Settings aria-hidden="true" className="size-4 shrink-0" />
+                <span>Settings…</span>
+              </button>
+            </li>
             <li>
               <button
                 type="button"

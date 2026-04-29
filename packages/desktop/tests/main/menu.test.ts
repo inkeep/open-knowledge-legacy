@@ -20,6 +20,8 @@ type RecentRow = { path: string; name: string };
 
 function makeDeps(overrides: Partial<MenuDeps> = {}): MenuDeps {
   return {
+    appName: 'Open Knowledge',
+    dialog: {} as MenuDeps['dialog'],
     openNavigator: mock(() => {}),
     openProject: mock(() => Promise.resolve()),
     getRecentProjects: mock(() => []),
@@ -256,6 +258,80 @@ describe('buildMenuTemplate', () => {
       expect(installIdx).toBeGreaterThan(openRecentIdx);
       expect(installIdx).toBeLessThan(trailingRoleIdx);
     });
+  });
+
+  describe('Settings… menu item (US-010 / FR-1 / D54)', () => {
+    const isMac = process.platform === 'darwin';
+
+    test('Settings… is rendered with the CmdOrCtrl+, accelerator', () => {
+      const deps = makeDeps({ openSettings: mock(() => {}) });
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      expect(settings).toBeDefined();
+      expect(settings?.accelerator).toBe('CmdOrCtrl+,');
+    });
+
+    test('Settings… click dispatches deps.openSettings()', () => {
+      const openSettings = mock(() => {});
+      const deps = makeDeps({ openSettings });
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      (settings?.click as (() => void) | undefined)?.();
+      expect(openSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('Settings… click is a safe no-op when openSettings dep is omitted', () => {
+      const deps = makeDeps();
+      const template = buildMenuTemplate(deps);
+      const settings = findByLabel(template, 'Settings…');
+      // The optional-dep (?.()) shape MUST not throw when unwired — unit
+      // tests build the menu without runtime wiring.
+      expect(() => (settings?.click as (() => void) | undefined)?.()).not.toThrow();
+    });
+
+    if (isMac) {
+      test('macOS: Settings… lives in the App menu, between About and the services separator', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        // The first top-level submenu on macOS is the App menu (label === appName).
+        const appMenu = template.find((t) => t.label === deps.appName);
+        expect(appMenu).toBeDefined();
+        const sub = appMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('App submenu missing on macOS');
+        const aboutIdx = sub.findIndex((i) => i.role === 'about');
+        const settingsIdx = sub.findIndex((i) => i.label === 'Settings…');
+        const servicesIdx = sub.findIndex((i) => i.role === 'services');
+        // Apple HIG: Settings sits after About + before Services. Both
+        // separators bracket Settings on either side.
+        expect(aboutIdx).toBeGreaterThanOrEqual(0);
+        expect(settingsIdx).toBeGreaterThan(aboutIdx);
+        expect(settingsIdx).toBeLessThan(servicesIdx);
+      });
+
+      test('macOS: Settings… does NOT appear in the File submenu', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const fileMenu = template.find((t) => t.label === 'File');
+        const sub = fileMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('File submenu missing');
+        const settingsInFile = sub.find((i) => i.label === 'Settings…');
+        // On macOS Settings lives in the App menu, not File — duplicating
+        // it across both menus would be a HIG violation.
+        expect(settingsInFile).toBeUndefined();
+      });
+    } else {
+      test('Windows/Linux: Settings… lives in the File submenu, above the trailing close/quit row', () => {
+        const deps = makeDeps({ openSettings: mock(() => {}) });
+        const template = buildMenuTemplate(deps);
+        const fileMenu = template.find((t) => t.label === 'File');
+        const sub = fileMenu?.submenu as MenuItemConstructorOptions[] | undefined;
+        if (!sub) throw new Error('File submenu missing');
+        const settingsIdx = sub.findIndex((i) => i.label === 'Settings…');
+        const trailingRoleIdx = sub.findIndex((i) => i.role === 'close' || i.role === 'quit');
+        expect(settingsIdx).toBeGreaterThanOrEqual(0);
+        expect(settingsIdx).toBeLessThan(trailingRoleIdx);
+      });
+    }
   });
 
   test('macOS-branch behavior for the current test host', () => {
