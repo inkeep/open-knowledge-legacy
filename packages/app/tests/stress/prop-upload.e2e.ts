@@ -28,6 +28,11 @@
  * needing a `Promise.reject(...)` mock at the unit tier — that's the
  * `bun:test` unhandled-rejection observer trap from the runUpload-tests
  * removal in `PropPanel.test.tsx:396-407`.
+ *
+ * This file is NOT in the CI `test:e2e` file list
+ * (`packages/app/package.json` dispatches a fixed subset for PR-tier runs);
+ * generic `bunx playwright test` invocations run it for pre-push coverage,
+ * and the nightly E2E stability surveillance picks up flakes.
  */
 
 import { randomUUID } from 'node:crypto';

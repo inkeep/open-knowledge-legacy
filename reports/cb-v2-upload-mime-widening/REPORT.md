@@ -95,7 +95,9 @@ export const ALLOWED_AUDIO_MIME_TYPES = [
   'audio/mpeg',
   'audio/wav',
   'audio/ogg',
-  'audio/webm',
+  // NOTE: `audio/webm` is intentionally absent — file-type returns
+  // `video/webm` for every WebM container, so `audio/webm` would
+  // never match. Same dead-code class as the SKIP entries below.
   // additions
   'audio/mp4',     // M4A — NOT 'audio/x-m4a' (dead string)
   'audio/aac',
