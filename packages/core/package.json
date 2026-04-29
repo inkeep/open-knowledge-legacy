@@ -80,6 +80,8 @@
     "@types/mdast": "^4.0.4",
     "@types/node": "^25.6.0",
     "@types/unist": "^3.0.3",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "commonmark.json": "^0.31.0",
     "fast-check": "^4.6.0",
     "mdast-util-to-hast": "^13.2.1",

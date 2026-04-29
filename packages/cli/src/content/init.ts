@@ -52,22 +52,29 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # --- Server ----------------------------------------------------------------
 # HTTP/WebSocket listener for the Hocuspocus server + static React app.
 #
+# host: bind interface for the HTTP server (\`localhost\` for loopback;
+# \`0.0.0.0\` for LAN). Override per-process with the \`HOST\` env var or the
+# \`--host\` CLI flag. Port is per-machine only — set via \`PORT\` env or the
+# \`--port\` CLI flag (no schema field).
+#
 # openOnAgentEdit: when true, the browser opens automatically the first time
 # an agent writes to the knowledge base in this server session. Debounced to
 # one open per boot. Useful for pairing with Claude Code — you see the edit
 # land live. Leave false for headless/CI.
 #
 # server:
-#   port: 3000
 #   host: localhost
 #   openOnAgentEdit: false
 
 
-# --- Persistence -----------------------------------------------------------
-# How aggressively CRDT updates are flushed to disk.
-# persistence:
-#   debounceMs: 2000
-#   maxDebounceMs: 10000
+# --- Appearance ------------------------------------------------------------
+# Theme + default editor mode for new docs. Both default UNSET so the
+# existing localStorage cache (\`ok-theme-v1\` / \`ok-editor-mode-v1\`) keeps
+# powering FOUC-free first paint until you explicitly write here.
+#
+# appearance:
+#   theme: system            # 'light' | 'dark' | 'system'
+#   editorModeDefault: wysiwyg  # 'wysiwyg' | 'source'
 
 
 # --- Folders: per-folder frontmatter defaults -------------------------------

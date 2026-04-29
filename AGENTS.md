@@ -153,7 +153,7 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 | E2E         | Playwright                                    | `bun run test:e2e` (CI subset) or `bunx playwright test` |
 | Ad-hoc      | Fuzz / stress (architectural residual)        | `bun run measure:fuzz` / `measure:stress`                |
 
-**Integration harness** at `packages/app/tests/integration/test-harness.ts` exposes `createTestServer()`, `createTestClient(port, docName?, opts?)`, `createTestClients(port, {count})`, `assertAllConverged(clients, {timeout?})`, `attachBridgeInvariantWatcher(doc)`, `createItemOriginProbe(ytext, {trackedOrigins})`, `getServerState(server, docName)`, `awaitDocQuiescence(doc)`. Use per-test docNames (auto-generated `test-${randomUUID()}`) so tests run concurrently. Network control primitives: `network-control.ts` — `ControllableWebSocket`, `client.pauseSync()`/`resumeSync()` via `syncControl: true`.
+**Integration harness** at `packages/app/tests/integration/test-harness.ts` exposes `createTestServer`/`createTestClient(s)`/`assertAllConverged`/`attachBridgeInvariantWatcher`/`createItemOriginProbe`/`getServerState`/`awaitDocQuiescence`. Use per-test docNames (auto-generated `test-${randomUUID()}`) so tests run concurrently. Network control: `network-control.ts` (`ControllableWebSocket`, `client.pauseSync()`/`resumeSync()` via `syncControl: true`).
 
 **Playwright policy.** Runs on every PR. `failOnFlakyTests: false` globally — persistent-flake detection is the nightly's job. Each test creates its own unique doc via `POST /api/create-page` and seeds via `POST /api/agent-write-md` with explicit `docName` + `position: 'replace'`. **STOP: do not hardcode `'test-doc'` in Playwright tests** — workers run in parallel and shared names cause cross-worker CRDT corruption. Reference pattern: `docs-open.e2e.ts`'s `seedDocs` helper.
 
@@ -198,6 +198,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
 - **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates (stale IDB + new clientID → markers twice). Auth-token Zod-validated via `parseHocuspocusAuthToken`. Ref: `provider-pool.ts`.
 - **No OK sidecars in user-content paths.** OK state lives in `<contentDir>/.open-knowledge/`; no `.frontmatter.yml`, no per-doc sidecars, no `_meta.json` / `_index.md`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](specs/2026-04-25-config-edit-paths/SPEC.md).
+- **`ConfigSchema` leaves: `.register(fieldRegistry, ...)` BEFORE `.default()`/`.optional()`/`.nullable()`.** Zod v4 wrappers drop `_zod.parent`; metadata binds to the wrapper, not the leaf. Use the `@inkeep/open-knowledge-core` singleton; coverage test enforces.
 
 ## WARN rules
 
@@ -245,13 +246,9 @@ Full pipeline design, file-by-file mapping, and handler tier listings: [`ARCHITE
 
 **Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
 
-**Invariants I1-I11** (PBTs in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`; I11 at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts`):
+**Invariants I1-I11** (PBTs in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`; I11 at `packages/core/src/markdown/autolink-void-html-guard.precision.test.ts`) cover identity, character preservation, normalization canonicality, idempotence, Layer A===B, multi-client preservation, cross-path consistency, crash resistance + guard completeness, and R23 guard precision. Six handler-specific PBTs (emphasis, backslash, list-nesting, html-block-edge, link-edge, image-edge) target bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
 
-- I1 Identity · I2 Character preservation · I3 Normalization canonicality · I4 Idempotence · I5 Layer A===B · I6 Multi-client preservation · I7 Cross-path consistency · I8/I9/I10 Crash resistance + guard completeness · I11 R23 guard precision
-
-Six handler-specific PBTs alongside (emphasis, backslash, list-nesting, html-block-edge, link-edge, image-edge) target bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
-
-**Irreducible gaps (NG1-NG11).** Blank-line count normalizes (NG1); GFM table column widths normalize (NG2); math/footnotes/alerts outside extension set not preserved (NG3); no storage-layer HTML sanitization (NG4); entity refs decode to literal characters (NG5); non-ambiguous `\foo` backslashes drop on round-trip (NG6); MDX `---` inside JSX parses as thematicBreak (NG7); block GFM inside inline `<Note>` flattens (NG8); U+E000–U+E004 PUA codepoints reserved as R23 guard sentinels (NG9); doc-start `---` normalizes to `***` (NG10); docs of only ignore-typed mdast get a synthesized empty paragraph (NG11). Full details: spec §§ and inline code docs.
+**Irreducible gaps (NG1-NG11).** Round-trip drops blank-line counts, GFM table column widths, math/footnotes/alerts, non-ambiguous `\foo` backslashes; storage never sanitizes HTML; entity refs decode literal; MDX `---` inside JSX is thematicBreak; block GFM inside inline `<Note>` flattens; U+E000–U+E004 PUA reserved as R23 guard sentinels; doc-start `---` → `***`; ignore-typed-only docs get a synthesized empty paragraph. Full enumeration: [`specs/2026-04-16-markdown-pipeline-engineering-health/SPEC.md`](specs/2026-04-16-markdown-pipeline-engineering-health/SPEC.md).
 
 ## Code style
 

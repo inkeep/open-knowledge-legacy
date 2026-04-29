@@ -101,21 +101,16 @@ export function loadConfig(cwd?: string): LoadConfigResult {
  * Apply process-level env overrides that affect config semantics. Kept narrow
  * on purpose: only values that already override the loaded config in the CLI
  * entrypoint belong here.
+ *
+ * `PORT` is intentionally NOT handled here — per D29 `server.port` is no
+ * longer a schema field; the `start` command resolves port directly from
+ * `--port` flag → `PORT` env → bootServer kernel-allocation.
  */
 function applyProcessEnvConfigOverrides(
   config: Config,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
   let next = config;
-  if (env.PORT) {
-    next = {
-      ...next,
-      server: {
-        ...next.server,
-        port: Number(env.PORT),
-      },
-    };
-  }
   if (env.HOST) {
     next = {
       ...next,

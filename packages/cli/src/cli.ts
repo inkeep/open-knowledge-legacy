@@ -63,20 +63,16 @@ program
     }
     const { config } = loadConfig(cwd);
 
-    // CLI flags override config
+    // CLI flags override config (host only — `server.port` is no longer a
+    // schema field per D29; port flows from `--port` / `PORT` env directly
+    // into `bootStartServer` at the start command's action site).
     const startOpts =
       thisCommand.args.length === 0 ? opts : (thisCommand.commands[0]?.opts() ?? {});
-    if (startOpts.port !== undefined) {
-      config.server.port = Number(startOpts.port);
-    }
     if (startOpts.host !== undefined) {
       config.server.host = startOpts.host as string;
     }
 
     // ENV overrides
-    if (process.env.PORT) {
-      config.server.port = Number(process.env.PORT);
-    }
     if (process.env.HOST) {
       config.server.host = process.env.HOST;
     }

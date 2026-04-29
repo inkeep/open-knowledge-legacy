@@ -27,6 +27,11 @@ export {
   type WriteScope,
   WriteScopeSchema,
 } from './config/errors.ts';
+export {
+  type FieldMeta,
+  fieldRegistry,
+  getFieldMeta,
+} from './config/field-registry.ts';
 export type { Err, Ok, Result } from './config/result.ts';
 // Config (config-edit-paths spec — D44/D50/FR-31, US-001)
 // Schema, error envelope, and Result helper. Browser+node compatible.

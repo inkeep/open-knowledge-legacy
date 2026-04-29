@@ -46,25 +46,24 @@ describe('loadConfig', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
 
-    // server — default 0 means kernel-allocated port
-    expect(config.server.port).toBe(0);
+    // server — host has a default; port is NOT a schema field per D29
     expect(config.server.host).toBe('localhost');
-
-    // persistence
-    expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.server.openOnAgentEdit).toBe(false);
 
     // mcp auto-spawn enabled by default
     expect(config.mcp.autoStart).toBe(true);
+
+    // appearance defaults to UNSET per D55
+    expect(config.appearance.theme).toBeUndefined();
+    expect(config.appearance.editorModeDefault).toBeUndefined();
   });
 
   test('empty YAML file → all defaults resolve', () => {
     writeWorkspaceConfig('');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.persistence.debounceMs).toBe(2000);
     expect(config.mcp.autoStart).toBe(true);
   });
 
@@ -75,22 +74,26 @@ describe('loadConfig', () => {
 #   include:
 #     - "**/*.md"
 # server:
-#   port: 3000
-# persistence:
-#   debounceMs: 2000
+#   host: localhost
 `);
     const { config, sources } = loadConfig(testDir);
 
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
   });
 
-  test('explicit server.port: 3000 in config.yml → 3000 (backward compat)', () => {
-    writeWorkspaceConfig('server:\n  port: 3000\n');
+  test('stale dropped fields (sync.*, persistence.debounceMs, server.port) load via loose-mode (D34)', () => {
+    // Per D29 these fields were removed from the schema. Per D34 every
+    // z.object → z.looseObject so users mid-upgrade aren't broken; the
+    // codemod (`ok config migrate`) is the proactive cleanup path.
+    writeWorkspaceConfig(
+      'sync:\n  pushIntervalSeconds: 30\npersistence:\n  debounceMs: 2000\nserver:\n  port: 3000\n  host: example.dev\n',
+    );
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(3000);
+    // Known field still resolves; unknown keys pass through silently.
+    expect(config.server.host).toBe('example.dev');
   });
 
   test('mcp.autoStart: false disables auto-spawn', () => {
@@ -102,34 +105,33 @@ describe('loadConfig', () => {
   // ── Workspace overrides ─────────────────────────────────────────────
 
   test('workspace config overrides a single field, other defaults preserved', () => {
-    writeWorkspaceConfig('server:\n  port: 5000\n');
+    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n');
 
     const { config, sources } = loadConfig(testDir);
 
     expect(sources).toHaveLength(1);
-    expect(config.server.port).toBe(5000);
+    expect(config.server.host).toBe('0.0.0.0');
     // sibling default preserved
-    expect(config.server.host).toBe('localhost');
+    expect(config.server.openOnAgentEdit).toBe(false);
     // other sections untouched
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.persistence.debounceMs).toBe(2000);
   });
 
   test('workspace config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
 server:
-  port: 8080
   host: 0.0.0.0
-persistence:
-  debounceMs: 5000
+  openOnAgentEdit: true
+mcp:
+  autoStart: false
 `);
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(8080);
     expect(config.server.host).toBe('0.0.0.0');
-    expect(config.persistence.debounceMs).toBe(5000);
+    expect(config.server.openOnAgentEdit).toBe(true);
+    expect(config.mcp.autoStart).toBe(false);
     // sibling default preserved within section
-    expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.mcp.tools.search.maxResults).toBe(50);
   });
 
   test('custom content include/exclude patterns', () => {
@@ -148,28 +150,28 @@ content:
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
-    writeWorkspaceConfig('persistence:\n  maxDebounceMs: 30000\n');
+    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: 25\n');
 
     const { config } = loadConfig(testDir);
 
-    expect(config.persistence.maxDebounceMs).toBe(30000);
-    expect(config.persistence.debounceMs).toBe(2000); // sibling preserved
+    expect(config.mcp.tools.search.maxResults).toBe(25);
+    expect(config.mcp.tools.read_document.historyDepth).toBe(5); // sibling preserved
   });
 
   // ── Validation ──────────────────────────────────────────────────────
 
-  test('invalid value type throws descriptive error', () => {
-    writeWorkspaceConfig('server:\n  port: not-a-number\n');
+  test('invalid host type throws descriptive error', () => {
+    writeWorkspaceConfig('server:\n  host: 12345\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('port out of range throws', () => {
-    writeWorkspaceConfig('server:\n  port: 99999\n');
+  test('appearance.theme outside the enum throws', () => {
+    writeWorkspaceConfig('appearance:\n  theme: midnight\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('negative persistence value throws', () => {
-    writeWorkspaceConfig('persistence:\n  debounceMs: -1\n');
+  test('negative mcp.tools.search.maxResults throws', () => {
+    writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -1\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
@@ -185,21 +187,21 @@ content:
     const { config } = loadConfig(testDir);
 
     // Still resolves defaults — no crash
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
   });
 
   test('unknown nested keys within known sections are silently ignored', () => {
-    writeWorkspaceConfig('server:\n  port: 4000\n  unknownKey: hello\n');
+    writeWorkspaceConfig('server:\n  host: 0.0.0.0\n  unknownKey: hello\n');
     const { config } = loadConfig(testDir);
 
-    expect(config.server.port).toBe(4000);
+    expect(config.server.host).toBe('0.0.0.0');
   });
 
   test('malformed YAML does not crash — returns defaults', () => {
-    writeWorkspaceConfig('server:\n  port: [invalid yaml');
+    writeWorkspaceConfig('server:\n  host: [invalid yaml');
     // Malformed YAML is caught by the loader and warned, falls back to defaults
     const { config } = loadConfig(testDir);
-    expect(config.server.port).toBe(0);
+    expect(config.server.host).toBe('localhost');
   });
 });
 
@@ -228,7 +230,10 @@ describe('createProjectConfigResolver', () => {
   });
 
   test('applies process env overrides on top of per-cwd config', async () => {
-    writeWorkspaceConfig('server:\n  host: localhost\n  port: 3000\n');
+    // Per D29 `server.port` is no longer a schema field; the resolver
+    // applies HOST env override only. PORT is handled at the start
+    // command's action (bootStartServer opts.port → bootServer).
+    writeWorkspaceConfig('server:\n  host: localhost\n');
     const startupConfig = loadConfig(testDir).config;
     const resolveConfig = createProjectConfigResolver({
       startupCwd: testDir,
@@ -236,12 +241,11 @@ describe('createProjectConfigResolver', () => {
       env: {
         ...process.env,
         HOST: '0.0.0.0',
-        PORT: '4545',
       },
     });
 
     await expect(resolveConfig()).resolves.toMatchObject({
-      server: { host: '0.0.0.0', port: 4545 },
+      server: { host: '0.0.0.0' },
     });
   });
 
