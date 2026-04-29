@@ -19,6 +19,17 @@ export {
   applyFolderRulesUpsert,
   type FolderRuleUpsert,
 } from './config/apply-folder-rules-upsert.ts';
+// UI ConfigBinding (US-008 — D5 reshape Part A / FR-33 / D48 / D59).
+// Browser+node compatible — no Node deps; structural ConfigDocProvider type
+// keeps `@hocuspocus/provider` out of core's runtime deps.
+export {
+  bindConfigDoc,
+  type ConfigBinding,
+  type ConfigBindingPatchResult,
+  type ConfigBindingPatchSuccess,
+  type ConfigDocProvider,
+  type Unsubscribe,
+} from './config/bind-config-doc.ts';
 export {
   type ConfigIssue,
   ConfigIssueSchema,

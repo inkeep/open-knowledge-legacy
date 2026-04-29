@@ -20,11 +20,12 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { type Document, isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
+import { isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
 import { OK_DIR } from '../constants/ok-dir.ts';
-import type { ConfigIssue, ConfigValidationError } from './errors.ts';
+import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
+import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
 /** Filename of the workspace + user config under `.open-knowledge/`. */
 const CONFIG_FILENAME = 'config.yml';
@@ -120,71 +121,6 @@ export function resolveConfigPath(
   }
   const absCwd = isAbsolute(cwd) ? cwd : resolve(cwd);
   return resolve(absCwd, OK_DIR, CONFIG_FILENAME);
-}
-
-/**
- * Walk a deep-partial patch tree and apply each leaf to the YAML Document.
- *
- * Null values clear the field via `deleteIn`. Undefined keys are skipped
- * (deep-partial semantics — absence means "leave alone"). Returns the
- * dotted paths of every leaf that was touched.
- */
-function applyPatchToDocument(doc: Document.Parsed<ParsedNode>, patch: ConfigPatch): string[] {
-  const applied: string[] = [];
-
-  function walk(value: unknown, path: (string | number)[]): void {
-    if (value === undefined) return;
-    if (value === null) {
-      // RFC 7396 spirit: null = delete
-      doc.deleteIn(path);
-      applied.push(path.join('.'));
-      return;
-    }
-    if (Array.isArray(value)) {
-      // Arrays replace wholesale (RFC 7396 §1) — folder rules etc. carry
-      // their own identity (`match` field) but cross-scope merging is a
-      // loader-side concern, not a write-time concern.
-      doc.setIn(path, value);
-      applied.push(path.join('.'));
-      return;
-    }
-    if (typeof value === 'object') {
-      // Recursive merge for plain objects.
-      for (const [key, subValue] of Object.entries(value)) {
-        walk(subValue, [...path, key]);
-      }
-      return;
-    }
-    // Scalar leaf: set the value directly.
-    doc.setIn(path, value);
-    applied.push(path.join('.'));
-  }
-
-  for (const [key, value] of Object.entries(patch)) {
-    walk(value, [key]);
-  }
-
-  return applied;
-}
-
-/**
- * Convert a Zod issue to a wire-safe `ConfigIssue`. Symbols in
- * `issue.path` (`PropertyKey[]`) are stringified — they don't survive JSON
- * serialization and break consumer rendering otherwise.
- *
- * Loosely typed `issue` because Zod v4's `$ZodIssue` is a discriminated
- * union with per-variant fields; we only need the three load-bearing
- * properties (`path`, `message`, `code`).
- */
-function toConfigIssue(issue: { path: PropertyKey[]; message: string; code: string }): ConfigIssue {
-  const path = issue.path.map((seg) =>
-    typeof seg === 'symbol' ? String(seg) : (seg as string | number),
-  );
-  return {
-    path,
-    message: issue.message,
-    issueCode: issue.code,
-  };
 }
 
 function err(error: ConfigValidationError): Err<ConfigValidationError> {
