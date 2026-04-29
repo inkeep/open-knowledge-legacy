@@ -25,7 +25,7 @@
  * not a concern — error path stays inside the React boundary.
  */
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 interface MermaidProps {
   chart?: string;
@@ -70,7 +70,6 @@ export function MermaidView(props: MermaidProps) {
   const chart = props.chart ?? '';
   const reactId = useId();
   const renderId = `mermaid-${reactId.replace(/:/g, '_')}`;
-  const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<RenderState>({ status: 'idle', svg: '', error: '' });
 
   useEffect(() => {
@@ -113,7 +112,6 @@ export function MermaidView(props: MermaidProps) {
       <div
         className="mermaid mermaid-placeholder"
         data-component-type="mermaid"
-        ref={containerRef}
         {...(props.id ? { id: props.id } : {})}
       >
         <span className="mermaid-empty"> </span>
@@ -127,7 +125,6 @@ export function MermaidView(props: MermaidProps) {
         className="mermaid mermaid-error"
         data-component-type="mermaid"
         title={state.error}
-        ref={containerRef}
         {...(props.id ? { id: props.id } : {})}
       >
         <pre className="mermaid-error-source">{chart}</pre>
@@ -139,7 +136,6 @@ export function MermaidView(props: MermaidProps) {
     <div
       className="mermaid mermaid-ready"
       data-component-type="mermaid"
-      ref={containerRef}
       {...(props.id ? { id: props.id } : {})}
       // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid.render with securityLevel:'strict' returns a sanitized SVG string with no script execution; this is the documented integration path.
       dangerouslySetInnerHTML={{ __html: state.svg }}

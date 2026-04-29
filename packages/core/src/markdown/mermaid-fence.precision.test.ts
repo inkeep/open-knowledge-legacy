@@ -38,6 +38,9 @@ describe('mermaid fence (` ```mermaid `) → MermaidFence compat', () => {
     const json = mdManager.parse('```mermaid\ngraph TD\n  A-->B\n  A-->C\n```\n');
     const node = findInJson(json, isComponent('MermaidFence'));
     expect(node).toBeDefined();
+    expect((node?.attrs?.props as Record<string, unknown>)?.chart).toBe(
+      'graph TD\n  A-->B\n  A-->C',
+    );
   });
 
   test('mermaid fence round-trips back to ` ```mermaid `…``` ` (γ pristine)', () => {
