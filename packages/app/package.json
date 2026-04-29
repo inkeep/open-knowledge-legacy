@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge-app",
-  "version": "0.0.4",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -20,6 +20,10 @@
     "measure:stress": "bash scripts/measure-stress.sh",
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
+    "test:visual": "playwright test --config playwright.visual.config.ts",
+    "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
+    "test:perf": "bun test tests/stress/component-blocks.perf.test.ts",
+    "test:a11y": "playwright test --config playwright.a11y.config.ts",
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
@@ -34,7 +38,7 @@
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1.15 MB",
+      "limit": "1.2 MB",
       "gzip": true
     },
     {
@@ -101,6 +105,7 @@
     "react-dom": "^19.2.5",
     "react-error-boundary": "^6.0.0",
     "react-force-graph-2d": "^1.29.1",
+    "react-medium-image-zoom": "^5.4.3",
     "react-resizable-panels": "^4.9.0",
     "shadcn": "^4.2.0",
     "sonner": "^2.0.7",
@@ -111,16 +116,18 @@
     "ws": "^8.20.0",
     "y-codemirror.next": "^0.3.5",
     "y-indexeddb": "9.0.12",
+    "y-prosemirror": "1.3.7",
     "yaml": "^2.8.3",
     "yjs": "^13.6.30",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.2",
+    "@axe-core/playwright": "^4.11.1",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
     "@size-limit/preset-app": "^12.1.0",
+    "@tailwindcss/postcss": "^4.2.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",

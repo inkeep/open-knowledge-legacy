@@ -168,6 +168,14 @@ declare module 'mdast' {
 declare module 'mdast-util-mdx-jsx' {
   interface MdxJsxFlowElementData {
     sourceRaw?: string;
+    /**
+     * Compat-descriptor escape hatch for source forms whose markdown emit
+     * is raw HTML wrapping a markdown body (e.g., HtmlDetailsAccordion's
+     * `<details>...</details>`). When set, the to-markdown handler emits
+     * `${opener}\n\n${state.containerFlow(children)}\n\n${closer}` instead of
+     * the default `<Name attrs>...</Name>` MDX-JSX reconstruction.
+     */
+    htmlBoundary?: { opener: string; closer: string };
   }
   interface MdxJsxTextElementData {
     sourceRaw?: string;

@@ -1,0 +1,541 @@
+---
+title: Wildcard + rawMdxFallback showcase
+cluster: showcase
+---
+# Unknown components + malformed MDX
+
+Two fallback paths keep content editable when the shipped descriptor doesn't match the authored name (wildcard) or the MDX doesn't parse (rawMdxFallback). Precedent #30 ("all user content visible and editable") means no content silently disappears.
+
+## Wildcard fallback — cut fumadocs descriptors
+
+These were part of the PR #165 17-descriptor manifest but cut in the 5-pack narrowing. They now route through the wildcard `'*'` descriptor — rendered as an `<UnknownComponent>` chrome with an embedded CodeMirror source editor. Bytes preserved exactly; user can rename or rewrite in place.
+
+<Tabs>
+<Tab label="First">This was a fumadocs Tabs/Tab pair in the old manifest.</Tab>
+
+<Tab label="Second">Both names are unregistered; the outer wraps the inner via the wildcard's `content: 'block*'`.
+
+</Tabs>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</Step>
+</Steps>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</Step>
+</Steps>
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Cards>
+
+<Card title="One" />
+
+<Card title="Two" />
+
+<C
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B[End]
+</Mermaid>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B[End]
+</Mermaid>
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+iles>
+
+17-descriptor world.</Banner>
+
+<Files>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+<In
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+## rawMdxFallback — malformed MDX
+
+When MDX syntax is structurally broken (unclosed tag, invalid expression), the parser emits a `rawMdxFallback` node — a raw-source CodeMirror editor. User bytes preserved verbatim; user can fix in place.
+
+Unclosed tag (remove the fix comment to see the fallback kick in):
+
+<UnclosedTag>
+This opening tag has no closer — the parser's R13 recovery path returns a rawMdxFallback with these bytes exact.
+
+Half-typed expression:
+
+\{ 1 + x <-- invalid MDX expression; rawMdxFallback catches it
+
+## Round-trip check
+
+Open this file in source mode (editor header toggle). Every unregistered-name block above should appear in source verbatim — no information lost. Edit the MDX source, switch back to WYSIWYG, and each block re-renders through the wildcard with your edits.
+
+# Unknown components + malformed MDX
+
+Two fallback paths keep content editable when the shipped descriptor doesn't match the authored name (wildcard) or the MDX doesn't parse (rawMdxFallback). Precedent #30 ("all user content visible and editable") means no content silently disappears.
+
+## Wildcard fallback — cut fumadocs descriptors
+
+These were part of the PR #165 17-descriptor manifest but cut in the 5-pack narrowing. They now route through the wildcard `'*'` descriptor — rendered as an `<UnknownComponent>` chrome with an embedded CodeMirror source editor. Bytes preserved exactly; user can rename or rewrite in place.
+
+<Tabs>
+<Tab label="First">This was a fumadocs Tabs/Tab pair in the old manifest.</Tab>
+
+<Tab label="Second">Both names are unregistered; the outer wraps the inner via the wildcard's `content: 'block*'`.
+
+</Tabs>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</
+
+<Steps>
+<Step>Authored as a Steps container.</Step>
+<Step>Second step.</Step>
+<Step>Third step.<
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Cards>
+
+<Card title="One" />
+
+<Card title="Two" />
+
+<C
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B\[End]
+</Mermaid
+
+<Folder name="s
+
+<Mermaid>
+graph LR
+A\[Start] --
+
+<Mermaid>
+graph LR
+  A[Start] 
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+> B[End]
+</Mermaid>
+
+er.mp3" />
+
+nlineTOC />
+
+B[End]
+</Mermaid>
+
+raph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+rmaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+madocs Banner in the 17-descriptor world.</Banner>
+
+<Files>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+<InlineTOC />
+
+<AudioPlaceholder src="placeholder.mp3" />
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+## rawMdxFallback — malformed MDX
+
+When MDX syntax is structurally broken (unclosed tag, invalid expression), the parser emits a `rawMdxFallback` node — a raw-source CodeMirror editor. User bytes preserved verbatim; user can fix in place.
+
+Unclosed tag (remove the fix comment to see the fallback kick in):
+
+<UnclosedTag>
+This opening tag has no closer — the parser's R13 recovery path returns a rawMdxFallback with these bytes exact.
+
+Half-typed expression:
+
+\{ 1 + x <-- invalid MDX expression; rawMdxFallback catches it
+
+## Round-trip check
+
+Open this file in source mode (editor header toggle). Every unregistered-name block above should appear in source verbatim — no information lost. Edit the MDX source, switch back to WYSIWYG, and each block re-renders through the wildcard with your edits.
+
+# Unknown components + malformed MDX
+
+Two fallback paths keep content editable when the shipped descriptor doesn't match the authored name (wildcard) or the MDX doesn't parse (rawMdxFallback). Precedent #30 ("all user content visible and editable") means no content silently disappears.
+
+## Wildcard fallback — cut fumadocs descriptors
+
+These were part of the PR #165 17-descriptor manifest but cut in the 5-pack narrowing. They now route through the wildcard `'*'` descriptor — rendered as an `<UnknownComponent>` chrome with an embedded CodeMirror source editor. Bytes preserved exactly; user can rename or rewrite in place.
+
+<Tabs>
+  <Tab label="First">This was a fumadocs Tabs/Tab pair in the old manifest.</Tab>
+  <Tab label="Second">Both names are unregistered; the outer wraps the inner via the wildcard's `content: 'block*'`.</Tabs>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</Step>
+</Steps>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</Step>
+</Steps>
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Cards>
+
+<Card title="One" />
+<Card title="Two" />
+
+<C
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B[End]
+</Mermaid>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B[End]
+</Mermaid>
+
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+iles>
+
+17-descriptor world.</Banner>
+
+<Files>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+<In
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+## rawMdxFallback — malformed MDX
+
+When MDX syntax is structurally broken (unclosed tag, invalid expression), the parser emits a `rawMdxFallback` node — a raw-source CodeMirror editor. User bytes preserved verbatim; user can fix in place.
+
+Unclosed tag (remove the fix comment to see the fallback kick in):
+
+<UnclosedTag>
+This opening tag has no closer — the parser's R13 recovery path returns a rawMdxFallback with these bytes exact.
+
+Half-typed expression:
+
+\{ 1 + x <-- invalid MDX expression; rawMdxFallback catches it
+
+## Round-trip check
+
+Open this file in source mode (editor header toggle). Every unregistered-name block above should appear in source verbatim — no information lost. Edit the MDX source, switch back to WYSIWYG, and each block re-renders through the wildcard with your edits.
+
+# Unknown components + malformed MDX
+
+Two fallback paths keep content editable when the shipped descriptor doesn't match the authored name (wildcard) or the MDX doesn't parse (rawMdxFallback). Precedent #30 ("all user content visible and editable") means no content silently disappears.
+
+## Wildcard fallback — cut fumadocs descriptors
+
+These were part of the PR #165 17-descriptor manifest but cut in the 5-pack narrowing. They now route through the wildcard `'*'` descriptor — rendered as an `<UnknownComponent>` chrome with an embedded CodeMirror source editor. Bytes preserved exactly; user can rename or rewrite in place.
+
+<Tabs>
+<Tab label="First">This was a fumadocs Tabs/Tab pair in the old manifest.</Tab>
+
+<Tab label="Second">Both names are unregistered; the outer wraps the inner via the wildcard's `content: 'block*'`.
+
+</Tabs>
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.</
+
+<Steps>
+  <Step>Authored as a Steps container.</Step>
+  <Step>Second step.</Step>
+  <Step>Third step.<
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Card title="Card example" href="https://example.com">
+  The fumadocs `<Card>` primitive — cut in US-003. Still authored-as-preserved.
+</Card>
+
+<Cards>
+
+<Card title="One" />
+<Card title="Two" />
+
+<C
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+tart] --> B[End]
+</Mermaid
+
+<Folder name="s
+
+<Mermaid>
+graph LR
+  A[Start] --
+
+
+
+
+
+<Mermaid>
+graph LR
+  A[Start] 
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+> B[End]
+</Mermaid>
+
+er.mp3" />
+
+nlineTOC />
+
+B[End]
+</Mermaid>
+
+raph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+rmaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+madocs Banner in the 17-descriptor world.</Banner>
+
+<Files>
+
+<Folder name="src">
+
+<File nam
+
+<I
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+</Folder>
+
+</Files>
+
+<InlineTOC />
+
+<AudioPlaceholder src="placeholder.mp3" />
+
+<Mermaid>
+graph LR
+  A[Start] --> B[End]
+</Mermaid>
+
+<ImageZoom src="https://picsum.photos/id/12/400/300" />
+
+## rawMdxFallback — malformed MDX
+
+When MDX syntax is structurally broken (unclosed tag, invalid expression), the parser emits a `rawMdxFallback` node — a raw-source CodeMirror editor. User bytes preserved verbatim; user can fix in place.
+
+Unclosed tag (remove the fix comment to see the fallback kick in):
+
+<UnclosedTag>
+This opening tag has no closer — the parser's R13 recovery path returns a rawMdxFallback with these bytes exact.
+
+Half-typed expression:
+
+\{ 1 + x <-- invalid MDX expression; rawMdxFallback catches it
+
+## Round-trip check
+
+Open this file in source mode (editor header toggle). Every unregistered-name block above should appear in source verbatim — no information lost. Edit the MDX source, switch back to WYSIWYG, and each block re-renders through the wildcard with your edits.

@@ -36,6 +36,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import { loadNgPinnedCases } from '../../../core/src/markdown/fixtures/index.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -79,4 +80,33 @@ describe('NG11 — ignore-typed-only doc triggers ensureNonEmptyDoc synthesis (b
     const output = mdManager.serialize(pm);
     expect(output).toBe('');
   });
+});
+
+describe('NG12 — edited-node quoting normalization (idempotence probe)', () => {
+  // 10 probe cases lifted from
+  // `specs/2026-04-14-component-blocks-v2/evidence/serialize-roundtrip-probe.md`.
+  // Each case asserts idempotence: serialize(parse(serialize(parse(x)))) ===
+  // serialize(parse(x)). Cases where `expectedOutput` is non-null also assert
+  // that canonical shape as a byte-identity pin. Four cases are highlighted —
+  // they have the highest drift risk profile (library-specific quoting,
+  // member-access, flush-left handler contract) and a silent change would
+  // surface an architectural regression, not just a cosmetic one.
+  //
+  // STRICT byte-identity: `===` only. No normalize() helpers. Any silent
+  // change to the canonical output fails loudly here.
+  const cases = loadNgPinnedCases();
+
+  for (const c of cases) {
+    const label = c.highlighted ? `${c.id} ⭐ ${c.name}` : `${c.id} ${c.name}`;
+    test(`${label} — idempotent ${c.expectedOutput ? '+ pinned' : ''}`, () => {
+      const firstOutput = mdManager.serialize(mdManager.parse(c.input));
+      const secondOutput = mdManager.serialize(mdManager.parse(firstOutput));
+      if (c.idempotent) {
+        expect(secondOutput).toBe(firstOutput);
+      }
+      if (c.expectedOutput !== null) {
+        expect(firstOutput).toBe(c.expectedOutput);
+      }
+    });
+  }
 });

@@ -1264,6 +1264,11 @@ export async function createRestartableServer(
     maxDebounce: options.maxDebounce ?? 1000,
     gitEnabled: options.gitEnabled ?? false,
     enableTestRoutes: true,
+    // Mirror createTestServer's opt-out — restart tests don't exercise the
+    // manifest gate; the second boot would otherwise stamp a fresh manifest
+    // on the reused contentDir and silently couple the suite to whatever
+    // STATE_SCHEMA_VERSION ships.
+    skipStateManifestCheck: true,
     ...(options.commitDebounceMs !== undefined
       ? { commitDebounceMs: options.commitDebounceMs }
       : {}),

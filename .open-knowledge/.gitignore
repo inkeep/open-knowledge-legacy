@@ -1,3 +1,16 @@
+# Per-machine runtime state — never commit. All Open Knowledge ignore rules
+# live here so the project root .gitignore stays free of OK-internal paths.
+
+# Derived caches
 cache/
+
+# Per-process locks
 server.lock
 ui.lock
+
+# Sync watermarks + per-machine principal identity
+sync-state.json
+principal.json
+
+# MCP spawn diagnostics
+last-spawn-error.log

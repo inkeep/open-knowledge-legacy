@@ -232,6 +232,7 @@ interface InitCommandOptions {
 
 interface InitCommandResult {
   contentCreated: string[];
+  contentUpdated: string[];
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
@@ -650,6 +651,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
     const fallbackPath = EDITOR_TARGETS.claude.configPath(cwd, options.home);
     return {
       contentCreated: [],
+      contentUpdated: [],
       contentSkipped: [],
       editors: [],
       legacyProjectConfigs: [],
@@ -773,6 +775,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
 
   return {
     contentCreated: contentResult.created,
+    contentUpdated: contentResult.updated,
     contentSkipped: contentResult.skipped,
     editors: editorResults,
     legacyProjectConfigs,
@@ -827,9 +830,14 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
-  if (result.contentCreated.length > 0) {
+  if (result.contentCreated.length > 0 || result.contentUpdated.length > 0) {
     lines.push(`Content scaffolded at ${okDir}/`);
-    lines.push(`  Created: ${result.contentCreated.join(', ')}`);
+    if (result.contentCreated.length > 0) {
+      lines.push(`  Created: ${result.contentCreated.join(', ')}`);
+    }
+    if (result.contentUpdated.length > 0) {
+      lines.push(`  Updated: ${result.contentUpdated.join(', ')}`);
+    }
   } else {
     lines.push(`Content already present at ${okDir}/`);
   }

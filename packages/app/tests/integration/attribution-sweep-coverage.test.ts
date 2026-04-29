@@ -25,6 +25,8 @@ const REQUIRED_HANDLERS = [
   'handleRenamePath',
   'handleDeletePath',
   'handleUploadImage',
+  'handleUploadVideo',
+  'handleUploadAudio',
 ];
 
 /**

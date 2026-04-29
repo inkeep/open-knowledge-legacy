@@ -480,7 +480,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     navigationPath: activeNavigationPath,
   } = resolveFileTreeSelection(activeTarget, activeDocName);
   const activeTreePath = selectedFilePath
-    ? docNameToTreePath(selectedFilePath)
+    ? docNameToTreePath(
+        selectedFilePath,
+        documents.find((d) => d.docName === selectedFilePath)?.docExt,
+      )
     : selectedFolderPath
       ? folderPathToTreeDirectoryPath(selectedFolderPath)
       : null;
@@ -530,7 +533,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     renderRowDecoration: ({ item }) => {
       if (item.kind !== 'file') return null;
       const doc = documentsRef.current.find(
-        (entry) => docNameToTreePath(entry.docName) === item.path,
+        (entry) => docNameToTreePath(entry.docName, entry.docExt) === item.path,
       );
       if (doc?.isSymlink) {
         return {
@@ -951,7 +954,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       const treePath =
         target.kind === 'folder'
           ? folderPathToTreeDirectoryPath(target.path)
-          : docNameToTreePath(target.path);
+          : docNameToTreePath(target.path, target.docExt);
       const res = await fetch('/api/delete-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1079,7 +1082,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       >
         {deleteTarget && (
           <DeleteConfirmationDialog
-            itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
+            itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? (deleteTarget.docExt ?? '.md') : '/'}`}
             isSubmitting={busyPath === deleteTarget.path}
             onDelete={() => handleDelete(deleteTarget)}
             customDescription={

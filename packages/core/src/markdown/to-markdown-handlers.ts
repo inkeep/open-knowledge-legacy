@@ -12,6 +12,7 @@
  */
 
 import type { Nodes, Parents } from 'mdast';
+import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
 
 type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
@@ -21,7 +22,13 @@ type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
   info: Info,
 ) => string;
 
-type MdastToMarkdownHandlers = { [K in Nodes['type']]: MdastToMarkdownHandlerFor<K> };
+type MdastToMarkdownHandlers = {
+  [K in Nodes['type']]: MdastToMarkdownHandlerFor<K>;
+} & {
+  // MDX extension types (mdast-util-mdx augments Nodes but the augmentation
+  // may not be visible in all type-resolution contexts)
+  mdxJsxFlowElement: (node: Nodes, parent: Parents | undefined, state: State, info: Info) => string;
+};
 
 export const toMarkdownHandlers = {
   /**
@@ -312,27 +319,75 @@ export const toMarkdownHandlers = {
   },
 
   /**
-   * mdxJsxFlowElement: emit node.data.sourceRaw verbatim when present, so the
-   * MDX source round-trips byte-identically. Shipped as part of D7 / US-005:
-   * the PM→mdast handler (index.ts `jsxComponent`) always sets sourceRaw, so
-   * this branch is the production path. If sourceRaw is missing (e.g. a tree
-   * constructed by hand with no position-slice walker run), fall back to the
-   * default extension handler by returning it via mdxToMarkdown's registered
-   * `mdxJsxFlowElement` handler — but in practice we always have sourceRaw.
+   * mdxJsxFlowElement: 2-path handler unifying PR #171's sourceRaw-verbatim
+   * pattern (precedent #19 sub-rule (d)) with PR #165's γ dirty-reconstruct
+   * pattern (FR-5, FR-6, D7).
+   *
+   *   - Pristine path: `data.sourceRaw` is set → emit verbatim. Bit-exact
+   *     round-trip for unedited content; also the production path for
+   *     clipboard copy (the PM→mdast `jsxComponent` pristine branch) and for
+   *     any non-PR-165 caller (file parse, agent write, etc.).
+   *   - Dirty path: `data.sourceRaw` is absent; the node carries structural
+   *     `name`, `attributes`, `children`. Reconstruct flush-left (children
+   *     serialized via containerFlow without the library's 2-space-per-depth
+   *     indent, which would trigger CommonMark's indented-code-block rule at
+   *     depth 2+). Matches the fumadocs/Obsidian authoring convention.
+   *
+   * Fallback (neither path): `<${name}/>` — minimal self-closing tag, only
+   * reached if an mdxJsxFlowElement appears with neither sourceRaw nor
+   * structural children, which is outside our parse pipeline.
    */
-  mdxJsxFlowElement(node) {
-    const raw = node.data?.sourceRaw;
+  mdxJsxFlowElement(node, _parent, state, info) {
+    const mdxNode = node as unknown as MdxJsxFlowElement;
+    const raw = mdxNode.data?.sourceRaw;
     if (typeof raw === 'string') return raw;
-    // Minimal fallback: reconstruct the simplest form. Only reached if an
-    // mdxJsxFlowElement appears without position-slice coverage — outside
-    // our parse pipeline.
-    const name = node.name ?? '';
-    return `<${name}/>`;
+
+    // Compat HTML-boundary descriptors (HtmlDetailsAccordion) emit raw HTML
+    // opener/closer with a markdown body in between. Body is rendered via
+    // state.containerFlow so block markdown inside `<details>` serializes
+    // correctly. The mdast `name` and `attributes` are ignored on this path.
+    const boundary = mdxNode.data?.htmlBoundary;
+    if (boundary && typeof boundary.opener === 'string' && typeof boundary.closer === 'string') {
+      const childContent = state.containerFlow(
+        // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
+        { type: 'root', children: mdxNode.children ?? [] } as any,
+        info,
+      );
+      return `${boundary.opener}\n\n${childContent}\n\n${boundary.closer}`;
+    }
+
+    const name = mdxNode.name ?? '';
+    const attrs = serializeMdxJsxAttrs(mdxNode.attributes ?? []);
+
+    if (!mdxNode.children || mdxNode.children.length === 0) {
+      if (!name) return '';
+      return attrs ? `<${name} ${attrs} />` : `<${name} />`;
+    }
+
+    const openTag = attrs ? `<${name} ${attrs}>` : `<${name}>`;
+    const closeTag = `</${name}>`;
+
+    // Serialize children flush-left via containerFlow (FR-6).
+    // Cast needed: containerFlow expects FlowParents which is a union of
+    // specific mdast parent types; our synthetic root satisfies the structural
+    // requirement ({type, children}) but not the nominal type.
+    const childContent = state.containerFlow(
+      // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
+      { type: 'root', children: mdxNode.children } as any,
+      info,
+    );
+
+    return `${openTag}\n\n${childContent}\n\n${closeTag}`;
   },
 
   /**
-   * mdxJsxTextElement: same sourceRaw-verbatim strategy as the flow element
-   * above. Covers inline `<Note>...</Note>` and `<br/>` variants.
+   * mdxJsxTextElement: sourceRaw-verbatim strategy. Covers inline
+   * `<Icon />`, `<Badge>x</Badge>`, `<br/>` variants. jsxInline (NG14 thin
+   * shape) always populates data.sourceRaw at the PM→mdast layer, so this
+   * branch is the production path. Custom handler returns the string
+   * directly — no state.safe() call — which avoids the text-context
+   * `<` → `\<` escape that FR-5b originally needed {type:'html'} to work
+   * around.
    */
   mdxJsxTextElement(node) {
     const raw = node.data?.sourceRaw;
@@ -350,6 +405,41 @@ export const toMarkdownHandlers = {
     return (node.value ?? '') as string;
   },
 } satisfies Partial<MdastToMarkdownHandlers>;
+
+/**
+ * Serialize an MdxJsxAttribute[] to the string that appears inside the JSX
+ * open tag. E.g., `type="warning" disabled data={[1,2,3]}`.
+ */
+function serializeMdxJsxAttrs(attrs: Array<MdxJsxAttribute | MdxJsxExpressionAttribute>): string {
+  const parts: string[] = [];
+  for (const attr of attrs) {
+    if (attr.type === 'mdxJsxExpressionAttribute') {
+      // Spread: {...rest}
+      parts.push(`{${attr.value}}`);
+      continue;
+    }
+    const name = attr.name;
+    if (attr.value === null || attr.value === undefined) {
+      // Boolean shorthand: <Comp disabled />
+      parts.push(name);
+      continue;
+    }
+    if (typeof attr.value === 'string') {
+      if (attr.value.includes('"')) {
+        // Contains double quotes — use JSX expression form with escaped quotes
+        const escaped = attr.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        parts.push(`${name}={"${escaped}"}`);
+      } else {
+        // String literal: type="warning"
+        parts.push(`${name}="${attr.value}"`);
+      }
+      continue;
+    }
+    // Expression: data={[1,2,3]}
+    parts.push(`${name}={${attr.value.value}}`);
+  }
+  return parts.join(' ');
+}
 
 /**
  * Emit text through state.safe with NG5-specific strips applied to the

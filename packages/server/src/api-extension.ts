@@ -25,10 +25,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as wait } from 'node:timers/promises';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
+  ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_VIDEO_MIME_TYPES,
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
@@ -209,7 +211,7 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
  * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -226,7 +228,7 @@ export const ROLLBACK_ORIGIN = {
  * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -251,6 +253,8 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
+const ALLOWED_VIDEO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_VIDEO_MIME_TYPES);
+const ALLOWED_AUDIO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_AUDIO_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -494,7 +498,13 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  const relativePath = kind === 'file' ? `${path}${getDocExtension(path)}` : path;
+  // When kind is 'file': if the caller passed an explicit supported extension,
+  // use the path verbatim — this is how the rename handler signals an
+  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
+  // Extension-less paths fall through to getDocExtension() + the registered
+  // extension map so legacy callers keep the source's existing extension.
+  const relativePath =
+    kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
   if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
@@ -645,6 +655,12 @@ export interface ApiExtensionOptions {
    * fake so the endpoint doesn't shell out.
    */
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
+  /**
+   * Explicit document unload hook. `createServer()` suppresses Hocuspocus's
+   * automatic unload-on-disconnect to avoid reload + IDB duplication, so API
+   * paths that intentionally retire a document must opt into unload here.
+   */
+  forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
 interface WorkspaceSearchCacheEntry {
@@ -767,6 +783,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     projectDir,
     getPrincipal,
     installedAgentsProbe,
+    forceUnloadDocument,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
@@ -1002,7 +1019,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       deleteReconciledBase(docName);
       if (!document) continue;
       hocuspocus.closeConnections(docName);
-      await hocuspocus.unloadDocument(document);
+      await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(document);
     }
 
     return liveContents;
@@ -1735,6 +1752,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const index = getFileIndex();
       const documents: {
         docName: string;
+        docExt: string;
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -1746,8 +1764,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
+        // getDocExtension() returns the registered on-disk extension for the
+        // docName (or `.md` by default when nothing is yet recorded). Surfacing
+        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
+        // faithfully instead of hard-coding `.md`.
+        const docExt = getDocExtension(docName);
+
         documents.push({
           docName,
+          docExt,
           size: entry.size,
           modified: entry.modified,
           isSymlink: false,
@@ -1761,6 +1786,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
             docName: alias,
+            docExt,
             size: entry.size,
             modified: entry.modified,
             isSymlink: true,
@@ -2552,7 +2578,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const doc = hocuspocus.documents.get(docName);
-      if (doc) await hocuspocus.unloadDocument(doc);
+      if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
       writeFileSync(filePath, '', 'utf-8');
       if (backlinkIndex) {
         backlinkIndex.deleteDocument(docName);
@@ -3355,6 +3381,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Loopback + Host-header gate. The principal record discloses operator
+    // PII — `display_name` (real name) and `display_email` — sourced from
+    // local `git config`. Under `--host 0.0.0.0` (demos, shared dev boxes,
+    // Codespaces) this would otherwise be readable by any LAN peer or
+    // cross-origin page that bypasses the Origin allowlist (non-browser
+    // callers send no `Origin` header). Matches the same gate
+    // `handleMetricsAgentPresence` and `handleWorkspace` apply.
+    // Authorization runs BEFORE method dispatch so a bad Host never leaks
+    // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
     if (req.method !== 'GET') {
       res.writeHead(405);
       res.end('Method not allowed');
@@ -3866,6 +3909,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
       const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
+      // Handles the case where the client sends an explicit extension that
+      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
+      // the file is already `foo.md`) — `docName !== newDocName` textually
+      // but the on-disk paths resolve to the same file. Treat as no-op,
+      // mirroring the extension-less `docName === newDocName` short-circuit
+      // above.
+      if (sourcePath === destinationPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
       if (!existsSync(sourcePath)) {
         json(res, 404, { ok: false, error: 'Document does not exist' });
         return;
@@ -4170,17 +4223,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      const pages: {
+        docName: string;
+        title: string;
+        docExt: string;
+        size: number;
+        modified: string;
+      }[] = [];
       for (const [docName, entry] of index) {
         let title = docName;
+        const docExt = getDocExtension(docName);
         try {
-          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
+          const filePath = resolve(contentDir, `${docName}${docExt}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title, size: entry.size, modified: entry.modified });
+        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
@@ -4414,13 +4474,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
+  /**
+   * Shared upload mechanics for image / video / audio endpoints. The three
+   * handlers differ only in their per-endpoint MIME allowlist + whether SVG
+   * fallback applies (image only — video and audio are binary formats with
+   * detectable magic bytes). Keeping a single source of truth for the
+   * security-critical path validation, magic-byte sniffing, and atomic
+   * write — every per-endpoint copy of this 100-line body would otherwise
+   * need the same audit + bug-fix cadence.
+   */
+  async function uploadMediaCore(
+    req: IncomingMessage,
+    res: ServerResponse,
+    allowlist: Set<string>,
+    options: { allowSvgFallback: boolean },
+  ): Promise<void> {
     let uploadResult: UploadResult | undefined;
     try {
       uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
@@ -4437,10 +4505,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const { filename, buffer, parentDocName } = uploadResult;
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
 
     if (!parentDocName) {
       json(res, 400, { ok: false, error: 'parentDocName is required' });
@@ -4491,15 +4555,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const fileTypeResult = await fileTypeFromBuffer(buffer);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes) — check manually
-    if (!detectedMime) {
+    // file-type can't detect SVG (text-based, no magic bytes). Only the image
+    // endpoint accepts SVG, so the fallback is gated by the option.
+    if (!detectedMime && options.allowSvgFallback) {
       const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
       if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !ALLOWED_MIME_TYPES.has(detectedMime)) {
+    if (!detectedMime || !detectedExt || !allowlist.has(detectedMime)) {
       json(res, 400, {
         ok: false,
         error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
@@ -4526,13 +4591,57 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
+      // Server-absolute, POSIX-normalized path. Doc-relative bare filename
+      // resolves wrong under hash routing for subdir docs: page URL
+      // `/#/showcase/02-image` has base `localhost:5173/`, so a bare
+      // `foo.png` in <img src> fetches `/foo.png` while the file is at
+      // `/showcase/foo.png`. The leading slash anchors the resolution to
+      // the server root regardless of the doc's location in the tree.
+      const src = `/${relPath.split(sep).join('/')}`;
       console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src: destFilename });
+      json(res, 200, { ok: true, src });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
       json(res, 500, { ok: false, error: 'Failed to save file' });
     }
+  }
+
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_MIME_TYPES, { allowSvgFallback: true });
+  }
+
+  async function handleUploadVideo(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_VIDEO_MIME_TYPES_SET, { allowSvgFallback: false });
+  }
+
+  async function handleUploadAudio(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+    await uploadMediaCore(req, res, ALLOWED_AUDIO_MIME_TYPES_SET, { allowSvgFallback: false });
   }
 
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
@@ -5758,6 +5867,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload-image': handleUploadImage,
+    '/api/upload-video': handleUploadVideo,
+    '/api/upload-audio': handleUploadAudio,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

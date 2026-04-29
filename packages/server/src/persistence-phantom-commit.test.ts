@@ -25,11 +25,56 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as wait } from 'node:timers/promises';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
 import { clearContributors, contributorCount } from './contributor-tracker.ts';
 import { createServer } from './standalone.ts';
+
+/**
+ * Poll until `predicate()` holds or the timeout elapses. Used instead of a
+ * fixed `setTimeout(N)` so CI-load timing variance can't silently produce a
+ * false-pass (where the debounce never fired AND the assertion just happens
+ * to match zero-valued defaults). Event-driven polling guarantees: if the
+ * predicate isn't satisfied in the budget, the test fails with context
+ * instead of green-ing through a race.
+ */
+async function waitForContributorCount(
+  expected: number,
+  { timeoutMs = 5_000, pollMs = 10 }: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (contributorCount() === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(
+    `Expected contributorCount() === ${expected} within ${timeoutMs}ms, got ${contributorCount()}`,
+  );
+}
+
+/**
+ * Assert `contributorCount()` stays at `expected` for `durationMs`. For the
+ * negative test: we want the count to NOT increment over a window long
+ * enough to cover the debounce flush + any asynchronous post-processing.
+ * Polling a steady-state is the inversion of the positive-path wait —
+ * fixed sleeps false-pass when the debounce never fires, but a
+ * steady-state poll proves the value stayed put across the window.
+ */
+async function expectContributorCountRemainsAt(
+  expected: number,
+  { durationMs = 800, pollMs = 50 }: { durationMs?: number; pollMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + durationMs;
+  while (Date.now() < deadline) {
+    const actual = contributorCount();
+    if (actual !== expected) {
+      throw new Error(
+        `contributorCount() drifted from ${expected} to ${actual} within ${durationMs}ms`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
 
 interface Fixture {
   tmpDir: string;
@@ -106,11 +151,12 @@ describe('onStoreDocument phantom-principal-commit regression (PR #295)', () => 
       }, connectionOrigin);
 
       // Wait for L1 debounce (100ms) to fire onStoreDocument with the
-      // connection origin. Without the wait, `server.destroy()` races the
-      // debounced store hook and we only see the synthetic local-origin
-      // store Hocuspocus fires on document unload (Hocuspocus server.esm.js
-      // line ~1955) — not the path we care about regression-testing.
-      await wait(300);
+      // connection origin, then prove the count STAYED at 0 across a
+      // steady-state window that covers debounce + any asynchronous
+      // post-processing. A fixed sleep here false-passes under CI load
+      // (if onStoreDocument hasn't fired yet, count is zero for the wrong
+      // reason) — a steady-state poll proves the gate short-circuited.
+      await expectContributorCountRemainsAt(0, { durationMs: 800 });
       conn.disconnect();
     } finally {
       await server.destroy();
@@ -158,12 +204,12 @@ describe('onStoreDocument phantom-principal-commit regression (PR #295)', () => 
         frag.push([newPara]);
       }, connectionOrigin);
 
-      // Wait for L1 debounce (100ms) to fire onStoreDocument. Without the
-      // wait, `server.destroy()` below can race the debounced store hook
-      // and teardown before the safety-net has a chance to run — the hook
-      // IS flushed during destroy, but the disconnect below fires first
-      // and changes the clients count, which must not suppress the store.
-      await wait(300);
+      // Event-driven poll: wait for onStoreDocument to record the
+      // principal. Without this, `server.destroy()` below can race the
+      // debounced store hook and teardown before the safety-net has a
+      // chance to run. Polling until the expected count is observable
+      // replaces fixed sleeps with a deterministic signal.
+      await waitForContributorCount(1);
       conn.disconnect();
     } finally {
       await server.destroy();

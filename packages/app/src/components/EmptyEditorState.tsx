@@ -145,7 +145,12 @@ function NoSelectionMessage({ onCtaClick, showCta }: { onCtaClick: () => void; s
     <div className="flex flex-col items-center gap-3">
       <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
       {showCta ? (
-        <Button variant="ghost" size="sm" className="text-xs" onClick={onCtaClick}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="uppercase font-mono text-xs"
+          onClick={onCtaClick}
+        >
           <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
           Initialize LLM brain
         </Button>

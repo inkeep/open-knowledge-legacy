@@ -170,7 +170,7 @@ The agent now has access to three workflow tools:
 .open-knowledge/
   AGENTS.md          — Navigation guide for AI agents (tool usage, linking conventions)
   config.yml         — Workspace config (content dir, include/exclude globs, server port)
-  .gitignore         — Excludes cache/
+  .gitignore         — Excludes per-machine runtime state (cache, locks, sync-state, principal identity, spawn diagnostics)
   cache/             — Derived data (gitignored)
 .git/                — Initialized via `git init --initial-branch=main` if not already present
 .git/open-knowledge/ — Attribution journal (bare git repo; see Service Topology)

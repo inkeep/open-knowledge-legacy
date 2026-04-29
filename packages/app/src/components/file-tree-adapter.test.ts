@@ -121,14 +121,48 @@ describe('file-tree-adapter', () => {
       name: 'guide',
       path: 'docs/guide',
       treePath: 'docs/guide.md',
+      docExt: '.md',
     });
     expect(treeItemToTarget(folder)).toEqual({
       kind: 'folder',
       name: 'docs',
       path: 'docs',
       treePath: 'docs/',
+      docExt: undefined,
     });
     expect(relativePathForTreeItem(file)).toBe('docs/guide.md');
     expect(relativePathForTreeItem(folder)).toBe('docs');
+  });
+
+  test('treeItemToTarget detects .mdx and surfaces it via docExt', () => {
+    const mdxFile = menuItem('docs/guide.mdx', 'file');
+    expect(treeItemToTarget(mdxFile)).toEqual({
+      kind: 'file',
+      name: 'guide',
+      path: 'docs/guide',
+      treePath: 'docs/guide.mdx',
+      docExt: '.mdx',
+    });
+  });
+
+  test('docNameToTreePath honors a per-doc extension; defaults to .md', () => {
+    expect(docNameToTreePath('README')).toBe('README.md');
+    expect(docNameToTreePath('README', '.md')).toBe('README.md');
+    expect(docNameToTreePath('docs/guide', '.mdx')).toBe('docs/guide.mdx');
+  });
+
+  test('treeFilePathToDocName strips both .md and .mdx suffixes', () => {
+    expect(treeFilePathToDocName('docs/guide.md')).toBe('docs/guide');
+    expect(treeFilePathToDocName('docs/guide.mdx')).toBe('docs/guide');
+  });
+
+  test('documentsToTreePaths uses each doc.docExt; absent docExt defaults to .md', () => {
+    expect(
+      documentsToTreePaths([
+        { docName: 'README', size: 0, modified: '' },
+        { docName: 'docs/guide', docExt: '.mdx', size: 0, modified: '' },
+        { docName: 'docs/legacy', docExt: '.md', size: 0, modified: '' },
+      ]),
+    ).toEqual(['README.md', 'docs/guide.mdx', 'docs/legacy.md']);
   });
 });
