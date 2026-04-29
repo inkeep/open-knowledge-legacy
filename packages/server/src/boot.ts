@@ -184,10 +184,9 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
 
   // Lock-kind + parent-pid resolution. Explicit options win over env. Env
   // (`OK_LOCK_KIND`, `OK_PARENT_PID`) is the contract used by the MCP
-  // detach-spawn path in `packages/cli/src/mcp/server-discovery.ts` —
-  // direct callers (CLI `ok start`, Electron utility) leave both unset.
-  // Default kind is `interactive` so omitted-everywhere boots are
-  // user-facing servers.
+  // detach-spawn path in `packages/cli/src/mcp/shim.ts` — direct callers
+  // (CLI `ok start`, Electron utility) leave both unset. Default kind is
+  // `interactive` so omitted-everywhere boots are user-facing servers.
   const envLockKind =
     process.env.OK_LOCK_KIND === 'mcp-spawned' || process.env.OK_LOCK_KIND === 'interactive'
       ? process.env.OK_LOCK_KIND

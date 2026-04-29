@@ -16,6 +16,19 @@ const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const SPAWN_ERROR_LOG = 'last-spawn-error.log';
 
+/**
+ * Read `OK_MCP_SPAWN_TIMEOUT_MS` from the environment. Returns the parsed
+ * number of milliseconds, or undefined when unset / invalid. Invalid values
+ * fall back to the default rather than crashing the MCP — the env knob is an
+ * operator escape hatch, not a precondition.
+ */
+export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
 interface ResolveMcpHttpUrlOptions {
   lockDir: string;
   contentDir: string;

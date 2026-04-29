@@ -1,17 +1,11 @@
 /**
  * Version constants for cross-install drift detection.
  *
- * Single source of truth for the three version dimensions defined in
- * `specs/2026-04-24-cross-install-version-handshake/SPEC.md` §6.5 + D13:
+ * Single source of truth for the durable version dimensions:
  *
  * - `RUNTIME_VERSION` — semver of `@inkeep/open-knowledge-server`. Read from
  *   the package's own `package.json` at module load. Used in lock metadata
  *   and state-manifest diagnostic fields. Changes every release.
- * - `PROTOCOL_VERSION` — integer. Bumped whenever a cross-process contract
- *   changes shape in a way an existing installed binary cannot interpret
- *   safely (lock-field rename/removal, WS frame shape change, MCP handshake
- *   addition). Additive-only changes do NOT bump. Used by the MCP protocol
- *   gate to refuse incompatible spawns (§3 G6).
  * - `STATE_SCHEMA_VERSION` — integer. Bumped whenever on-disk durable state
  *   changes shape in a way older binaries cannot safely read (writer-ID
  *   category, shadow-repo branch naming, agent-presence map shape).
@@ -43,15 +37,6 @@ function readRuntimeVersion(): string {
 }
 
 export const RUNTIME_VERSION: string = readRuntimeVersion();
-
-/**
- * Cross-process contract version. Bumped on shape-breaking changes to the
- * lock fields, the WS protocol between server and Electron renderer, the MCP
- * auto-start handshake, or any HTTP API field an installed binary depends on.
- * Additive-only changes (new optional fields, new endpoints, new WS frame
- * types old readers can ignore) do NOT bump.
- */
-export const PROTOCOL_VERSION = 1 as const;
 
 /**
  * Durable on-disk state version. Bumped when the shadow repo, the

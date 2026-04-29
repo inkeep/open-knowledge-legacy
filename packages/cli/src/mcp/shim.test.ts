@@ -11,7 +11,6 @@ const liveLock: ServerLockMetadata = {
   port: 4123,
   startedAt: '2026-04-29T00:00:00Z',
   worktreeRoot: '/tmp/project',
-  protocolVersion: 999,
   runtimeVersion: '9.9.9',
 };
 
@@ -28,7 +27,7 @@ describe('MCP stdio shim server resolution', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test('live lock resolves to /mcp without checking protocolVersion', async () => {
+  test('live lock resolves directly to the /mcp HTTP URL', async () => {
     const url = await resolveMcpHttpUrl({
       lockDir,
       contentDir: tmp,

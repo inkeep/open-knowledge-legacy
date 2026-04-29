@@ -270,4 +270,4 @@ export {
   type UiLockMetadata,
   updateUiLockPort,
 } from './ui-lock.ts';
-export { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';
+export { RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './version-constants.ts';

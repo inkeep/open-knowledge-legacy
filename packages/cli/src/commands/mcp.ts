@@ -10,8 +10,7 @@
 import { Command } from 'commander';
 import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
-import { parseSpawnTimeoutEnv } from '../mcp/server-discovery.ts';
-import { startMcpShim } from '../mcp/shim.ts';
+import { parseSpawnTimeoutEnv, startMcpShim } from '../mcp/shim.ts';
 
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')

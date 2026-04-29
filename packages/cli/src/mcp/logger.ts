@@ -108,11 +108,6 @@ export class McpLogger {
   }
 }
 
-/** Convenience factory. */
-export function createMcpLogger(component = 'mcp'): McpLogger {
-  return new McpLogger(component);
-}
-
 /** Run an async/sync block with the provided logger bound as the active MCP logger. */
 export function runWithMcpLogger<T>(logger: McpLogger, fn: () => T): T {
   return loggerContext.run(logger, fn);
