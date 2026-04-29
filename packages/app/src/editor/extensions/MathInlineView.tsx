@@ -35,6 +35,7 @@
  */
 
 import type { NodeViewProps } from '@tiptap/core';
+import { NodeSelection } from '@tiptap/pm/state';
 import { NodeViewWrapper } from '@tiptap/react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
@@ -140,19 +141,20 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
   //   2. Click-to-edit: PM produces a NodeSelection on click; `selected`
   //      flips true; we open the popover. (No auto-open flag needed —
   //      every selection of this atom opens the editor.)
-  // Closing on selected→false keeps the popover dismissed when the user
-  // clicks elsewhere; outside-click dismissal is handled by the Popover
-  // primitive itself.
+  //
+  // We do NOT close the popover when `selected` flips false. Reason:
+  // PropPanel's `setNodeMarkup` dispatch on every keystroke can briefly
+  // de-select the atom (PM rebuilds the selection in the new doc state),
+  // which used to dismiss the popover after the first character — Radix's
+  // own outside-click / Escape handlers cover dismiss instead.
   useEffect(() => {
-    const pos = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
     if (selected && !wasSelected.current) {
+      const pos = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
       // Drain any pending auto-open flag (slash-insert path) — non-load-
       // bearing here because we open on every fresh selection anyway, but
       // calling it keeps the queue tidy for the next inline-math insert.
       consumeAutoOpen(pos);
       setPopoverOpen(true);
-    } else if (!selected && wasSelected.current) {
-      setPopoverOpen(false);
     }
     wasSelected.current = selected;
   }, [selected, getPos]);
@@ -206,16 +208,23 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
               // PM's selection has moved off the atom; selection-based
               // `updateAttributes` would no-op. `setNodeMarkup(pos, …)`
               // targets the atom regardless of where selection is now.
+              //
+              // After setNodeMarkup, explicitly re-apply the NodeSelection
+              // on the freshly-marked atom. Without this, PM rebuilds the
+              // selection in the new doc and may default to a TextSelection
+              // — flipping our `selected` prop to false on every keystroke.
+              // The popover-open effect would then dismiss the popover
+              // after the first character, breaking the editor.
               const p = typeof getPos === 'function' ? getPos() : undefined;
               if (typeof p !== 'number') return;
               const curNode = editor.state.doc.nodeAt(p);
               if (!curNode || curNode.type.name !== 'mathInline') return;
-              editor.view.dispatch(
-                editor.state.tr.setNodeMarkup(p, null, {
-                  ...curNode.attrs,
-                  [propName]: value ?? '',
-                }),
-              );
+              const tr = editor.state.tr.setNodeMarkup(p, null, {
+                ...curNode.attrs,
+                [propName]: value ?? '',
+              });
+              tr.setSelection(NodeSelection.create(tr.doc, p));
+              editor.view.dispatch(tr);
             }}
           />
         </PopoverContent>
