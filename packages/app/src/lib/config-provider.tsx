@@ -25,7 +25,9 @@ import {
   type ConfigBinding,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAME_WORKSPACE,
+  getLeafFieldMeta,
 } from '@inkeep/open-knowledge-core';
+import { ConfigSchema } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from 'react';
 import * as Y from 'yjs';
@@ -145,28 +147,35 @@ export function useConfigContext(): ConfigContextValue {
 
 /**
  * Merge the layered configs per the loader's precedence: workspace
- * overrides user. Recursive on nested mappings; arrays replace wholesale
- * (matches `applyPatchToDocument` semantics + RFC 7396 §1).
+ * overrides user — EXCEPT for leaves marked `scope: 'user'` in the
+ * field registry. User-scope fields are personal preferences (theme,
+ * editor mode default); a stale workspace value should not override
+ * the user's choice and lock collaborators into one mode. Workspace
+ * values for user-scope fields are ignored at merge time, even if
+ * they exist on disk (e.g., from a buggy prior write).
  *
- * Lives here because the loader's deep-merge runs on raw YAML mapping
- * objects on the server; the UI needs the same semantics on parsed
- * `Config` instances. Keeping it small + scoped to this file rather
- * than exporting from core to avoid an `@inkeep/open-knowledge-core`
- * surface area we'd have to maintain.
+ * Recursive on nested mappings; arrays replace wholesale (matches
+ * `applyPatchToDocument` semantics + RFC 7396 §1).
  */
 function mergeLayered(user: Config, workspace: Config): Config {
-  return mergeDeep(user, workspace) as Config;
+  return mergeDeep(user, workspace, []) as Config;
 }
 
-function mergeDeep(base: unknown, override: unknown): unknown {
+function mergeDeep(base: unknown, override: unknown, path: (string | number)[]): unknown {
   if (override === undefined) return base;
+  // At a leaf path, ask the field registry whether the field is user-scope.
+  // If so, drop the workspace value entirely.
+  if (path.length > 0) {
+    const meta = getLeafFieldMeta(ConfigSchema, path);
+    if (meta?.scope === 'user') return base;
+  }
   if (override === null) return null;
   if (Array.isArray(override)) return override;
   if (typeof override !== 'object') return override;
   if (typeof base !== 'object' || base === null || Array.isArray(base)) return override;
   const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
   for (const [key, value] of Object.entries(override as Record<string, unknown>)) {
-    out[key] = mergeDeep((base as Record<string, unknown>)[key], value);
+    out[key] = mergeDeep((base as Record<string, unknown>)[key], value, [...path, key]);
   }
   return out;
 }
