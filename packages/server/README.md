@@ -107,8 +107,12 @@ Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this
 | `POST /api/agent-write` | fires under `session.origin` | raw Y.XmlElement append (V3 validation surface) |
 | `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text |
 | `POST /api/agent-undo` | fires under per-session `session.undoOrigin` (distinct from `session.origin`) via `applyAgentUndo(session, scope)` — V0-14 landed surface | body: `{ connectionId, scope: 'last' \| 'session' }`. `session.um.undo()` runs inside the outer `doc.transact(..., session.undoOrigin)` so Observer A/B short-circuit; post-undo composes via `updateYFragment` + `applyFastDiff` |
+| `POST /api/rename-path` | fires under `MANAGED_RENAME_ORIGIN` via `applyManagedRename` (single spine for both `kind: 'file'` and `kind: 'folder'`) | body: `{ kind, fromPath, toPath, agentId?, summary? }`. Identity threaded via `extractActorIdentity(body, getPrincipal)` — body `agentId` → agent contributor; absent + loaded principal → `principal-<uuid>` contributor; neither → anonymous. Body `principalId` is silently ignored (HTTP body unauthenticated; trust boundary per precedent #24(d)). Rewrites inbound wiki-links + supported markdown links across affected docs. Recovery journal v2 (multi-doc) at `<contentDir>/.open-knowledge/managed-rename.json`; replayed at next boot via `recoverPendingManagedRename`. |
+| `POST /api/rollback` | fires under `ROLLBACK_ORIGIN` | body: `{ docName, commitSha, agentId?, summary? }`. Same `extractActorIdentity` routing as `/api/rename-path` — UI Restore button (no `agentId`) attributes to the loaded principal. |
 
 `POST /api/save-version` uses `Author: <principal_display_name>` + `Co-Authored-By: <agent>` trailers (FR-9, D12) on the project-git commit; gracefully skips when the project dir is absent / not a git repo (D45). The history checkpoint always lands regardless of project-git state.
+
+`POST /api/rename` was deleted in [`specs/2026-04-29-rename-consolidation/SPEC.md`](../../specs/2026-04-29-rename-consolidation/SPEC.md) (D-A3) — clients (UI, MCP, scripts) target `/api/rename-path` exclusively. The route returns 404.
 
 Classified writer IDs for non-attributable writes: `file-system` (disk reconciliation), `git-upstream` (HEAD-move import), `openknowledge-service` (park snapshots, fallback). See `packages/core/src/shadow-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor` and AGENTS.md → "History repo & branch runtime" for the full taxonomy table.
 

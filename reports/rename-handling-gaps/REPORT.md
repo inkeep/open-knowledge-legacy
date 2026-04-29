@@ -9,20 +9,24 @@
 
 ---
 
+> **Update 2026-04-29 (post-ship):** The gaps catalogued in this report drove [[specs/2026-04-29-rename-consolidation/SPEC|the rename-consolidation spec]]. As of branch `feat/rename-consolidation`: surfaces S1 + S2 + S3 are consolidated into a single polymorphic `POST /api/rename-path { kind: 'file' | 'folder' }`; the link-rewrite spine lives in `applyManagedRename` and is invoked by both branches; the recovery journal is bumped to v2 (multi-doc, `affectedDocs[]`-driven); UI-driven renames + rollbacks now attribute to the server-loaded principal via `extractActorIdentity`; MCP gains a `rename_folder` tool. NG1 (external rename via watcher) and NG2 (per-writer ghost commits) remain open. The narrative below is preserved as the historical world-model snapshot — read it for context, then read the SPEC for current behavior.
+
+---
+
 ## 1. Surfaces inventory
 
 Eight surfaces can rename a file or folder in this system. They differ in attribution, link-rewrite coverage, recovery protection, and history fidelity.
 
-| # | Surface | Trigger | File | Folder | Attribution | Link rewrite | Recovery journal |
-|---|---|---|---|---|---|---|---|
-| S1 | `/api/rename` (handleRename) | UI file rename, MCP `rename_document` | ✓ | — | Agent only (D22) | ✓ full | ✓ |
-| S2 | `/api/rename-path` file branch | UI file rename via FileTree drag/drop | ✓ | — | None | ✗ | ✓ |
-| S3 | `/api/rename-path` folder branch | UI folder rename via FileTree | — | ✓ | None | ✗ | ✗ |
-| S4 | MCP `rename_document` | Agent tool call | ✓ | — | Agent (via S1) | ✓ via S1 | ✓ via S1 |
-| S5 | (no MCP folder rename tool) | — | — | — | — | — | — |
-| S6 | File-watcher rename detection | External `mv` in contentDir (same batch, content unchanged) | ✓ | partial | `file-system` writer | ✗ | ✗ |
-| S7 | File-watcher delete+create fallback | External `mv` across batches OR with content change | ✓ | ✓ | `file-system` writer | ✗ | ✗ |
-| S8 | Git-upstream import | `git pull` brings in renamed paths | ✓ | ✓ | `git-upstream` writer | UNRESOLVED | ✗ |
+| #  | Surface                             | Trigger                                                     | File | Folder  | Attribution           | Link rewrite | Recovery journal |
+| -- | ----------------------------------- | ----------------------------------------------------------- | ---- | ------- | --------------------- | ------------ | ---------------- |
+| S1 | `/api/rename` (handleRename)        | UI file rename, MCP `rename_document`                       | ✓    | —       | Agent only (D22)      | ✓ full       | ✓                |
+| S2 | `/api/rename-path` file branch      | UI file rename via FileTree drag/drop                       | ✓    | —       | None                  | ✗            | ✓                |
+| S3 | `/api/rename-path` folder branch    | UI folder rename via FileTree                               | —    | ✓       | None                  | ✗            | ✗                |
+| S4 | MCP `rename_document`               | Agent tool call                                             | ✓    | —       | Agent (via S1)        | ✓ via S1     | ✓ via S1         |
+| S5 | (no MCP folder rename tool)         | —                                                           | —    | —       | —                     | —            | —                |
+| S6 | File-watcher rename detection       | External `mv` in contentDir (same batch, content unchanged) | ✓    | partial | `file-system` writer  | ✗            | ✗                |
+| S7 | File-watcher delete+create fallback | External `mv` across batches OR with content change         | ✓    | ✓       | `file-system` writer  | ✗            | ✗                |
+| S8 | Git-upstream import                 | `git pull` brings in renamed paths                          | ✓    | ✓       | `git-upstream` writer | UNRESOLVED   | ✗                |
 
 **Observations.**
 
@@ -39,6 +43,7 @@ Eight surfaces can rename a file or folder in this system. They differ in attrib
 The repo has a `ContentFilter` ([content-filter.ts:2](packages/server/src/content-filter.ts#L2)) that combines `.gitignore` + `content.exclude` (exclusion) with `content.include` (inclusion). It is consulted by the file-walker and the file-watcher event classifier.
 
 **Gap (CONFIRMED):** No rename surface validates that the destination path remains admitted. A user or agent can rename:
+
 - An admitted doc → an excluded path (e.g., `notes/foo.md` → `node_modules/foo.md`). The rename succeeds at the API. The file-watcher then refuses to re-index the destination. The shadow commit still records the move on disk.
 - An admitted doc → outside `content.include`. Same outcome — file system has the new path, but the doc effectively disappears from the wiki surface.
 
@@ -62,13 +67,13 @@ CLAUDE.md prohibits per-doc sidecars in user-content paths. **CONFIRMED no renam
 
 The cache at `<contentDir>/.open-knowledge/` is **content-hashed, not path-keyed** (per code agent finding, MEDIUM confidence — claim was "SHA1-based"). This means rename moves a backlink-index entry from old → new docName via `backlinkIndex.renameDocument(oldName, newName, content)`, but only when the surface invokes that method.
 
-| Surface | Calls `backlinkIndex.renameDocument`? |
-|---|---|
-| S1 `/api/rename` | ✓ ([api-extension.ts:1215](packages/server/src/api-extension.ts#L1215)) |
-| S2 `/api/rename-path` file branch | ✗ **CONFIRMED gap** ([api-extension.ts:4016-4025](packages/server/src/api-extension.ts#L4016)) |
-| S3 `/api/rename-path` folder branch | ✓ per affected doc ([api-extension.ts:4046-4054](packages/server/src/api-extension.ts#L4046)) |
-| S6 file-watcher rename event | ✗ — only `updateFileIndex` runs ([file-watcher.ts:602-616](packages/server/src/file-watcher.ts#L602)) |
-| S7 file-watcher delete+create | ✗ via the rename surface; backlinks would be re-derived on next content scan |
+| Surface                             | Calls `backlinkIndex.renameDocument`?                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| S1 `/api/rename`                    | ✓ ([api-extension.ts:1215](packages/server/src/api-extension.ts#L1215))                               |
+| S2 `/api/rename-path` file branch   | ✗ **CONFIRMED gap** ([api-extension.ts:4016-4025](packages/server/src/api-extension.ts#L4016))        |
+| S3 `/api/rename-path` folder branch | ✓ per affected doc ([api-extension.ts:4046-4054](packages/server/src/api-extension.ts#L4046))         |
+| S6 file-watcher rename event        | ✗ — only `updateFileIndex` runs ([file-watcher.ts:602-616](packages/server/src/file-watcher.ts#L602)) |
+| S7 file-watcher delete+create       | ✗ via the rename surface; backlinks would be re-derived on next content scan                          |
 
 **Net.** S2's lack of backlink-index update is asymmetric with S3. S6 detects renames but doesn't propagate them to the backlink graph.
 
@@ -90,15 +95,15 @@ The full spine runs only for S1/S4. All other surfaces partial or skip.
 
 ### 3.2 Per-surface link-rewrite matrix
 
-| Surface | Inbound wiki-link rewrite | Inbound markdown-link rewrite | Self-reference rewrite | Backlink index update | On-disk cache | Forward-link re-extract |
-|---|---|---|---|---|---|---|
-| S1 `/api/rename` | ✓ | ✓ | ✓ | ✓ | ✓ deferred | partial (via `updateDocumentFromMarkdown`) |
-| S2 file branch | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| S3 folder branch | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ |
-| S4 MCP rename_document | ✓ via S1 | ✓ via S1 | ✓ via S1 | ✓ via S1 | ✓ via S1 | partial via S1 |
-| S6 watcher rename | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| S7 watcher delete+create | ✗ | ✗ | ✗ | ✗ (delete+create separately) | ✗ | partial on next content load |
-| S8 upstream import | UNRESOLVED | UNRESOLVED | UNRESOLVED | UNRESOLVED | UNRESOLVED | UNRESOLVED |
+| Surface                  | Inbound wiki-link rewrite | Inbound markdown-link rewrite | Self-reference rewrite | Backlink index update        | On-disk cache | Forward-link re-extract                    |
+| ------------------------ | ------------------------- | ----------------------------- | ---------------------- | ---------------------------- | ------------- | ------------------------------------------ |
+| S1 `/api/rename`         | ✓                         | ✓                             | ✓                      | ✓                            | ✓ deferred    | partial (via `updateDocumentFromMarkdown`) |
+| S2 file branch           | ✗                         | ✗                             | ✗                      | ✗                            | ✗             | ✗                                          |
+| S3 folder branch         | ✗                         | ✗                             | ✗                      | ✓                            | ✓             | ✗                                          |
+| S4 MCP rename\_document  | ✓ via S1                  | ✓ via S1                      | ✓ via S1               | ✓ via S1                     | ✓ via S1      | partial via S1                             |
+| S6 watcher rename        | ✗                         | ✗                             | ✗                      | ✗                            | ✗             | ✗                                          |
+| S7 watcher delete+create | ✗                         | ✗                             | ✗                      | ✗ (delete+create separately) | ✗             | partial on next content load               |
+| S8 upstream import       | UNRESOLVED                | UNRESOLVED                    | UNRESOLVED             | UNRESOLVED                   | UNRESOLVED    | UNRESOLVED                                 |
 
 ### 3.3 Dangling-link semantics
 
@@ -126,15 +131,15 @@ Five categories defined in CLAUDE.md (also covered in [`reports/agent-identity-a
 
 ### 4.2 Per-surface attribution matrix
 
-| Surface | `recordContributor` called | Writer ID | `subjectOverride` | Explicit L2 flush | ok-actor.docs | Per-doc entries (folder case) | D22 honored |
-|---|---|---|---|---|---|---|---|
-| S1 `/api/rename` | ✓ when `agentId` in body | `agent-<id>` or skipped | `rename: X -> Y` | ✓ `flushDocToGit` | ✓ newDocName | n/a | ✓ |
-| S2 file branch | ✗ (body checked but not used) | none | none | none | none | n/a | n/a |
-| S3 folder branch | ✗ | none | none | none | none | ✗ none generated | n/a |
-| S4 MCP `rename_document` | ✓ via S1 | `agent-<id>` | via S1 | via S1 | via S1 | n/a | ✓ |
-| S6 watcher rename | ✗ (no rename-specific contributor; only update path runs `recordContributor`) | none | none | (next idle drain stages disk state) | none | n/a | n/a |
-| S7 watcher delete+create | indirectly via `applyExternalChange` for create event | `file-system` | reconcile-style | ✓ via persistence | content-update doc only | n/a | n/a |
-| S8 upstream import | UNRESOLVED | `git-upstream` | UNRESOLVED | UNRESOLVED | UNRESOLVED | UNRESOLVED | UNRESOLVED |
+| Surface                  | `recordContributor` called                                                    | Writer ID               | `subjectOverride` | Explicit L2 flush                   | ok-actor.docs           | Per-doc entries (folder case) | D22 honored |
+| ------------------------ | ----------------------------------------------------------------------------- | ----------------------- | ----------------- | ----------------------------------- | ----------------------- | ----------------------------- | ----------- |
+| S1 `/api/rename`         | ✓ when `agentId` in body                                                      | `agent-<id>` or skipped | `rename: X -> Y`  | ✓ `flushDocToGit`                   | ✓ newDocName            | n/a                           | ✓           |
+| S2 file branch           | ✗ (body checked but not used)                                                 | none                    | none              | none                                | none                    | n/a                           | n/a         |
+| S3 folder branch         | ✗                                                                             | none                    | none              | none                                | none                    | ✗ none generated              | n/a         |
+| S4 MCP `rename_document` | ✓ via S1                                                                      | `agent-<id>`            | via S1            | via S1                              | via S1                  | n/a                           | ✓           |
+| S6 watcher rename        | ✗ (no rename-specific contributor; only update path runs `recordContributor`) | none                    | none              | (next idle drain stages disk state) | none                    | n/a                           | n/a         |
+| S7 watcher delete+create | indirectly via `applyExternalChange` for create event                         | `file-system`           | reconcile-style   | ✓ via persistence                   | content-update doc only | n/a                           | n/a         |
+| S8 upstream import       | UNRESOLVED                                                                    | `git-upstream`          | UNRESOLVED        | UNRESOLVED                          | UNRESOLVED              | UNRESOLVED                    | UNRESOLVED  |
 
 **D22 LOCKED** ([specs/2026-04-21-agent-write-summaries/SPEC.md](specs/2026-04-21-agent-write-summaries/SPEC.md)) — rename/rollback handlers MUST gate `recordContributor` on explicit `agentId` in the request body. Prevents `extractAgentIdentity`'s Claude default from misattributing UI clicks.
 
@@ -160,14 +165,14 @@ Five categories defined in CLAUDE.md (also covered in [`reports/agent-identity-a
 
 ## 5. Recovery & rollback paths
 
-| Surface | Recovery journal | Crash-safety scope |
-|---|---|---|
-| S1 `/api/rename` | ✓ `withManagedRenameRecovery` ([api-extension.ts:1152](packages/server/src/api-extension.ts#L1152)) | Snapshot of source doc + all backlink sources before rewrite |
-| S2 file branch | ✓ `withManagedRenameRecovery` ([api-extension.ts:4025](packages/server/src/api-extension.ts#L4025)) | Snapshot of source doc only (no backlink rewrites to roll back) |
-| S3 folder branch | ✗ raw `applyRename()` ([api-extension.ts:4027](packages/server/src/api-extension.ts#L4027)) | None — partial-state on crash |
-| S6 watcher rename | ✗ | None — rename is observation, not transaction |
-| S7 watcher delete+create | ✗ | None |
-| S8 upstream import | UNRESOLVED | UNRESOLVED |
+| Surface                  | Recovery journal                                                                                    | Crash-safety scope                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| S1 `/api/rename`         | ✓ `withManagedRenameRecovery` ([api-extension.ts:1152](packages/server/src/api-extension.ts#L1152)) | Snapshot of source doc + all backlink sources before rewrite    |
+| S2 file branch           | ✓ `withManagedRenameRecovery` ([api-extension.ts:4025](packages/server/src/api-extension.ts#L4025)) | Snapshot of source doc only (no backlink rewrites to roll back) |
+| S3 folder branch         | ✗ raw `applyRename()` ([api-extension.ts:4027](packages/server/src/api-extension.ts#L4027))         | None — partial-state on crash                                   |
+| S6 watcher rename        | ✗                                                                                                   | None — rename is observation, not transaction                   |
+| S7 watcher delete+create | ✗                                                                                                   | None                                                            |
+| S8 upstream import       | UNRESOLVED                                                                                          | UNRESOLVED                                                      |
 
 **Observation.** S3's folder branch lacks recovery journaling. If a process crash interrupts a folder rename mid-batch, the contentDir can land in a partial state (some files renamed, others not) with no recoverable journal. Compare S1/S2 which use the journal pattern for single-file renames.
 
@@ -246,7 +251,7 @@ Context only — for comparing primitives across systems.
 - **AnyType.** Uses `@`-symbol mentions resolved by stable IDs at render time. Sidesteps rename propagation entirely. Migration tools to/from Obsidian convert between path-based and ID-based.
 - **GitHub wiki / GitLab wiki.** Path-based linking with no automatic rewrite.
 - **note-link-janitor (Andy Matuschak).** Script-based offline backlink injection; full-rebuild model.
-- **Karpathy LLM-wiki pattern.** "LLMs touch fifteen files in one pass" framing — agent-driven rewrite as the primitive. Aligns with this codebase's MCP rename_document approach (loop file renames with agent attribution).
+- **Karpathy LLM-wiki pattern.** "LLMs touch fifteen files in one pass" framing — agent-driven rewrite as the primitive. Aligns with this codebase's MCP rename\_document approach (loop file renames with agent attribution).
 
 **Git rename detection (web confirms code findings).**
 
@@ -302,18 +307,18 @@ These are questions that, if answered before spec work, would constrain the desi
 
 ## 12. Terminology
 
-| Term | Meaning | Source |
-|---|---|---|
-| S1–S8 | Surface labels in this report only — for cross-section reference. | this report |
-| `ok-actor:` | JSON-line in shadow commit body carrying writer + docs + summaries. | [api-extension.ts:419](packages/server/src/api-extension.ts#L419) |
-| `subjectOverride` | Per-action commit subject (e.g., `rename: X -> Y`) replacing default `formatWipSubject(docs)`. | [contributor-tracker.ts:40](packages/server/src/contributor-tracker.ts#L40) |
-| `D22 LOCKED` | Spec decision: rename/rollback handlers gate `recordContributor` on explicit `agentId`. 1-way door. | [SPEC](specs/2026-04-21-agent-write-summaries/SPEC.md) |
-| `_performManagedRename` | The full-spine rename helper called by S1. Reads backlink sources, rewrites links, atomic disk move, journal-protected. | [api-extension.ts:1104](packages/server/src/api-extension.ts#L1104) |
-| `commitWipFromTree` | Per-writer fan-out shadow commit creator. All writers share one tree per drain cycle. | [shadow-repo.ts:389](packages/server/src/shadow-repo.ts#L389) |
-| `withManagedRenameRecovery` | Crash-safe wrapper around rename mutations using a snapshot journal. | imported in [api-extension.ts:1152](packages/server/src/api-extension.ts#L1152) |
-| ContentFilter | Combines `.gitignore` + config-driven `content.exclude`/`content.include`. | [content-filter.ts:2](packages/server/src/content-filter.ts#L2) |
-| Ghost commit | A timeline entry for file X attributed to writer A even though A didn't edit X — caused by per-writer fan-out shared trees. | conversation context |
-| Redlink | Wiki-link to a target that doesn't exist; rendered with a visual indicator. | wiki-links-backlinks report |
+| Term                        | Meaning                                                                                                                     | Source                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| S1–S8                       | Surface labels in this report only — for cross-section reference.                                                           | this report                                                                     |
+| `ok-actor:`                 | JSON-line in shadow commit body carrying writer + docs + summaries.                                                         | [api-extension.ts:419](packages/server/src/api-extension.ts#L419)               |
+| `subjectOverride`           | Per-action commit subject (e.g., `rename: X -> Y`) replacing default `formatWipSubject(docs)`.                              | [contributor-tracker.ts:40](packages/server/src/contributor-tracker.ts#L40)     |
+| `D22 LOCKED`                | Spec decision: rename/rollback handlers gate `recordContributor` on explicit `agentId`. 1-way door.                         | [SPEC](specs/2026-04-21-agent-write-summaries/SPEC.md)                          |
+| `_performManagedRename`     | The full-spine rename helper called by S1. Reads backlink sources, rewrites links, atomic disk move, journal-protected.     | [api-extension.ts:1104](packages/server/src/api-extension.ts#L1104)             |
+| `commitWipFromTree`         | Per-writer fan-out shadow commit creator. All writers share one tree per drain cycle.                                       | [shadow-repo.ts:389](packages/server/src/shadow-repo.ts#L389)                   |
+| `withManagedRenameRecovery` | Crash-safe wrapper around rename mutations using a snapshot journal.                                                        | imported in [api-extension.ts:1152](packages/server/src/api-extension.ts#L1152) |
+| ContentFilter               | Combines `.gitignore` + config-driven `content.exclude`/`content.include`.                                                  | [content-filter.ts:2](packages/server/src/content-filter.ts#L2)                 |
+| Ghost commit                | A timeline entry for file X attributed to writer A even though A didn't edit X — caused by per-writer fan-out shared trees. | conversation context                                                            |
+| Redlink                     | Wiki-link to a target that doesn't exist; rendered with a visual indicator.                                                 | wiki-links-backlinks report                                                     |
 
 ---
 
