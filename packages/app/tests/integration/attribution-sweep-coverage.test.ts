@@ -111,7 +111,10 @@ function extractStaticRouteHandlerNames(): string[] {
 }
 
 describe('attribution sweep coverage (FR-5, D42)', () => {
-  test('all required POST handlers call extractAgentIdentity', () => {
+  test('all required POST handlers call an identity-threading helper', () => {
+    // Identity threading is satisfied by either `extractAgentIdentity` (used
+    // by agent-write handlers) OR `extractActorIdentity` (used by rename +
+    // rollback handlers; routes agent identity OR principal-fallback).
     const failures: string[] = [];
     for (const handler of REQUIRED_HANDLERS) {
       const body = extractHandlerBody(handler);
@@ -119,8 +122,8 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
         failures.push(`${handler}: function not found in source`);
         continue;
       }
-      if (!body.includes('extractAgentIdentity(')) {
-        failures.push(`${handler}: missing extractAgentIdentity call`);
+      if (!body.includes('extractAgentIdentity(') && !body.includes('extractActorIdentity(')) {
+        failures.push(`${handler}: missing extractAgentIdentity or extractActorIdentity call`);
       }
     }
     expect(failures).toEqual([]);

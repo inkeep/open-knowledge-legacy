@@ -109,6 +109,7 @@ import {
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
   contentHash,
   type FileIndexEntry,
@@ -3457,20 +3458,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const {
-      agentId: rollbackAgentId,
-      agentName: rollbackAgentName,
-      colorSeed: rollbackColorSeed,
-      clientName: rollbackClientName,
-      clientVersion: rollbackClientVersion,
-      label: rollbackLabel,
-    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+    // Identity routing (D22-A): body agentId → agent contributor; absent →
+    // server-side getPrincipal() fallback to principal contributor; neither →
+    // anonymous (D22 invariant for the bootstrap-failure case).
+    const bodyObj = body as Record<string, unknown>;
+    const actor = extractActorIdentity(bodyObj, getPrincipal);
+    if (actor.kind === 'invalid-summary') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
 
-    const {
-      docName: rawDocName,
-      commitSha: rawSha,
-      versionTag: rawVersionTag,
-    } = body as Record<string, unknown>;
+    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
     const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
@@ -3481,25 +3479,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
       json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
-    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
-    // defaults would attribute every human Restore to Claude. Only when the
-    // caller explicitly sends `agentId` do we attribute + record a summary.
-    //
-    // Validation runs unconditionally (independent of `hasAgentId`) so a
-    // malformed `summary: 42` returns 400 even when identity is absent — this
-    // surfaces MCP-client identity-passthrough regressions loudly instead of
-    // silently dropping the summary on the floor. The attribution semantics
-    // (D22) are unchanged: `recordContributor` still only fires when
-    // `hasAgentId` is true.
-    const bodyObj = body as Record<string, unknown>;
-    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-    const normalizedSummary = normalizeSummary(bodyObj.summary);
-    if (normalizedSummary.kind === 'invalid') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
     }
 
@@ -3576,26 +3555,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Letting `onStoreDocument` fire naturally writes disk AND updates the
       // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // D22 LOCKED: attribute + record summary ONLY when caller supplied
-      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
-      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
-      // applies when agent-supplied summary was absent; the default goes through
-      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
-      //
-      // When the default is used and it happens to truncate (rare for rollback
-      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
-      // path symmetric with `handleRename` where defaults frequently overflow
-      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
-      // the response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" message would misattribute
-      // blame to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior.
+      // Default summary `"Restored to <sha-short>"` applies for the agent path
+      // when no agent-supplied summary was given; the default goes through
+      // `normalizeSummary` so the 80-char cap covers it. When the default
+      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
+      // chars, but symmetric with `handleRename` where defaults frequently
+      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
+      // `hint` from the response so the truncation message doesn't misattribute
+      // blame to the caller. The principal path records the contributor with
+      // the rollback subject but does NOT generate a default summary bullet —
+      // the rollback subject already drives the timeline display.
       let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
+      if (actor.kind === 'agent') {
         const shaShort = commitSha.slice(0, 8);
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
+        const agentProvidedSummary = actor.summary.kind === 'value';
         const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
+          ? actor.summary
           : normalizeSummary(`Restored to ${shaShort}`);
         const fields = summaryResponseFields(effectiveNormalized);
         summaryResponse =
@@ -3604,19 +3579,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             : stripDefaultPathTruncation(fields.response);
         recordContributor(
           docName,
-          rollbackAgentId,
-          rollbackAgentName,
-          rollbackColorSeed,
+          actor.writerId,
+          actor.displayName,
+          actor.colorSeed,
           formatRollbackSubject(docName, commitSha),
-          buildAgentActor({
-            clientName: rollbackClientName,
-            clientVersion: rollbackClientVersion,
-            label: rollbackLabel,
-          }),
+          actor.actor,
           fields.stored,
         );
         incrementAgentWriteCalls();
         countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+      } else if (actor.kind === 'principal') {
+        const fields = summaryResponseFields(actor.summary);
+        summaryResponse = fields.response;
+        recordContributor(
+          docName,
+          actor.writerId,
+          actor.displayName,
+          actor.colorSeed,
+          formatRollbackSubject(docName, commitSha),
+          actor.actor,
+          fields.stored,
+        );
+        countNormalizedSummary(actor.summary, false);
       }
 
       // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
@@ -3648,12 +3632,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      // D22: only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (no agentId) must not
-      // trigger a cross-client push-nav as if Claude-1 did the rollback.
-      if (hasAgentId) {
-        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-          agentName: rollbackAgentName,
+      // Only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (principal or anonymous)
+      // must not trigger a cross-client push-nav as if an agent did the
+      // rollback.
+      if (actor.kind === 'agent') {
+        agentFocusBroadcaster?.setFocus(actor.writerId, {
+          agentName: actor.displayName,
           currentDoc: docName,
           writeKind: 'rollback-apply',
           ts: Date.now(),

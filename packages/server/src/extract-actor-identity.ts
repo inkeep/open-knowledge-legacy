@@ -5,7 +5,7 @@ import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 
 const AGENT_NAME_MAX_LEN = 128;
 
-export interface ActorMetadata {
+interface ActorMetadata {
   principalId?: string;
   agentType?: string;
   clientName?: string;
@@ -13,7 +13,7 @@ export interface ActorMetadata {
   label?: string;
 }
 
-export type ActorIdentity =
+type ActorIdentity =
   | {
       kind: 'agent';
       writerId: string;
