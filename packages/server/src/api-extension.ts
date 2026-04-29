@@ -1526,8 +1526,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const recoveryJournal = createManagedRenameRecoveryJournal({
-        sourceDocName,
-        destinationDocName,
+        fromPath: sourceDocName,
+        toPath: destinationDocName,
+        affectedDocs: [{ from: sourceDocName, to: destinationDocName }],
         snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
       });
 
@@ -4468,8 +4469,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       if (kind === 'file') {
         const recoveryJournal = createManagedRenameRecoveryJournal({
-          sourceDocName: fromPath,
-          destinationDocName: toPath,
+          fromPath,
+          toPath,
+          affectedDocs: renamed.map(({ fromDocName, toDocName }) => ({
+            from: fromDocName,
+            to: toDocName,
+          })),
           snapshots: buildManagedRenameSnapshots(
             renamed.map(({ fromDocName }) => fromDocName),
             liveContents,

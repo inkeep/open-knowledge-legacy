@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   createManagedRenameRecoveryJournal,
   managedRenameJournalPath,
+  readManagedRenameJournal,
   recoverPendingManagedRename,
   withManagedRenameRecovery,
   writeManagedRenameJournal,
@@ -24,7 +33,7 @@ afterEach(() => {
   }
 });
 
-describe('managed rename recovery journal', () => {
+describe('managed rename recovery journal — v2 round-trip', () => {
   test('writes the journal before mutations and clears it after success', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8');
@@ -33,8 +42,9 @@ describe('managed rename recovery journal', () => {
     await withManagedRenameRecovery(
       dir,
       createManagedRenameRecoveryJournal({
-        sourceDocName: 'alpha',
-        destinationDocName: 'beta',
+        fromPath: 'alpha',
+        toPath: 'beta',
+        affectedDocs: [{ from: 'alpha', to: 'beta' }],
         snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
       }),
       () => {
@@ -49,40 +59,90 @@ describe('managed rename recovery journal', () => {
     expect(readFileSync(join(dir, 'beta.md'), 'utf-8')).toBe('# Alpha\n');
   });
 
-  test('replays a pending journal back to the pre-rename vault state', () => {
+  test('writes a journal with version 2 on disk', () => {
+    const dir = setupTmpDir();
+    const journal = createManagedRenameRecoveryJournal({
+      fromPath: 'alpha',
+      toPath: 'beta',
+      affectedDocs: [{ from: 'alpha', to: 'beta' }],
+      snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+    });
+    writeManagedRenameJournal(dir, journal);
+
+    const onDisk = JSON.parse(readFileSync(managedRenameJournalPath(dir), 'utf-8'));
+    expect(onDisk.version).toBe(2);
+    expect(onDisk.fromPath).toBe('alpha');
+    expect(onDisk.toPath).toBe('beta');
+    expect(onDisk.affectedDocs).toEqual([{ from: 'alpha', to: 'beta' }]);
+  });
+
+  test('readManagedRenameJournal round-trips a v2 journal', () => {
+    const dir = setupTmpDir();
+    const journal = createManagedRenameRecoveryJournal({
+      fromPath: 'articles',
+      toPath: 'essays',
+      affectedDocs: [
+        { from: 'articles/auth', to: 'essays/auth' },
+        { from: 'articles/login', to: 'essays/login' },
+      ],
+      snapshots: [
+        { docName: 'articles/auth', content: '# Auth\n' },
+        { docName: 'articles/login', content: '# Login\n' },
+      ],
+    });
+    writeManagedRenameJournal(dir, journal);
+
+    const parsed = readManagedRenameJournal(dir);
+    expect(parsed?.version).toBe(2);
+    if (parsed?.version === 2) {
+      expect(parsed.fromPath).toBe('articles');
+      expect(parsed.affectedDocs).toHaveLength(2);
+    }
+  });
+});
+
+describe('managed rename recovery journal — v2 multi-doc recovery', () => {
+  test('replays multiple affected docs and removes all destination paths', () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'beta.md'), '# Alpha\n', 'utf-8');
+    writeFileSync(join(dir, 'gamma.md'), '# Bravo\n', 'utf-8');
     writeFileSync(join(dir, 'referrer.md'), 'See [[beta]].\n', 'utf-8');
 
     const journal = createManagedRenameRecoveryJournal({
-      sourceDocName: 'alpha',
-      destinationDocName: 'beta',
+      fromPath: 'group',
+      toPath: 'team',
+      affectedDocs: [
+        { from: 'alpha', to: 'beta' },
+        { from: 'bravo', to: 'gamma' },
+      ],
       snapshots: [
         { docName: 'alpha', content: '# Alpha\n' },
+        { docName: 'bravo', content: '# Bravo\n' },
         { docName: 'referrer', content: 'See [[alpha]].\n' },
       ],
     });
     writeManagedRenameJournal(dir, journal);
 
     const recovery = recoverPendingManagedRename(dir);
-
     expect(recovery.recovered).toBe(true);
-    expect(recovery.restoredDocNames).toEqual(['alpha', 'referrer']);
+    expect(recovery.restoredDocNames).toEqual(['alpha', 'bravo', 'referrer']);
     expect(readFileSync(join(dir, 'alpha.md'), 'utf-8')).toBe('# Alpha\n');
+    expect(readFileSync(join(dir, 'bravo.md'), 'utf-8')).toBe('# Bravo\n');
     expect(readFileSync(join(dir, 'referrer.md'), 'utf-8')).toBe('See [[alpha]].\n');
     expect(existsSync(join(dir, 'beta.md'))).toBe(false);
+    expect(existsSync(join(dir, 'gamma.md'))).toBe(false);
     expect(existsSync(managedRenameJournalPath(dir))).toBe(false);
   });
 
-  test('keeps the journal on disk when the managed rename operation throws', async () => {
+  test('keeps the journal on disk when the operation throws', async () => {
     const dir = setupTmpDir();
-
     await expect(
       withManagedRenameRecovery(
         dir,
         createManagedRenameRecoveryJournal({
-          sourceDocName: 'alpha',
-          destinationDocName: 'beta',
+          fromPath: 'alpha',
+          toPath: 'beta',
+          affectedDocs: [{ from: 'alpha', to: 'beta' }],
           snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
         }),
         () => {
@@ -90,7 +150,6 @@ describe('managed rename recovery journal', () => {
         },
       ),
     ).rejects.toThrow('boom');
-
     expect(existsSync(managedRenameJournalPath(dir))).toBe(true);
   });
 
@@ -101,8 +160,9 @@ describe('managed rename recovery journal', () => {
     writeManagedRenameJournal(
       dir,
       createManagedRenameRecoveryJournal({
-        sourceDocName: 'alpha',
-        destinationDocName: 'beta',
+        fromPath: 'alpha',
+        toPath: 'beta',
+        affectedDocs: [{ from: 'alpha', to: 'beta' }],
         snapshots: [
           { docName: 'alpha', content: '# Alpha\n' },
           { docName: '../escape', content: 'bad\n' },
@@ -116,5 +176,93 @@ describe('managed rename recovery journal', () => {
     expect(readFileSync(join(dir, 'alpha.md'), 'utf-8')).toBe('# Alpha\n');
     expect(existsSync(join(dir, 'beta.md'))).toBe(true);
     expect(existsSync(managedRenameJournalPath(dir))).toBe(true);
+  });
+
+  test('preserves a destination that also appears as a source (rename chain)', () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'b.md'), '# A content\n', 'utf-8');
+    writeFileSync(join(dir, 'c.md'), '# B content\n', 'utf-8');
+
+    const journal = createManagedRenameRecoveryJournal({
+      fromPath: 'group',
+      toPath: 'team',
+      affectedDocs: [
+        { from: 'a', to: 'b' },
+        { from: 'b', to: 'c' },
+      ],
+      snapshots: [
+        { docName: 'a', content: '# A content\n' },
+        { docName: 'b', content: '# B content\n' },
+      ],
+    });
+    writeManagedRenameJournal(dir, journal);
+
+    const recovery = recoverPendingManagedRename(dir);
+    expect(recovery.recovered).toBe(true);
+    expect(readFileSync(join(dir, 'a.md'), 'utf-8')).toBe('# A content\n');
+    expect(readFileSync(join(dir, 'b.md'), 'utf-8')).toBe('# B content\n');
+    expect(existsSync(join(dir, 'c.md'))).toBe(false);
+  });
+});
+
+describe('managed rename recovery journal — v1 legacy support', () => {
+  test('readManagedRenameJournal parses a v1 journal at startup', () => {
+    const dir = setupTmpDir();
+    const v1Journal = {
+      version: 1,
+      sourceDocName: 'alpha',
+      destinationDocName: 'beta',
+      createdAt: '2026-04-29T10:00:00.000Z',
+      snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+    };
+    mkdirSync(dirname(managedRenameJournalPath(dir)), { recursive: true });
+    writeFileSync(managedRenameJournalPath(dir), JSON.stringify(v1Journal), 'utf-8');
+
+    const parsed = readManagedRenameJournal(dir);
+    expect(parsed?.version).toBe(1);
+    if (parsed?.version === 1) {
+      expect(parsed.sourceDocName).toBe('alpha');
+      expect(parsed.destinationDocName).toBe('beta');
+    }
+  });
+
+  test('recoverPendingManagedRename restores a v1 journal at startup', () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'beta.md'), '# Alpha\n', 'utf-8');
+    writeFileSync(join(dir, 'referrer.md'), 'See [[beta]].\n', 'utf-8');
+
+    const v1Journal = {
+      version: 1,
+      sourceDocName: 'alpha',
+      destinationDocName: 'beta',
+      createdAt: '2026-04-29T10:00:00.000Z',
+      snapshots: [
+        { docName: 'alpha', content: '# Alpha\n' },
+        { docName: 'referrer', content: 'See [[alpha]].\n' },
+      ],
+    };
+    mkdirSync(dirname(managedRenameJournalPath(dir)), { recursive: true });
+    writeFileSync(managedRenameJournalPath(dir), JSON.stringify(v1Journal), 'utf-8');
+
+    const recovery = recoverPendingManagedRename(dir);
+    expect(recovery.recovered).toBe(true);
+    expect(recovery.restoredDocNames).toEqual(['alpha', 'referrer']);
+    expect(readFileSync(join(dir, 'alpha.md'), 'utf-8')).toBe('# Alpha\n');
+    expect(readFileSync(join(dir, 'referrer.md'), 'utf-8')).toBe('See [[alpha]].\n');
+    expect(existsSync(join(dir, 'beta.md'))).toBe(false);
+    expect(existsSync(managedRenameJournalPath(dir))).toBe(false);
+  });
+
+  test('rejects journals with unsupported version', () => {
+    const dir = setupTmpDir();
+    mkdirSync(dirname(managedRenameJournalPath(dir)), { recursive: true });
+    writeFileSync(
+      managedRenameJournalPath(dir),
+      JSON.stringify({ version: 99, snapshots: [] }),
+      'utf-8',
+    );
+    expect(() => readManagedRenameJournal(dir)).toThrow(
+      'Unsupported managed rename journal version',
+    );
   });
 });

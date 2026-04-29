@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, resolve } from 'node:path';
 import { safeContentPath } from './persistence.ts';
 
-const MANAGED_RENAME_JOURNAL_VERSION = 1;
 const MANAGED_RENAME_JOURNAL_FILENAME = 'managed-rename.json';
 
 export interface ManagedRenameSnapshot {
@@ -10,13 +9,37 @@ export interface ManagedRenameSnapshot {
   content: string;
 }
 
-interface ManagedRenameRecoveryJournal {
+interface ManagedRenameAffectedDoc {
+  from: string;
+  to: string;
+}
+
+/**
+ * V1 schema (legacy) — single-doc rename. Kept for back-compat reading at
+ * startup. New journals are written as V2.
+ */
+interface ManagedRenameRecoveryJournalV1 {
   version: 1;
   sourceDocName: string;
   destinationDocName: string;
   createdAt: string;
   snapshots: ManagedRenameSnapshot[];
 }
+
+/**
+ * V2 schema — multi-doc rename. `affectedDocs[]` drives recovery's destination
+ * cleanup; `fromPath` / `toPath` are observability-only (logs + dashboards).
+ */
+interface ManagedRenameRecoveryJournalV2 {
+  version: 2;
+  fromPath: string;
+  toPath: string;
+  affectedDocs: ManagedRenameAffectedDoc[];
+  createdAt: string;
+  snapshots: ManagedRenameSnapshot[];
+}
+
+type ManagedRenameRecoveryJournal = ManagedRenameRecoveryJournalV1 | ManagedRenameRecoveryJournalV2;
 
 interface ManagedRenameRecoveryResult {
   recovered: boolean;
@@ -35,67 +58,123 @@ export function managedRenameJournalPath(contentDir: string): string {
 }
 
 export function createManagedRenameRecoveryJournal(args: {
-  sourceDocName: string;
-  destinationDocName: string;
+  fromPath: string;
+  toPath: string;
+  affectedDocs: ManagedRenameAffectedDoc[];
   snapshots: ManagedRenameSnapshot[];
   createdAt?: string;
-}): ManagedRenameRecoveryJournal {
+}): ManagedRenameRecoveryJournalV2 {
   return {
-    version: MANAGED_RENAME_JOURNAL_VERSION,
-    sourceDocName: args.sourceDocName,
-    destinationDocName: args.destinationDocName,
+    version: 2,
+    fromPath: args.fromPath,
+    toPath: args.toPath,
+    affectedDocs: args.affectedDocs,
     createdAt: args.createdAt ?? new Date().toISOString(),
     snapshots: args.snapshots,
   };
 }
 
 function isManagedRenameSnapshot(value: unknown): value is ManagedRenameSnapshot {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
+  if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<ManagedRenameSnapshot>;
   return typeof snapshot.docName === 'string' && typeof snapshot.content === 'string';
+}
+
+function isManagedRenameAffectedDoc(value: unknown): value is ManagedRenameAffectedDoc {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<ManagedRenameAffectedDoc>;
+  return typeof entry.from === 'string' && typeof entry.to === 'string';
+}
+
+function parseV2(value: Record<string, unknown>): ManagedRenameRecoveryJournalV2 {
+  if (typeof value.fromPath !== 'string' || value.fromPath.length === 0) {
+    throw new Error('Managed rename journal v2 is missing fromPath');
+  }
+  if (typeof value.toPath !== 'string' || value.toPath.length === 0) {
+    throw new Error('Managed rename journal v2 is missing toPath');
+  }
+  if (typeof value.createdAt !== 'string' || value.createdAt.length === 0) {
+    throw new Error('Managed rename journal v2 is missing createdAt');
+  }
+  if (
+    !Array.isArray(value.affectedDocs) ||
+    value.affectedDocs.length === 0 ||
+    !value.affectedDocs.every(isManagedRenameAffectedDoc)
+  ) {
+    throw new Error('Managed rename journal v2 has invalid affectedDocs');
+  }
+  if (
+    !Array.isArray(value.snapshots) ||
+    value.snapshots.length === 0 ||
+    !value.snapshots.every(isManagedRenameSnapshot)
+  ) {
+    throw new Error('Managed rename journal v2 has invalid snapshots');
+  }
+  for (const entry of value.affectedDocs as ManagedRenameAffectedDoc[]) {
+    if (
+      !(value.snapshots as ManagedRenameSnapshot[]).some(
+        (snapshot) => snapshot.docName === entry.from,
+      )
+    ) {
+      throw new Error(
+        `Managed rename journal v2 is missing snapshot for affected doc: ${entry.from}`,
+      );
+    }
+  }
+  return {
+    version: 2,
+    fromPath: value.fromPath,
+    toPath: value.toPath,
+    affectedDocs: value.affectedDocs as ManagedRenameAffectedDoc[],
+    createdAt: value.createdAt,
+    snapshots: value.snapshots as ManagedRenameSnapshot[],
+  };
+}
+
+function parseV1(value: Record<string, unknown>): ManagedRenameRecoveryJournalV1 {
+  if (typeof value.sourceDocName !== 'string' || value.sourceDocName.length === 0) {
+    throw new Error('Managed rename journal v1 is missing sourceDocName');
+  }
+  if (typeof value.destinationDocName !== 'string' || value.destinationDocName.length === 0) {
+    throw new Error('Managed rename journal v1 is missing destinationDocName');
+  }
+  if (typeof value.createdAt !== 'string' || value.createdAt.length === 0) {
+    throw new Error('Managed rename journal v1 is missing createdAt');
+  }
+  if (
+    !Array.isArray(value.snapshots) ||
+    value.snapshots.length === 0 ||
+    !value.snapshots.every(isManagedRenameSnapshot)
+  ) {
+    throw new Error('Managed rename journal v1 has invalid snapshots');
+  }
+  if (
+    !(value.snapshots as ManagedRenameSnapshot[]).some(
+      (snapshot) => snapshot.docName === value.sourceDocName,
+    )
+  ) {
+    throw new Error('Managed rename journal v1 must include the source document snapshot');
+  }
+  return {
+    version: 1,
+    sourceDocName: value.sourceDocName,
+    destinationDocName: value.destinationDocName,
+    createdAt: value.createdAt,
+    snapshots: value.snapshots as ManagedRenameSnapshot[],
+  };
 }
 
 function parseManagedRenameRecoveryJournal(value: unknown): ManagedRenameRecoveryJournal {
   if (!value || typeof value !== 'object') {
     throw new Error('Managed rename journal must be an object');
   }
-
-  const journal = value as Partial<ManagedRenameRecoveryJournal>;
-  if (journal.version !== MANAGED_RENAME_JOURNAL_VERSION) {
-    throw new Error(`Unsupported managed rename journal version: ${String(journal.version)}`);
-  }
-  if (typeof journal.sourceDocName !== 'string' || journal.sourceDocName.length === 0) {
-    throw new Error('Managed rename journal is missing sourceDocName');
-  }
-  if (typeof journal.destinationDocName !== 'string' || journal.destinationDocName.length === 0) {
-    throw new Error('Managed rename journal is missing destinationDocName');
-  }
-  if (typeof journal.createdAt !== 'string' || journal.createdAt.length === 0) {
-    throw new Error('Managed rename journal is missing createdAt');
-  }
-  if (!Array.isArray(journal.snapshots) || journal.snapshots.length === 0) {
-    throw new Error('Managed rename journal is missing snapshots');
-  }
-  if (!journal.snapshots.every(isManagedRenameSnapshot)) {
-    throw new Error('Managed rename journal has invalid snapshots');
-  }
-  if (!journal.snapshots.some((snapshot) => snapshot.docName === journal.sourceDocName)) {
-    throw new Error('Managed rename journal must include the source document snapshot');
-  }
-
-  return {
-    version: journal.version,
-    sourceDocName: journal.sourceDocName,
-    destinationDocName: journal.destinationDocName,
-    createdAt: journal.createdAt,
-    snapshots: journal.snapshots,
-  };
+  const journal = value as Record<string, unknown>;
+  if (journal.version === 2) return parseV2(journal);
+  if (journal.version === 1) return parseV1(journal);
+  throw new Error(`Unsupported managed rename journal version: ${String(journal.version)}`);
 }
 
-function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
+export function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
   const path = managedRenameJournalPath(contentDir);
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8');
@@ -110,7 +189,7 @@ function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJour
 
 export function writeManagedRenameJournal(
   contentDir: string,
-  journal: ManagedRenameRecoveryJournal,
+  journal: ManagedRenameRecoveryJournalV2,
 ): void {
   const path = managedRenameJournalPath(contentDir);
   mkdirSync(dirname(path), { recursive: true });
@@ -133,13 +212,21 @@ function clearManagedRenameJournal(contentDir: string): void {
  */
 export async function withManagedRenameRecovery<T>(
   contentDir: string,
-  journal: ManagedRenameRecoveryJournal,
+  journal: ManagedRenameRecoveryJournalV2,
   operation: () => MaybePromise<T>,
 ): Promise<T> {
   writeManagedRenameJournal(contentDir, journal);
   const result = await operation();
   clearManagedRenameJournal(contentDir);
   return result;
+}
+
+function destinationsToCleanV1(journal: ManagedRenameRecoveryJournalV1): string[] {
+  return [journal.destinationDocName];
+}
+
+function destinationsToCleanV2(journal: ManagedRenameRecoveryJournalV2): string[] {
+  return journal.affectedDocs.map((entry) => entry.to);
 }
 
 export function recoverPendingManagedRename(contentDir: string): ManagedRenameRecoveryResult {
@@ -171,24 +258,32 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
     );
   }
 
-  if (!restoredDocNames.has(journal.destinationDocName)) {
-    const destinationPath = safeContentPath(journal.destinationDocName, contentDir);
+  const destinationsToClean =
+    journal.version === 2 ? destinationsToCleanV2(journal) : destinationsToCleanV1(journal);
+  const failedCleanups: string[] = [];
+  for (const destination of destinationsToClean) {
+    if (restoredDocNames.has(destination)) continue;
+    const destinationPath = safeContentPath(destination, contentDir);
     try {
       rmSync(destinationPath, { force: true });
     } catch (err) {
       if (existsSync(destinationPath)) {
         console.warn(
-          `[managed-rename] Both source and destination files exist after partial recovery for ${journal.destinationDocName}`,
+          `[managed-rename] Both source and destination files exist after partial recovery for ${destination}`,
         );
       }
       console.warn(
-        `[managed-rename] Recovery incomplete; failed to clean destination ${journal.destinationDocName}:`,
+        `[managed-rename] Recovery incomplete; failed to clean destination ${destination}:`,
         err,
       );
-      throw new Error(
-        `Managed rename recovery incomplete; failed to clean destination: ${journal.destinationDocName}`,
-      );
+      failedCleanups.push(destination);
     }
+  }
+
+  if (failedCleanups.length > 0) {
+    throw new Error(
+      `Managed rename recovery incomplete; failed to clean destinations: ${failedCleanups.join(', ')}`,
+    );
   }
 
   clearManagedRenameJournal(contentDir);
