@@ -106,7 +106,28 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               seen.add(item.name);
             }
           }
-          return filterItems(allItems, query);
+          // Sort items so source order matches the visual (category-grouped)
+          // order the menu renders. `SlashCommandMenu` groups items into
+          // category buckets in first-appearance order and builds `indexMap`
+          // from the flat source array — if those orders diverge, `selectedIndex`
+          // (which advances through the source array) points to a button whose
+          // DOM position differs from `selectedIndex`, so `data-selected=true`
+          // lands on the wrong visual item. Category order is taken from
+          // `categoryLabels` keys (declaration order); unknown categories
+          // sort last. Stable sort preserves within-category source order.
+          const categoryOrder = Object.keys(extension.options.categoryLabels);
+          const indexOfCategory = (cat: string): number => {
+            const i = categoryOrder.indexOf(cat);
+            return i === -1 ? Number.POSITIVE_INFINITY : i;
+          };
+          const sorted = allItems
+            .map((item, i) => ({ item, i }))
+            .sort((a, b) => {
+              const diff = indexOfCategory(a.item.category) - indexOfCategory(b.item.category);
+              return diff !== 0 ? diff : a.i - b.i;
+            })
+            .map((x) => x.item);
+          return filterItems(sorted, query);
         },
 
         command: ({ editor, range, props: item }) => {

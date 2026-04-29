@@ -56,6 +56,9 @@ describe('ensureMdExtension', () => {
   test('leaves .md in place', () => {
     expect(ensureMdExtension('foo.md')).toBe('foo.md');
   });
+  test('leaves .mdx in place (first-class admission)', () => {
+    expect(ensureMdExtension('foo.mdx')).toBe('foo.mdx');
+  });
   test('does not double-append', () => {
     expect(ensureMdExtension('foo.md')).toBe('foo.md');
   });
@@ -94,6 +97,36 @@ describe('composeNewItemPath — kind=file', () => {
     expect(composeNewItemPath({ kind: 'file', initialDir: 'a/b/c', fileName: 'leaf.md' })).toBe(
       'a/b/c/leaf.md',
     );
+  });
+
+  test('explicit .mdx via fileExtension state produces a .mdx path', () => {
+    expect(
+      composeNewItemPath({
+        kind: 'file',
+        initialDir: '',
+        fileName: 'component',
+        fileExtension: '.mdx',
+      }),
+    ).toBe('component.mdx');
+  });
+
+  test('typed-in extension wins over fileExtension state (Finder-like)', () => {
+    // If the user types `foo.mdx` in the name field, that's the authoritative
+    // signal — regardless of whatever the extension picker's visible state is.
+    // The picker should visually sync to .mdx on the next render; this test
+    // pins the compose-time behavior.
+    expect(
+      composeNewItemPath({
+        kind: 'file',
+        initialDir: '',
+        fileName: 'foo.mdx',
+        fileExtension: '.md',
+      }),
+    ).toBe('foo.mdx');
+  });
+
+  test('fileExtension defaults to .md when omitted (backward-compat)', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: '', fileName: 'bare' })).toBe('bare.md');
   });
 });
 

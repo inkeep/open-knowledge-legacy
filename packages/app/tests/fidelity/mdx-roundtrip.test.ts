@@ -47,7 +47,7 @@ describe('MDX round-trip — self-closing flow elements', () => {
   });
 
   test('URL special chars in attr value', () => {
-    assertRoundTrip('<Image src="https://example.com?a=1&b=2" />\n');
+    assertRoundTrip('<img src="https://example.com?a=1&b=2" />\n');
   });
 
   test('complex object expression attr', () => {

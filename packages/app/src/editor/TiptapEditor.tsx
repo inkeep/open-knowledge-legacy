@@ -14,6 +14,8 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef, useState } from 'react';
+import { Breadcrumb } from '@/components/editor/Breadcrumb';
+import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
 import { mountTiptapEditor, parkTiptapEditor, type TiptapCacheEntry } from './editor-cache';
 import { InteractionLayerView } from './interaction-layer';
 import { getInteractionLayer } from './interaction-layer-host';
@@ -28,16 +30,19 @@ import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePa
 import { mark } from '@/lib/perf';
 import { useIdentity } from '../presence/identity';
 import { registerEditor, unregisterEditor } from './active-editor';
+import { buildAwarenessUser } from './awareness-user';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import {
   createClipboardHtmlSerializer,
   createClipboardTextSerializer,
   createHandlePaste,
 } from './clipboard/index.ts';
+import { useDocumentContext } from './DocumentContext';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
+import { getEditorView } from './utils/get-editor-view';
 
 /**
  * Custom cursor renderer. Post-US-005 (multi-agent-presence FR-3 + FR-10),
@@ -91,9 +96,17 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 interface TiptapEditorProps {
   provider: HocuspocusProvider;
   placeholder?: string;
+  /**
+   * Whether the active doc's editor surface is the source view. TiptapEditor
+   * stays mounted underneath the source surface (CSS-hidden) per the editor
+   * cache pattern, but we publish the mode the user is actually using —
+   * keeps presence consistent with what they see. Single mode-publication
+   * site avoids the race between two editor effects writing the same field.
+   */
+  isSourceMode: boolean;
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
@@ -101,6 +114,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
+  const { principal, activeDocName } = useDocumentContext();
+  const docName = provider.configuration.name ?? '';
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
   // Use useState with a lazy initializer so the bundle is constructed once
@@ -173,7 +188,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const [mountError, setMountError] = useState<Error | null>(null);
   if (mountError) throw mountError;
   const cacheEntryRef = useRef<TiptapCacheEntry | null>(null);
-  const docName = provider.configuration.name ?? '';
 
   // Placeholder deliberately excluded from the deps array below. The only
   // observable placeholder transition (the `isNewDoc` draft→saved flip) is
@@ -370,7 +384,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
       if (attachedDom || !editor || editor.isDestroyed) return;
-      attachedDom = editor.view.dom;
+      const view = getEditorView(editor);
+      if (!view) return;
+      attachedDom = view.dom;
       attachedDom.addEventListener('keydown', mark);
       attachedDom.addEventListener('paste', mark);
       attachedDom.addEventListener('drop', mark);
@@ -384,9 +400,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       attachedDom.removeEventListener('cut', mark);
       attachedDom = null;
     };
-    // Access `editorView` directly (not through the throwing proxy) to check
-    // mount state. The proxy intercepts property access on `editor.view` only.
-    const isMounted = !!(editor as unknown as { editorView?: unknown }).editorView;
+    // `getEditorView` returns undefined pre-mount; truthy check confirms the
+    // underlying ProseMirror EditorView is present so `attach()` can run now.
+    const isMounted = !!getEditorView(editor);
     if (isMounted) {
       attach();
     } else {
@@ -397,6 +413,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       detach();
     };
   }, [editor]);
+
+  // Note: `window.__activeEditor` is exposed centrally from DocumentContext
+  // via `Object.defineProperty({get})` reading the `active-editor.ts`
+  // registry — populated by the `registerEditor`/`unregisterEditor` effect
+  // above. Direct assignment here used to collide with that getter-only
+  // accessor and throw "Cannot set property __activeEditor of #<Window>
+  // which has only a getter" on any doc open in DEV.
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -607,10 +630,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     function onNav(e: Event) {
       const detail = (e as CustomEvent<OutlineNavDetail>).detail;
       if (!detail || detail.mode !== 'wysiwyg' || !editor || editor.isDestroyed) return;
-      // Access the real editorView directly (not editor.view which is a
-      // throwing proxy pre-mount). Typed as the relevant subset so we don't
-      // need an `any` cast at the call site.
-      const realView = (editor as unknown as { editorView?: { dom: HTMLElement } }).editorView;
+      // `getEditorView` is the non-throwing accessor for the underlying
+      // ProseMirror EditorView (see utils/get-editor-view.ts). Returns
+      // undefined pre-mount, never throws on the recycle/remount race.
+      const realView = getEditorView(editor);
       if (!realView) return;
       const headings = realView.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const target = headings[detail.index];
@@ -637,19 +660,50 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     return () => metaMap.unobserve(observer);
   }, [provider.document]);
 
-  // Set awareness state on mount (user identity + mode)
+  // Publish (or clear) this tab's awareness for the doc this editor binds to.
+  //
+  // EditorActivityPool keeps multiple TiptapEditor instances mounted in
+  // parallel (one per pool entry) — but only ONE of those docs is the
+  // foreground at a time. Without the `docName !== activeDocName` gate the
+  // effect would fire on mount and then never clear, leaving stale "this user
+  // is here" entries on every doc that ever passed through the pool. Peers
+  // would dedupe two ghost tabs into a `· N tabs` tooltip even after the
+  // user navigated away (they're still pool-cached, WebSocket open, awareness
+  // set).
+  //
+  // `activeDocName` is in the dep list so this re-runs on every navigation:
+  // the editor whose doc just became active publishes; the editor whose doc
+  // just became inactive calls `setLocalState(null)`, which deletes the entry
+  // entirely from y-protocols' awareness map (not just empties it). The
+  // delete fans out to peers as an "awareness removal" the same way an
+  // ungraceful disconnect would — so peers' usePresence drops the entry
+  // immediately, no TTL wait. `buildAwarenessUser` is the pure helper holding
+  // the three-state FR3 design (unit-tested in awareness-user.test.ts).
   useEffect(() => {
     const awareness = provider.awareness;
     if (!awareness) return;
-    awareness.setLocalStateField('user', {
-      name: identity.name,
-      color: identity.color,
-      type: 'human' as const,
-      coeditor: identity.coeditor,
-      tabId: identity.tabId,
+    if (docName !== activeDocName) {
+      awareness.setLocalState(null);
+      return;
+    }
+    // Atomic publish via setLocalState (not two setLocalStateField calls):
+    // y-protocols' setLocalStateField short-circuits when localState is null,
+    // so once setLocalState(null) ran on a previous navigate-away, a follow-up
+    // setLocalStateField('user', ...) would silently no-op. setLocalState
+    // unconditionally rebuilds the entry, restoring the navigate-away → back
+    // path. Atomicity also means peers never observe an entry with `mode` but
+    // no `user` (the discriminator that usePresence filters on).
+    //
+    // TiptapEditor is the sole writer of `user` and `mode` on per-doc
+    // awareness. Two writers (TiptapEditor + SourceEditor's previous
+    // setLocalStateField calls) would race on every render — peers' observed
+    // mode depended on React's effect-firing order across siblings. Single
+    // writer eliminates the race.
+    awareness.setLocalState({
+      user: buildAwarenessUser({ principal, identity }),
+      mode: isSourceMode ? 'source' : 'wysiwyg',
     });
-    awareness.setLocalStateField('mode', 'wysiwyg');
-  }, [provider, identity]);
+  }, [provider, docName, activeDocName, identity, principal, isSourceMode]);
 
   // Data attributes are set once on initial render; the flash useEffect updates them
   // imperatively via wrapperRef to avoid triggering React re-renders during typing.
@@ -664,6 +718,15 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     >
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
+      {/* Drag handle + "+" chrome is registered as the imperative
+          `BlockDragHandle` TipTap extension in `sharedExtensions` —
+          bare DOM container, no React involvement. A React-wrapper
+          variant (`@tiptap/extension-drag-handle-react`) is
+          incompatible with `<Activity>` because the plugin externally
+          moves its ref'd `<div>` into `editor.view.dom.parentElement`
+          and Activity mode flips then throw `Failed to execute
+          'removeChild' on 'Node'` — regression validated against
+          docs-open F1/F4/F5/F10, 2026-04-18. */}
       {/*
        * <EditorContent> owns the React-side DOM mount and sets
        * editor.contentComponent (load-bearing for ReactRenderer + the
@@ -674,6 +737,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
        * view.dom on remount. Editor identity preserved across navigation.
        */}
       <EditorContent editor={editor} className="h-full" />
+      {/* Selection layer footer — ancestry breadcrumb + aria-live announcer.
+          Breadcrumb renders only when a block is selected; announcer is
+          always in the DOM (role=status + sr-only) and updates imperatively. */}
+      {editor && <Breadcrumb editor={editor} />}
+      {editor && <SelectionAnnouncer editor={editor} />}
       {/*
        * <InteractionLayerView> renders the singleton PropPanel / Toolbar /
        * Breadcrumb subtree FOR THE ACTIVE chip — inside the main React tree
@@ -681,10 +749,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
        * inherit context providers like <PageListProvider> + <ThemeProvider>.
        * The layer host (per-editor WeakMap) provides the store; the View
        * subscribes via useState + subscribe and renders the active
-       * registration's controls. RawMdxFallback registers with empty controls
-       * + a handlePrimary hook (dispatches RAW_MDX_NAV_EVENT); in-place MDX
-       * editing is deferred to CB-v2's inline-nested RawMdxFallbackCMView
-       * per T1 trim.
+       * registration's controls. In CB-v2, RawMdxFallback is handled inline
+       * via `RawMdxFallbackCMView` (per precedent #30 "all user content
+       * visible and editable") and does not register with InteractionLayer.
        *
        * Rendered AFTER EditorContent so its absolute-positioned PropPanels
        * stack above editor content (z-index handled in CSS).
@@ -694,7 +761,9 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   );
 };
 
-// Expose flash state type on window for test access
+// Expose flash state type on window for test access.
+// `__activeEditor` is declared globally in env.d.ts (DocumentContext owns the
+// accessor); no duplicate Window augmentation here.
 declare global {
   interface Window {
     __agentFlashState?: AgentFlashState;

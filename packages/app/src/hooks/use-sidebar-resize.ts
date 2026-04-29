@@ -3,7 +3,7 @@
  */
 import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from 'react';
 
-export interface UseSidebarResizeProps {
+interface UseSidebarResizeProps {
   /**
    * Direction of the resize handle
    * - 'left': Handle is on left side (for right-positioned panels)

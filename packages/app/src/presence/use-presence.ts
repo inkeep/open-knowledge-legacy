@@ -6,38 +6,21 @@ import {
   hasAgentPresenceShape,
   pickAgentsForDoc,
 } from '@/lib/agent-presence';
-import type { AwarenessState, AwarenessUser } from './identity.ts';
+import type { AwarenessUser } from './identity.ts';
+import {
+  type AgentParticipant,
+  dedupeHumansByPrincipalId,
+  type HumanParticipant,
+  type Participant,
+  participantsEqual,
+} from './participant-model.ts';
 
-// NOTE: `pickAgentsForDoc` now returns `{agentId, entry}` pairs directly so
-// this hook doesn't have to reverse-lookup the id from the awareness map
-// per render (previously O(N²) against presence map entries — see review
-// pass 0 finding #11).
+// `pickAgentsForDoc` returns `{agentId, entry}` pairs directly so this hook
+// doesn't have to reverse-lookup the id from the awareness map per render.
+// The earlier shape forced a Map.entries() reverse lookup inside the
+// participants build, which was O(N²) over presence-map size.
 
-/**
- * A human participant — publishes per-doc awareness (name, color, icon,
- * cursor position, mode). Cursors are rendered by `@tiptap/extension-
- * collaboration-cursor`.
- */
-export interface HumanParticipant {
-  kind: 'human';
-  clientId: number;
-  user: AwarenessUser;
-  mode: AwarenessState['mode'];
-}
-
-/**
- * An agent participant — publishes presence via the `__system__` Y.Doc's
- * `agentPresence` map (never per-doc awareness; see FR-3 + precedent #3).
- * `presence` carries everything the bar needs: displayName, icon, color,
- * currentDoc, mode, ts.
- */
-export interface AgentParticipant {
-  kind: 'agent';
-  agentId: string;
-  presence: AgentPresenceEntry;
-}
-
-export type Participant = HumanParticipant | AgentParticipant;
+export type { AgentParticipant, HumanParticipant, Participant } from './participant-model.ts';
 
 /**
  * 1s cadence is a compromise. Awareness-change events fan out on every
@@ -58,43 +41,6 @@ const TTL_TICK_MS = 1_000;
  * spamming on every remount.
  */
 let warnedOnMalformedAwareness = false;
-
-/**
- * Shallow-compare two Participant arrays across the render-affecting
- * fields. Intentionally skips `presence.ts` because the timestamp shifts
- * on every `touchMode` call (mode-flip → same render output) without
- * changing what the bar looks like. Used to short-circuit the 1 Hz TTL
- * tick's `setState` when no peer actually changed — React Compiler cannot
- * elide this because every tick produces a fresh object reference.
- */
-function participantsEqual(a: Participant[], b: Participant[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i];
-    const y = b[i];
-    if (x.kind !== y.kind) return false;
-    if (x.kind === 'human' && y.kind === 'human') {
-      if (x.clientId !== y.clientId || x.mode !== y.mode) return false;
-      const u = x.user;
-      const v = y.user;
-      if (u.name !== v.name || u.color !== v.color || u.icon !== v.icon) return false;
-    } else if (x.kind === 'agent' && y.kind === 'agent') {
-      if (x.agentId !== y.agentId) return false;
-      const p = x.presence;
-      const q = y.presence;
-      if (
-        p.displayName !== q.displayName ||
-        p.icon !== q.icon ||
-        p.color !== q.color ||
-        p.currentDoc !== q.currentDoc ||
-        p.mode !== q.mode
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
 
 /**
  * Two-source presence reader for the sectioned PresenceBar.
@@ -167,9 +113,11 @@ export function usePresence(
             clientId,
             user,
             mode: (s.mode as HumanParticipant['mode']) ?? 'wysiwyg',
+            tabCount: 1,
           });
         }
       }
+      const deduped = dedupeHumansByPrincipalId(humans);
 
       const now = Date.now();
       const { current: currentAgents, crossDoc: crossDocAgents } = systemAwareness
@@ -190,7 +138,7 @@ export function usePresence(
       const currentAgentParticipants: AgentParticipant[] = currentAgents.map(toParticipant);
       const crossDocAgentParticipants: AgentParticipant[] = crossDocAgents.map(toParticipant);
 
-      const nextCurrent: Participant[] = [...humans, ...currentAgentParticipants];
+      const nextCurrent: Participant[] = [...deduped, ...currentAgentParticipants];
       const nextCrossDoc: Participant[] = crossDocAgentParticipants;
       // Functional updater so the equality check compares against the
       // LATEST committed state, not a stale closure capture. When both

@@ -135,6 +135,157 @@ describe('mdxJsxFlowElement mdast→hast', () => {
   });
 });
 
+describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
+  test('img flow element emits native <img> with src + alt, not the <pre> source-as-code shape', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'alt', value: 'A picture' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="https://x.example/img.png" alt="A picture" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/img\.png"[^>]*>/);
+    expect(out).toMatch(/<img\b[^>]*alt="A picture"[^>]*>/);
+    expect(out).not.toContain('<pre class="mdx-component">');
+  });
+
+  test('video flow element emits <video> with explicit close + bare boolean controls attr', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'video',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/v.mp4' },
+        { type: 'mdxJsxAttribute', name: 'controls', value: null },
+      ],
+      children: [],
+      data: { sourceRaw: '<video src="https://x.example/v.mp4" controls />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<video\b[^>]*src="https:\/\/x\.example\/v\.mp4"[^>]*>/);
+    expect(out).toMatch(/<video\b[^>]*\bcontrols(?=[\s/>])[^>]*>/);
+    expect(out).toContain('</video>');
+    expect(out).not.toContain('<pre class="mdx-component">');
+  });
+
+  test('audio flow element emits native <audio>...</audio>', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'audio',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/a.mp3' },
+        { type: 'mdxJsxAttribute', name: 'controls', value: null },
+      ],
+      children: [],
+      data: { sourceRaw: '<audio src="https://x.example/a.mp3" controls />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<audio\b[^>]*src="https:\/\/x\.example\/a\.mp3"[^>]*>/);
+    expect(out).toMatch(/<audio\b[^>]*\bcontrols(?=[\s/>])[^>]*>/);
+    expect(out).toContain('</audio>');
+    expect(out).not.toContain('<pre class="mdx-component">');
+  });
+
+  test('inline <img> via mdxJsxTextElement also emits native <img> (not <span class="mdx-inline">)', () => {
+    const node: MdxJsxTextElement = {
+      type: 'mdxJsxTextElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/inline.png' },
+        { type: 'mdxJsxAttribute', name: 'alt', value: 'Inline' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="https://x.example/inline.png" alt="Inline" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/inline\.png"[^>]*>/);
+    expect(out).not.toContain('<span class="mdx-inline">');
+  });
+
+  test('capitalized JSX (e.g. <Callout>) still emits the <pre class="mdx-component"> source-as-code shape', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'Callout',
+      attributes: [{ type: 'mdxJsxAttribute', name: 'type', value: 'note' }],
+      children: [],
+      data: { sourceRaw: '<Callout type="note">Body</Callout>' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<pre class="mdx-component">');
+    expect(out).not.toMatch(/<callout\b/i);
+  });
+
+  test('non-primitive lowercase tag (<picture>) falls through to <pre> shape (gate is name-keyed, not lowercase-globbed)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'picture',
+      attributes: [],
+      children: [],
+      data: { sourceRaw: '<picture></picture>' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<pre class="mdx-component">');
+    expect(out).not.toMatch(/<picture\b/);
+  });
+
+  test('javascript: src on native <img> is stripped by downstream rehypeSanitizeUrls (composition-boundary lock)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'javascript:alert(1)' },
+        { type: 'mdxJsxAttribute', name: 'alt', value: 'evil' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="javascript:alert(1)" alt="evil" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b/);
+    expect(out).not.toContain('javascript:');
+    expect(out).toMatch(/<img\b[^>]*alt="evil"[^>]*>/);
+    expect(out).not.toMatch(/<img\b[^>]*src=/);
+  });
+
+  test('expression-valued attr (`width={400}`) falls back to <pre> shape (helper bails on dynamic values)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'x' },
+        {
+          type: 'mdxJsxAttribute',
+          name: 'width',
+          value: { type: 'mdxJsxAttributeValueExpression', value: '400', data: {} },
+        },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="x" width={400} />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<pre class="mdx-component">');
+    expect(out).not.toMatch(/<img\b[^>]*src="x"/);
+  });
+
+  test('spread attribute (`{...rest}`) falls back to <pre> shape (helper bails on non-mdxJsxAttribute)', () => {
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'x' },
+        { type: 'mdxJsxExpressionAttribute', value: '...rest', data: {} },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="x" {...rest} />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toContain('<pre class="mdx-component">');
+    expect(out).not.toMatch(/<img\b[^>]*src="x"/);
+  });
+});
+
 describe('mdxJsxTextElement mdast→hast', () => {
   test('renders as <span class="mdx-inline">escaped</span>', () => {
     const node: MdxJsxTextElement = {

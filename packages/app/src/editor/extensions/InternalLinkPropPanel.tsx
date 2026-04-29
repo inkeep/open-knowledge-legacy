@@ -16,16 +16,11 @@
  *   - 'external' → show navigate / edit / remove
  *   - 'anchor'   → show navigate / edit / remove
  *
- * The PropPanel is positioned by InteractionLayer's mountNode (default: the
- * editor's wrapper). It does NOT track the chip's pixel position itself —
- * the layer mounts the panel into the editor's React tree and authors style
- * it with `position: absolute; bottom: 100%` etc. relative to the chip via
- * `data-mark-id` lookups in CSS or by passing the chip's bounding rect.
- *
- * For now the panel renders inline at the layer's mountNode (top-right of
- * editor wrapper); a follow-up can position it floating-ui-style relative
- * to the active chip if the UX warrants. Greenfield directive: ship the
- * functional reduction first, polish positioning after baseline measurement.
+ * The PropPanel is anchored to the chip via Floating UI (`computePosition` +
+ * `autoUpdate`) inside `InteractionPropPanel`. The caller passes a virtual
+ * reference whose `getBoundingClientRect` resolves the live mark range via
+ * `getCurrentMarkInfo` + `posToDOMRect`, so the panel tracks PM edits and
+ * scroll without stale rects.
  */
 
 import {
@@ -34,6 +29,7 @@ import {
   isExternalHref,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
+import { posToDOMRect } from '@tiptap/core';
 import {
   CircleAlert,
   ExternalLink,
@@ -284,6 +280,18 @@ export function InternalLinkPropPanel({
 
   const target = classifyMarkdownHref(href, sourceDocName);
 
+  // Human-readable display path. Strips markdown-link surface
+  // (`./` prefix, `.md` suffix) for doc kinds; preserves the URL form
+  // for external; preserves `#anchor` for in-doc anchor jumps.
+  const displayHref =
+    target?.kind === 'doc'
+      ? `${target.docName}${target.anchor ? `#${target.anchor}` : ''}`
+      : target?.kind === 'anchor'
+        ? `#${target.anchor}`
+        : target?.kind === 'external'
+          ? target.url
+          : href;
+
   function handleSave(nextHref: string) {
     const live = getCurrentMarkInfo(editor.state, nodeId);
     if (!live) return;
@@ -398,20 +406,41 @@ export function InternalLinkPropPanel({
     };
   }
 
+  // Floating-UI virtual reference. Each tick `getCurrentMarkInfo` resolves
+  // the current mark range from PM state, then `posToDOMRect` yields the
+  // chip's rect. Tracks live edits + scroll. Mirrors WikiLinkPropPanel.
+  const triggerReference = {
+    getBoundingClientRect: () => {
+      const live = getCurrentMarkInfo(editor.state, nodeId);
+      if (!live) return new DOMRect();
+      try {
+        return posToDOMRect(editor.view, live.from, live.to);
+      } catch {
+        return new DOMRect();
+      }
+    },
+    contextElement: editor.view.dom,
+  };
+
   return (
     <>
-      <InteractionPropPanel kind="internal-link" ariaLabel="Link options" onDeactivate={onClose}>
+      <InteractionPropPanel
+        kind="internal-link"
+        ariaLabel="Link options"
+        onDeactivate={onClose}
+        triggerReference={triggerReference}
+      >
         <div className="mb-2 flex items-start gap-2 pr-8">
           <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
           <div className="flex-1 min-w-0">
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
-            <div className="truncate text-xs text-muted-foreground" title={href}>
-              {href}
+            <div className="truncate font-mono text-xs text-muted-foreground" title={displayHref}>
+              {displayHref}
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {!isUnresolved ? (
             <Button
               size="sm"
@@ -435,16 +464,15 @@ export function InternalLinkPropPanel({
               Create index
             </Button>
           ) : null}
+          {/* Spacer pushes Edit + Remove to the right, separating
+              navigation/creation actions (left) from modify-the-mark
+              actions (right). */}
+          <div className="flex-1" />
           <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
             <Pencil className="size-3.5" aria-hidden="true" />
             Edit
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-300 dark:hover:bg-red-100/10 dark:hover:text-red-200"
-            onClick={handleRemove}
-          >
+          <Button size="sm" variant="destructive" onClick={handleRemove}>
             <Trash2 className="size-3.5" aria-hidden="true" />
             Remove
           </Button>

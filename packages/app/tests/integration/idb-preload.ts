@@ -7,6 +7,11 @@ import { afterEach } from 'bun:test';
 // harness name) would otherwise hydrate from prior-test state on open.
 // Cleaning here prevents cross-test pollution WITHOUT requiring every
 // integration test to call resetFakeIndexedDB explicitly.
+//
+// This relies on Bun running afterEach hooks in LIFO order: per-file teardown
+// hooks registered after this preload close providers/servers first, then this
+// hook deletes the databases. If Bun ever switches to FIFO ordering,
+// deleteDatabase would hit onblocked while provider IDB handles are still open.
 afterEach(async () => {
   if (typeof indexedDB === 'undefined') return;
   const dbs = await indexedDB.databases();

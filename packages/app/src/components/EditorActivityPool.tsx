@@ -38,6 +38,7 @@
  *   (invalidate + nav), or (c) Activity eviction from the MRU mount list.
  */
 
+import { Loader2, RefreshCw } from 'lucide-react';
 import {
   Activity,
   lazy,
@@ -51,12 +52,14 @@ import {
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { setActivityMountList } from '@/editor/editor-cache';
 import { isSystemDoc } from '@/editor/is-system-doc';
+import type { ServerRestartRecoveryState } from '@/editor/provider-pool';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { DocumentBoundary } from './DocumentBoundary';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorSkeleton } from './EditorSkeleton';
 import { usePageList } from './PageListContext';
+import { Button } from './ui/button';
 
 /**
  * Large-doc threshold in Y.Text characters. Above this, the non-active editor
@@ -134,7 +137,7 @@ export function computeEditorMountGate(args: EditorMountGateArgs): EditorMountGa
 /**
  * Maximum number of editors mounted concurrently inside `<Activity>` boundaries.
  * Decoupled from `MAX_POOL` (exported from `provider-pool.ts`, default 10) per
- * SPEC.md §10 DX9 / PRECEDENTS.md precedent #15(c) — pool-resident-but-not-
+ * SPEC.md §10 DX9 / PRECEDENTS.md precedent #18(c) — pool-resident-but-not-
  * Activity-mounted docs keep their warm provider (so revisiting is fast via
  * Suspense-gated remount with `syncPromise` resolving immediately from
  * `hasSynced=true`) but skip the per-editor memory + observer-CPU cost of
@@ -247,6 +250,51 @@ export function computeActivityMountList<T extends { docName: string; lastAccess
   return [...top.slice(0, limit - 1), active];
 }
 
+type ServerRestartRecoveryView =
+  | {
+      kind: 'recovering';
+      title: string;
+      summary: string;
+    }
+  | {
+      kind: 'failed';
+      title: string;
+      summary: string;
+      actionLabel: string;
+    };
+
+export function getServerRestartRecoveryView(
+  docName: string,
+  state: ServerRestartRecoveryState,
+): ServerRestartRecoveryView | null {
+  if (state.kind === 'idle') return null;
+
+  if (state.kind === 'failed' && state.failedDocNames.includes(docName)) {
+    return {
+      kind: 'failed',
+      title: "Couldn't reconnect after server restart",
+      summary:
+        state.reason === 'clear-data-timeout'
+          ? `Local collaboration data for "${docName}" could not be cleared in time. Reload to retry.`
+          : `Local collaboration data for "${docName}" could not be cleared. Reload to retry.`,
+      actionLabel: 'Reload',
+    };
+  }
+
+  if (state.kind === 'recovering' && state.docNames.includes(docName)) {
+    return {
+      kind: 'recovering',
+      title: 'Reconnecting after server restart',
+      summary:
+        state.phase === 'clearing-local-cache'
+          ? `Clearing local collaboration data for "${docName}" before reconnecting.`
+          : `Reopening "${docName}" with a fresh local collaboration cache.`,
+    };
+  }
+
+  return null;
+}
+
 export function EditorActivityPool(props: EditorActivityPoolProps) {
   return (
     <ProfilerBoundary name="activity-pool">
@@ -263,7 +311,7 @@ function EditorActivityPoolInner({
   onNavigateBack,
   onRecycle,
 }: EditorActivityPoolProps) {
-  const { poolEntries } = useDocumentContext();
+  const { poolEntries, serverRestartRecovery } = useDocumentContext();
   const { pages, loading } = usePageList();
 
   const mountList = computeActivityMountList(poolEntries, activeDocName, ACTIVITY_MOUNT_LIMIT);
@@ -295,7 +343,7 @@ function EditorActivityPoolInner({
     });
     priorMountKeyRef.current = mountKey;
     // The cache uses this list to drive provider connect/disconnect for
-    // cached-but-not-Activity-mounted editors (precedent #18(i)). Bounds
+    // cached-but-not-Activity-mounted editors (precedent #27(b)). Bounds
     // remote-peer CRDT load to the top ACTIVITY_MOUNT_LIMIT editors
     // regardless of how many docs are pool-resident.
     setActivityMountList(mounted);
@@ -314,6 +362,7 @@ function EditorActivityPoolInner({
           previousDocName={previousDocName}
           onNavigateBack={onNavigateBack}
           onRecycle={onRecycle}
+          serverRestartRecovery={serverRestartRecovery}
         />
       ))}
     </>
@@ -329,6 +378,7 @@ interface ActivityEntryProps {
   previousDocName?: string;
   onNavigateBack?: (previousDocName: string) => void;
   onRecycle: (docName: string) => void;
+  serverRestartRecovery: ServerRestartRecoveryState;
 }
 
 /**
@@ -470,6 +520,37 @@ function SourceEditorSlot({
     </Suspense>
   );
 }
+
+function ServerRestartRecoveryPanel({ view }: { view: ServerRestartRecoveryView }) {
+  const isFailed = view.kind === 'failed';
+  return (
+    <div
+      data-slot="server-restart-recovery"
+      role={isFailed ? 'alert' : 'status'}
+      aria-busy={!isFailed}
+      className="flex h-full flex-col items-center justify-center gap-6 p-8 text-center"
+    >
+      <div className="flex size-12 items-center justify-center rounded-full border bg-muted text-muted-foreground">
+        {isFailed ? (
+          <RefreshCw className="size-5" aria-hidden="true" />
+        ) : (
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+        )}
+      </div>
+      <div className="flex flex-col items-center gap-1">
+        <h2 className="text-lg font-medium">{view.title}</h2>
+        <p className="max-w-md text-sm text-muted-foreground">{view.summary}</p>
+      </div>
+      {isFailed ? (
+        <Button type="button" onClick={() => window.location.reload()}>
+          <RefreshCw className="size-4" aria-hidden="true" />
+          {view.actionLabel}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function ActivityEntry({
   entry,
   isActive,
@@ -479,7 +560,10 @@ function ActivityEntry({
   previousDocName,
   onNavigateBack,
   onRecycle,
+  serverRestartRecovery,
 }: ActivityEntryProps) {
+  const recoveryView = getServerRestartRecoveryView(entry.docName, serverRestartRecovery);
+
   // Defer-mount gating for large docs (US-008 / SPEC D12 DIRECTED).
   //
   // Small/medium docs keep pre-mount-both (precedent #18(b) default): mode swap
@@ -562,20 +646,24 @@ function ActivityEntry({
           state cross-document and collapse scrollHeight on hidden-mode
           effect cleanup (QA-002 / SPEC US-007/F1). */}
       <ScrollPreservingContainer isActive={isActive}>
-        {/* Per-Activity error + suspense scoping — see file-level docstring
+        {recoveryView ? (
+          <ServerRestartRecoveryPanel view={recoveryView} />
+        ) : (
+          <>
+            {/* Per-Activity error + suspense scoping — see file-level docstring
             "ERROR + SUSPENSE SCOPING" for rationale. `activeDocName` passed
             to the boundary is this Activity's OWN docName (entry.docName),
             not the globally-active doc. This keeps the error state tied to
             the Activity instance: a healthy doc becoming active does not
             reset an errored doc's boundary, and revisiting an errored doc
             re-reveals the same error UI (QA-024). */}
-        <DocumentErrorBoundary
-          activeDocName={entry.docName}
-          previousDocName={previousDocName}
-          onNavigateBack={onNavigateBack}
-          onRecycle={onRecycle}
-        >
-          {/*
+            <DocumentErrorBoundary
+              activeDocName={entry.docName}
+              previousDocName={previousDocName}
+              onNavigateBack={onNavigateBack}
+              onRecycle={onRecycle}
+            >
+              {/*
             Suspense fallback = `EditorSkeleton`. Earlier iteration shipped
             an Option E "static mdast→React preview" fallback that read disk
             bytes and rendered a fumadocs-style tree; the visual jump from
@@ -585,9 +673,9 @@ function ActivityEntry({
             removal. The perceived-first-paint budget (spec G5 <500ms P95)
             still applies — the skeleton meets it trivially.
           */}
-          <Suspense fallback={<EditorSkeleton />}>
-            <DocumentBoundary docName={entry.docName} provider={entry.provider}>
-              {/* Dual-editor mount with size-gated defer for large docs. Small
+              <Suspense fallback={<EditorSkeleton />}>
+                <DocumentBoundary docName={entry.docName} provider={entry.provider}>
+                  {/* Dual-editor mount with size-gated defer for large docs. Small
                   docs render both (pre-mount-both default — mode swap stays
                   CSS-only after first source visit). SourceEditor itself is
                   lazy-loaded the first time this doc is shown in source mode.
@@ -605,33 +693,36 @@ function ActivityEntry({
                   the MAX intrinsic size across children, stretching the
                   visible editor to 8000px and creating bottom whitespace on
                   short docs — see globals.css §.ok-mode-hidden). */}
-              <div className="relative h-full">
-                {gate.renderSource ? (
-                  <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
-                    <SourceEditorSlot
-                      entry={entry}
-                      isActive={isActive}
-                      isSourceMode={isSourceMode}
-                      editorPlaceholder={editorPlaceholder}
-                    />
+                  <div className="relative h-full">
+                    {gate.renderSource ? (
+                      <div className={isSourceMode ? 'h-full' : 'ok-mode-hidden h-full'}>
+                        <SourceEditorSlot
+                          entry={entry}
+                          isActive={isActive}
+                          isSourceMode={isSourceMode}
+                          editorPlaceholder={editorPlaceholder}
+                        />
+                      </div>
+                    ) : null}
+                    {gate.renderVisual ? (
+                      <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
+                        <TiptapEditor
+                          // Composite key matches existing pattern at EditorArea.tsx:172 —
+                          // forces TipTap remount on draft → saved transition (the isNewDoc
+                          // flip changes the page list's membership of this docName).
+                          key={`${entry.docName}-${String(isNewDoc)}`}
+                          provider={entry.provider}
+                          placeholder={editorPlaceholder}
+                          isSourceMode={isSourceMode}
+                        />
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-                {gate.renderVisual ? (
-                  <div className={isSourceMode ? 'ok-mode-hidden h-full' : 'h-full'}>
-                    <TiptapEditor
-                      // Composite key matches existing pattern at EditorArea.tsx:172 —
-                      // forces TipTap remount on draft → saved transition (the isNewDoc
-                      // flip changes the page list's membership of this docName).
-                      key={`${entry.docName}-${String(isNewDoc)}`}
-                      provider={entry.provider}
-                      placeholder={editorPlaceholder}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            </DocumentBoundary>
-          </Suspense>
-        </DocumentErrorBoundary>
+                </DocumentBoundary>
+              </Suspense>
+            </DocumentErrorBoundary>
+          </>
+        )}
       </ScrollPreservingContainer>
     </Activity>
   );

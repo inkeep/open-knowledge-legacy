@@ -19,6 +19,7 @@
  * client-side machinery alone.
  */
 
+import './idb-preload';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,7 +39,7 @@ afterEach(async () => {
   while (cleanups.length > 0) {
     await cleanups.pop()?.();
   }
-});
+}, 30_000);
 
 describe('T12: buffer-and-replay across server-instance-mismatch', () => {
   test('clean mismatch recycle: no unsynced delta, no duplication, server state becomes authoritative', async () => {

@@ -23,7 +23,12 @@ export {
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
-export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
+export {
+  ALLOWED_AUDIO_MIME_TYPES,
+  ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_VIDEO_MIME_TYPES,
+  ASSET_EXTENSIONS,
+} from './constants/upload.ts';
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -74,13 +79,42 @@ export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
+  incrementJsxAutoConvertFailed,
+  incrementJsxAutoConvertSucceeded,
+  incrementJsxMoveFailed,
+  incrementJsxPropDropped,
+  incrementJsxRenderFailure,
+  incrementJsxStuckCopyFailed,
+  incrementJsxStuckDeleteFailed,
   incrementWholeDocFallback,
   incrementYpsMismatchBlock,
   incrementYpsMismatchInline,
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
-export { type ServerInfoResponse, ServerInfoResponseSchema } from './schemas/api.ts';
+// Registry
+export {
+  builtInComponents,
+  type ComponentRegistry,
+  createRegistry,
+  wildcardMeta,
+} from './registry/index.ts';
+export type {
+  JsxComponentMeta,
+  PropDef,
+  PropDefBase,
+  PropDefBoolean,
+  PropDefEnum,
+  PropDefNumber,
+  PropDefReactNode,
+  PropDefString,
+} from './registry/types.ts';
+export {
+  type PrincipalResponse,
+  PrincipalResponseSchema,
+  type ServerInfoResponse,
+  ServerInfoResponseSchema,
+} from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CHANNEL_DISK_ACK,
@@ -160,7 +194,9 @@ export {
   AGENT_ICON_COLORS,
   AGENT_ICON_COLORS_DARK,
   colorFromSeed,
+  computeInitials,
   deriveIconColor,
+  formatPresenceLabel,
   generateRandomColor,
   generateRandomName,
   getIdentity,
