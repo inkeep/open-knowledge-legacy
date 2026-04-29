@@ -79,12 +79,14 @@ describe('uploadFile', () => {
   });
 
   test('returns { url } from the server src field on success', async () => {
-    const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: 'photo-1.png' }));
+    // Stub mirrors the server-absolute URL shape returned by the upload
+    // endpoints (see `api-extension.test.ts:151` for the canonical form).
+    const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: '/docs/photo-1.png' }));
     const file = new File(['x'], 'photo.png', { type: 'image/png' });
 
     const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
 
-    expect(result).toEqual({ url: 'photo-1.png' });
+    expect(result).toEqual({ url: '/docs/photo-1.png' });
   });
 
   test('unknown MIME prefix throws without making any fetch call', async () => {

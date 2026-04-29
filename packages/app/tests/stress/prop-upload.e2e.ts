@@ -191,7 +191,9 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     // Server returns server-absolute URLs (leading slash, contentDir-relative).
     expect(srcAfterFirst).toMatch(/^\//);
     expect(srcAfterFirst).toContain(c.payloads[0].name.replace(/\.\w+$/, ''));
-    expect(existsSync(join(workerServer.contentDir, srcAfterFirst))).toBe(true);
+    // Strip the leading `/` before joining: `path.join(base, '/foo')` happens
+    // to strip leading separators on POSIX, but relying on that is implicit.
+    expect(existsSync(join(workerServer.contentDir, srcAfterFirst.replace(/^\//, '')))).toBe(true);
 
     // Second upload — first payload → second payload. Same wiring path,
     // but starting from a populated src (initial-vs-update parity).
@@ -204,7 +206,7 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     expect(srcAfterSecond).not.toBe(srcAfterFirst);
     expect(srcAfterSecond).toMatch(/^\//);
     expect(srcAfterSecond).toContain(c.payloads[1].name.replace(/\.\w+$/, ''));
-    expect(existsSync(join(workerServer.contentDir, srcAfterSecond))).toBe(true);
+    expect(existsSync(join(workerServer.contentDir, srcAfterSecond.replace(/^\//, '')))).toBe(true);
   });
 }
 
@@ -274,8 +276,9 @@ test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the ass
   // Server-absolute URL shape — leading slash + contains the doc's subdir.
   expect(newSrc).toMatch(/^\/sidebar-folder\//);
 
-  // The file must exist on disk under the doc's subdir.
-  expect(existsSync(join(workerServer.contentDir, newSrc))).toBe(true);
+  // The file must exist on disk under the doc's subdir. Strip the leading
+  // `/` before joining (path.join's leading-separator stripping is implicit).
+  expect(existsSync(join(workerServer.contentDir, newSrc.replace(/^\//, '')))).toBe(true);
 
   // Critical: when the browser resolves <img src=...>, it must hit the
   // actual file (Content-Type: image/*), not Vite's SPA fallback

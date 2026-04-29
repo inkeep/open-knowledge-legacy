@@ -62,6 +62,12 @@ import type {
  * names (Callout, Accordion, custom components) and lowercase tags NOT in
  * this set fall through to the `<pre>` shape — the gate is set-membership,
  * not lowercase detection.
+ *
+ * Sister set in `autolink-void-html-guard.ts` — `LOWERCASE_JSX_CANONICAL_TAGS` —
+ * gates which lowercase tags reach remark-mdx as JSX (vs PUA-protected as
+ * raw HTML text). The two sets currently coincide for the v1 5-pack but
+ * serve distinct purposes; a tag is membership-relevant here only if it
+ * already passes through that PUA-guard exemption.
  */
 const HTML_PRIMITIVE_TAGS = new Set(['img', 'video', 'audio']);
 

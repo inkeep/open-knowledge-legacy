@@ -84,6 +84,13 @@ const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
  * Adding a new lowercase canonical descriptor to the registry requires
  * appending its tag name here. Capitalized canonicals (Callout / Accordion)
  * pass through automatically — only lowercase needs the exemption.
+ *
+ * Sister set in `mdast-to-hast-handlers.ts` — `HTML_PRIMITIVE_TAGS` —
+ * gates which lowercase tags emit as native hast (vs `<pre>` fallback) at
+ * cross-app paste time. The two sets currently coincide for the v1 5-pack
+ * but are conceptually distinct: a tag could be PUA-exempt here without
+ * being native-renderable there (e.g., a future descriptor whose React
+ * component handles the rendering). Update both deliberately.
  */
 const LOWERCASE_JSX_CANONICAL_TAGS = new Set(['img', 'video', 'audio']);
 
