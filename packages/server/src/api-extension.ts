@@ -172,7 +172,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer } from './telemetry.ts';
+import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 // Cache the HTTP duration histogram at module scope — lazy-init at first use
@@ -201,6 +201,18 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
     });
   }
   return _hintEmittedCounter;
+}
+
+let _renameAttributionCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_renameAttributionCounter) {
+    _renameAttributionCounter = getMeter().createCounter('ok.rename.attribution_kind', {
+      description:
+        'Count of rename and rollback handler dispatches by attribution kind (agent | principal | anonymous)',
+    });
+  }
+  return _renameAttributionCounter;
 }
 
 /**
@@ -1470,144 +1482,156 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     kind: ContentEntryKind,
     affectedDocs: ReadonlyArray<{ from: string; to: string }>,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
-    return runSerialized(async () => {
-      if (!backlinkIndex) {
-        throw new Error('Managed rename requires backlink index support');
-      }
-
-      const renameMap = buildRenameMap(affectedDocs);
-      const renamed: RenamedDocMapping[] = affectedDocs.map(({ from, to }) => ({
-        fromDocName: from,
-        toDocName: to,
-      }));
-
-      const backlinkSourceSet = new Set<string>();
-      for (const { from } of affectedDocs) {
-        for (const entry of backlinkIndex.getBacklinks(from)) {
-          if (!renameMap.has(entry.source)) {
-            backlinkSourceSet.add(entry.source);
-          }
-        }
-      }
-      const backlinkSources = [...backlinkSourceSet].sort((a, b) => a.localeCompare(b));
-
-      const snapshotContents = new Map<string, string>();
-      const rewriteDocNames: string[] = [];
-      const missingBacklinkSources: string[] = [];
-
-      for (const docName of [...renameMap.keys(), ...backlinkSources]) {
-        if (snapshotContents.has(docName)) continue;
-        const content = readCurrentDocumentContent(docName);
-        if (typeof content === 'string') {
-          snapshotContents.set(docName, content);
-          if (!renameMap.has(docName)) {
-            rewriteDocNames.push(docName);
-          }
-        } else if (!renameMap.has(docName)) {
-          missingBacklinkSources.push(docName);
-        }
-      }
-
-      for (const { from } of affectedDocs) {
-        if (typeof snapshotContents.get(from) !== 'string') {
-          throw new Error(`Cannot rename missing document: ${from}`);
-        }
-      }
-
-      const recoveryJournal = createManagedRenameRecoveryJournal({
-        fromPath,
-        toPath,
-        affectedDocs: [...affectedDocs],
-        snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
-      });
-
-      const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
-
-      await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
-        for (const docName of missingBacklinkSources) {
-          backlinkIndex.deleteDocument(docName);
-        }
-
-        for (const docName of rewriteDocNames) {
-          const document = hocuspocus.documents.get(docName);
-          const rewritten = document
-            ? applyManagedRenameMapToLoadedDocument(docName, renameMap)
-            : applyRenameMap(snapshotContents.get(docName) ?? '', docName, renameMap);
-
-          if (rewritten.rewrites > 0) {
-            writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
-            rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+    return runSerialized(async () =>
+      withSpan(
+        'rename.executeRewrites',
+        {
+          attributes: {
+            'rename.kind': kind,
+            'rename.affected_docs': affectedDocs.length,
+          },
+        },
+        async (span) => {
+          if (!backlinkIndex) {
+            throw new Error('Managed rename requires backlink index support');
           }
 
-          backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
-        }
+          const renameMap = buildRenameMap(affectedDocs);
+          const renamed: RenamedDocMapping[] = affectedDocs.map(({ from, to }) => ({
+            fromDocName: from,
+            toDocName: to,
+          }));
 
-        const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
+          const backlinkSourceSet = new Set<string>();
+          for (const { from } of affectedDocs) {
+            for (const entry of backlinkIndex.getBacklinks(from)) {
+              if (!renameMap.has(entry.source)) {
+                backlinkSourceSet.add(entry.source);
+              }
+            }
+          }
+          const backlinkSources = [...backlinkSourceSet].sort((a, b) => a.localeCompare(b));
 
-        const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
-        const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          rootSourcePath,
-          rootDestinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(rootDestinationPath), { recursive: true });
-          renameSync(rootSourcePath, rootDestinationPath);
-        }
+          const snapshotContents = new Map<string, string>();
+          const rewriteDocNames: string[] = [];
+          const missingBacklinkSources: string[] = [];
 
-        const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
+          for (const docName of [...renameMap.keys(), ...backlinkSources]) {
+            if (snapshotContents.has(docName)) continue;
+            const content = readCurrentDocumentContent(docName);
+            if (typeof content === 'string') {
+              snapshotContents.set(docName, content);
+              if (!renameMap.has(docName)) {
+                rewriteDocNames.push(docName);
+              }
+            } else if (!renameMap.has(docName)) {
+              missingBacklinkSources.push(docName);
+            }
+          }
 
-        for (const { from: fromDocName, to: toDocName } of sortedAffected) {
-          const sourcePath = resolveContentEntryPath(contentDir, 'file', fromDocName);
-          const destinationPath = resolveContentEntryPath(contentDir, 'file', toDocName);
-          const sourceCurrentContent =
-            liveContents.get(fromDocName) ??
-            snapshotContents.get(fromDocName) ??
-            readFileSync(destinationPath, 'utf-8');
-          const renamedSource = applyRenameMap(sourceCurrentContent, fromDocName, renameMap);
+          for (const { from } of affectedDocs) {
+            if (typeof snapshotContents.get(from) !== 'string') {
+              throw new Error(`Cannot rename missing document: ${from}`);
+            }
+          }
 
-          syncRenamedDocsToDisk(
-            [{ fromDocName, toDocName }],
-            new Map([[fromDocName, renamedSource.markdown]]),
-          );
-          setReconciledBase(toDocName, renamedSource.markdown);
+          const recoveryJournal = createManagedRenameRecoveryJournal({
+            fromPath,
+            toPath,
+            affectedDocs: [...affectedDocs],
+            snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
+          });
 
-          const fileIndex = getFileIndex();
-          if (fileIndex instanceof Map) {
-            updateFileIndex(
-              {
-                kind: 'rename',
-                oldPath: sourcePath,
-                newPath: destinationPath,
-                oldDocName: fromDocName,
-                newDocName: toDocName,
-                content: renamedSource.markdown,
-              },
-              fileIndex as Map<string, FileIndexEntry>,
+          const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
+
+          await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
+            for (const docName of missingBacklinkSources) {
+              backlinkIndex.deleteDocument(docName);
+            }
+
+            for (const docName of rewriteDocNames) {
+              const document = hocuspocus.documents.get(docName);
+              const rewritten = document
+                ? applyManagedRenameMapToLoadedDocument(docName, renameMap)
+                : applyRenameMap(snapshotContents.get(docName) ?? '', docName, renameMap);
+
+              if (rewritten.rewrites > 0) {
+                writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
+                rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+              }
+
+              backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
+            }
+
+            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
+
+            const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
+            const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
+            const renamedWithGit = await renameTrackedPathInGit(
+              projectDir,
+              rootSourcePath,
+              rootDestinationPath,
             );
-          }
+            if (!renamedWithGit) {
+              mkdirSync(dirname(rootDestinationPath), { recursive: true });
+              renameSync(rootSourcePath, rootDestinationPath);
+            }
 
-          backlinkIndex.renameDocument(fromDocName, toDocName, renamedSource.markdown);
-          if (renamedSource.rewrites > 0) {
-            rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
-          }
-        }
-      });
+            const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
 
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn(
-          `[backlinks] Failed to persist managed rename cache for ${fromPath} -> ${toPath}:`,
-          err,
-        );
-      });
-      signalChannel?.('files');
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
+            for (const { from: fromDocName, to: toDocName } of sortedAffected) {
+              const sourcePath = resolveContentEntryPath(contentDir, 'file', fromDocName);
+              const destinationPath = resolveContentEntryPath(contentDir, 'file', toDocName);
+              const sourceCurrentContent =
+                liveContents.get(fromDocName) ??
+                snapshotContents.get(fromDocName) ??
+                readFileSync(destinationPath, 'utf-8');
+              const renamedSource = applyRenameMap(sourceCurrentContent, fromDocName, renameMap);
 
-      rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
-      return { renamed, rewrittenDocs };
-    });
+              syncRenamedDocsToDisk(
+                [{ fromDocName, toDocName }],
+                new Map([[fromDocName, renamedSource.markdown]]),
+              );
+              setReconciledBase(toDocName, renamedSource.markdown);
+
+              const fileIndex = getFileIndex();
+              if (fileIndex instanceof Map) {
+                updateFileIndex(
+                  {
+                    kind: 'rename',
+                    oldPath: sourcePath,
+                    newPath: destinationPath,
+                    oldDocName: fromDocName,
+                    newDocName: toDocName,
+                    content: renamedSource.markdown,
+                  },
+                  fileIndex as Map<string, FileIndexEntry>,
+                );
+              }
+
+              backlinkIndex.renameDocument(fromDocName, toDocName, renamedSource.markdown);
+              if (renamedSource.rewrites > 0) {
+                rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
+              }
+            }
+          });
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist managed rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('files');
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+
+          rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
+          span.setAttribute('rename.rewrite_count', rewrittenDocs.length);
+          return { renamed, rewrittenDocs };
+        },
+      ),
+    );
   }
 
   const AGENT_NAME_MAX_LEN = 128;
@@ -3595,6 +3619,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         );
         countNormalizedSummary(actor.summary, false);
       }
+      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
       // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
       // restored version + attribution appear in the timeline within ~100ms
@@ -4365,6 +4390,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           flushDocToGit(toDocName, 'rename-path');
         }
       }
+      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
 
       json(res, 200, {
         ok: true,
