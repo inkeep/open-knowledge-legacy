@@ -34,9 +34,8 @@ const DEV_MCP_ENV = {
  * MCP install modes for `ok init`-written editor configs.
  *
  * - `'published'` (default) — `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}`.
- *   Self-heals after CLI reinstalls; the version each editor's MCP child runs
- *   may drift over time (the protocol gate at `cli/mcp/server-discovery.ts`
- *   refuses on mismatch).
+ *   Self-heals after CLI reinstalls. The child is now a thin stdio→HTTP shim;
+ *   the running `ok start` process owns the MCP implementation.
  * - `'dev'` — `{command: 'node', args: [<dist/cli.mjs>, 'mcp'], env: {...}}`.
  *   Used by `--dev-mcp` for monorepo development against a worktree-local CLI.
  * - `'pinned'` — `{command: 'node', args: [<absolute process.argv[1]>, 'mcp']}`.

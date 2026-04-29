@@ -119,6 +119,11 @@ export {
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 export {
+  createMcpHttpHandler,
+  type McpHttpHandler,
+  type McpHttpHandlerOptions,
+} from './mcp-http.ts';
+export {
   getMetrics,
   handleCollabSocketError,
   incrementCollabSocketFilteredError,

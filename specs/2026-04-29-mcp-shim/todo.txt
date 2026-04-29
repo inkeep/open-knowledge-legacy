@@ -1,0 +1,168 @@
+  Here's my read on what to address, in two buckets.
+
+  A. Fix the layering smell — the move
+
+  The cross-package import in packages/server/src/mcp-http.ts is the visible symptom; it forced the relative-path workaround in cli/src/mcp/tools/preview-url.ts to dodge a cli → server → cli cycle. The fix has more depth than just relocating one import — mcp-http.ts reaches into
+  cli for registerAllTools, Config, and AgentIdentity, and registerAllTools transitively pulls in tool handlers that use cli‑only modules: bash/*, content/enrichment.ts, content/shadow-log.ts, config/schema.ts, config/paths.ts, constants.ts. So the real options are:
+
+  1. Move the MCP runtime into the server package. Relocate cli/src/mcp/{agent-identity,logger,tool-logging,tools/*} → server/src/mcp/*, and pull along bash/*, content/enrichment.ts, content/shadow-log.ts, plus the Config schema + resolveContentDir/resolveLockDir helpers +
+     OK_DIR/MCP_SERVER_NAME constants. The server already owns lock/git/persistence, so this is the smaller diff. The cli ends up importing config schema + path resolvers back from server, which is the natural direction (cli depends on server, not the reverse).
+  2. Introduce packages/mcp. Cleanest layering — both cli and server depend on it, no cycles. But it's another package, another tsconfig, and the dep boundaries (config schema? bash? enrichment?) need drawing.
+
+  Given how much of the "tool-handler universe" already wants to live alongside server/persistence/git, I'd go with Option 1. Concrete steps:
+
+  1. Move cli/src/mcp/{agent-identity,logger,tool-logging,tools} → server/src/mcp/.
+  2. Move cli/src/bash/* and cli/src/content/{enrichment,shadow-log}.ts → server/src/.
+  3. Move Config schema + resolveContentDir/resolveLockDir + MCP_SERVER_NAME → server (or core if cli boot also imports them — likely the case). The cli's commands/* re-import from there.
+  4. Drop the relative-path workaround in preview-url.ts; everything resolves via @inkeep/open-knowledge-server again.
+  5. mcp-http.ts and the new home for tools live in the same package — no cross-package import, no cycle.
+  6. Update cli/scripts/probe-*.ts to import from server.
+
+  Once that's done, the shim genuinely only knows about lock-reading + JSON-RPC framing.
+
+  B. While you're in there
+
+  In rough priority order:
+
+  1. Delete the legacy stdio MCP server. packages/cli/src/mcp/server.ts (~395 LOC) and server.test.ts (~402 LOC) are unreferenced everywhere except their own test file. Same for the deeper machinery in server-discovery.ts: ensureServerRunning, decideAutoStart,
+     createProjectServerUrlResolver, classifyMcpLaunchPath, describeProtocolMismatchRemedy. The only thing the new mcp.ts still imports from server-discovery.ts is parseSpawnTimeoutEnv — move that constant into shim.ts (or a tiny shim-env.ts) and delete the rest. Net deletion:
+     ~2,000+ LOC including server-discovery.test.ts.
+
+  2. Rip out the G6 protocol gate. With the legacy decideAutoStart gone, the protocolVersion field on ServerLockMetadata no longer has a consumer. You can either delete the field or leave it for forward-debugging; the gate (mismatch detection + remedy classification + spec
+     language) goes away. The cross-install-version-handshake spec text should get a "superseded by HTTP MCP shim" note.
+
+  3. DRY the MCP wiring between boot.ts and test-harness.ts. Both manually compose createHttpServer(...) → /mcp + /api/* + WS upgrade + keepalive. Extract a mountMcpAndApi(httpServer, hocuspocus, mcpHttpHandler, log) helper in server and have both call it. The harness's keepalive
+      grace block is also a near-duplicate of boot.ts — same fix.
+
+  4. Drop the AGENT_LABEL env trick. It made sense when each editor spawned its own stdio MCP child (one process = one identity). Now the server is shared across editors, so a single AGENT_LABEL from server-startup env applies to every session. Either honor clientInfo.name from
+     oninitialized (already partially wired in mcp-http.ts:139) and drop AGENT_LABEL, or pass identity through a header from the shim (mcp-agent-label etc.) and read it per-session. The current code reads the env once at createSessionServer time, which is wrong.
+
+  5. Consolidate the INSTRUCTIONS string. mcp-http.ts:96-103 has a different, shorter version than what the legacy cli/src/mcp/server.ts shipped (the longer one had wiki-link conventions, frontmatter rules, anti-patterns). Diff them and either lift the long version verbatim, or
+     sign off explicitly that the trimmed version is intentional.
+
+  6. Make mcp-http.ts's session config not a fabrication. It currently builds a Config object inline with hardcoded GitHub OAuth client id, sync intervals, debounce values, etc. — completely independent of whatever's actually in the project's .open-knowledge/config.yml. The real
+     config should come from the boot context (the project that started ok start). Today boot.ts already loads it; thread it through BootServerOptions → createMcpHttpHandler instead of fabricating. Otherwise tools that read config.mcp.tools.read_document.historyDepth etc. always
+     see the hardcoded defaults.
+
+  7. Multi-editor parent-death watch. The first shim to spawn ok start becomes the watched parent (OK_PARENT_PID). When that editor closes, the server tears down, killing every other editor's session. The old stdio model had the same flaw, but it's more visible now that the shim
+     is supposed to be ephemeral. Options: (a) only watch parent if OK_LOCK_KIND=mcp-spawned AND no other shims are connected; (b) drop the watch entirely and rely on idle-shutdown; (c) ref-count via mcp-session-id. (b) is the simplest and matches the "server is the primary,
+     shims are ephemeral" mental model.
+
+  8. Shim packaging. The prompt mentioned "the shim should be a separate dist artifact so it can be tiny and stable." Right now everything ships in one @inkeep/open-knowledge bundle including the full server boot path. If the goal is npx @inkeep/open-knowledge mcp having a small,
+      fast cold start, the shim entrypoint needs its own dist target with no transitive imports of boot.ts/Hocuspocus/etc. The simplest version: build a dist/shim.mjs that imports only shim.ts + its lock + SDK transports, and have the cli's bin map a separate ok-mcp binary to it.
+      Or have ok mcp lazy-import() the shim. This is optional for v1 but worth noting before publishing.
+
+  9. Test coverage on the shim's bridge. The 3 unit tests cover URL resolution only. There's no test that an MCP frame on stdin actually reaches the HTTP server and the response comes back. A small in-process test (start an HTTP MCP server, point a StdioServerTransport-fed shim
+     at it via streams, send an initialize, assert response on stdout) would close the gap that mcp-http.test.ts and shim.test.ts each cover only one half of.
+
+  10. Doc + spec updates. specs/2026-04-24-cross-install-version-handshake/SPEC.md, docs/content/internals/lifecycle.mdx, docs/content/guides/mcp-integration.mdx, and reports/mcp-agent-attribution-implementation/REPORT.md all describe the old stdio-child model. Once #1 lands,
+      these need a sweep.
+
+  If I were sequencing: B1+B2 first (deletes ~2K LOC and removes the cycle's worst tail), A (the actual layering move), B6 (config plumbing — it's a real bug, not just a smell), then the rest. Want me to start with B1 (delete legacy stdio server + protocol gate) since that shrinks
+  the surface area before the move?
+
+  Cross-walking your 10-item list against the plan I just gave:
+
+  ┌────┬─────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ #  │ Revisit item                        │ Plan coverage                                                                                             │
+  ├────┼─────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1  │ Keep mcp, replace impl, drop legacy │ ✅ already in code; legacy delete is B1                                                                   │
+  │ 2  │ Delete G6 protocol gate entirely    │ ⚠️ B2 but I hedged on the field — should commit to deleting the consumer                                 │
+  │ 3  │ HTTP MCP as the only impl           │ ✅ accomplished by B1 (deleting cli/src/mcp/server.ts)                                                    │
+  │ 4  │ Move tools into server package      │ ✅ section A                                                                                              │
+  │ 5  │ Stop supporting disk-only           │ ✅ shim already errors on --port=0; B1 sweeps the legacy disk-only branches                               │
+  │ 6  │ Simplify ok init --pin              │ ❌ not in the plan                                                                                        │
+  │ 7  │ Collapse server-discovery.ts        │ ✅ B1                                                                                                     │
+  │ 8  │ One transport bridge strategy       │ ⚠️ already implemented (byte/JSON-RPC proxy via SDK transports), but not declared as a deliberate choice │
+  │ 9  │ Socket vs HTTP                      │ ❌ not in the plan                                                                                        │
+  │ 10 │ Simplify editor config migration    │ ❌ not in the plan                                                                                        │
+  └────┴─────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  So three real gaps and two that need tightening. Adding them now:
+
+  Tighten #2 — actually drop the field, not just the gate
+
+  The prompt says "remove… entirely." My B2 said "delete the field or leave it"; correct call is delete it. Steps:
+
+  • Remove protocolVersion from ServerLockMetadata (packages/server/src/server-lock.ts), acquireServerLock/updateServerLockPort writers, and any test fixtures (e.g. liveLock in shim.test.ts:14).
+  • Remove SERVER_PROTOCOL_VERSION / PROTOCOL_VERSION from version-constants.ts if nothing else consumes it. (STATE_SCHEMA_VERSION is independent — keep it.)
+  • The stamp that distinguishes "server is from this build" can be runtimeVersion only, which is already in the lock.
+  • Remove expectedProtocolVersion plumbing through decideAutoStart/ensureServerRunning as part of B1.
+
+  Tighten #8 — make the bridge strategy a decision, not an accident
+
+  Today shim.ts does the right thing — uses StdioServerTransport + StreamableHTTPClientTransport and forwards onmessage payloads as opaque JSON-RPC envelopes; no McpServer/McpClient instantiation in the shim. That's exactly the "byte/JSON-RPC proxy" arm of your fork, and it's the
+  safer one (the "client + stdio re-exposer" alternative would re-register schemas in the shim and reintroduce protocol surface).
+
+  What's missing is the declaration. Add a doc-block at the top of shim.ts:
+
+  │ Bridge strategy: byte-level JSON-RPC proxy. The shim connects two SDK transports and forwards opaque JSONRPCMessage envelopes between them. It deliberately does NOT instantiate McpServer or McpClient — protocol semantics, schema validation, capability negotiation, and the
+    tool registry all live in ok start. The shim's only protocol awareness is reading result.protocolVersion off the initialize response so setProtocolVersion matches the negotiated value on both sides.
+
+  That commits the choice and tells the next reviewer not to "improve" it by upgrading to a full client/server proxy.
+
+  Add #6 — simplify --pin
+
+  Three options on the table; my read of the trade-off:
+
+  • Keep it for v1 — costs little, lets you test against a specific worktree-built CLI without touching npx. The protocol-mismatch remedy text it was originally introduced for (G6 + D14 in the cross-install spec) goes away with B2, but the function (point editor at a known
+    absolute binary) is still useful for dev/Electron paths and for cliPath in buildManagedServerEntry.
+  • Remove it — saves ~50 LOC in init.ts/editors.ts plus the 'pinned' branch of buildManagedServerEntry. Defensible if you accept that any pinning need is covered by --dev-mcp (worktree dist) and cliPath: (Electron's bundled ok.sh).
+  • Default to the M6a stable symlink (/usr/local/bin/ok) once distribution settles, with --pin as override.
+
+  I'd remove it and lean on cliPath for the Electron-bundled case and --dev-mcp for the worktree-dist case. Both already exist and cover the real use cases. Concrete deletes:
+
+  • 'pinned' branch in buildManagedServerEntry (packages/cli/src/commands/editors.ts:110-121).
+  • --pin flag, cliEntryPath plumbing, and the pin-related code paths in init.ts.
+  • The cross-install spec's G7 section (or mark superseded).
+  • Test fixtures for mode: 'pinned'.
+
+  Add #9 — Unix socket vs localhost HTTP
+
+  Trade-off without back-compat pressure:
+
+  ┌─────────────────────────────────────┬────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+  │ Concern                             │ localhost HTTP (today)                         │ Unix socket / named pipe                                                       │
+  ├─────────────────────────────────────┼────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ Discovery                           │ port in server.lock, kernel-assigned           │ path in server.lock, deterministic per project                                 │
+  │ Cross-host                          │ works                                          │ doesn't (only loopback case anyway)                                            │
+  │ Port-reuse / TIME_WAIT race         │ a real flake source in RestartableServer tests │ gone                                                                           │
+  │ Localhost-binding security exposure │ 0.0.0.0 mode binds to LAN                      │ sockets are filesystem-permissioned                                            │
+  │ MCP SDK support                     │ StreamableHTTPClientTransport accepts a URL    │ needs undici/http agent with socketPath; verify the SDK threads agents through │
+  │ Windows                             │ trivial                                        │ needs named-pipe code path                                                     │
+  └─────────────────────────────────────┴────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────┘
+
+  My take: keep HTTP for v1, leave a note in the shim that the abstraction (resolveMcpHttpUrl → URL string) is socket-ready if we ever want to swap. The Windows named-pipe story is the real cost; not worth solving now. The TIME_WAIT win is real but only matters in tests, where
+  waitForPortFree already absorbs it.
+
+  If we do want to do this later, the migration is small: change getServerUrl to emit a sentinel like http+unix:///path/to/sock, change the listener in boot.ts to httpServer.listen({ path }), and pass an undici agent to StreamableHTTPClientTransport in the shim. Feasible, not
+  free.
+
+  Add #10 — collapse computeForce + historical-shape detection
+
+  packages/desktop/src/main/mcp-wiring.ts has three classifiers stacked on top of target.isCompatible:
+
+  • isHistoricalNpxVariant — matches {command:'npx', args:['-y','@inkeep/open-knowledge','mcp']}. Greenfield = nobody has this. Delete.
+  • isPriorCliPathShape — matches {command:<...ok|ok.sh|open-knowledge>, args:['mcp']} from a prior M6b run. Greenfield = nobody has this. Delete (recreate later if/when M6b ships an auto-update path that needs it).
+  • computeForce itself collapses to target.isCompatible(existing, '', {mode:'published'}) — i.e., overwrite if and only if the entry matches today's canonical shape; otherwise treat as foreign-customized and skip. The result is the same as just inlining isCompatible at the call
+     site.
+
+  Plus the test surface: mcp-wiring.test.ts Fixture B (historical -y) and Fixture D edges around prior cliPath go away. Fixtures A (canonical) and C (canonical + custom env) stay. Editor-tests in init.test.ts that assert behavior under managed-old-shapes get pruned.
+
+  While there: re-check mergeManagedFields in editors.ts:285 — it preserves user keys verbatim (...existing, ...managed), so it doesn't carry historical-shape baggage. Leave alone.
+
+  ────────────────────────────────────────
+
+  Updated sequencing
+
+  1. B1 — delete cli/src/mcp/server.ts, server.test.ts, the unreachable parts of server-discovery.ts and its tests; move parseSpawnTimeoutEnv into shim.ts. Also drops disk-only legacy code (revisit #5 cleanup).
+  2. B2 (tightened) — delete the protocol gate AND the protocolVersion field consumer; remove SERVER_PROTOCOL_VERSION if no other consumer remains.
+  3. #10 — collapse computeForce and historical-shape classifiers in desktop.
+  4. #6 — remove --pin and the 'pinned' mode of buildManagedServerEntry.
+  5. A — move MCP runtime into the server package; drops the relative-path workaround in preview-url.ts and the cross-package import in mcp-http.ts.
+  6. #8 — add the bridge-strategy doc-block in shim.ts (~5 lines, do it as part of A or independently).
+  7. B6 (config plumbing fix), B3 (DRY harness), B4 (AGENT_LABEL), B5 (instructions consolidation), B7 (parent-death watch), B9 (bridge tests), B10 (docs/spec sweep).
+  8. #9 — leave HTTP for v1; add a one-line comment in the shim noting resolveMcpHttpUrl is socket-swappable.
+
+  That covers all 10. Want me to start on B1 + tightened B2 as one PR? It's the largest deletion (~2K LOC) and clears the way for the move in A.
+

@@ -26,7 +26,7 @@
  * URLs fall through to the next source.
  */
 import { realpathSync } from 'node:fs';
-import { readUiLock } from '@inkeep/open-knowledge-server';
+import { readUiLock } from '../../../../server/src/ui-lock.ts';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { Config } from '../../config/schema.ts';
 import { type ConfigOrResolver, resolveConfig } from './shared.ts';

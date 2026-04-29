@@ -24,6 +24,7 @@ import type { Server as HttpServer } from 'node:http';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
+import { createMcpHttpHandler } from './mcp-http.ts';
 import { handleCollabSocketError } from './metrics.ts';
 import { isProcessAlive } from './process-alive.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
@@ -263,11 +264,40 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     agentPresenceBroadcaster,
   } = serverInstance;
 
-  // HTTP server — /api/* routed through Hocuspocus onRequest extensions;
-  // everything else 404s (static React assets are served separately by
-  // `ok ui`, which is a CLI wrapper concern and not modeled here).
+  const mcpHost = (() => {
+    const host = opts.host ?? 'localhost';
+    if (host === '0.0.0.0' || host === '::') return 'localhost';
+    return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  })();
+  let boundPort = opts.port ?? 0;
+  const mcpHttpHandler = createMcpHttpHandler({
+    contentDir: opts.contentDir,
+    projectDir: opts.projectDir ?? opts.contentDir,
+    contentRoot: opts.contentRoot,
+    includePatterns: opts.includePatterns,
+    excludePatterns: opts.excludePatterns,
+    getServerUrl: () => `http://${mcpHost}:${boundPort}`,
+    log,
+  });
+
+  // HTTP server — /mcp serves MCP Streamable HTTP, /api/* routes through
+  // Hocuspocus onRequest extensions; everything else 404s (static React
+  // assets are served separately by `ok ui`, which is a CLI wrapper concern
+  // and not modeled here).
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
+    if (url === '/mcp') {
+      mcpHttpHandler.handle(req, res).catch((err) => {
+        log.error({ err }, 'Unhandled MCP HTTP error');
+        if (!res.writableEnded && !res.headersSent) {
+          res.writeHead(500);
+          res.end('Internal server error');
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      });
+      return;
+    }
     if (url?.startsWith('/api/')) {
       hocuspocus
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
@@ -492,6 +522,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
 
   const addr = httpServer.address();
   const realPort = typeof addr === 'object' && addr !== null ? addr.port : (opts.port ?? 0);
+  boundPort = realPort;
   updateServerLockPort(lockDir, realPort);
 
   // UI-sibling spawn — CLI wrapper injects `spawnUiSiblingFn`; desktop leaves
@@ -529,6 +560,7 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     if (keepaliveGraceInflight.size > 0) {
       await Promise.allSettled([...keepaliveGraceInflight]);
     }
+    await mcpHttpHandler.close();
     await new Promise<void>((resolveClose) => {
       httpServer.close(() => resolveClose());
     });

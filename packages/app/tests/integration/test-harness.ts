@@ -33,6 +33,7 @@ import {
   sharedExtensions,
 } from '@inkeep/open-knowledge-core';
 import {
+  createMcpHttpHandler,
   createServer,
   ensureProjectGit,
   isPairedWriteOrigin,
@@ -155,9 +156,28 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   // doesn't race the watcher startup
   await srv.ready;
 
+  const mcpHttpHandler = createMcpHttpHandler({
+    contentDir,
+    projectDir: contentDir,
+    contentRoot: '.',
+    includePatterns: ['**/*.md', '**/*.mdx'],
+    excludePatterns: [],
+    getServerUrl: () => `http://localhost:${port}`,
+  });
+
   // Wire up HTTP server + WebSocket (same pattern as packages/cli/src/commands/start.ts)
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
+    if (url === '/mcp') {
+      mcpHttpHandler.handle(req, res).catch((err) => {
+        console.error('[mcp] Unhandled HTTP MCP error:', err);
+        if (!res.writableEnded) {
+          res.writeHead(500);
+          res.end('Internal server error');
+        }
+      });
+      return;
+    }
     if (url?.startsWith('/api/')) {
       srv.hocuspocus
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
@@ -257,6 +277,7 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     contentDir,
     instance: srv,
     cleanup: async () => {
+      await mcpHttpHandler.close();
       await srv.destroy();
       wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
