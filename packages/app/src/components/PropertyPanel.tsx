@@ -610,6 +610,7 @@ function AddPropertyRow({
       {draft.error ? (
         <div
           id={errorId}
+          role="alert"
           data-testid="add-property-error"
           className="mt-0.5 pl-7 text-[10px] text-destructive"
         >
