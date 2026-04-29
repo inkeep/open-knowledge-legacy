@@ -401,17 +401,15 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
           <div className="flex-1 min-w-0">
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
             <div
-              className="truncate text-xs text-muted-foreground"
-              title={
-                externalTarget ? externalTarget.url : `[[${target}${anchor ? `#${anchor}` : ''}]]`
-              }
+              className="truncate font-mono text-xs text-muted-foreground"
+              title={externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`}
             >
-              {externalTarget ? externalTarget.url : `[[${target}${anchor ? `#${anchor}` : ''}]]`}
+              {externalTarget ? externalTarget.url : `${target}${anchor ? `#${anchor}` : ''}`}
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {!isUnresolved ? (
             <Button
               size="sm"
@@ -435,16 +433,15 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
               Create index
             </Button>
           ) : null}
+          {/* Spacer pushes Edit + Remove to the right, separating
+              navigation/creation actions (left) from modify-the-mark
+              actions (right). */}
+          <div className="flex-1" />
           <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
             <Pencil className="size-3.5" aria-hidden="true" />
             Edit
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-300 dark:hover:bg-red-100/10 dark:hover:text-red-200"
-            onClick={handleRemove}
-          >
+          <Button size="sm" variant="destructive" onClick={handleRemove}>
             <Trash2 className="size-3.5" aria-hidden="true" />
             Remove
           </Button>

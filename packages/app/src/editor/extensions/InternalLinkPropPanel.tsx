@@ -280,6 +280,19 @@ export function InternalLinkPropPanel({
 
   const target = classifyMarkdownHref(href, sourceDocName);
 
+  // Human-readable display path. Strips markdown-link surface
+  // (`./` prefix, `.md` suffix) for doc kinds; preserves the URL form
+  // for external; preserves `#anchor` for in-doc anchor jumps. The raw
+  // `href` is still kept on the title attr for hover-disclosure.
+  const displayHref =
+    target?.kind === 'doc'
+      ? `${target.docName}${target.anchor ? `#${target.anchor}` : ''}`
+      : target?.kind === 'anchor'
+        ? `#${target.anchor}`
+        : target?.kind === 'external'
+          ? target.url
+          : href;
+
   function handleSave(nextHref: string) {
     const live = getCurrentMarkInfo(editor.state, nodeId);
     if (!live) return;
@@ -422,13 +435,13 @@ export function InternalLinkPropPanel({
           <div className={cn('mt-0.5 flex shrink-0', stateLabel.className)}>{stateLabel.icon}</div>
           <div className="flex-1 min-w-0">
             <div className={cn('text-sm font-medium', stateLabel.className)}>{stateLabel.text}</div>
-            <div className="truncate text-xs text-muted-foreground" title={href}>
-              {href}
+            <div className="truncate font-mono text-xs text-muted-foreground" title={displayHref}>
+              {displayHref}
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {!isUnresolved ? (
             <Button
               size="sm"
@@ -452,16 +465,15 @@ export function InternalLinkPropPanel({
               Create index
             </Button>
           ) : null}
+          {/* Spacer pushes Edit + Remove to the right, separating
+              navigation/creation actions (left) from modify-the-mark
+              actions (right). */}
+          <div className="flex-1" />
           <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
             <Pencil className="size-3.5" aria-hidden="true" />
             Edit
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-300 dark:hover:bg-red-100/10 dark:hover:text-red-200"
-            onClick={handleRemove}
-          >
+          <Button size="sm" variant="destructive" onClick={handleRemove}>
             <Trash2 className="size-3.5" aria-hidden="true" />
             Remove
           </Button>
