@@ -1,5 +1,5 @@
 import type { Principal } from '@inkeep/open-knowledge-core';
-import { AGENT_ID_RE, toBroadcasterKey } from './agent-id.ts';
+import { AGENT_ID_RE, resolveAgentType, toBroadcasterKey } from './agent-id.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 
@@ -38,17 +38,6 @@ type ActorIdentity =
       summary: NormalizedSummary;
     }
   | { kind: 'invalid-summary' };
-
-function resolveAgentType(clientName: string | undefined): string {
-  if (!clientName) return 'bot';
-  const lower = clientName.toLowerCase();
-  if (lower.includes('claude')) return 'claude';
-  if (lower.includes('cursor')) return 'cursor';
-  if (lower.includes('codex')) return 'codex';
-  if (lower.includes('cline')) return 'cline';
-  if (lower.includes('windsurf')) return 'windsurf';
-  return 'bot';
-}
 
 /**
  * Identity boundary for rename + rollback handlers.

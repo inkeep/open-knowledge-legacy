@@ -1,5 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
+import {
+  tracedMkdirSync,
+  tracedRenameSync,
+  tracedRmdirSync,
+  tracedRmSync,
+  tracedWriteFileSync,
+} from './fs-traced.ts';
 import { safeContentPath } from './persistence.ts';
 
 const MANAGED_RENAME_JOURNAL_FILENAME = 'managed-rename.json';
@@ -192,14 +199,14 @@ export function writeManagedRenameJournal(
   journal: ManagedRenameRecoveryJournalV2,
 ): void {
   const path = managedRenameJournalPath(contentDir);
-  mkdirSync(dirname(path), { recursive: true });
+  tracedMkdirSync(dirname(path), { recursive: true });
   const tempPath = `${path}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(journal, null, 2), 'utf-8');
-  renameSync(tempPath, path);
+  tracedWriteFileSync(tempPath, JSON.stringify(journal, null, 2), 'utf-8');
+  tracedRenameSync(tempPath, path);
 }
 
 function clearManagedRenameJournal(contentDir: string): void {
-  rmSync(managedRenameJournalPath(contentDir), { force: true });
+  tracedRmSync(managedRenameJournalPath(contentDir), { force: true });
 }
 
 /**
@@ -229,6 +236,27 @@ function destinationsToCleanV2(journal: ManagedRenameRecoveryJournalV2): string[
   return journal.affectedDocs.map((entry) => entry.to);
 }
 
+function pruneEmptyAncestors(filePath: string, contentDir: string): void {
+  const root = resolve(contentDir);
+  const boundary = `${root}${sep}`;
+  let cur = dirname(filePath);
+  while (cur.startsWith(boundary) && cur !== root) {
+    let entries: string[];
+    try {
+      entries = readdirSync(cur);
+    } catch {
+      return;
+    }
+    if (entries.length > 0) return;
+    try {
+      tracedRmdirSync(cur);
+    } catch {
+      return;
+    }
+    cur = dirname(cur);
+  }
+}
+
 export function recoverPendingManagedRename(contentDir: string): ManagedRenameRecoveryResult {
   const journal = readManagedRenameJournal(contentDir);
   if (!journal) {
@@ -236,36 +264,42 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
   }
 
   const restoredDocNames = new Set<string>();
-  const failedDocNames: string[] = [];
+  const restoreFailures: Array<{ docName: string; cause: unknown }> = [];
   for (const snapshot of journal.snapshots) {
     try {
       const filePath = safeContentPath(snapshot.docName, contentDir);
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, snapshot.content, 'utf-8');
+      tracedMkdirSync(dirname(filePath), { recursive: true });
+      tracedWriteFileSync(filePath, snapshot.content, 'utf-8');
       restoredDocNames.add(snapshot.docName);
     } catch (err) {
-      failedDocNames.push(snapshot.docName);
+      restoreFailures.push({ docName: snapshot.docName, cause: err });
       console.warn(`[managed-rename] Failed to restore ${snapshot.docName}:`, err);
     }
   }
 
-  if (failedDocNames.length > 0) {
+  if (restoreFailures.length > 0) {
+    const failedNames = restoreFailures.map((f) => f.docName).join(', ');
     console.warn(
-      `[managed-rename] Recovery incomplete; keeping journal for retry (${failedDocNames.join(', ')})`,
+      `[managed-rename] Recovery incomplete; keeping journal for retry (${failedNames})`,
     );
-    throw new Error(
-      `Managed rename recovery incomplete; failed to restore: ${failedDocNames.join(', ')}`,
+    const causes = restoreFailures.map((f) =>
+      f.cause instanceof Error ? f.cause : new Error(String(f.cause)),
+    );
+    throw new AggregateError(
+      causes,
+      `Managed rename recovery incomplete; failed to restore: ${failedNames}`,
     );
   }
 
   const destinationsToClean =
     journal.version === 2 ? destinationsToCleanV2(journal) : destinationsToCleanV1(journal);
-  const failedCleanups: string[] = [];
+  const cleanupFailures: Array<{ destination: string; cause: unknown }> = [];
   for (const destination of destinationsToClean) {
     if (restoredDocNames.has(destination)) continue;
     const destinationPath = safeContentPath(destination, contentDir);
     try {
-      rmSync(destinationPath, { force: true });
+      tracedRmSync(destinationPath, { force: true });
+      pruneEmptyAncestors(destinationPath, contentDir);
     } catch (err) {
       if (existsSync(destinationPath)) {
         console.warn(
@@ -276,13 +310,18 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
         `[managed-rename] Recovery incomplete; failed to clean destination ${destination}:`,
         err,
       );
-      failedCleanups.push(destination);
+      cleanupFailures.push({ destination, cause: err });
     }
   }
 
-  if (failedCleanups.length > 0) {
-    throw new Error(
-      `Managed rename recovery incomplete; failed to clean destinations: ${failedCleanups.join(', ')}`,
+  if (cleanupFailures.length > 0) {
+    const failedNames = cleanupFailures.map((f) => f.destination).join(', ');
+    const causes = cleanupFailures.map((f) =>
+      f.cause instanceof Error ? f.cause : new Error(String(f.cause)),
+    );
+    throw new AggregateError(
+      causes,
+      `Managed rename recovery incomplete; failed to clean destinations: ${failedNames}`,
     );
   }
 

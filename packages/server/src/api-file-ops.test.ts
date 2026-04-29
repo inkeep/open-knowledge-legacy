@@ -353,7 +353,7 @@ describe('file operation API routes', () => {
         { backlinkIndex: buildBacklinkIndex(contentDir) },
       );
 
-      expect(result.status).toBe(500);
+      expect(result.status).toBe(400);
       expect(JSON.parse(result.body)).toEqual({
         ok: false,
         error: 'symlink-escape: path resolves outside content directory',
@@ -619,7 +619,7 @@ describe('file operation API routes', () => {
         toPath: 'evil/captured',
       });
 
-      expect(result.status).toBe(500);
+      expect(result.status).toBe(400);
       expect(readFileSync(join(contentDir, 'safe.md'), 'utf-8')).toBe('# Safe\n');
       expect(existsSync(join(outside, 'captured.md'))).toBe(false);
     },

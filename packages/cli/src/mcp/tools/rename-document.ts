@@ -1,8 +1,8 @@
 /**
  * `rename_document` MCP tool — managed page rename via the server API.
  *
- * Calls POST /api/rename, which renames the target document and rewrites
- * inbound wiki-links plus supported internal inline Markdown links.
+ * Calls POST /api/rename-path with kind: 'file'. Renames the target document
+ * and rewrites inbound wiki-links plus supported internal inline Markdown links.
  */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -47,9 +47,17 @@ interface RenameDocumentSuccess {
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
+interface RenameDocumentCollision {
+  existing: string;
+  incoming: string;
+  to: string;
+}
+
 interface RenameDocumentError {
   ok: false;
   error: string;
+  /** Server-supplied structured collision list when 409 is a rename-map collision. */
+  colliding?: RenameDocumentCollision[];
 }
 
 export const DESCRIPTION = [
@@ -86,6 +94,17 @@ function parseRewrittenDocs(value: unknown): RenameDocumentRewrittenDoc[] {
     const { docName, rewrites } = entry as Record<string, unknown>;
     return typeof docName === 'string' && typeof rewrites === 'number'
       ? [{ docName, rewrites }]
+      : [];
+  });
+}
+
+function parseCollidingPairs(value: unknown): RenameDocumentCollision[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const { existing, incoming, to } = entry as Record<string, unknown>;
+    return typeof existing === 'string' && typeof incoming === 'string' && typeof to === 'string'
+      ? [{ existing, incoming, to }]
       : [];
   });
 }
@@ -149,7 +168,12 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
 
       if (!result.ok) {
         const error = typeof result.error === 'string' ? result.error : 'Rename failed';
-        const structured: RenameDocumentError = { ok: false, error };
+        const colliding = parseCollidingPairs(result.colliding);
+        const structured: RenameDocumentError = {
+          ok: false,
+          error,
+          ...(colliding.length > 0 ? { colliding } : {}),
+        };
         return textPlusStructured(`Error: ${error}`, structured, true);
       }
 

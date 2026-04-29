@@ -54,3 +54,21 @@ export function toBroadcasterKey(rawAgentId: string): string {
   if (rawAgentId.startsWith('agent-')) return rawAgentId;
   return `agent-${rawAgentId}`;
 }
+
+/**
+ * Derive the bounded-cardinality `agent_type` from a `clientInfo.name`
+ * string. Mirrors the registry used by `iconFromClientName` on the client
+ * side. Unknown clients map to `'bot'`. Used by every actor-identity
+ * resolver (`extractAgentIdentity`, `extractActorIdentity`, agent-write
+ * span attributes) so the type tag stays consistent across surfaces.
+ */
+export function resolveAgentType(clientName: string | undefined): string {
+  if (!clientName) return 'bot';
+  const lower = clientName.toLowerCase();
+  if (lower.includes('claude')) return 'claude';
+  if (lower.includes('cursor')) return 'cursor';
+  if (lower.includes('codex')) return 'codex';
+  if (lower.includes('cline')) return 'cline';
+  if (lower.includes('windsurf')) return 'windsurf';
+  return 'bot';
+}

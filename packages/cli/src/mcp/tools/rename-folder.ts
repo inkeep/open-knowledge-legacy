@@ -42,9 +42,18 @@ interface RenameFolderSuccess {
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
+interface RenameFolderCollision {
+  existing: string;
+  incoming: string;
+  to: string;
+}
+
 interface RenameFolderError {
   ok: false;
   error: string;
+  /** Server-supplied structured collision list when 409 is a rename-map collision.
+   *  Empty/absent for other 4xx error classes (validation, missing source, etc.). */
+  colliding?: RenameFolderCollision[];
 }
 
 export const DESCRIPTION = [
@@ -54,7 +63,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `fromFolder` — Current folder path relative to the content directory (no leading or trailing slash). Example: `articles` or `notes/drafts`.',
   '- `toFolder` — New folder path relative to the content directory. Example: `essays` or `notes/published`. Parent directories are auto-created.',
-  '- `summary` — Optional one-line user-outcome description (≤80 chars). Applied to every affected-doc contributor entry. If omitted, no default summary is generated.',
+  '- `summary` — Optional one-line user-outcome description (≤80 chars). Applied to every affected-doc contributor entry. If omitted, a default like "Renamed X → Y" is generated. Provide your own summary to explain the why. Avoid including secrets or PII — summaries are persisted to git history.',
   '',
   '**Errors:**',
   '- 400 — case-only renames (e.g. `Articles` → `articles`) are not supported.',
@@ -88,6 +97,17 @@ function parseRewrittenDocs(value: unknown): RenameFolderRewrittenDoc[] {
     const { docName, rewrites } = entry as Record<string, unknown>;
     return typeof docName === 'string' && typeof rewrites === 'number'
       ? [{ docName, rewrites }]
+      : [];
+  });
+}
+
+function parseCollidingPairs(value: unknown): RenameFolderCollision[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const { existing, incoming, to } = entry as Record<string, unknown>;
+    return typeof existing === 'string' && typeof incoming === 'string' && typeof to === 'string'
+      ? [{ existing, incoming, to }]
       : [];
   });
 }
@@ -153,7 +173,12 @@ export function register(server: ServerInstance, deps: RenameFolderDeps): void {
 
       if (!result.ok) {
         const error = typeof result.error === 'string' ? result.error : 'Folder rename failed';
-        const structured: RenameFolderError = { ok: false, error };
+        const colliding = parseCollidingPairs(result.colliding);
+        const structured: RenameFolderError = {
+          ok: false,
+          error,
+          ...(colliding.length > 0 ? { colliding } : {}),
+        };
         return textPlusStructured(`Error: ${error}`, structured, true);
       }
 
@@ -186,11 +211,18 @@ export function register(server: ServerInstance, deps: RenameFolderDeps): void {
         ...(summaryResult ? { summary: summaryResult } : {}),
       };
 
-      const textLines = [
-        `Renamed folder ${args.fromFolder}/ → ${args.toFolder}/ (${renamed.length} doc${
-          renamed.length === 1 ? '' : 's'
-        }, ${rewrittenDocs.length} rewrite${rewrittenDocs.length === 1 ? '' : 's'}).`,
-      ];
+      const textLines: string[] = [];
+      if (renamed.length === 0) {
+        textLines.push(
+          `No managed docs under ${args.fromFolder}/ — nothing to rename. Empty folders are not tracked; create a doc inside the folder first.`,
+        );
+      } else {
+        textLines.push(
+          `Renamed folder ${args.fromFolder}/ → ${args.toFolder}/ (${renamed.length} doc${
+            renamed.length === 1 ? '' : 's'
+          }, ${rewrittenDocs.length} rewrite${rewrittenDocs.length === 1 ? '' : 's'}).`,
+        );
+      }
       if (summaryHint) textLines.push(summaryHint);
       return textPlusStructured(textLines.join('\n'), structured);
     },

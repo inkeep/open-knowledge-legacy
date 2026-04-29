@@ -19,7 +19,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -33,6 +32,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
+  ALLOWED_IMAGE_MIME_TYPES,
   ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
@@ -100,11 +100,14 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { AGENT_ID_RE, resolveAgentType, toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import {
   applyRenameMap,
   buildRenameMap,
   ManagedRenameCollisionError,
+  ManagedRenameDestinationExistsError,
+  ManagedRenameSourceNotFoundError,
+  ManagedRenameSourceTypeMismatchError,
 } from './apply-managed-rename.ts';
 import {
   type BacklinkIndex,
@@ -114,7 +117,13 @@ import {
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
-import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import {
+  getDocExtension,
+  isSupportedDocFile,
+  registerDocExtension,
+  SUPPORTED_DOC_EXTENSIONS,
+  stripDocExtension,
+} from './doc-extensions.ts';
 import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
   contentHash,
@@ -122,6 +131,7 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -217,6 +227,15 @@ function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['cre
 }
 
 /**
+ * Test-only: clear the lazy-initialized rename counter so a test that
+ * registers a fresh meter provider via `metrics.setGlobalMeterProvider`
+ * can capture subsequent counter increments. Production code never calls this.
+ */
+export function __resetRenameTelemetryForTesting(): void {
+  _renameAttributionCounter = null;
+}
+
+/**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
  * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
@@ -229,7 +248,7 @@ function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['cre
  * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -246,7 +265,7 @@ export const ROLLBACK_ORIGIN = {
  * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -810,10 +829,10 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
 
   const resolvedContentDir = resolve(contentDir);
   // When kind is 'file': if the caller passed an explicit supported extension,
-  // use the path verbatim — this is how the rename handler signals an
-  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
-  // Extension-less paths fall through to getDocExtension() + the registered
-  // extension map so legacy callers keep the source's existing extension.
+  // use the path verbatim — this is how rename callers signal an extension
+  // change (toPath: "foo.mdx" renames foo.md → foo.mdx). Extension-less paths
+  // fall through to getDocExtension() + the registered extension map so legacy
+  // callers keep the source's existing extension.
   const relativePath =
     kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
@@ -825,6 +844,32 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   assertNoSymlinkEscape(fullPath, resolvedContentDir);
 
   return fullPath;
+}
+
+/**
+ * Probe disk for the actual on-disk extension of a file's docName, registering
+ * it in the doc-extensions map if found. Closes a boot/watcher race where the
+ * rename handler runs before the file watcher has observed the source — without
+ * this, `getDocExtension()` returns the `.md` default, which silently defeats
+ * `.mdx`-specific exclusion patterns and routes existence checks to the wrong
+ * path. Iterating in `SUPPORTED_DOC_EXTENSIONS` precedence order ensures the
+ * `.mdx` precedence rule is preserved when both files exist on disk.
+ * Idempotent — `registerDocExtension` is a no-op when the higher-precedence
+ * extension is already registered.
+ */
+function probeAndRegisterSourceFileExtension(contentDir: string, fromPath: string): void {
+  if (!isValidRelativeContentPath(fromPath)) return;
+  const resolvedContentDir = resolve(contentDir);
+  for (const ext of SUPPORTED_DOC_EXTENSIONS) {
+    const candidate = resolve(resolvedContentDir, `${fromPath}${ext}`);
+    if (candidate !== resolvedContentDir && !candidate.startsWith(`${resolvedContentDir}${sep}`)) {
+      continue;
+    }
+    if (existsSync(candidate)) {
+      registerDocExtension(fromPath, ext);
+      return;
+    }
+  }
 }
 
 function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
@@ -1330,20 +1375,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): string {
+  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
     if (!(error instanceof Error)) {
-      return 'Failed to rename document';
+      return { status: 500, error: 'Failed to rename document' };
     }
-
-    if (
-      error.message === 'Managed rename requires backlink index support' ||
-      error.message.startsWith('Cannot rename missing document:') ||
-      error.message.startsWith('symlink-escape:')
-    ) {
-      return error.message;
+    if (error instanceof ManagedRenameSourceNotFoundError) {
+      return { status: 404, error: error.message };
     }
-
-    return 'Failed to rename document';
+    if (error instanceof ManagedRenameDestinationExistsError) {
+      return { status: 409, error: error.message };
+    }
+    if (error instanceof ManagedRenameSourceTypeMismatchError) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message.startsWith('Cannot rename missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('symlink-escape:')) {
+      return { status: 400, error: error.message };
+    }
+    return { status: 500, error: 'Failed to rename document' };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -1381,7 +1432,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const filePath = safeContentPath(toDocName, contentDir);
       const liveContent = liveContents.get(fromDocName);
       if (typeof liveContent === 'string') {
-        writeFileSync(filePath, liveContent, 'utf-8');
+        tracedWriteFileSync(filePath, liveContent, 'utf-8');
       }
 
       const finalContent =
@@ -1434,8 +1485,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function writeManagedRenameDocumentToDisk(docName: string, markdown: string): void {
     const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, markdown, 'utf-8');
+    tracedMkdirSync(dirname(filePath), { recursive: true });
+    tracedWriteFileSync(filePath, markdown, 'utf-8');
     registerWrite(filePath, contentHash(markdown));
     setReconciledBase(docName, markdown);
 
@@ -1490,7 +1541,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     fromPath: string,
     toPath: string,
     kind: ContentEntryKind,
-    affectedDocs: ReadonlyArray<{ from: string; to: string }>,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
     return runSerialized(async () =>
       withSpan(
@@ -1498,12 +1548,48 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         {
           attributes: {
             'rename.kind': kind,
-            'rename.affected_docs': affectedDocs.length,
           },
         },
         async (span) => {
           if (!backlinkIndex) {
             throw new Error('Managed rename requires backlink index support');
+          }
+
+          // Existence + stat + affected-doc enumeration all live inside the
+          // serialized critical section so a concurrent file watcher event
+          // (external mv add) or in-flight write to the source folder cannot
+          // land between enumeration and the disk move and produce a "ghost"
+          // file that the recovery journal doesn't know about. POSIX
+          // rename(2) does not fail-loud on overwrite, so the lock is the
+          // only backstop against silent data loss.
+          const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
+          const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
+          if (!existsSync(sourcePathRoot)) {
+            throw new ManagedRenameSourceNotFoundError(kind);
+          }
+          if (existsSync(destinationPathRoot)) {
+            throw new ManagedRenameDestinationExistsError();
+          }
+          const sourceStat = statSync(sourcePathRoot);
+          if (
+            (kind === 'file' && !sourceStat.isFile()) ||
+            (kind === 'folder' && !sourceStat.isDirectory())
+          ) {
+            throw new ManagedRenameSourceTypeMismatchError(kind);
+          }
+
+          const affectedDocNames =
+            kind === 'file' ? [fromPath] : listAffectedDocNames(getFileIndex(), kind, fromPath);
+          const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map(
+            (docName) => ({
+              from: docName,
+              to: kind === 'file' ? toPath : remapDocNameForRename(docName, kind, fromPath, toPath),
+            }),
+          );
+          span.setAttribute('rename.affected_docs', affectedDocs.length);
+
+          if (affectedDocs.length === 0) {
+            return { renamed: [], rewrittenDocs: [] };
           }
 
           const renameMap = buildRenameMap(affectedDocs);
@@ -1583,8 +1669,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               rootDestinationPath,
             );
             if (!renamedWithGit) {
-              mkdirSync(dirname(rootDestinationPath), { recursive: true });
-              renameSync(rootSourcePath, rootDestinationPath);
+              tracedMkdirSync(dirname(rootDestinationPath), { recursive: true });
+              tracedRenameSync(rootSourcePath, rootDestinationPath);
             }
 
             const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
@@ -1686,21 +1772,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
     return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
-  }
-
-  /**
-   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
-   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
-   */
-  function resolveAgentType(clientName: string | undefined): string {
-    if (!clientName) return 'bot';
-    const lower = clientName.toLowerCase();
-    if (lower.includes('claude')) return 'claude';
-    if (lower.includes('cursor')) return 'cursor';
-    if (lower.includes('codex')) return 'codex';
-    if (lower.includes('cline')) return 'cline';
-    if (lower.includes('windsurf')) return 'windsurf';
-    return 'bot';
   }
 
   /**
@@ -2142,7 +2213,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const index = getFileIndex();
       const documents: {
         docName: string;
-        docExt: string;
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -2154,15 +2224,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // getDocExtension() returns the registered on-disk extension for the
-        // docName (or `.md` by default when nothing is yet recorded). Surfacing
-        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
-        // faithfully instead of hard-coding `.md`.
-        const docExt = getDocExtension(docName);
-
         documents.push({
           docName,
-          docExt,
           size: entry.size,
           modified: entry.modified,
           isSymlink: false,
@@ -2176,7 +2239,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
             docName: alias,
-            docExt,
             size: entry.size,
             modified: entry.modified,
             isSymlink: true,
@@ -3583,48 +3645,65 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // when no agent-supplied summary was given; the default goes through
       // `normalizeSummary` so the 80-char cap covers it. When the default
       // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
-      // chars, but symmetric with the rename default where deeply-nested doc
-      // paths frequently overflow), we strip `truncatedFrom` +
+      // chars, but symmetric with `handleRenamePath` where defaults frequently
+      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
       // `hint` from the response so the truncation message doesn't misattribute
       // blame to the caller. The principal path records the contributor with
       // the rollback subject but does NOT generate a default summary bullet —
       // the rollback subject already drives the timeline display.
       let summaryResponse: SummaryResponse | undefined;
-      if (actor.kind === 'agent') {
-        const shaShort = commitSha.slice(0, 8);
-        const agentProvidedSummary = actor.summary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? actor.summary
-          : normalizeSummary(`Restored to ${shaShort}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          docName,
-          actor.writerId,
-          actor.displayName,
-          actor.colorSeed,
-          formatRollbackSubject(docName, commitSha),
-          actor.actor,
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-      } else if (actor.kind === 'principal') {
-        const fields = summaryResponseFields(actor.summary);
-        summaryResponse = fields.response;
-        recordContributor(
-          docName,
-          actor.writerId,
-          actor.displayName,
-          actor.colorSeed,
-          formatRollbackSubject(docName, commitSha),
-          actor.actor,
-          fields.stored,
-        );
-        countNormalizedSummary(actor.summary, false);
+      switch (actor.kind) {
+        case 'agent': {
+          const shaShort = commitSha.slice(0, 8);
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Restored to ${shaShort}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          countNormalizedSummary(actor.summary, false);
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { docName, commitSha: commitSha.slice(0, 8) },
+            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
       renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
@@ -3678,8 +3757,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Failed to roll back document' });
     }
   }
 
@@ -4282,6 +4360,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
+      // Reject paths whose first segment is `.open-knowledge` — that directory
+      // holds per-machine OK runtime state (server.lock, principal.json, cache,
+      // etc.) and is symmetric with the `__system__` carve-out above. The
+      // `AGENTS.md` file inside `.open-knowledge/` is a tracked content file
+      // by design, but a rename TO or FROM this directory would clobber OK
+      // bookkeeping.
+      if (
+        fromPath === '.open-knowledge' ||
+        fromPath.startsWith('.open-knowledge/') ||
+        toPath === '.open-knowledge' ||
+        toPath.startsWith('.open-knowledge/')
+      ) {
+        json(res, 400, { ok: false, error: '.open-knowledge is a reserved directory' });
+        return;
+      }
       if (fromPath === toPath) {
         json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
         return;
@@ -4291,6 +4384,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (fromPath.toLowerCase() === toPath.toLowerCase()) {
         json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;
+      }
+
+      // Register the source's actual on-disk extension before downstream
+      // checks so admission and existsSync probes both see the right value
+      // when the file watcher hasn't yet observed the source (boot race).
+      if (kind === 'file') {
+        probeAndRegisterSourceFileExtension(contentDir, fromPath);
       }
 
       if (contentFilter) {
@@ -4307,51 +4407,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
-      const destinationPath = resolveContentEntryPath(contentDir, kind, toPath);
-      // Handles the case where the client sends an explicit extension that
-      // matches the source's existing one (e.g. `toPath: "foo.md"` when the
-      // file is already `foo.md`) — `fromPath !== toPath` textually but the
-      // on-disk paths resolve to the same file. Treat as no-op, mirroring
-      // the extension-less `fromPath === toPath` short-circuit above.
-      if (sourcePath === destinationPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const sourceStat = statSync(sourcePath);
-      if (
-        (kind === 'file' && !sourceStat.isFile()) ||
-        (kind === 'folder' && !sourceStat.isDirectory())
-      ) {
-        json(res, 400, { ok: false, error: `Source path is not a ${kind}` });
-        return;
-      }
-
-      const affectedDocNames =
-        kind === 'file' ? [fromPath] : listAffectedDocNames(getFileIndex(), kind, fromPath);
-      const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map((docName) => ({
-        from: docName,
-        to: kind === 'file' ? toPath : remapDocNameForRename(docName, kind, fromPath, toPath),
-      }));
-
-      if (affectedDocs.length === 0) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-
       let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
       try {
-        result = await _performManagedRenameForDocs(fromPath, toPath, kind, affectedDocs);
+        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
       } catch (err) {
         if (err instanceof ManagedRenameCollisionError) {
           json(res, 409, {
@@ -4364,50 +4422,72 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
 
+      if (result.renamed.length === 0) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+
       let summaryResponse: SummaryResponse | undefined;
-      if (actor.kind === 'agent') {
-        const agentProvidedSummary = actor.summary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? actor.summary
-          : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        for (const { fromDocName, toDocName } of result.renamed) {
-          recordContributor(
-            toDocName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRenameSubject(fromDocName, toDocName),
-            actor.actor,
-            fields.stored,
+      switch (actor.kind) {
+        case 'agent': {
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          countNormalizedSummary(actor.summary, false);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
           );
-        }
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-        for (const { toDocName } of result.renamed) {
-          flushDocToGit(toDocName, 'rename-path');
-        }
-      } else if (actor.kind === 'principal') {
-        const fields = summaryResponseFields(actor.summary);
-        summaryResponse = fields.response;
-        for (const { fromDocName, toDocName } of result.renamed) {
-          recordContributor(
-            toDocName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRenameSubject(fromDocName, toDocName),
-            actor.actor,
-            fields.stored,
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
           );
-        }
-        countNormalizedSummary(actor.summary, false);
-        for (const { toDocName } of result.renamed) {
-          flushDocToGit(toDocName, 'rename-path');
         }
       }
       renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
@@ -4420,7 +4500,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rename-path]', e);
-      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
+      const { status, error } = toManagedRenamePublicError(e);
+      json(res, status, { ok: false, error });
     }
   }
 
@@ -4503,24 +4584,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: {
-        docName: string;
-        title: string;
-        docExt: string;
-        size: number;
-        modified: string;
-      }[] = [];
+      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
       for (const [docName, entry] of index) {
         let title = docName;
-        const docExt = getDocExtension(docName);
         try {
-          const filePath = resolve(contentDir, `${docName}${docExt}`);
+          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
+        pages.push({ docName, title, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });

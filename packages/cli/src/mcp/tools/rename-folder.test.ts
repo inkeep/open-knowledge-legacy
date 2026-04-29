@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
 import { type RenameFolderDeps, register } from './rename-folder.ts';
-import type { ServerInstance } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, type ServerInstance } from './shared.ts';
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
@@ -250,6 +250,114 @@ describe('rename_folder MCP tool', () => {
         { fromDocName: 'a/y', toDocName: 'b/y' },
       ],
       rewrittenDocs: [{ docName: 'index', rewrites: 3 }],
+    });
+  });
+
+  test('uses the shared Hocuspocus-not-running error when no server URL is available', async () => {
+    const { server, registrations } = createCapturingServer();
+    register(server, makeDeps(undefined));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: 'articles', toFolder: 'essays' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(HOCUSPOCUS_NOT_RUNNING_ERROR);
+  });
+
+  test('rejects empty-string fromFolder', async () => {
+    const { server, registrations } = createCapturingServer();
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: '', toFolder: 'essays' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('fromFolder must be');
+  });
+
+  test('rejects empty-string toFolder', async () => {
+    const { server, registrations } = createCapturingServer();
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: 'articles', toFolder: '' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('toFolder must be');
+  });
+
+  test('emits previewUrls keyed by toDocName for each renamed doc', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const { server, registrations } = createCapturingServer();
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          renamed: [
+            { fromDocName: 'articles/auth', toDocName: 'essays/auth' },
+            { fromDocName: 'articles/login', toDocName: 'essays/login' },
+          ],
+          rewrittenDocs: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: 'articles', toFolder: 'essays' });
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      previewUrls: {
+        'essays/auth': 'https://env.example/#/essays/auth',
+        'essays/login': 'https://env.example/#/essays/login',
+      },
+      previewUrlSource: 'env',
+    });
+  });
+
+  test('empty-folder rename surfaces a clear no-op message', async () => {
+    const { server, registrations } = createCapturingServer();
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          renamed: [],
+          rewrittenDocs: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: 'articles', toFolder: 'essays' });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('No managed docs under articles/');
+    expect(result.content[0]?.text).not.toContain('Renamed folder');
+  });
+
+  test('surfaces server colliding[] structured array on 409', async () => {
+    const { server, registrations } = createCapturingServer();
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: "Managed rename collision: 'articles/x' and 'notes/x' both target 'essays/x'",
+          colliding: [{ existing: 'articles/x', incoming: 'notes/x', to: 'essays/x' }],
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_folder');
+
+    const result = await tool.handler({ fromFolder: 'articles', toFolder: 'essays' });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      colliding: [{ existing: 'articles/x', incoming: 'notes/x', to: 'essays/x' }],
     });
   });
 });

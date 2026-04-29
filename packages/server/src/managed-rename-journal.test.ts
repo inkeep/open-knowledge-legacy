@@ -203,6 +203,89 @@ describe('managed rename recovery journal — v2 multi-doc recovery', () => {
     expect(readFileSync(join(dir, 'b.md'), 'utf-8')).toBe('# B content\n');
     expect(existsSync(join(dir, 'c.md'))).toBe(false);
   });
+
+  test('removes empty destination parent directories left behind by a folder rename', () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'essays'), { recursive: true });
+    writeFileSync(join(dir, 'essays', 'auth.md'), '# Auth\n', 'utf-8');
+    writeFileSync(join(dir, 'essays', 'login.md'), '# Login\n', 'utf-8');
+
+    writeManagedRenameJournal(
+      dir,
+      createManagedRenameRecoveryJournal({
+        fromPath: 'articles',
+        toPath: 'essays',
+        affectedDocs: [
+          { from: 'articles/auth', to: 'essays/auth' },
+          { from: 'articles/login', to: 'essays/login' },
+        ],
+        snapshots: [
+          { docName: 'articles/auth', content: '# Auth\n' },
+          { docName: 'articles/login', content: '# Login\n' },
+        ],
+      }),
+    );
+
+    const recovery = recoverPendingManagedRename(dir);
+    expect(recovery.recovered).toBe(true);
+    expect(readFileSync(join(dir, 'articles', 'auth.md'), 'utf-8')).toBe('# Auth\n');
+    expect(readFileSync(join(dir, 'articles', 'login.md'), 'utf-8')).toBe('# Login\n');
+    expect(existsSync(join(dir, 'essays', 'auth.md'))).toBe(false);
+    expect(existsSync(join(dir, 'essays', 'login.md'))).toBe(false);
+    expect(existsSync(join(dir, 'essays'))).toBe(false);
+  });
+
+  test('preserves a non-empty destination parent that holds unrelated files', () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'essays'), { recursive: true });
+    writeFileSync(join(dir, 'essays', 'auth.md'), '# Auth\n', 'utf-8');
+    writeFileSync(join(dir, 'essays', 'unrelated.md'), '# Unrelated\n', 'utf-8');
+
+    writeManagedRenameJournal(
+      dir,
+      createManagedRenameRecoveryJournal({
+        fromPath: 'articles/auth',
+        toPath: 'essays/auth',
+        affectedDocs: [{ from: 'articles/auth', to: 'essays/auth' }],
+        snapshots: [{ docName: 'articles/auth', content: '# Auth\n' }],
+      }),
+    );
+
+    recoverPendingManagedRename(dir);
+    expect(existsSync(join(dir, 'essays', 'unrelated.md'))).toBe(true);
+    expect(existsSync(join(dir, 'essays'))).toBe(true);
+  });
+});
+
+describe('managed rename recovery journal — failure cause propagation', () => {
+  test('thrown summary on snapshot restore failure carries underlying causes', () => {
+    const dir = setupTmpDir();
+
+    writeManagedRenameJournal(
+      dir,
+      createManagedRenameRecoveryJournal({
+        fromPath: 'alpha',
+        toPath: 'beta',
+        affectedDocs: [{ from: 'alpha', to: 'beta' }],
+        snapshots: [
+          { docName: 'alpha', content: '# Alpha\n' },
+          { docName: '../escape', content: 'bad\n' },
+        ],
+      }),
+    );
+
+    let captured: unknown;
+    try {
+      recoverPendingManagedRename(dir);
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(AggregateError);
+    if (captured instanceof AggregateError) {
+      expect(captured.errors).toHaveLength(1);
+      expect(captured.errors[0]).toBeInstanceOf(Error);
+    }
+  });
 });
 
 describe('managed rename recovery journal — v1 legacy support', () => {

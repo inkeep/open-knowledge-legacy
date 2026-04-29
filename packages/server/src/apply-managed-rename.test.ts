@@ -46,7 +46,7 @@ describe('buildRenameMap — collision detection', () => {
       if (e instanceof ManagedRenameCollisionError) error = e;
     }
     expect(error).toBeDefined();
-    expect(error?.colliding).toEqual([{ a: 'a', b: 'b', to: 'shared' }]);
+    expect(error?.colliding).toEqual([{ existing: 'a', incoming: 'b', to: 'shared' }]);
   });
 
   test('collision error message includes the colliding paths', () => {

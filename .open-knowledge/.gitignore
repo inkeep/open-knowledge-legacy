@@ -9,6 +9,7 @@ server.lock
 ui.lock
 
 # Sync watermarks + per-machine principal identity
+state.json
 sync-state.json
 principal.json
 state.json
