@@ -22,6 +22,8 @@ export {
 export {
   type ConfigIssue,
   ConfigIssueSchema,
+  type ConfigIssueSource,
+  ConfigIssueSourceSchema,
   type ConfigValidationError,
   ConfigValidationErrorSchema,
   type FieldScope,
@@ -40,6 +42,11 @@ export {
   fieldRegistry,
   getFieldMeta,
 } from './config/field-registry.ts';
+export {
+  type ReadConfigSafelyOptions,
+  type ReadConfigSafelyResult,
+  readConfigSafely,
+} from './config/read-config-safely.ts';
 export type { Err, Ok, Result } from './config/result.ts';
 // Config (config-edit-paths spec — D44/D50/FR-31, US-001)
 // Schema, error envelope, and Result helper. Browser+node compatible.
@@ -52,6 +59,7 @@ export {
   type FolderRule,
   FolderRuleSchema,
 } from './config/schema.ts';
+export { type LocateOptions, locateIssue } from './config/source-locator.ts';
 export {
   resolveConfigPath,
   type WriteConfigPatchOptions,

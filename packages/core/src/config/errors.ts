@@ -1,17 +1,39 @@
 import { z } from 'zod';
 
 /**
+ * Source location of an issue in a YAML file, if the issue was traced back
+ * to a parsed `Document` AST. 1-indexed line and column to match the
+ * conventions IDEs/CLIs use (Biome, tsc, ESLint).
+ *
+ * `snippet` is a multi-line preview of the source around the issue —
+ * typically 1-3 lines with a caret marker under the offending token.
+ */
+export const ConfigIssueSourceSchema = z.object({
+  file: z.string(),
+  line: z.number().int().min(1),
+  column: z.number().int().min(1),
+  snippet: z.string().optional(),
+});
+
+export type ConfigIssueSource = z.infer<typeof ConfigIssueSourceSchema>;
+
+/**
  * Path segments are coerced to (string | number) at the wire boundary —
  * Zod's native `issue.path` is `PropertyKey[]` (`string | number | symbol`),
  * and symbols don't survive JSON serialization. Every consumer of
  * `ConfigValidationError` (Settings pane walker, CLI source-located renderer,
  * MCP tool envelopes) gets a pre-coerced path.
+ *
+ * `source` is set when the issue was traced back to a yaml@2 `Document` AST
+ * (loader path, `ok config validate`). Headless writers without an associated
+ * file (e.g., MCP `set_config` writing to a fresh document) leave it unset.
  */
 export const ConfigIssueSchema = z.object({
   path: z.array(z.union([z.string(), z.number()])),
   message: z.string(),
   issueCode: z.string(),
   params: z.record(z.string(), z.unknown()).optional(),
+  source: ConfigIssueSourceSchema.optional(),
 });
 
 export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
@@ -126,11 +148,38 @@ export function humanFormat(error: ConfigValidationError): string {
       return `Failed to parse YAML: ${error.detail}`;
     case 'SCHEMA_INVALID': {
       if (error.issues.length === 0) return 'Invalid configuration.';
-      const lines = error.issues.map((iss) => {
-        const path = iss.path.length === 0 ? '<root>' : iss.path.join('.');
-        return `  ${path}: ${iss.message}`;
-      });
-      return ['Invalid configuration:', ...lines].join('\n');
+      // Group issues by file so a single header line precedes each file's
+      // issues. Issues without source go under a synthetic "<no source>" key.
+      const grouped = new Map<string, ConfigIssue[]>();
+      for (const iss of error.issues) {
+        const key = iss.source?.file ?? '<no source>';
+        const list = grouped.get(key) ?? [];
+        list.push(iss);
+        grouped.set(key, list);
+      }
+      const lines: string[] = [];
+      for (const [file, issues] of grouped) {
+        if (file === '<no source>') {
+          lines.push('Invalid configuration:');
+        } else {
+          lines.push(`Invalid configuration at ${file}:`);
+        }
+        for (const iss of issues) {
+          const path = iss.path.length === 0 ? '<root>' : iss.path.join('.');
+          if (iss.source) {
+            lines.push(`  ${file}:${iss.source.line}:${iss.source.column}`);
+            lines.push(`  ${path}: ${iss.message}`);
+            if (iss.source.snippet && iss.source.snippet.length > 0) {
+              for (const snippetLine of iss.source.snippet.split('\n')) {
+                lines.push(`    ${snippetLine}`);
+              }
+            }
+          } else {
+            lines.push(`  ${path}: ${iss.message}`);
+          }
+        }
+      }
+      return lines.join('\n');
     }
     case 'SCOPE_VIOLATION':
       return `Field ${error.path.join('.')} cannot be set at ${error.actualScope} scope (expected: ${error.expectedScope}).`;
