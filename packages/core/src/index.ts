@@ -11,6 +11,34 @@ export {
 // Re-export VFileMessage for Observer B's error classification (instanceof check
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
+export {
+  type ConfigIssue,
+  ConfigIssueSchema,
+  type ConfigValidationError,
+  ConfigValidationErrorSchema,
+  type FieldScope,
+  FieldScopeSchema,
+  type ForwardCompatConfigError,
+  ForwardCompatConfigErrorSchema,
+  humanFormat,
+  isKnownConfigError,
+  type KnownConfigValidationError,
+  KnownConfigValidationErrorSchema,
+  type WriteScope,
+  WriteScopeSchema,
+} from './config/errors.ts';
+export type { Err, Ok, Result } from './config/result.ts';
+// Config (config-edit-paths spec — D44/D50/FR-31, US-001)
+// Schema, error envelope, and Result helper. Browser+node compatible.
+export {
+  type Config,
+  type ConfigPatch,
+  ConfigSchema,
+  type FolderFrontmatter,
+  FolderFrontmatterSchema,
+  type FolderRule,
+  FolderRuleSchema,
+} from './config/schema.ts';
 
 // Constants
 export {
