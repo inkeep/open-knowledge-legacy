@@ -674,14 +674,28 @@ jobs:
         env:
           CLAUDE_CODE_DEBUG_LOGS_DIR: ${{ runner.temp }}/claude-debug
           DEBUG_CLAUDE_AGENT_SDK: "1"
+          # Block first query until extraKnownMarketplaces install completes
+          # so cross-plugin skill resolution (e.g., shared:interaction-polish)
+          # is reliable.
+          CLAUDE_CODE_SYNC_PLUGIN_INSTALL: "true"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
           allowed_bots: "inkeep-internal-ci[bot]"
           track_progress: true
+          # Load the shared plugin via structured action inputs (install-plugins.ts),
+          # not via a second --plugin-dir flag. claude-code-action's claude_args parser
+          # collapses repeated --plugin-dir flags (last value wins), which silently
+          # dropped the pr-review plugin and produced empty reviews on every PR.
+          # Marketplace name "inkeep-team-skills" is from the marketplace.json at
+          # the root of /tmp/team-skills, which the "Clone team-skills" step above
+          # places on disk.
+          plugin_marketplaces: |
+            /tmp/team-skills
+          plugins: |
+            shared@inkeep-team-skills
           claude_args: |
             --plugin-dir /tmp/team-skills/ci/pr-review
-            --plugin-dir /tmp/team-skills/plugins/shared
             --agent pr-review:pr-review
             --mcp-config '{"mcpServers":{"exa":{"command":"npx","args":["-y","exa-mcp-server"],"env":{"EXA_API_KEY":"${{ secrets.EXA_API_KEY }}"}}}}'
             --allowedTools "Task,Read,Write,Grep,Glob,Skill,mcp__exa__web_search_exa,mcp__github__create_pending_pull_request_review,mcp__github__add_comment_to_pending_review,mcp__github__submit_pending_pull_request_review,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git merge-base:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(mkdir:*)"
