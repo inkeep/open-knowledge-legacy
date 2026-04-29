@@ -308,8 +308,9 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
 
     await dropFileIntoEditor(page, TINY_PNG_BYTES, 'photo.png', 'image/png');
 
-    // Wait for Y.Text to carry the `![[photo.png]]` ref — confirms drop
-    // was consumed by the editor (no client-side crash / wrong shape).
+    // Wait for Y.Text to carry a photo.png reference — image-extension
+    // drops emit the canonical `<img src="…/photo.png" alt="" />` JSX
+    // shape (US-004). The substring assertion is shape-tolerant.
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain('photo.png');

@@ -207,19 +207,30 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     const expectedSha = sha256(svg);
 
     await dropFileBytesIntoEditor(page, svg, 'xss.svg', 'image/svg+xml');
+    // SVG is in IMAGE_EXTENSIONS — drops emit the canonical `<img>` JSX shape
+    // (US-004 convergence). The XSS payload is still the bytes-on-disk
+    // concern: render-time XSS protection is unchanged whether the chip
+    // renders as wikiLinkEmbed `<img>` or Image.tsx `<img>` — both go through
+    // the browser's <img> element which doesn't execute embedded <script>.
     await expect
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
-      .toContain('![[xss.svg]]');
+      .toMatch(/<img\s+src="\/?xss\.svg"/);
 
     // Byte-identical on disk (server stores verbatim — it's render-time that protects us).
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'xss.svg');
     expect(sha256(onDisk)).toBe(expectedSha);
 
-    // NFR-3: after settle, WYSIWYG must NOT have injected <svg> markup into the
-    // ProseMirror DOM. The extension-fallback routes SVG as image/svg+xml
-    // rendered via <img src=...>; inline DOM injection would be an XSS vector.
-    const svgCount = await page.locator('.ProseMirror svg').count();
-    expect(svgCount).toBe(0);
+    // NFR-3: WYSIWYG must NOT inject the SVG bytes as inline DOM. Image.tsx
+    // (US-004) renders SVG via `<img src=...>`, so the embedded `<script>`
+    // and `onload="alert('xss')"` never enter the document. The
+    // bare-`svg-count` proxy doesn't apply post-US-004 because Image.tsx's
+    // Zoom wrapper paints a UI chevron SVG; we instead pin the actual XSS
+    // surface — no `<script>` element and no element carrying the
+    // `onload="alert(...)"` attribute landed in the editor.
+    const scriptCount = await page.locator('.ProseMirror script').count();
+    expect(scriptCount).toBe(0);
+    const onloadCount = await page.locator('.ProseMirror [onload]').count();
+    expect(onloadCount).toBe(0);
 
     // Prove no deferred alert fires. `alertFired` is a page-level
     // sentinel updated by an `on('dialog', ...)` handler set up at
@@ -321,22 +332,26 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     page,
     workerServer,
   }) => {
+    // Image-extension drops emit `<img>` JSX (US-004). Dedup is asserted
+    // against filename collision-suffix shape (no `shot-1.png`), not the
+    // wikiembed text shape.
     const png = readFileSync(join(FIXTURES_DIR, 'real-shot.png'));
     const expectedSha = sha256(png);
     await dropFileBytesIntoEditor(page, png, 'shot.png', 'image/png');
     await expect
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
-      .toContain('![[shot.png]]');
+      .toMatch(/<img\s+src="\/?shot\.png"/);
 
     // Second drop with identical bytes
     await dropFileBytesIntoEditor(page, png, 'shot.png', 'image/png');
 
-    // Two wiki-embed refs should appear, BOTH pointing at shot.png (not shot-1.png).
+    // Two `<img …shot.png…>` tags should appear, BOTH pointing at shot.png
+    // (not shot-1.png).
     await expect
       .poll(
         async () => {
           const t = await getSourceText(page);
-          return (t.match(/!\[\[shot\.png\]\]/g) ?? []).length;
+          return (t.match(/<img\s+[^>]*src="\/?shot\.png"/g) ?? []).length;
         },
         { timeout: 10_000 },
       )

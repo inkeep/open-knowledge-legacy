@@ -6,12 +6,17 @@ import { pickInsertShape } from './index';
 // `DEFAULT_EMIT_FORMAT`. The extension-matrix coverage that matters
 // (image / non-image wikiembed / opaque / markdown-doc) stays.
 describe('pickInsertShape — emit-dispatch by extension', () => {
-  test('image extension emits wikiembed', () => {
-    expect(pickInsertShape('photo.png').kind).toBe('wikiembed');
-    expect(pickInsertShape('diagram.svg').kind).toBe('wikiembed');
+  test('image extension emits jsx-img (canonical <img> JSX shape)', () => {
+    expect(pickInsertShape('photo.png').kind).toBe('jsx-img');
+    expect(pickInsertShape('diagram.svg').kind).toBe('jsx-img');
+    expect(pickInsertShape('snap.jpg').kind).toBe('jsx-img');
+    expect(pickInsertShape('avatar.webp').kind).toBe('jsx-img');
   });
 
-  test('non-image wikiembed extension emits wikiembed', () => {
+  test('non-image wikiembed extension emits wikiembed (PDF / video / audio)', () => {
+    // pdf stays on wiki-embed (no descriptor → keep wiki-link semantic per
+    // the "no descriptor → fallback" principle). video/audio currently
+    // remain on wikiembed until US-009 introduces jsx-video / jsx-audio.
     expect(pickInsertShape('draft.pdf').kind).toBe('wikiembed');
     expect(pickInsertShape('clip.mp4').kind).toBe('wikiembed');
     expect(pickInsertShape('song.mp3').kind).toBe('wikiembed');
@@ -24,7 +29,7 @@ describe('pickInsertShape — emit-dispatch by extension', () => {
   });
 
   test('extension matching is case-insensitive', () => {
-    expect(pickInsertShape('PHOTO.PNG').kind).toBe('wikiembed');
+    expect(pickInsertShape('PHOTO.PNG').kind).toBe('jsx-img');
     expect(pickInsertShape('Clip.MP4').kind).toBe('wikiembed');
   });
 

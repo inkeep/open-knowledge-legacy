@@ -116,33 +116,37 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
   test('P3.1: same PNG dropped twice → second drop dedups, single file on disk', async ({
     page,
   }) => {
+    // Image-extension drops emit the OK-canonical `<img>` JSX shape
+    // (US-004 convergence — drag/drop/paste land on the same Image.tsx
+    // renderer as slash-menu insert + CommonMarkImage compat). On-disk
+    // markdown is `<img src="/shot.png" alt="" />`; dedup is asserted by
+    // the server returning the same path for both drops (no `shot-1.png`
+    // collision-suffix).
     await dropFileIntoEditor(page, TINY_PNG, 'shot.png', 'image/png');
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
-      .toContain('![[shot.png]]');
+      .toMatch(/<img\s+src="\/?shot\.png"/);
 
     // Second drop with identical bytes — server returns deduped:true and
     // the filename in the second emit matches the existing on-disk file.
     await dropFileIntoEditor(page, TINY_PNG, 'shot.png', 'image/png');
 
-    // Assert the body still has only one wiki-embed AFTER both inserts —
-    // the dedup test isn't the source-text count (each insert appends
-    // one ref) but rather that the inserted filename matches the existing
-    // filename, not a `-1` collision-suffix variant.
+    // Two `<img …shot.png…>` tags appear after both inserts; both reference
+    // the same filename (no collision-suffix). Counts the JSX shape.
     await expect
       .poll(
         async () => {
           const text = await getSourceText(page);
-          return (text.match(/!\[\[shot\.png\]\]/g) ?? []).length;
+          return (text.match(/<img\s+[^>]*src="\/?shot\.png"/g) ?? []).length;
         },
         { timeout: 5_000 },
       )
       .toBeGreaterThanOrEqual(2);
     const text = await getSourceText(page);
-    expect(text).not.toContain('![[shot-1.png]]');
+    expect(text).not.toContain('shot-1.png');
   });
 
-  test('P1.1-paste: paste a PNG via ClipboardEvent → Y.Text contains ![[shot.png]]', async ({
+  test('P1.1-paste: paste a PNG via ClipboardEvent → Y.Text contains <img src=".../shot.png">', async ({
     page,
   }) => {
     // Clipboard-paste is a separate FileHandler binding (`onPaste`) from
@@ -172,19 +176,22 @@ test.describe('asset-embed — drop UX (SPEC §6 FR-1, FR-1a, FR-2, FR-8)', () =
 
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
-      .toContain('![[shot.png]]');
+      .toMatch(/<img\s+src="\/?shot\.png"/);
   });
 
-  test('SVG drop emits as wiki-embed (NFR-3 sniff-fallback path)', async ({ page }) => {
+  test('SVG drop emits as <img> JSX (image extension; NFR-3 sniff-fallback path)', async ({
+    page,
+  }) => {
     // SVG has no magic bytes; the server's text-sniff fallback marks it
-    // image/svg+xml so the file lands as an image. Client emits the
-    // wiki-embed shape because .svg is in DEFAULT_WIKI_EMBED_EXTENSIONS.
+    // image/svg+xml so the file lands as an image. SVG is in
+    // IMAGE_EXTENSIONS so US-004 routes the drop through the canonical
+    // `<img>` JSX shape.
     const svgBytes = Array.from(
       Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', 'utf-8'),
     );
     await dropFileIntoEditor(page, svgBytes, 'diagram.svg', 'image/svg+xml');
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
-      .toContain('![[diagram.svg]]');
+      .toMatch(/<img\s+src="\/?diagram\.svg"/);
   });
 });
