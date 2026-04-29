@@ -794,6 +794,38 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             return;
           }
 
+          // Phantom-doc guard: refuse to materialize a 0-byte file when the
+          // Y.Doc was never confirmed to exist on disk (no reconciled base
+          // from a successful onLoadDocument) AND the serialized content is
+          // empty. This blocks accidental orphan files from any code path
+          // that opens a Y.Doc for a non-existent docName: the browser race
+          // during a rename, GETs to `/api/document?docName=<missing>`, MCP
+          // queries on deleted docs, and any future caller of
+          // `openDirectConnection` that hits a missing path.
+          //
+          // Legitimate first-write flows are unaffected:
+          //   - `/api/create-page` writes the file synchronously before any
+          //     transaction, so the next onLoadDocument sets reconciledBase
+          //     to '' (defined) before this guard fires.
+          //   - `/api/agent-write-md` populates the XmlFragment with the
+          //     agent's content INSIDE the same transact that triggers the
+          //     debounced store, so by the time we get here `markdown` is
+          //     non-empty even when reconciledBase is still undefined.
+          //
+          // Mode-coupling note: the guard is asymmetric. It only blocks
+          // file *creation*. Once a file exists and reconciledBase is set,
+          // subsequent stores fall through to the normal write path,
+          // including legitimate transitions to empty content (user clears
+          // a doc) — those compare against the non-empty base above and
+          // proceed.
+          if (currentBase === undefined && normalizeBridge(markdown) === '') {
+            log.warn(
+              { documentName },
+              `[persistence] Skipped phantom write for ${documentName}: empty Y.Doc with no reconciled base`,
+            );
+            return;
+          }
+
           // Thread origin → contributor tracker. Safety-net for writes that
           // bypass api-extension.ts handlers. Agent write handlers already
           // call recordContributor explicitly; this handles human-browser
