@@ -73,6 +73,28 @@ const HTML_CLOSE_TAG_RE = /<\/([a-z][a-z0-9]*)\s*>/g;
 const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
 
 /**
+ * Lowercase tag names that ARE registered canonical descriptors and must
+ * pass through to remark-mdx as `mdxJsxFlowElement` rather than being
+ * PUA-protected as raw HTML. This carve-out is what makes the "media
+ * converges with HTML primitives" rule work — `<img>` / `<video>` /
+ * `<audio>` author as JSX so descriptor dispatch + PropPanel + advanced-
+ * attr passthrough light up. Without the carve-out the guard would route
+ * them into text and the slash-menu insert path round-trips as a string.
+ *
+ * Adding a new lowercase canonical descriptor to the registry requires
+ * appending its tag name here. Capitalized canonicals (Callout / Accordion)
+ * pass through automatically — only lowercase needs the exemption.
+ *
+ * Sister set in `mdast-to-hast-handlers.ts` — `HTML_PRIMITIVE_TAGS` —
+ * gates which lowercase tags emit as native hast (vs `<pre>` fallback) at
+ * cross-app paste time. The two sets currently coincide for the v1 5-pack
+ * but are conceptually distinct: a tag could be PUA-exempt here without
+ * being native-renderable there (e.g., a future descriptor whose React
+ * component handles the rendering). Update both deliberately.
+ */
+const LOWERCASE_JSX_CANONICAL_TAGS = new Set(['img', 'video', 'audio']);
+
+/**
  * Uppercase close tag used for the catch-all matching-close lookup (R15).
  *
  * Matches the literal `</UpperName>` form with NO whitespace before `>` —
@@ -189,6 +211,16 @@ export function protectFromMdx(source: string): string {
 
   // Protect lowercase HTML tags (not JSX components)
   result = result.replace(LOWERCASE_HTML_TAG_RE, (match, tag: string) => {
+    // Lowercase canonical media tags (img/video/audio) are JSX descriptors
+    // post-pivot — pass them through to remark-mdx so they parse as
+    // mdxJsxFlowElement and reach the descriptor dispatch. Only the
+    // self-closing JSX form (`<img ... />`) is exempted; bare `<img>` /
+    // `<img src="x">` (HTML void semantics) stays guarded so legacy
+    // HTML-form content keeps parsing as text without remark-mdx
+    // demanding a close tag.
+    if (LOWERCASE_JSX_CANONICAL_TAGS.has(tag) && match.endsWith('/>')) {
+      return match;
+    }
     // Only protect if the tag name is lowercase (standard HTML).
     // Uppercase or dotted names are JSX components — leave for remark-mdx.
     if (tag[0] === tag[0].toLowerCase() && tag[0] !== tag[0].toUpperCase()) {
@@ -249,6 +281,17 @@ export function protectFromMdx(source: string): string {
     if (lookahead[1] === '/') {
       if (/^<\/[a-zA-Z][a-zA-Z0-9.]*[ \t]*>/.test(lookahead)) return match;
       return GUARD_OPEN; // Incomplete close tag — protect
+    }
+
+    // Lowercase canonical media tags (img/video/audio) survived the
+    // LOWERCASE_HTML_TAG_RE pass via the JSX-canonical exemption — keep
+    // them passing through here too so remark-mdx claims them as JSX.
+    // Same self-closing constraint as the LOWERCASE_HTML_TAG_RE branch:
+    // require the `/>` suffix within the bounded lookahead window so bare
+    // `<img>` (HTML void) stays guarded.
+    const lowercaseCanonicalMatch = /^<([a-z][a-z0-9]*)([^>]*)\/>/.exec(lookahead);
+    if (lowercaseCanonicalMatch && LOWERCASE_JSX_CANONICAL_TAGS.has(lowercaseCanonicalMatch[1])) {
+      return match;
     }
 
     // Check if this looks like a valid self-closing or paired tag

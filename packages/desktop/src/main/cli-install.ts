@@ -1,9 +1,9 @@
 /**
- * CLI-on-PATH install for D52 / M6a.
+ * CLI-on-PATH install.
  *
  * Two layers, both in this one file:
  *
- *   1. Pure (US-002) — no `electron`, no filesystem side effects unless an
+ *   1. Pure — no `electron`, no filesystem side effects unless an
  *      `FsOps` is injected:
  *         - `isTranslocated(executablePath)`
  *         - `wrapperPathInBundle(executablePath)`
@@ -13,7 +13,7 @@
  *         - `buildInstallShellCmd(target)`
  *         - `buildUninstallShellCmd(paths)`
  *
- *   2. Runtime (US-003) — spawn `osascript` + call `dialog.showMessageBox`:
+ *   2. Runtime — spawn `osascript` + call `dialog.showMessageBox`:
  *         - `installCli(deps)` / `uninstallCli(deps)`
  *
  * The runtime functions take their Electron surface (`dialog`) by parameter
@@ -73,7 +73,7 @@ const defaultFsOps: FsOps = {
  * `/private/var/folders/.../AppTranslocation/<UUID>/d/...` path and runs
  * it from there. If we install a symlink INTO that path, the symlink is
  * dangling on next launch — the temp dir is gone. VS Code #209356 and
- * Zed #5276 shipped this bug; D52 requires we refuse installation instead.
+ * Zed #5276 shipped this bug; we refuse installation instead.
  */
 export function isTranslocated(executablePath: string): boolean {
   return (
@@ -89,7 +89,7 @@ export function isTranslocated(executablePath: string): boolean {
  * Input shape: `.../<Bundle>.app/Contents/MacOS/<Bundle>` (the value of
  * `app.getPath('exe')` in a packaged build).
  * Output shape: `.../<Bundle>.app/Contents/Resources/cli/bin/ok.sh` — the
- * script shipped by US-001's `extraResources` entry.
+ * script shipped via `extraResources`.
  *
  * Signed+notarized builds embed this in the code-resource seal, so a
  * foreign-written `ok.sh` at this path would fail bundle verification —
@@ -104,14 +104,14 @@ export function wrapperPathInBundle(executablePath: string): string {
 /**
  * Classify the current `/usr/local/bin/{ok,open-knowledge}` symlink state.
  *
- * The menu-label flip in US-004 consumes this: `'installed'` → "Uninstall
+ * The menu-label flip consumes this: `'installed'` → "Uninstall
  * Command-Line Tools"; `'not-installed'` → "Install Command-Line Tools…";
- * `'broken'` drives the launch-time repair prompt (G5 / AC1.6).
+ * `'broken'` drives the launch-time repair prompt.
  *
- * Per SPEC AC2 of US-002, `'installed'` requires BOTH symlinks to be
- * present AND point at our wrapper path. A partial install (only `ok`
- * exists, `open-knowledge` is ENOENT) is classified `'broken'` — a half-
- * installed state is never something we want to silently accept.
+ * `'installed'` requires BOTH symlinks to be present AND point at our
+ * wrapper path. A partial install (only `ok` exists, `open-knowledge` is
+ * ENOENT) is classified `'broken'` — a half-installed state is never
+ * something we want to silently accept.
  *
  * Resolution rules:
  *   - Both symlinks ENOENT → `'not-installed'`.
@@ -230,7 +230,7 @@ export function buildAdminAppleScript(shellCmd: string, promptCopy: string): str
 
 /**
  * POSIX-safe single-quote shell escape for embedding an arbitrary string
- * inside `'...'` literals (Pass 0 Major #1).
+ * inside `'...'` literals.
  *
  * macOS users can rename `.app` bundles freely AND user account names can
  * contain apostrophes (e.g. `/Users/Bob's Mac/Applications/...`). Without
@@ -262,7 +262,7 @@ function shellEscapeSingleQuoted(value: string): string {
  *
  * Both `target` and the fixed `/usr/local/bin/...` paths are routed through
  * `shellEscapeSingleQuoted` so an apostrophe in the bundle path can't
- * close-and-reopen the literal to inject root commands (Pass 0 Major #1).
+ * close-and-reopen the literal to inject root commands.
  */
 export function buildInstallShellCmd(target: string): string {
   const escapedTarget = shellEscapeSingleQuoted(target);
@@ -277,7 +277,7 @@ export function buildInstallShellCmd(target: string): string {
  * Build the shell command `runAsAdmin` executes on uninstall — a plain
  * `rm -f` for each path we own. Callers pre-filter via
  * `classifySymlinkState(…) === 'ours'` so this never attacks a foreign
- * file. Paths are POSIX-escaped symmetric with install (Pass 0 Major #1).
+ * file. Paths are POSIX-escaped symmetric with install.
  */
 export function buildUninstallShellCmd(paths: readonly string[]): string {
   return paths.map((p) => `rm -f '${shellEscapeSingleQuoted(p)}'`).join(' && ');
@@ -287,10 +287,10 @@ export function buildUninstallShellCmd(paths: readonly string[]): string {
  * Reasons `runAsAdmin` can fail. `installCli` / `uninstallCli` branch on
  * the kind so user-cancel surfaces as the soft "Installation cancelled."
  * dialog while spawn / shell failures surface as actionable error dialogs
- * with the underlying message (Pass 0 Major #7 + #8). Without the
- * distinction the user sees identical "cancelled" copy regardless of
- * actual cause, including for the worst case (mid-install partial write
- * leaves /usr/local/bin in a broken state with no signal).
+ * with the underlying message. Without the distinction the user sees
+ * identical "cancelled" copy regardless of actual cause, including for
+ * the worst case (mid-install partial write leaves /usr/local/bin in a
+ * broken state with no signal).
  */
 export type AdminFailureReason = 'user-cancel' | 'spawn-error' | 'shell-error';
 
@@ -303,8 +303,7 @@ export type AdminFailureReason = 'user-cancel' | 'spawn-error' | 'shell-error';
  * the cast — consumers would then read `.reason === undefined` and fall
  * through to the `'shell-error'` default, showing users a shell-error
  * dialog for what may have been a spawn error or programmer bug. The
- * class + `instanceof` path makes the unsoundness impossible (Pass 0
- * Major #11).
+ * class + `instanceof` path makes the unsoundness impossible.
  */
 export class AdminFailureError extends Error {
   readonly reason: AdminFailureReason;
@@ -344,43 +343,88 @@ export function classifyOsascriptExitCode(code: number | null): AdminFailureReas
 }
 
 /**
+ * Timeout cap for `osascript` admin spawn. Longer than typical Touch ID
+ * (~30s) + up to ~3 password retries so a normal slow prompt doesn't trip
+ * the cap, but bounded enough to catch a hung password prompt (documented
+ * on macOS under SIP-blocked scenarios, MDM admin policies, unresponsive
+ * Touch ID daemon). Without this, a wedged `osascript` never resolves and
+ * leaves Open Knowledge's main process holding the in-flight admin prompt
+ * indefinitely.
+ */
+const OSASCRIPT_TIMEOUT_MS = 60_000;
+
+/**
  * Run `shellCmd` under a macOS admin privilege prompt via `osascript`.
  *
  * Rejects with `AdminFailureError` whose `reason` distinguishes:
  *   - `user-cancel` — user dismissed the Touch ID / password prompt.
- *   - `spawn-error` — `osascript` failed to launch (ENOENT / sandbox / MDM).
+ *   - `spawn-error` — `osascript` failed to launch (ENOENT / sandbox /
+ *     MDM), OR the spawn hung past `OSASCRIPT_TIMEOUT_MS`.
  *   - `shell-error` — the wrapped shell command returned non-zero (mid-
  *     install partial write, EROFS, EACCES, etc.).
  *
  * Stderr is captured and attached to the error so the caller can surface
- * it in the user-facing dialog (Pass 0 Major #7).
+ * it in the user-facing dialog.
  */
 async function defaultRunAsAdmin(shellCmd: string, promptCopy: string): Promise<void> {
   const appleScript = buildAdminAppleScript(shellCmd, promptCopy);
   return new Promise<void>((resolve, reject) => {
     const child = spawn('osascript', ['-e', appleScript]);
     let stderrBuf = '';
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      settle(() => {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // Child may already be dead — swallow.
+        }
+        reject(
+          buildAdminFailureError(
+            'spawn-error',
+            `osascript timed out after ${OSASCRIPT_TIMEOUT_MS}ms`,
+            stderrBuf.trim() || undefined,
+          ),
+        );
+      });
+    }, OSASCRIPT_TIMEOUT_MS);
+    timer.unref?.();
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderrBuf += chunk.toString();
     });
     child.on('exit', (code) => {
-      if (code === 0) return resolve();
-      reject(
-        buildAdminFailureError(
-          classifyOsascriptExitCode(code),
-          `osascript exited with code ${code}`,
-          stderrBuf.trim(),
-        ),
-      );
+      settle(() => {
+        if (code === 0) return resolve();
+        reject(
+          buildAdminFailureError(
+            classifyOsascriptExitCode(code),
+            `osascript exited with code ${code}`,
+            stderrBuf.trim(),
+          ),
+        );
+      });
     });
     child.on('error', (err) => {
-      reject(buildAdminFailureError('spawn-error', err.message));
+      settle(() => {
+        try {
+          child.kill();
+        } catch {
+          // Already dead.
+        }
+        reject(buildAdminFailureError('spawn-error', err.message));
+      });
     });
   });
 }
 
 /**
- * Dependencies for the runtime install/uninstall flows (US-003).
+ * Dependencies for the runtime install/uninstall flows.
  *
  * `executablePath` is what Electron's `app.getPath('exe')` returns —
  * `/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge` for a
@@ -410,7 +454,7 @@ export interface CliInstallDeps {
  *      Cancel aborts the whole flow.
  *   4. Run the `mkdir -p && rm -f && ln -s` shell under an admin prompt.
  *      If the user dismisses the prompt, show a manual-PATH fallback
- *      dialog — silent completion (per OQ-7, lower-surprise option).
+ *      dialog.
  *   5. On success, confirm with a "open a new terminal and run
  *      `ok --version`" dialog.
  */
@@ -464,7 +508,7 @@ export async function installCli(deps: CliInstallDeps): Promise<void> {
   // path too; Docker Desktop's helper enumerates its writes. A bare
   // "install the Command-Line Tools" string, when the user later finds a
   // rogue symlink at /usr/local/bin/ok from a different app, gives no
-  // audit trail for why they granted root access (Pass 0 Major #3).
+  // audit trail for why they granted root access.
   try {
     await runAsAdmin(
       shellCmd,
@@ -472,14 +516,14 @@ export async function installCli(deps: CliInstallDeps): Promise<void> {
     );
   } catch (err) {
     // Distinguish user-cancel from spawn-error / shell-error so the user
-    // sees actionable copy instead of "cancelled" for every failure mode
-    // (Pass 0 Major #7). user-cancel → soft manual-install fallback dialog;
-    // spawn-error / shell-error → red error dialog with the underlying
-    // message AND the manual-install fallback so the user has a path
-    // forward. `instanceof` narrowing (Pass 0 Major #11) — an injected
-    // `runAsAdmin` stub that throws a plain `Error` falls through to the
-    // shell-error branch with the underlying message preserved, instead of
-    // silently masquerading as one of our three classified reasons.
+    // sees actionable copy instead of "cancelled" for every failure mode.
+    // user-cancel → soft manual-install fallback dialog; spawn-error /
+    // shell-error → red error dialog with the underlying message AND the
+    // manual-install fallback so the user has a path forward.
+    // `instanceof` narrowing — an injected `runAsAdmin` stub that throws
+    // a plain `Error` falls through to the shell-error branch with the
+    // underlying message preserved, instead of silently masquerading as
+    // one of our three classified reasons.
     const adminErr = err instanceof AdminFailureError ? err : null;
     const reason: AdminFailureReason = adminErr?.reason ?? 'shell-error';
     const stderr = adminErr?.stderr ?? '';
@@ -548,8 +592,8 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
 
   const shellCmd = buildUninstallShellCmd(toRemove);
   try {
-    // Symmetric-with-install copy (Pass 0 Major #3): name the paths so the
-    // user sees what root will delete.
+    // Symmetric-with-install copy: name the paths so the user sees what
+    // root will delete.
     await runAsAdmin(
       shellCmd,
       `Open Knowledge will remove the symlinks at ${toRemove.join(' and ')}. This requires administrator access.`,
@@ -560,9 +604,9 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
     // the user knows the menu click landed somewhere bad — without this,
     // a partial-uninstall (e.g., `ok` removed but `open-knowledge` failed)
     // leaves the install in a 'broken' state with no signal that anything
-    // happened (Pass 0 Major #8). `instanceof` narrowing (Pass 0 Major #11):
-    // plain `Error` from an injected `runAsAdmin` falls to shell-error with
-    // its message preserved rather than silently adopting `.reason = undefined`.
+    // happened. `instanceof` narrowing: plain `Error` from an injected
+    // `runAsAdmin` falls to shell-error with its message preserved rather
+    // than silently adopting `.reason = undefined`.
     const adminErr = err instanceof AdminFailureError ? err : null;
     const reason: AdminFailureReason = adminErr?.reason ?? 'shell-error';
     if (reason === 'user-cancel') return;
@@ -592,7 +636,7 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Launch-time broken-symlink repair (G5 / AC1.6 — extracted per Pass 1 Major #4)
+// Launch-time broken-symlink repair
 // ---------------------------------------------------------------------------
 
 /**
@@ -607,13 +651,13 @@ export async function uninstallCli(deps: CliInstallDeps): Promise<void> {
  * repair so the `File → Uninstall Command-Line Tools…` label reflects the
  * newly-installed state.
  *
- * Pass 1 Major #4 rationale: this function is privilege-escalation-adjacent
- * (the Repair branch leads to an osascript admin prompt). Inline in
- * `main/index.ts` it had ZERO test coverage — a regression that dropped
- * `!isPackaged` would install dev-path symlinks into the user's
- * `/usr/local/bin`, and the M6 e2e runs unpackaged with `OK_M6B_FORCE` so
- * it couldn't catch packaging-gate regressions either. The factory + DI
- * pattern unlocks deterministic unit coverage.
+ * Rationale for the factory + DI shape: this function is
+ * privilege-escalation-adjacent (the Repair branch leads to an osascript
+ * admin prompt). Inline in `main/index.ts` it had ZERO test coverage — a
+ * regression that dropped `!isPackaged` would install dev-path symlinks
+ * into the user's `/usr/local/bin`, and the desktop e2e runs unpackaged
+ * with `OK_M6B_FORCE` so it couldn't catch packaging-gate regressions
+ * either. The factory + DI pattern unlocks deterministic unit coverage.
  */
 export interface BrokenSymlinkRepairDeps {
   executablePath: string;
@@ -622,7 +666,7 @@ export interface BrokenSymlinkRepairDeps {
    *  because `app.getPath('exe')` resolves to the electron dev binary and
    *  a prior DMG's symlinks would always classify 'broken' against it;
    *  running the repair would install dev-path symlinks into the user's
-   *  system (M6a analogue of M6b's STOP_IF (e) contamination guard). */
+   *  system (contamination guard). */
   isPackaged: boolean;
   dialog: Pick<Dialog, 'showMessageBox'>;
   /** Callable-once installer for the Repair branch. Defaults to `installCli`
@@ -636,7 +680,7 @@ export interface BrokenSymlinkRepairDeps {
   refreshMenu: () => void;
   getStatus?: (executablePath: string) => CliInstallStatus;
   /**
-   * Per-bundle dismissal token (Pass 1 Major #3). A value of
+   * Per-bundle dismissal token. A value of
    * `<appVersion>:<executablePath>` means the user dismissed the repair
    * modal on THIS bundle — skip silently. An auto-update or app-move
    * shifts the computed token, invalidating any prior dismissal so the
@@ -667,13 +711,14 @@ export interface BrokenSymlinkRepairDeps {
  * reinstall recovery on a packaged macOS build the user hasn't opted out
  * of for THIS bundle.
  *
- * Pass 2 Major #3: per-bundle dismissal token — users who don't care
- * about CLI tools can Skip once and stay un-nagged for the life of that
- * bundle. Auto-update shifts `appVersion`; app-move shifts
- * `executablePath`; either rebuilds the token, so the prompt fires once
- * on the new bundle. Rationale in `BrokenSymlinkRepairDeps`.
+ * Per-bundle dismissal token — users who don't care about CLI tools can
+ * Skip once and stay un-nagged for the life of that bundle. Auto-update
+ * shifts `appVersion`; app-move shifts `executablePath`; either rebuilds
+ * the token, so the prompt fires once on the new bundle. Rationale in
+ * `BrokenSymlinkRepairDeps`.
  *
- * Pass 1 Major #3 flipped `defaultId` to 0 (Skip) so Enter-reflex is safe.
+ * `defaultId` is 0 (Skip) so Enter-reflex is safe — repair leads into an
+ * osascript admin-password prompt.
  */
 export function createBrokenSymlinkRepairHandler(
   deps: BrokenSymlinkRepairDeps,
@@ -685,7 +730,7 @@ export function createBrokenSymlinkRepairHandler(
     const status = getStatus(deps.executablePath);
     if (status !== 'broken') return;
 
-    // Per-bundle dismissal gate (Pass 2 Major #3). The token shape
+    // Per-bundle dismissal gate. The token shape
     // `<appVersion>:<executablePath>` means auto-update (version shift)
     // OR app-move (exe path shift) invalidates a prior dismissal — the
     // modal fires once on the new bundle, respects Skip for the rest
@@ -704,10 +749,10 @@ export function createBrokenSymlinkRepairHandler(
         "The Command-Line Tools for Open Knowledge point at a path that's no longer valid. This happens if the app was moved or reinstalled from a new DMG. Repair to re-link them at this bundle, or skip to dismiss.",
       buttons: ['Skip', 'Repair'],
       cancelId: 0,
-      // Pass 1 Major #3: Enter-default = Skip. Repair leads into the
-      // osascript admin-password prompt — a user reflexively dismissing
-      // a startup modal with Enter should land on the no-op path, not
-      // on a root-write they didn't intend.
+      // Enter-default = Skip. Repair leads into the osascript
+      // admin-password prompt — a user reflexively dismissing a startup
+      // modal with Enter should land on the no-op path, not on a
+      // root-write they didn't intend.
       defaultId: 0,
     });
     if (response === 0) {

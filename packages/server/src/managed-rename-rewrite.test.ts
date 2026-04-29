@@ -134,4 +134,32 @@ describe('rewriteMarkdownLinksForDocumentRename', () => {
       rewrites: 1,
     });
   });
+
+  test('preserves .mdx extension on markdown-link rewrite', () => {
+    expect(
+      rewriteMarkdownLinksForDocumentRename(
+        'See [Component](./old.mdx#section).\n',
+        'notes',
+        'old',
+        'new',
+      ),
+    ).toEqual({
+      markdown: 'See [Component](./new.mdx#section).\n',
+      rewrites: 1,
+    });
+  });
+
+  test('preserves .mdx extension when renamed doc moves paths', () => {
+    expect(
+      rewriteMarkdownLinksForDocumentRename(
+        'See [Overview](../old.mdx#section).\n',
+        'folder/page',
+        'old',
+        'guides/new',
+      ),
+    ).toEqual({
+      markdown: 'See [Overview](../guides/new.mdx#section).\n',
+      rewrites: 1,
+    });
+  });
 });

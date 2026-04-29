@@ -34,7 +34,7 @@ import { FILE_SYSTEM_WRITER } from './shadow-repo.ts';
  * symmetrically (bridge-correctness SPEC §6 R0/R0b/R0c).
  */
 export const FILE_WATCHER_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: true,
   context: { origin: 'file-watcher', paired: true },
 } as const satisfies PairedWriteOrigin;

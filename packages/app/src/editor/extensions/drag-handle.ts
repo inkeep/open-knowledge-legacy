@@ -4,8 +4,27 @@
  *
  * Layout: [+ btn] [grip] — flex row, both vertically centered.
  *
- * Clicking + inserts a new empty paragraph below the hovered block and
- * triggers the slash command menu.
+ * **Why this is a TipTap extension (not a React component).**
+ * `@tiptap/extension-drag-handle-react`'s `<DragHandle>` React component
+ * renders a ref'd `<div>` and lets the underlying `DragHandlePlugin`
+ * *move* that div into `editor.view.dom.parentElement`. The external DOM
+ * move breaks React 19.2 reconciliation on `<Activity>` mode flips with
+ * `Failed to execute 'removeChild' on 'Node'` (see Debug Phase 5 root
+ * cause, 2026-04-18). Using the plugin imperatively with a
+ * `document.createElement` container sidesteps React entirely — no refs
+ * for the plugin to move, no reconciliation to break. Evidence: regression
+ * validated against docs-open F1/F4/F5/F10 (2026-04-18 Debug Phase 5 root
+ * cause). The same pattern would apply to any future plugin that moves its
+ * ref'd DOM into `editor.view.dom.parentElement` while the editor lives in
+ * an `<Activity>` subtree — prefer imperative `document.createElement`
+ * mounting over React component wrappers for those plugins.
+ *
+ * Clicking + context-aware insertion:
+ *   - If the hovered block is a typed-children container (descriptor has
+ *     `emptyChildName` — e.g. Steps, Tabs, Cards), insert a child INSIDE
+ *     the container using the registry's default factory.
+ *   - Otherwise, insert a new empty paragraph below the hovered block and
+ *     trigger the slash command menu.
  *
  * Positioning: floating-ui `offset` middleware with:
  *   - mainAxis: horizontal gap between handle and text edge
@@ -19,6 +38,8 @@ import { type Editor, Extension } from '@tiptap/core';
 import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
+import { getDescriptor } from '../registry/index.ts';
+import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.ts';
 
 // Height of the handle element (matches .ok-block-controls button height: 20px in globals.css).
 const HANDLE_HEIGHT = 20;
@@ -60,8 +81,31 @@ function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLBut
 
 function addBlockBelow(editor: Editor, hoveredNodePos: number, hoveredNode: PmNode): void {
   const { state, view } = editor;
-  const insertAt = hoveredNodePos + hoveredNode.nodeSize;
 
+  // Context-aware insertion: if the hovered block is a typed-children
+  // container (descriptor has `emptyChildName` — Steps, Tabs, Cards,
+  // Files, Accordions), insert a child *inside* the container rather
+  // than a paragraph after. Derived from descriptor metadata — no
+  // component-specific logic. Matches the NodeView "+" chrome behavior
+  // documented in SPEC §9.9.
+  if (hoveredNode.type.name === 'jsxComponent') {
+    const componentName = (hoveredNode.attrs.componentName as string | undefined) ?? '';
+    if (componentName) {
+      const descriptor = getDescriptor(componentName);
+      if (descriptor.emptyChildName) {
+        const insertPos = hoveredNodePos + 1 + hoveredNode.content.size;
+        // Guard against stale hover position (concurrent edits).
+        if (insertPos > state.doc.content.size) return;
+        const childName = descriptor.emptyChildName;
+        editor.chain().focus().insertContentAt(insertPos, createChildNode(childName)).run();
+        focusInsertedComponent(editor, insertPos, getDescriptor(childName));
+        return;
+      }
+    }
+  }
+
+  // Non-container default: paragraph after + slash-menu trigger.
+  const insertAt = hoveredNodePos + hoveredNode.nodeSize;
   // Guard against stale hover position — remote edits (CRDT, agent writes) can shrink
   // the document between hover and click, making insertAt exceed doc bounds.
   if (insertAt > state.doc.content.size) return;
@@ -106,7 +150,7 @@ export const BlockDragHandle = Extension.create({
           currentNodePos = pos ?? -1;
         },
         computePositionConfig: {
-          placement: 'left-start',
+          placement: 'left',
           strategy: 'absolute',
           middleware: [
             offset(({ rects }) => {

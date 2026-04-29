@@ -1,0 +1,68 @@
+---
+title: Image showcase
+cluster: showcase
+---
+# Image
+
+The `img` descriptor takes both CommonMark `![alt](src)` and lowercase MDX JSX. The CommonMark promoter (`image-promoter.ts`) emits `CommonMarkImage` (read-only compat); native lowercase `<img>` parses straight to the canonical descriptor.
+
+## CommonMark form
+
+Standard markdown syntax. Round-trips byte-identically through the `CommonMarkImage` compat descriptor.
+
+![A scenic landscape](https://picsum.photos/id/10/800/400)
+
+![Portrait](https://picsum.photos/id/64/400/600)
+
+## MDX JSX form (minimal)
+
+<img src="https://picsum.photos/id/1018/800/400" alt="Mountain vista" />
+
+## With explicit dimensions
+
+Explicit `width` and `height` prevent layout shift while the image loads.
+
+<img
+  src="https://picsum.photos/id/237/400/300"
+  alt="A puppy"
+  width={400}
+  height={300}
+/>
+
+## Loading hint
+
+`loading="eager"` forces above-the-fold load; default is `"lazy"`.
+
+<img src="https://picsum.photos/id/1025/600/400" alt="Eager load" loading="eager" />
+
+<img src="https://picsum.photos/id/1050/600/400" alt="Lazy load (default)" loading="lazy" />
+
+## Advanced HTML attrs
+
+Click-to-zoom is always on (no descriptor prop). Responsive images use the standard `srcset` / `sizes` pair; `decoding`, `fetchpriority`, `crossorigin`, `referrerpolicy` round-trip through the descriptor.
+
+<img
+  src="https://picsum.photos/id/1033/800/500"
+  alt="Responsive candidate"
+  srcset="https://picsum.photos/id/1033/400/250 1x, https://picsum.photos/id/1033/800/500 2x"
+  sizes="(max-width: 600px) 400px, 800px"
+  decoding="async"
+  fetchpriority="high"
+/>
+
+## All common props at once
+
+<img
+  src="https://picsum.photos/id/1080/1000/500"
+  alt="Every common prop demonstrated"
+  width={1000}
+  height={500}
+  loading="lazy"
+  title="Hover for browser native tooltip"
+/>
+
+## Edge case: no alt
+
+For decorative images, pass an empty alt. Screen readers skip `alt=""` per WCAG.
+
+<img src="https://picsum.photos/id/1084/600/200" alt="" />

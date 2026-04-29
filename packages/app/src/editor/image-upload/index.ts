@@ -1,7 +1,12 @@
+import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
+import { getCurrentDocName, setCurrentDocName } from './current-doc-name.ts';
+import { uploadFile } from './upload-file.ts';
+
+export { setCurrentDocName };
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 
@@ -95,19 +100,12 @@ export function shortestImageRef(assetPath: string, mdPath: string): string {
   return `/${assetPath}`;
 }
 
-let currentDocName: string | null = null;
-
-export function setCurrentDocName(docName: string | null): void {
-  currentDocName = docName;
-}
-
 export async function uploadAndInsert(
   file: File,
   editor: Editor,
   insertPos: number,
 ): Promise<void> {
-  const parentDocName = currentDocName ? `${currentDocName}.md` : '';
-  if (!parentDocName) {
+  if (!getCurrentDocName()) {
     toast.error('Cannot upload: no document is open');
     return;
   }
@@ -123,40 +121,14 @@ export async function uploadAndInsert(
     }),
   );
 
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('parentDocName', parentDocName);
-
-  let res: Response;
+  let url: string;
   try {
-    res = await fetch('/api/upload-image', { method: 'POST', body: formData });
-  } catch (networkError) {
-    console.error('[uploadAndInsert] Network error:', networkError);
-    showError(editor, uploadId);
-    return;
-  }
-
-  if (!res.ok) {
-    let errorMessage = `Upload failed (${res.status})`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) errorMessage = body.error;
-    } catch {
-      /* use default */
-    }
-    console.error('[uploadAndInsert] Server error:', errorMessage);
-    showError(editor, uploadId, errorMessage);
-    return;
-  }
-
-  let src: string;
-  try {
-    const body = (await res.json()) as { src?: string };
-    if (typeof body.src !== 'string') throw new Error('missing src in response');
-    src = body.src;
-  } catch (parseError) {
-    console.error('[uploadAndInsert] Response parse error:', parseError);
-    showError(editor, uploadId);
+    const result = await uploadFile(file, ALLOWED_IMAGE_MIME_TYPES);
+    url = result.url;
+  } catch (uploadError) {
+    const message = uploadError instanceof Error ? uploadError.message : String(uploadError);
+    console.error('[uploadAndInsert] Upload error:', message);
+    showError(editor, uploadId, message);
     return;
   }
 
@@ -175,7 +147,7 @@ export async function uploadAndInsert(
 
   const tr = state.tr
     .setMeta(uploadPluginKey, { type: 'remove', id: uploadId })
-    .insert(mappedPos, imageNode.create({ src, alt }));
+    .insert(mappedPos, imageNode.create({ src: url, alt }));
 
   editor.view.dispatch(tr);
 }

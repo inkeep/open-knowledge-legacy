@@ -19,15 +19,14 @@ import {
 } from './mcp-wiring.ts';
 
 /**
- * Pure-function coverage for US-007 (M6b).
+ * Pure-function coverage for first-launch MCP wiring.
  *
  * Every test runs against an injected `FsOps` stub — no real filesystem
  * touched. `computeForce` tests import the real `EDITOR_TARGETS` from
  * the CLI via relative source path (CLAUDE.md worktree-local pattern)
  * so fixtures exercise the authoritative `isCompatible` implementation,
- * not a hand-rolled mirror. The US-002 precedent is followed for the
- * pure-function discipline: zero `electron` imports, zero `osascript`
- * spawns, zero `node:fs` side effects.
+ * not a hand-rolled mirror. Pure-function discipline: zero `electron`
+ * imports, zero `osascript` spawns, zero `node:fs` side effects.
  */
 
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
@@ -44,9 +43,9 @@ const EINVAL: NodeJS.ErrnoException = Object.assign(new Error('EINVAL'), { code:
  * `writeFileSync` + `mkdirSync` calls into maps so tests can re-read
  * and assert shape without touching disk.
  *
- * `renameSync` + `unlinkSync` (Pass 0 Minor #2 — atomic write pattern)
- * are modeled identically to real fs: rename moves the file (overwriting
- * the destination if present), unlink removes it.
+ * `renameSync` + `unlinkSync` (atomic tmp+rename write pattern) are
+ * modeled identically to real fs: rename moves the file (overwriting the
+ * destination if present), unlink removes it.
  */
 function createVirtualFs(): {
   fs: McpWiringFsOps;
@@ -220,7 +219,7 @@ describe('writeMcpStatusMarker', () => {
     expect(written.endsWith('\n')).toBe(true);
   });
 
-  test('Pass 0 Minor #2: write is atomic via tmp+rename (no stray .tmp on success)', () => {
+  test('write is atomic via tmp+rename (no stray .tmp on success)', () => {
     const { fs, files } = createVirtualFs();
     writeMcpStatusMarker(
       '/Users/andrew',
@@ -235,7 +234,7 @@ describe('writeMcpStatusMarker', () => {
     expect(strayTmps).toEqual([]);
   });
 
-  test('Pass 0 Minor #2: rename failure cleans up the .tmp sibling and rethrows', () => {
+  test('rename failure cleans up the .tmp sibling and rethrows', () => {
     const { files, dirs } = createVirtualFs();
     let renameAttempts = 0;
     const renameFailingFs: McpWiringFsOps = {
@@ -280,7 +279,7 @@ describe('writeMcpStatusMarker', () => {
   });
 });
 
-describe('resolveCliPath — hybrid per D-M6-R9', () => {
+describe('resolveCliPath — hybrid symlink-or-bundle resolution', () => {
   test('returns bundle-absolute when /usr/local/bin/ok does not exist', () => {
     const fs = stubFsForResolve({ symlinkPresent: false });
     expect(resolveCliPath(INSTALLED_EXE, fs)).toBe(INSTALLED_BUNDLE_WRAPPER);
@@ -291,7 +290,7 @@ describe('resolveCliPath — hybrid per D-M6-R9', () => {
     expect(resolveCliPath(INSTALLED_EXE, fs)).toBe(INSTALLED_BUNDLE_WRAPPER);
   });
 
-  test('returns /usr/local/bin/ok when symlink target equals bundle wrapper (canonical M6a)', () => {
+  test('returns /usr/local/bin/ok when symlink target equals bundle wrapper (canonical install)', () => {
     const fs = stubFsForResolve({
       symlinkPresent: true,
       readlinkResult: INSTALLED_BUNDLE_WRAPPER,
@@ -300,9 +299,9 @@ describe('resolveCliPath — hybrid per D-M6-R9', () => {
   });
 
   test('returns /usr/local/bin/ok when symlink target lives anywhere under the current bundle', () => {
-    // Future M6a variant could point at a universal-binary subpath or a different
-    // script inside the same bundle; the ownership check accepts any path under
-    // `.app/` root, not just the exact wrapper.
+    // Future CLI install variant could point at a universal-binary subpath or
+    // a different script inside the same bundle; the ownership check accepts
+    // any path under `.app/` root, not just the exact wrapper.
     const fs = stubFsForResolve({
       symlinkPresent: true,
       readlinkResult:
@@ -313,7 +312,7 @@ describe('resolveCliPath — hybrid per D-M6-R9', () => {
 
   test('returns bundle-absolute when symlink target lives outside the current bundle (foreign/stale)', () => {
     // Most common "stale" case: an old uninstalled OK bundle's symlink that
-    // outlived its owner. Ownership check MUST fail — STOP_IF (e).
+    // outlived its owner. Ownership check MUST fail.
     const fs = stubFsForResolve({
       symlinkPresent: true,
       readlinkResult: '/Applications/Other.app/Contents/Resources/cli/bin/ok.sh',
@@ -348,7 +347,7 @@ describe('resolveCliPath — hybrid per D-M6-R9', () => {
   });
 });
 
-describe('computeForce — isCompatible-based merge classification (D-M6-R4)', () => {
+describe('computeForce — isCompatible-based merge classification', () => {
   // Use real EDITOR_TARGETS from the CLI package via relative source import
   // (CLAUDE.md worktree-local pattern) so fixtures exercise the authoritative
   // `isCompatible` implementation rather than a hand-rolled mirror.
@@ -373,9 +372,9 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
   });
 
   test('Fixture B — historical -y variant → force=true', () => {
-    // Pre-M6 CLI versions sometimes produced `npx -y @inkeep/open-knowledge mcp`.
+    // Earlier CLI versions sometimes produced `npx -y @inkeep/open-knowledge mcp`.
     // `isCompatible` returns false on the 3-arg diff, so `isHistoricalNpxVariant`
-    // carries the load here. AC requires this shape be OK-managed.
+    // carries the load here — we treat it as OK-managed.
     const existing: Record<string, unknown> = {
       command: 'npx',
       args: ['-y', '@inkeep/open-knowledge', 'mcp'],
@@ -412,10 +411,11 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
     expect(computeForce(existing, vscode)).toBe(false);
   });
 
-  test('Prior cliPath shape (bundle-absolute from earlier M6b run) → force=true', () => {
-    // User ran M6b pre-auto-update or pre-M6a-install; the prior cliPath was
-    // bundle-absolute. After auto-update moves the bundle, or after the user
-    // later installs M6a, the preferred cliPath shifts — overwrite it.
+  test('Prior cliPath shape (bundle-absolute from earlier first-launch run) → force=true', () => {
+    // User ran first-launch before auto-update or CLI-symlink install; the
+    // prior cliPath was bundle-absolute. After auto-update moves the bundle,
+    // or after the user later installs the CLI symlink, the preferred cliPath
+    // shifts — overwrite it.
     const existing: Record<string, unknown> = {
       command: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
       args: ['mcp'],
@@ -449,7 +449,7 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
   test('Accepts any structurally-compatible target (interface assignability)', () => {
     // Proves the `ForceComputeTarget` interface is the right structural subset
     // — a hand-rolled target that mirrors only `isCompatible` works, confirming
-    // that US-008 can pass the real `EDITOR_TARGETS[id]` without a wrapper.
+    // that runtime callers can pass the real `EDITOR_TARGETS[id]` without a wrapper.
     const minimalTarget: ForceComputeTarget = {
       isCompatible(existing, _cwd, options) {
         if (options?.mode !== 'published') return false;
@@ -470,7 +470,7 @@ describe('computeForce — isCompatible-based merge classification (D-M6-R4)', (
 });
 
 // ---------------------------------------------------------------------------
-// runMcpWiringOnFirstLaunch — runtime orchestration (US-008)
+// runMcpWiringOnFirstLaunch — runtime orchestration
 // ---------------------------------------------------------------------------
 
 /** Minimal ipcMain stub capturing handler registration for assertion. */
@@ -480,9 +480,9 @@ interface IpcMainStub extends IpcMainLike {
    * Simulate a renderer `invoke(channel, ...args)`. Uses the stub's
    * currently-bound sender id (set by `bindSender`) so confirm/skip pass the
    * sender-binding gate. Defaults to sender id `999` before any binding —
-   * which the gate rejects per Pass 0 Major #1. Tests that want happy-path
-   * flow call `await ipcMain.bindSender()` first; tests that want to
-   * exercise the rejection branch call `invoke` without priming.
+   * which the gate rejects. Tests that want happy-path flow call
+   * `await ipcMain.bindSender()` first; tests that want to exercise the
+   * rejection branch call `invoke` without priming.
    */
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   /** Simulate an invoke with a custom sender event (for renderer-ready tests). */
@@ -493,7 +493,7 @@ interface IpcMainStub extends IpcMainLike {
    * tests can assert the show payload shape. After success, the stub uses
    * `id` as the default sender for `invoke`, letting subsequent confirm /
    * skip tests pass the sender-binding gate without explicitly constructing
-   * an event. Pass 1 Major #7 — tests for the binding gate.
+   * an event.
    */
   bindSender(id?: number): Promise<Array<{ channel: string; args: unknown[] }>>;
 }
@@ -503,11 +503,11 @@ function createIpcMainStub(): IpcMainStub {
     string,
     (event: unknown, ...args: unknown[]) => unknown | Promise<unknown>
   >();
-  // Pass 0 Major #1: the main-side sender-binding captures `event.sender.id`
-  // inside the renderer-ready handler and validates confirm/skip invokes
-  // against it. The stub needs to thread the bound id through to subsequent
-  // `invoke` calls so happy-path tests can keep their shape (`invoke(channel,
-  // args)`) without each one manually constructing a sender event.
+  // The main-side sender-binding captures `event.sender.id` inside the
+  // renderer-ready handler and validates confirm/skip invokes against it.
+  // The stub needs to thread the bound id through to subsequent `invoke`
+  // calls so happy-path tests can keep their shape (`invoke(channel, args)`)
+  // without each one manually constructing a sender event.
   let boundSenderId: number | null = null;
   return {
     handlers,
@@ -659,7 +659,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
     expect(infos.some((i) => i.msg.includes('platform is not darwin'))).toBe(true);
   });
 
-  test('returns inert handle when !isPackaged and OK_M6B_FORCE unset (D-M6-R7)', () => {
+  test('returns inert handle when !isPackaged and OK_M6B_FORCE unset (dev-mode contamination guard)', () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli } = createCliSurface();
@@ -702,7 +702,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
     handle.destroy();
   });
 
-  test('returns inert handle when executablePath does not match .app/Contents/MacOS/<name> (STOP_IF c)', () => {
+  test('returns inert handle when executablePath does not match .app/Contents/MacOS/<name>', () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli } = createCliSurface();
@@ -774,7 +774,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
     expect(handle.armed).toBe(false);
   });
 
-  test('Pass 2 Major #5: forceShow bypasses marker-present gate and arms dispatch', () => {
+  test('forceShow bypasses marker-present gate and arms dispatch', () => {
     // The "Configure AI Tool Integrations…" File-menu path passes `forceShow: true`
     // so users can re-run wiring after the first-launch gate has closed. Without
     // this test, a refactor that accidentally respected the marker gate under
@@ -852,7 +852,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       expect(claude?.detected).toBe(true);
       expect(cursor?.detected).toBe(true);
       expect(vscode?.detected).toBe(false);
-      // Pass 1 Major #8: every row carries a willReplace boolean. No existing
+      // Every row carries a willReplace boolean. No existing
       // entries in this fixture, so all must be `false`.
       expect(claude?.willReplace).toBe(false);
       expect(cursor?.willReplace).toBe(false);
@@ -862,7 +862,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
     }
   });
 
-  test('Pass 1 Major #8: willReplace=true when existing OK-managed entry is present', async () => {
+  test('willReplace=true when existing OK-managed entry is present', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     // Claude has a canonical npx entry from a prior `ok init` — Add would
@@ -913,7 +913,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
     }
   });
 
-  test('Pass 1 Major #8: readExistingMcpEntry throw per-editor tolerated, willReplace defaults to false', async () => {
+  test('readExistingMcpEntry throw per-editor tolerated, willReplace defaults to false', async () => {
     // A single editor's config read throwing must not pull the dialog down —
     // confirm-time classification is authoritative; this arming-time probe
     // is a disclosure aid, tolerant of failure.
@@ -958,7 +958,7 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
     }
   });
 
-  test('Pass 0 Major #6: failed dispatch keeps handler armed for next renderer-ready invoke', async () => {
+  test('failed dispatch keeps handler armed for next renderer-ready invoke', async () => {
     // If sendToRenderer throws (WebContents destroyed mid-handshake, channel
     // drift, etc.), the handler MUST stay armed. Without this, a failed first
     // dispatch leaves the dialog permanently undeliverable until next boot.
@@ -1078,7 +1078,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm resolves /usr/local/bin/ok when M6a symlink points inside current bundle', async () => {
+  test('confirm resolves /usr/local/bin/ok when CLI symlink points inside current bundle', async () => {
     const fs: McpWiringFsOps = {
       existsSync: (path) => path === SYMLINK_OK_PATH,
       readlinkSync: (path) => {
@@ -1200,7 +1200,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with partial failure → returns ok:false with user-facing error, marker NOT written, emits mcp-wiring-write-failed per failed editor (Pass 0 Critical #1)', async () => {
+  test('confirm with partial failure → returns ok:false with user-facing error, marker NOT written, emits mcp-wiring-write-failed per failed editor', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli } = createCliSurface({
@@ -1241,7 +1241,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       const result = (await ipcMain.invoke('ok:mcp-wiring:confirm', {
         editorIds: ['claude', 'cursor'],
       })) as { ok: boolean; error?: string };
-      // Pass 0 Critical #1: previously returned `{ok:true}` which the renderer
+      // Previously returned `{ok:true}` which the renderer
       // store cleared the snapshot on, leaving the user with no UI signal that
       // anything failed. Now `ok:false` so the dialog body fires a sonner toast
       // before the snapshot clears.
@@ -1249,7 +1249,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       expect(result.error).toContain('cursor');
       expect(result.error).toContain('EACCES');
       expect(result.error).toContain('reappear on next launch');
-      // Marker must NOT be written (deferred-marker per OQ-19).
+      // Marker must NOT be written (deferred-marker pattern).
       expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
       const failedEvents = events.filter((e) => e.event === 'mcp-wiring-write-failed');
       expect(failedEvents.length).toBe(1);
@@ -1293,7 +1293,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
   });
 
   test('confirm with marker write failure → returns ok:false, writes succeeded but marker absent, handled reset for retry', async () => {
-    // Pass 2 Minor #2 (cloud review): the confirm handler's marker-write
+    // The confirm handler's marker-write
     // try/catch has existing operator-grade logging, but the branch was
     // untested — a marker-write EACCES means the CLI configs landed on disk
     // correctly yet the dialog re-fires on next launch. Verify (a) the
@@ -1353,7 +1353,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       // Operator-grade structured log fires independent of the user-facing
       // return — matches the skip-side test at line 1313.
       expect(errors.some((e) => e.msg.includes('marker write failed'))).toBe(true);
-      // Pass 0 Major #2: `handled` reset so a same-boot retry is possible.
+      // `handled` reset so a same-boot retry is possible.
       // Retry with a healthy fs would land — probe by issuing a second
       // confirm with the original inner.fs (no throw) and expecting success.
       const retryHandle = runMcpWiringOnFirstLaunch({
@@ -1431,7 +1431,7 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
     }
   });
 
-  test('skip with marker write failure → returns ok:false with user-facing error (Pass 0 Major #9)', async () => {
+  test('skip with marker write failure → returns ok:false with user-facing error', async () => {
     // Wrap a working virtual fs so reads succeed but writes throw — simulates
     // EACCES / EROFS on the marker path. Without this fix, the handler returned
     // `ok:true` on writeMcpStatusMarker failure; the user saw the dialog close
@@ -1505,7 +1505,7 @@ describe('runMcpWiringOnFirstLaunch — skip flow', () => {
   });
 });
 
-describe('runMcpWiringOnFirstLaunch — handled flag concurrency (Pass 0 Major #12)', () => {
+describe('runMcpWiringOnFirstLaunch — handled flag concurrency', () => {
   test('racing confirm + skip while writeUserMcpConfigs is in flight → exactly one handler runs, the other returns ok:true no-op', async () => {
     // Without the `handled` flag flip happening synchronously at handler entry,
     // a rage-click of Add-then-Skip while the first write is in flight would
@@ -1631,7 +1631,7 @@ describe('runMcpWiringOnFirstLaunch — handled flag concurrency (Pass 0 Major #
   });
 });
 
-describe('formatPartialFailureMessage (Pass 0 Critical #1)', () => {
+describe('formatPartialFailureMessage', () => {
   test('single failure → mentions the editor + error inline', () => {
     const msg = formatPartialFailureMessage(
       [{ editorId: 'cursor', error: 'EACCES: permission denied' }],
@@ -1714,18 +1714,16 @@ describe('runMcpWiringOnFirstLaunch — destroy', () => {
 });
 
 /**
- * Pass 1 Major #7 — regression tests for three new behaviors landed in
- * Pass 1 without explicit coverage:
- *   (1) sender-binding rejection (Pass 0 Major #1 isPermittedSender),
- *   (2) `handled` reset on failure so same-boot retry lands (Pass 0 Major #2),
- *   (3) detection try/catch emitting `mcp-wiring-detect-failed` (Pass 0 Major #5).
+ * Regression tests for three product-critical behaviors:
+ *   (1) sender-binding rejection (isPermittedSender),
+ *   (2) `handled` reset on failure so same-boot retry lands,
+ *   (3) detection try/catch emitting `mcp-wiring-detect-failed`.
  *
- * Without these tests, a regression that reverts the sender-binding bypass
- * or collapses same-boot retry to single-attempt lands silently; these
- * cases are exactly the product-critical paths the Pass 1 review flagged.
+ * Without these tests, a regression that reverts the sender-binding guard
+ * or collapses same-boot retry to single-attempt lands silently.
  */
 
-describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.1: sender binding', () => {
+describe('runMcpWiringOnFirstLaunch — sender binding', () => {
   test('confirm from an unbound sender is rejected with "Consent must come from..." copy', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
@@ -1862,7 +1860,7 @@ describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.1: sender binding', () =
   });
 });
 
-describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.2: handled flag reset enables same-boot retry', () => {
+describe('runMcpWiringOnFirstLaunch — handled flag reset enables same-boot retry', () => {
   test('partial failure → second confirm with all-passing fixtures writes marker (proves handled was reset)', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
@@ -1978,7 +1976,7 @@ describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.2: handled flag reset en
   });
 });
 
-describe('runMcpWiringOnFirstLaunch — Pass 1 Major #7.3: detection try/catch', () => {
+describe('runMcpWiringOnFirstLaunch — detection try/catch', () => {
   test('missing editorTargets entry → returns inert handle + emits mcp-wiring-detect-failed', () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();

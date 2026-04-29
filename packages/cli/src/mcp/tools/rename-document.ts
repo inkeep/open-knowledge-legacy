@@ -14,7 +14,7 @@ import {
   normalizeDocName,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
-  SUMMARY_TRANSPORT_CAP,
+  summaryArgSchema,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -105,13 +105,9 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
     {
       docName: z.string().describe('Current document name'),
       newDocName: z.string().describe('New document name'),
-      summary: z
-        .string()
-        .max(SUMMARY_TRANSPORT_CAP)
-        .optional()
-        .describe(
-          'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted.',
-        ),
+      summary: summaryArgSchema.describe(
+        'Optional one-line user-outcome description (≤80 chars). Defaults to "Renamed X → Y" when omitted. Appears as a bullet in the timeline.',
+      ),
       cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
     },
     async (args: { docName: string; newDocName: string; summary?: string; cwd?: string }) => {

@@ -22,14 +22,13 @@ import {
 } from './cli-install.ts';
 
 /**
- * Pure-function + runtime-layer coverage for US-002 + US-003 (M6a).
+ * Pure-function + runtime-layer coverage.
  *
- * US-002 pieces (isTranslocated / wrapperPathInBundle / getInstallStatus)
- * need no `electron` import and no real filesystem. US-003 runtime wrappers
+ * The pure pieces (isTranslocated / wrapperPathInBundle / getInstallStatus)
+ * need no `electron` import and no real filesystem. Runtime wrappers
  * (`installCli` / `uninstallCli`) run with injected `dialog` + `runAsAdmin`
  * + `fs` stubs so this file still doesn't touch `osascript` or the real
- * `node:fs` — the unsigned-DMG smoke (AC1.4 / AC1.5 / AC1.7 / AC1.8) is
- * the end-to-end verification layer.
+ * `node:fs` — the unsigned-DMG smoke is the end-to-end verification layer.
  */
 
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
@@ -226,7 +225,7 @@ describe('classifySymlinkState', () => {
   });
 });
 
-describe('classifyOsascriptExitCode (Pass 0 Major #7)', () => {
+describe('classifyOsascriptExitCode', () => {
   test("exit 1 → 'user-cancel' (Touch ID dismiss / OSA error -128)", () => {
     expect(classifyOsascriptExitCode(1)).toBe('user-cancel');
   });
@@ -242,7 +241,7 @@ describe('classifyOsascriptExitCode (Pass 0 Major #7)', () => {
   });
 });
 
-describe('buildAdminFailureError (Pass 0 Major #7)', () => {
+describe('buildAdminFailureError', () => {
   test('shapes the error with reason + message + optional stderr', () => {
     const err: AdminFailureError = buildAdminFailureError(
       'shell-error',
@@ -265,7 +264,7 @@ describe('buildAdminFailureError (Pass 0 Major #7)', () => {
     expect(err.stderr).toBeUndefined();
   });
 
-  test('Pass 0 Major #11: is a real class, not an `as` cast — instanceof narrows correctly', () => {
+  test('is a real class, not an `as` cast — instanceof narrows correctly', () => {
     // Plain `Error` must NOT match the narrowing path that reads `.reason`.
     // If this slipped to `true`, the install-failure dialog would read
     // `.reason = undefined` and mis-classify plain errors as shell-error.
@@ -341,7 +340,7 @@ describe('buildInstallShellCmd', () => {
     );
   });
 
-  test('Pass 0 Major #1: target paths containing apostrophes are POSIX-escaped, no shell injection', () => {
+  test('target paths containing apostrophes are POSIX-escaped — no shell injection', () => {
     // macOS users can rename `.app` bundles freely AND user account names can
     // contain apostrophes (e.g. `/Users/Bob's Mac/Applications/...`). Without
     // escaping, an apostrophe inside `target` closes the single-quote literal
@@ -424,7 +423,7 @@ describe('buildUninstallShellCmd', () => {
     expect(buildUninstallShellCmd([])).toBe('');
   });
 
-  test('Pass 0 Major #1: POSIX-escapes apostrophes in arbitrary paths', () => {
+  test('POSIX-escapes apostrophes in arbitrary paths (shell-injection guard)', () => {
     // Defense-in-depth — uninstallCli filters via classifySymlinkState before
     // calling here, so the input list shouldn't contain hostile paths in
     // practice. But the function is exported and a future caller might pass
@@ -580,8 +579,8 @@ describe('installCli', () => {
     // Admin prompt WAS invoked once even though it was cancelled.
     expect(adminCalls).toHaveLength(1);
     expect(adminCalls[0].shellCmd).toContain('mkdir -p /usr/local/bin');
-    // Pass 0 Major #3: admin prompt names the concrete symlink paths so the
-    // user sees what root will create, not a generic "install" phrasing.
+    // Admin prompt names the concrete symlink paths so the user sees
+    // what root will create, not a generic "install" phrasing.
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
     expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
@@ -607,7 +606,7 @@ describe('installCli', () => {
     expect(dialogCalls[0].detail).toContain('ok --version');
   });
 
-  test('Pass 0 Major #7: spawn-error surfaces warning dialog with stderr (NOT soft cancel copy)', async () => {
+  test('spawn-error surfaces warning dialog with stderr (NOT soft cancel copy)', async () => {
     const fs = stubFs({});
     const { deps, dialogCalls } = makeDeps({
       fs,
@@ -623,7 +622,7 @@ describe('installCli', () => {
     expect(dialogCalls[0].detail).toContain('~/.zprofile');
   });
 
-  test('Pass 0 Major #7: shell-error surfaces warning dialog with stderr', async () => {
+  test('shell-error surfaces warning dialog with stderr', async () => {
     const fs = stubFs({});
     const { deps, dialogCalls } = makeDeps({
       fs,
@@ -638,7 +637,7 @@ describe('installCli', () => {
     expect(dialogCalls[0].detail).toContain('Read-only file system');
   });
 
-  test('Pass 0 Major #7: user-cancel still gets the soft "cancelled" fallback (existing UX preserved)', async () => {
+  test('user-cancel still gets the soft "cancelled" fallback (existing UX preserved)', async () => {
     const fs = stubFs({});
     const { deps, dialogCalls } = makeDeps({ fs, adminOutcome: 'cancel' });
     await installCli(deps);
@@ -706,7 +705,7 @@ describe('uninstallCli', () => {
     expect(dialogCalls).toHaveLength(0);
   });
 
-  test('Pass 0 Major #8: spawn-error surfaces warning with manual rm instruction', async () => {
+  test('spawn-error surfaces warning with manual rm instruction', async () => {
     const fs = stubFs({
       readlink: {
         '/usr/local/bin/ok': INSTALLED_TARGET,
@@ -728,7 +727,7 @@ describe('uninstallCli', () => {
     );
   });
 
-  test('Pass 0 Major #8: shell-error (e.g. partial-rm) surfaces warning with stderr', async () => {
+  test('shell-error (e.g. partial-rm) surfaces warning with stderr', async () => {
     const fs = stubFs({
       readlink: {
         '/usr/local/bin/ok': INSTALLED_TARGET,
@@ -763,7 +762,7 @@ describe('uninstallCli', () => {
     expect(dialogCalls[0].message).toBe('Command-Line Tools removed.');
   });
 
-  test('Pass 0 Major #3: admin prompt names the concrete symlink paths on uninstall', async () => {
+  test('admin prompt names the concrete symlink paths on uninstall', async () => {
     const fs = stubFs({
       readlink: {
         '/usr/local/bin/ok': INSTALLED_TARGET,
@@ -781,9 +780,9 @@ describe('uninstallCli', () => {
 });
 
 /**
- * Pass 1 Major #4: `createBrokenSymlinkRepairHandler` — factored out of
- * `main/index.ts` so the privilege-escalation-adjacent launch-time prompt
- * has deterministic unit coverage. Each guard is exercised via injected
+ * `createBrokenSymlinkRepairHandler` — factored out of `main/index.ts`
+ * so the privilege-escalation-adjacent launch-time prompt has
+ * deterministic unit coverage. Each guard is exercised via injected
  * deps; no Electron runtime, no real fs, no `osascript` spawn.
  */
 describe('createBrokenSymlinkRepairHandler', () => {
@@ -801,10 +800,10 @@ describe('createBrokenSymlinkRepairHandler', () => {
       status?: CliInstallStatus;
       /** Response to the repair dialog — 0 = Skip, 1 = Repair. Defaults to 0. */
       response?: number;
-      /** Per-bundle dismissal-token plumbing (Pass 2 Major #3). When any of
-       *  these is provided, the dismissal-gate branches light up; otherwise
-       *  the factory omits the keys so the gate behaves as if the caller
-       *  didn't plumb it (prior behavior). */
+      /** Per-bundle dismissal-token plumbing. When any of these is
+       *  provided, the dismissal-gate branches light up; otherwise the
+       *  factory omits the keys so the gate behaves as if the caller
+       *  didn't plumb it. */
       appVersion?: string;
       getDismissedToken?: () => string | null;
       setDismissedToken?: (token: string) => void;
@@ -856,16 +855,16 @@ describe('createBrokenSymlinkRepairHandler', () => {
     } as StubDeps;
   }
 
-  test('no-op when platform !== "darwin" (Windows/Linux deferred per NG4)', async () => {
+  test('no-op when platform !== "darwin" (Windows/Linux deferred)', async () => {
     const { deps, dialogCalls, installCalls } = makeRepairDeps({ platform: 'win32' });
     const handler = createBrokenSymlinkRepairHandler(deps);
     await handler();
-    // Must short-circuit BEFORE firing any dialog — spec NG4 gate on non-darwin.
+    // Must short-circuit BEFORE firing any dialog — non-darwin gate.
     expect(dialogCalls).toHaveLength(0);
     expect(installCalls).toHaveLength(0);
   });
 
-  test('no-op when !isPackaged (dev-mode contamination guard — M6a analogue of STOP_IF (e))', async () => {
+  test('no-op when !isPackaged (dev-mode contamination guard)', async () => {
     const { deps, dialogCalls, installCalls } = makeRepairDeps({ isPackaged: false });
     const handler = createBrokenSymlinkRepairHandler(deps);
     await handler();
@@ -949,7 +948,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(order).toEqual(['install', 'refresh']);
   });
 
-  test('Pass 1 Major #3: defaultId=0 so Enter-default is Skip (safe cancel path)', async () => {
+  test('defaultId=0 so Enter-default is Skip (safe cancel path)', async () => {
     const stub = makeRepairDeps({ status: 'broken', response: 0 });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
@@ -971,7 +970,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(captured[0].cancelId).toBe(0);
     // defaultId: 0 means Enter-activate lands on Skip (no-op). If this
     // flipped back to 1, a reflexive Enter on the startup modal would
-    // trigger the osascript admin password prompt — Pass 0 Major #4.
+    // trigger the osascript admin password prompt.
     expect(captured[0].defaultId).toBe(0);
   });
 
@@ -1006,14 +1005,14 @@ describe('createBrokenSymlinkRepairHandler', () => {
   });
 
   /**
-   * Pass 2 Major #3: per-bundle dismissal token. The token shape is
+   * Per-bundle dismissal token. The token shape is
    * `<appVersion>:<executablePath>` — auto-update OR app-move invalidates
    * any prior dismissal, the modal fires once on the new bundle, Skip
    * persists the token for the rest of that bundle's life. Without these
    * tests, a refactor that broke the short-circuit would silently re-nag
    * users who had already dismissed on the current bundle.
    */
-  test('Pass 2 Major #3: short-circuits when dismissed token matches current token', async () => {
+  test('short-circuits when dismissed token matches current token', async () => {
     const currentToken = `0.1.0:${INSTALLED_EXE}`;
     const stub = makeRepairDeps({
       status: 'broken',
@@ -1030,7 +1029,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(stub.refreshCalls).toBe(0);
   });
 
-  test('Pass 2 Major #3: dismissed token mismatch (different version) still fires dialog', async () => {
+  test('dismissed token mismatch (different version) still fires dialog', async () => {
     // Auto-update from 0.1.0 → 0.1.1 shifts the token; the prior dismissal
     // should not suppress the new bundle's prompt.
     const staleToken = `0.1.0:${INSTALLED_EXE}`;
@@ -1046,7 +1045,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(stub.dialogCalls).toHaveLength(1);
   });
 
-  test('Pass 2 Major #3: Skip (response=0) persists dismissal token via setDismissedToken', async () => {
+  test('Skip (response=0) persists dismissal token via setDismissedToken', async () => {
     let savedToken: string | null = null;
     const stub = makeRepairDeps({
       status: 'broken',
@@ -1066,7 +1065,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(stub.refreshCalls).toBe(0);
   });
 
-  test('Pass 2 Major #3: Repair (response=1) does NOT persist dismissal token', async () => {
+  test('Repair (response=1) does NOT persist dismissal token', async () => {
     // The Repair branch installs the symlinks and refreshes the menu. It
     // must not write a dismissal token — the bundle is now healthy, so the
     // status will be 'installed' next boot and the gate never reaches this
@@ -1089,7 +1088,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(stub.refreshCalls).toBe(1);
   });
 
-  test('Pass 2 Major #3: dismissal plumbing absent → prompt fires per-boot (back-compat)', async () => {
+  test('dismissal plumbing absent → prompt fires per-boot (back-compat)', async () => {
     // When appVersion / getDismissedToken / setDismissedToken are not
     // plumbed (the simpler callers, existing test shape), the gate is
     // inert — the modal fires on every broken-status boot. This is the

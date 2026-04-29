@@ -36,3 +36,9 @@ export {
   waitForSlashMenuFirstOption,
   waitForSlashMenuOpen,
 } from './slash-menu.ts';
+export {
+  createMp3Buffer,
+  createMp4Buffer,
+  createPdfBuffer,
+  createPngBuffer,
+} from './upload-fixtures.ts';

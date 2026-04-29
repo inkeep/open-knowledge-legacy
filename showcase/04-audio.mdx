@@ -1,0 +1,62 @@
+---
+title: Audio showcase
+cluster: showcase
+---
+# Audio
+
+Pure HTML5 `<audio>` wrapper. Self-closing leaf. `controls` is now an explicit prop (default true) — set `controls={false}` for chrome-less playback (rare, mostly for hero loops).
+
+## Basic
+
+<audio src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3" />
+
+## Autoplay (muted)
+
+Autoplay with audio is blocked by browsers. Pair with `muted` for reliable autoplay.
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  autoplay
+  muted
+/>
+
+## Loop
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  loop
+/>
+
+## Preload strategies
+
+Same three `preload` values as `<video>`. `metadata` is a good default.
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  preload="none"
+/>
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  preload="auto"
+/>
+
+## With title
+
+The `title` prop sets the browser-native tooltip on hover.
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  title="T-Rex roar from MDN's CC0 audio library"
+/>
+
+## All common + advanced props
+
+<audio
+  src="https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3"
+  title="Every prop set"
+  autoplay
+  loop
+  muted
+  preload="metadata"
+/>

@@ -164,48 +164,24 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     cleanup();
   });
 
-  test('Observer B skips incomplete MDX gracefully and recovers on next valid write', async () => {
-    const doc = new Y.Doc();
-    const fragment = doc.getXmlFragment('default');
-    const ytext = doc.getText('source');
-
-    applyMarkdown(doc, fragment, '# Heading\n');
-    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
-
-    await wait();
-
-    // XmlFragment should have the heading (set by applyMarkdown, not observer)
-    const beforeJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
-    const beforeMd = mdManager.serialize(beforeJson);
-    expect(beforeMd).toContain('# Heading');
-
-    // Write tag-mismatch MDX — Observer B catches parse error without crashing
-    doc.transact(() => {
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, '<Foo>broken text</Bar>\n');
-    }, 'user-edit');
-
-    await wait();
-
-    // XmlFragment retains last state — Observer B no longer writes to it
-    const duringJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
-    const duringMd = mdManager.serialize(duringJson);
-    expect(duringMd).toContain('# Heading');
-
-    // Write valid markdown — Observer B parses successfully (diagnostic only)
-    doc.transact(() => {
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, 'Recovered content\n');
-    }, 'user-edit');
-
-    await wait();
-
-    // XmlFragment still has heading — no cross-CRDT write from client observer
-    const afterJson = yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON();
-    const afterMd = mdManager.serialize(afterJson);
-    expect(afterMd).toContain('# Heading');
-
-    cleanup();
+  // Superseded by server-authoritative observer (precedent #14). The G9
+  // "bridge always-live" contract (FR-22 in Component Blocks v2) now lives
+  // on the server — see `packages/server/src/server-observers.ts` which
+  // uses `parseWithFallback` to produce rawMdxFallback instead of freezing
+  // on malformed MDX. Client-side Observer B no longer writes XmlFragment,
+  // so G9 cannot be asserted in a single-process client-only test. End-to-end
+  // coverage belongs in the integration test harness with a real server
+  // (packages/app/tests/integration/); unit coverage belongs in
+  // packages/server/src/server-observers.test.ts.
+  //
+  // Main's PR #250 (yXmlFragmentToProsemirrorJSON → yXmlFragmentToProseMirrorRootNode)
+  // renamed the old API at this call site, but the call site no longer exists
+  // on this branch — the test body was deleted when G9 coverage moved to the
+  // server per Precedent #14. The auto-merge applied PR #250's rename to the
+  // import statement and the 4 remaining call sites in this file; only the
+  // body-replacement conflict remains and takes our (HEAD) skip'd stub.
+  test.skip('Observer B renders broken MDX as rawMdxFallback (G9 always-live) and recovers on next valid write', async () => {
+    /* intentionally empty — see comment above */
   });
 });
 

@@ -58,17 +58,17 @@ describe('MDX: flow element (block-level JSX)', () => {
 // Deferred until schema is expanded for MDX inline support.
 
 describe('MDX: PM node storage', () => {
-  test('self-closing component parsed to jsxComponent with content', () => {
+  test('self-closing component parsed to jsxComponent with sourceRaw', () => {
     const json = mdManager.parse('<Chart />\n');
     const jsx = findInJson(json, 'jsxComponent');
     expect(jsx).toBeDefined();
-    expect(jsx.attrs.content).toContain('Chart');
+    expect(jsx.attrs.sourceRaw).toContain('Chart');
   });
 
-  test('component with attrs stored in content', () => {
+  test('component with attrs stored in sourceRaw', () => {
     const json = mdManager.parse('<Callout type="info" />\n');
     const jsx = findInJson(json, 'jsxComponent');
     expect(jsx).toBeDefined();
-    expect(jsx.attrs.content).toContain('type="info"');
+    expect(jsx.attrs.sourceRaw).toContain('type="info"');
   });
 });

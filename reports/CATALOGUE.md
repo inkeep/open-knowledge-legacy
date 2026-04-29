@@ -1,12 +1,14 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-27 by `generate-catalogue.ts`
-> 121 valid reports indexed
+> Auto-generated on 2026-04-27 by `generate-catalogue.ts`; manually amended post-merge to surface 2 reports unique to cb-v2-md-foundation (Mermaid Rendering + Block-Level Selection Indicator). Re-run `generate-catalogue.ts` to refresh.
+> 123 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Mermaid Rendering Options for MDX Editors — Factual La…](mermaid-rendering-options-for-mdx-editors/REPORT.md) | 2026-04-21 | 5 files | mermaid rendering, mdx editor, nod… | Mermaid, fumadocs, TipTap, ProseMi… |
+| [Block-Level Selection Indicator Patterns in Rich-Text …](block-selection-indicator-patterns/REPORT.md) | 2026-04-16 | 6 files | block selection UX, focus indicato… | Notion, Tiptap, Lexical, Anytype, … |
 | [Electron Spawns CLI: Security Implications and the Pat…](electron-spawns-cli-security/REPORT.md) | 2026-04-27 | 1 files | Electron spawning CLI subprocess, … | Open Knowledge, Electron, electron… |
 | [Open Knowledge Server Paths](server-paths/REPORT.md) | 2026-04-27 | — | server entry points, process model… | Hocuspocus, bootServer, createServ… |
 | [Config-File CRUD Architecture: YAML Round-Trip, Schema…](config-edit-paths/REPORT.md) | 2026-04-25 | 7 files | YAML round-trip, schema-driven edi… | yaml@2 (eemeli/yaml), js-yaml, Zod… |
@@ -132,6 +134,25 @@
 ---
 
 ## Report Details
+
+### [Mermaid Rendering Options for MDX Editors — Factual Landscape](mermaid-rendering-options-for-mdx-editors/REPORT.md)
+
+> Factual research on Mermaid rendering options for a live MDX editor context. Covers the official `mermaid` package at version 11.14.0 (API, theme, error surface, known issues, version drift), alternative renderers (beautiful-mermaid, Rust WASM forks, server-side via mermaid-cli/mermaid.ink/Kroki), how 10 sibling editors (Notion, Obsidian, Outline, BlockNote, MDXEditor, TipTap community, Lexical, AFFiNE, VS Code, mermaid-live-editor) implement Mermaid in a NodeView-like slot, re-render patterns, and bundle-size measurements. No recommendations — evidence-cited facts only.
+
+- **Created:** 2026-04-21
+- **Topics:** mermaid rendering, mdx editor, nodeview, bundle size, react rerender, promise cache, decoration widget, client-side diagrams
+- **Subjects:** Mermaid, fumadocs, TipTap, ProseMirror, Outline, Obsidian, Notion, BlockNote, MDXEditor, Lexical, AFFiNE, VS Code, beautiful-mermaid, mermaid-cli, mermaid.ink, Kroki
+- **Evidence files:** 5
+
+### [Block-Level Selection Indicator Patterns in Rich-Text Editors](block-selection-indicator-patterns/REPORT.md)
+
+> Survey of how production block editors (Notion, Tiptap, Lexical, Anytype, Outline, BlockNote, Figma et al.) visually signal block-level selection/focus, with concrete CSS techniques for avoiding the 'double outline' problem on blocks that already have their own border chrome. WCAG 2.1/2.2 + ARIA + …
+
+- **Created:** 2026-04-16
+- **Topics:** block selection UX, focus indicators, CSS outline vs box-shadow, forced-colors mode, double-outline problem, nested selection, multi-block selection, transition timing, data-state pattern
+- **Subjects:** Notion, Tiptap, Lexical, Anytype, Outline, BlockNote, Craft, Figma, WordPress Gutenberg, ProseMirror, Tailwind, WCAG 2.2, ARIA 1.2
+- **Evidence files:** 6
+- **Warnings:** 1
 
 ### [Electron Spawns CLI: Security Implications and the Path A vs B Decision](electron-spawns-cli-security/REPORT.md)
 
@@ -517,6 +538,7 @@
 - **Subjects:** Model Context Protocol, Open Knowledge, Hocuspocus
 - **Evidence files:** 5
 
+
 ### [CodeMirror Markdown Source-View Rendering: Primitives, Patterns, and Ecosystem Practice](codemirror-markdown-source-view-rendering/REPORT.md)
 
 > How CodeMirror 6-based markdown source editors handle long logical lines (pipe table rows, fenced code blocks, HTML blocks, frontmatter) — what primitives CM6 exposes, what products do in practice, what maintainers and authoritative sources recommend. Covers Obsidian Source Mode & Live Preview, Sil…
@@ -554,6 +576,24 @@
 - **Topics:** markdown source view, CodeMirror primitives, per-construct decoration, line decoration, widget replace, cursor reveal, block widgets, atomic ranges, syntax tree traversal, ecosystem comparison
 - **Subjects:** CodeMirror 6, @lezer/markdown, @codemirror/lang-markdown, Obsidian, SilverBullet, codemirror-rich-markdoc, HedgeDoc, Zettlr, VS Code, Typora, MDXEditor, Marktext, Milkdown, HackMD, Foam, Dendron, Markdoc
 - **Evidence files:** 13
+
+### [Fumadocs Ecosystem Survey for Component Blocks v2 Reuse Assessment](fumadocs-ecosystem-component-blocks-reuse/REPORT.md)
+
+> End-to-end survey of the fumadocs ecosystem (core, mdx, ui, mdx-remote, community plugins, adjacent tools) mapped against Component Blocks v2 spec primitives. Identifies what to reuse, what to learn from, and what to build from scratch — with concrete spec amendment recommendations.
+
+- **Created:** 2026-04-14
+- **Topics:** MDX component editing, descriptor registry patterns, source fidelity preservation, CRDT collaboration, ecosystem reuse assessment
+- **Subjects:** Fumadocs, MDXEditor, TinaCMS, Keystatic, Plate, BlockNote, Storybook, mdast-util-mdx-jsx
+- **Evidence files:** 5
+
+### [Storybook Alternatives and Adjacent Component Playground Tools](storybook-alternatives-component-playgrounds/REPORT.md)
+
+> Primary-source survey of 7 tools (Ladle, Histoire, Playroom, React Cosmos, Docusaurus live code/react-live, Sandpack, and additional projects) covering maintenance status, component registration models, prop editing architectures, and relevance to in-editor component block systems with inline prop …
+
+- **Created:** 2026-04-14
+- **Topics:** component playgrounds, prop editing architecture, live preview rendering, component registration
+- **Subjects:** Ladle, Histoire, Playroom, React Cosmos, Sandpack, react-live, Docusaurus, react-styleguidist
+- **Evidence files:** 8
 
 ### [Fumadocs Ecosystem Survey for Component Blocks v2 Reuse Assessment](fumadocs-ecosystem-component-blocks-reuse/REPORT.md)
 
