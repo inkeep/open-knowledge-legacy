@@ -229,6 +229,26 @@
   }
 
   --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
+
+  /* Settings field flash — red briefly to signal a non-pane writer
+     (CLI/MCP/hand-edit) caused L3 validation rejection (FR-39 / D56).
+     Outline-only so the field input itself is untouched. */
+  @keyframes settings-flash {
+    0% {
+      outline: 2px solid hsl(var(--destructive) / 0);
+      outline-offset: 2px;
+    }
+    20% {
+      outline: 2px solid hsl(var(--destructive) / 0.7);
+      outline-offset: 2px;
+    }
+    100% {
+      outline: 2px solid hsl(var(--destructive) / 0);
+      outline-offset: 2px;
+    }
+  }
+
+  --animate-settings-flash: settings-flash 600ms ease-out;
 }
 
 /* Push-mode pulse hint — plays once when an in-sidebar action (file pick,
