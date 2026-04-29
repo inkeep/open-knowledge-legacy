@@ -191,7 +191,7 @@ export function buildInstructions(config: Config, _opts?: { dynamicConfig?: bool
 
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-**STOP — native tools on in-scope \`.md\` / \`.mdx\`.** Do NOT use host-native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on markdown inside the content dir. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
+**STOP** *(when \`.open-knowledge/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
 
 **Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
@@ -209,7 +209,7 @@ Claude Code Desktop: \`preview_start("open-knowledge-ui")\`. Other hosts: open-U
 
 Detailed conventions (wiki-link authoring, frontmatter, anti-patterns) live in the installed \`open-knowledge\` Agent Skill. If missing, run \`npx @inkeep/open-knowledge init\`.
 
-**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed ONLY when no OK MCP is registered, or immediately after an OK MCP call failed — then begin your sentence with \`Open Knowledge MCP unavailable:\`. Non-markdown: native tools always.
+**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.open-knowledge/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
 `;
 }
 
