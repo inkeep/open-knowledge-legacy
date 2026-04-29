@@ -12,6 +12,7 @@ import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
+  type ConfigValidationError,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
@@ -28,6 +29,7 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { type ConfigPersistenceCtx, loadConfigDoc, storeConfigDoc } from './config-persistence.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   contributorCount,
@@ -173,6 +175,20 @@ export interface PersistenceOptions {
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+  /**
+   * Override `os.homedir()` for config-doc persistence (US-006). Tests
+   * scope user-global writes (`__user__/config.yml`) to a tempdir; if
+   * unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   */
+  configHomedirOverride?: string;
+  /**
+   * Fired after the L3 persistence-hook reverts an invalid Y.Text
+   * mutation on a config doc. Wired in standalone boot to
+   * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
+   * so any open Settings pane sees the rejection toast. Omitted in
+   * plugin mode where no CC1Broadcaster is available.
+   */
+  onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
 }
 
 /**
@@ -301,6 +317,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
   const onDiskFlush = options?.onDiskFlush;
+
+  // Per-server-instance LKG cache for config docs (D45 L3 / D58). Maps
+  // each well-known config doc name to the most recent successfully-
+  // validated YAML string. Lives in the closure so multiple server
+  // instances don't share mutable state.
+  const configLkgCache = new Map<string, string>();
+  const configPersistenceCtx: ConfigPersistenceCtx = {
+    projectDir,
+    lkgCache: configLkgCache,
+    homedirOverride: options?.configHomedirOverride,
+    onConfigRejected: options?.onConfigRejected,
+  };
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -631,7 +659,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
-      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
+      if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        loadConfigDoc(document, documentName, configPersistenceCtx);
+        return;
+      }
       ensureHistograms();
       const started = Date.now();
       return withSpan(
@@ -746,7 +778,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       lastTransactionOrigin,
       lastContext: _lastContext,
     }) {
-      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
+      if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        await storeConfigDoc(document, documentName, lastTransactionOrigin, configPersistenceCtx);
+        return;
+      }
       if (isBatchInProgress()) return;
       ensureHistograms();
       const started = Date.now();

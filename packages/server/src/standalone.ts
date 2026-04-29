@@ -332,6 +332,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       // pattern as `onAgentCommit` — broadcaster is initialized after
       // persistence but captured by reference.
       onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
+      // L3 validation rejection (D45 / FR-34). Fired when the config-doc
+      // branch reverts Y.Text to LKG; the broadcast tells any open
+      // Settings pane to surface the rejection toast + flash the
+      // affected field. Same closure-deferred pattern.
+      onConfigRejected: (docName, error) =>
+        cc1Broadcaster?.emitConfigValidationRejected(docName, error),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);

@@ -3,9 +3,11 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
+  CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
   CONFIG_DOC_NAME_USER,
@@ -385,5 +387,86 @@ describe('CC1Broadcaster', () => {
     const snapshot2 = broadcaster.getLatestDiskAckSVsAsBase64();
     expect(snapshot1).not.toBe(snapshot2);
     expect(snapshot1).toEqual(snapshot2);
+  });
+
+  test('emitConfigValidationRejected publishes payload with docName, error, seq=1', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+      code: 'YAML_PARSE',
+      detail: 'unexpected token at line 5',
+    });
+    expect(broadcasts).toHaveLength(1);
+    const payload = CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    expect(payload.v).toBe(1);
+    expect(payload.ch).toBe(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED);
+    expect(payload.seq).toBe(1);
+    expect(payload.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(payload.error.code).toBe('YAML_PARSE');
+  });
+
+  test('emitConfigValidationRejected emits synchronously — no debounce', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_USER, {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['mcp', 'autoStart'],
+          message: 'expected boolean, received string',
+          issueCode: 'invalid_type',
+        },
+      ],
+    });
+    // No wait — rejections are discrete user-visible events, emit immediately.
+    expect(broadcasts).toHaveLength(1);
+  });
+
+  test('emitConfigValidationRejected seq increments monotonically', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+      code: 'UNKNOWN',
+      message: 'one',
+    });
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_USER, {
+      code: 'UNKNOWN',
+      message: 'two',
+    });
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+      code: 'UNKNOWN',
+      message: 'three',
+    });
+    expect(broadcasts).toHaveLength(3);
+    const seqs = broadcasts.map(
+      (b) => CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(b)).seq,
+    );
+    expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  test('emitConfigValidationRejected graceful no-op when __system__ document missing', () => {
+    mockHocuspocus.documents.clear();
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+      code: 'YAML_PARSE',
+      detail: 'oops',
+    });
+    expect(broadcasts).toHaveLength(0);
+  });
+
+  test('emitConfigValidationRejected serializes SCHEMA_INVALID issues array intact', () => {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['mcp', 'tools', 'search', 'maxResults'],
+          message: 'expected number, received string',
+          issueCode: 'invalid_type',
+          source: { file: '/abs/config.yml', line: 5, column: 19, snippet: '> 5 |  ...' },
+        },
+      ],
+    });
+    const payload = CC1ConfigValidationRejectedPayloadSchema.parse(JSON.parse(broadcasts[0]));
+    if (payload.error.code !== 'SCHEMA_INVALID') {
+      throw new Error('expected SCHEMA_INVALID');
+    }
+    expect(payload.error.issues).toHaveLength(1);
+    const issue = payload.error.issues[0];
+    if (!issue) throw new Error('issue missing');
+    expect(issue.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+    expect(issue.source?.line).toBe(5);
   });
 });
