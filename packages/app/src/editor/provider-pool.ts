@@ -1018,10 +1018,15 @@ export class ProviderPool {
         // claim and preserve a newer live-server ID learned from a fast boot
         // fetch so the post-clear recycle can reconnect without another
         // mismatch. If the live cache itself was the stale claim, clear it too.
+        if (expectedServerInstanceId === null) {
+          return;
+        }
+        // Sibling provider already cleared IDB-backed storage (`persistIdbSyncedServerInstanceId(null)`)
+        // while `cachedServerInstanceId` moved to the fresh server — this handler is a duplicate
+        // `authenticationFailed` for the same mismatch round; skip so we do not double-enter recycle.
         if (
-          expectedServerInstanceId === null ||
-          (this.getOrInitIdbSyncedServerInstanceId() === null &&
-            this.cachedServerInstanceId !== expectedServerInstanceId)
+          this.getOrInitIdbSyncedServerInstanceId() === null &&
+          this.cachedServerInstanceId !== expectedServerInstanceId
         ) {
           return;
         }
@@ -1113,16 +1118,17 @@ export class ProviderPool {
     // the map via destroyEntry → delete → re-open.
     const snapshot = Array.from(this.entries.entries());
     const startedAt = Date.now();
+    const recoveryActiveDocName = this.activeDocName;
     // Recovery UI (spinner + failure panel) only tracks the foreground doc.
     // Background pool entries still recycle and clear IDB on mismatch; if
     // clearData fails there, the provider stays inert until a later reconnect
     // retries — no separate banner per background tab by design.
     const activeRecoveryDocNames =
-      this.activeDocName !== null &&
+      recoveryActiveDocName !== null &&
       snapshot.some(
-        ([docName, poolEntry]) => docName === this.activeDocName && poolEntry.kind === 'active',
+        ([docName, poolEntry]) => docName === recoveryActiveDocName && poolEntry.kind === 'active',
       )
-        ? [this.activeDocName]
+        ? [recoveryActiveDocName]
         : [];
 
     this.beginServerRestartRecovery(activeRecoveryDocNames, startedAt);
@@ -1207,11 +1213,11 @@ export class ProviderPool {
           cleared.push(docName);
         }
       });
-      const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
-        ? 'clear-data-timeout'
-        : 'clear-data-failed';
-      const reconnectDocNames = cleared.filter((docName) => docName === this.activeDocName);
+      const reconnectDocNames = cleared.filter((docName) => docName === recoveryActiveDocName);
       if (failed.length > 0) {
+        const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
+          ? 'clear-data-timeout'
+          : 'clear-data-failed';
         // Per-doc recycle. An all-or-none gate would re-open the
         // duplication class for the cleared docs: their providers would
         // reconnect after the stale claim has been cleared, then Yjs sync
@@ -1236,7 +1242,7 @@ export class ProviderPool {
         }
         return;
       }
-      this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, failureReason);
+      this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, 'clear-data-failed');
       this.recycleAllEntries();
     });
   }

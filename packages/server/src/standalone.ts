@@ -293,6 +293,8 @@ export function createServer(options: ServerOptions): ServerInstance {
   let loadedPrincipal: Principal | null = null;
   const forceUnloadSet = new Set<Document>();
   let shutdownAllowsUnload = false;
+  // Assigned synchronously in the init `try` immediately after `new Hocuspocus` (before the try
+  // completes or awaits). Call sites (disk reconcile, API extension) only run after boot returns.
   let forceUnloadDocument!: (document: Document) => Promise<void>;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
