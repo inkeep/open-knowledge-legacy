@@ -433,3 +433,162 @@ Right-click ──┼─ POST /api/config/folders/upsert ──► applyFolderRu
 **Tool count check.** 3 new MCP tools (`set_config`, `get_config`, `set_folder_rule`), under the 2-6/server domain optimum. The "minimize MCP surface" constraint stays satisfied.
 
 **Process discipline note.** The naming question caught a real semantic drift — "defaults" had been used colloquially in the spec without ever checking the actual merge code. The bulk question was even more useful: it surfaced that bulk-mutation complexity (207, per-item DU) is conditional on per-row fail-soft semantics, NOT on whether you accept N>1. Transactional batches don't pay that complexity tax. This is the kind of insight that's only visible when you read the bulk-mutations reference rigorously rather than skimming for guidance — the failure-model section (§5.0) is the load-bearing distinction, not the bulk-input-shape section.
+
+---
+
+## 2026-04-28 — Release-pivot intake (worktree `spec-config-edit-paths`, baseline 7b0283c1)
+
+**Major architectural pivot driven by Andrew's intake conversation.** Existing HTTP-centric architecture (D5 `applyConfigPatch` server primitive + `POST /api/config/patch` + `ApiError` envelope across ~50 routes per D30) is being collapsed in favor of a Hocuspocus-based transport with TypeScript-function-shaped APIs.
+
+**User direction (verbatim captured in `evidence/_user_outcomes.md`):**
+1. Evolve this spec, not a new one
+2. No dedicated REST API for config — use Hocuspocus Y.Text-only docs as transport for UI writers; fs-direct for headless writers (MCP/CLI)
+3. config.yml is the one-stop-shop for entered config; auth.yml stays separate (secrets threat model)
+4. VSCode-style scope-as-constraint: each field declares legal scope(s), schema validates illegal placements
+5. User-global tier stays in v0 — theme is the load-bearing user-config field (confirms D20)
+6. The "API" is a TypeScript-function contract (`ConfigBinding.patch` for UI; `writeConfigPatch` for headless) running over the collab WS or fs — /typescript-api-design discipline applies in Step 5
+
+**Evidence files created:**
+- `evidence/_user_outcomes.md` — verbatim user direction + decoded outcomes + initial per-field scope map
+- `evidence/architectural-pivot-hocuspocus.md` — fate map of all 38 existing decisions under the pivot (~60-75% collapse), proposed D39-D44, worldmodel scope for Step 2
+- `evidence/api-shape-typescript-not-rest.md` — refines the pivot: API is TypeScript function surface, two shapes (UI binding + headless writer), shared schema/validation core; /typescript-api-design applies in Step 5
+
+**Provisional decision fate (will be formalized in Step 5 after worldmodel + framing):**
+- DROPS: D6 (CC1 'config' channel — Y.Text observer IS the channel), D17 (HTTP local-op security — no endpoints), D30 (all-routes ApiError refactor — no new routes), D31 (RFC 7396 PATCH dialect — no HTTP), D33 (ETag/If-Match — replaced by CRDT + persistence-hook validation)
+- SHRINKS: D5 (still a shared write primitive but split into ConfigBinding + writeConfigPatch), D14 (ApiError → ConfigValidationError, TS-only), D32 (two-validator collapses to one merged-doc validator + persistence-hook), D38 (folder upsert HTTP route drops; MCP tool + helper stay)
+- KEEPS: D1, D2, D3, D4, D7-D13, D15 (relocates to core), D16, D18-D29, D34, D35, D36, D37
+- NEW (proposed): D39 admit workspace config.yml as Y.Text-only doc; D40 admit user-global as synthetic `__user__/config.yml`; D41 per-doc bridge bypass; D42 persistence-time validation hook; D43 scope-as-constraint Zod metadata; D44 ConfigSchema migrates to @inkeep/open-knowledge-core
+- NG2 reframes from "no Hocuspocus for config" → "no markdown bridge for config docs; no awareness/presence rendering"
+
+**What's locked vs. open:**
+- LOCKED: pivot direction (Hocuspocus transport + TS-function API + scope-as-constraint), evolve-existing-spec, theme is user-config
+- OPEN (Step 2 worldmodel scope): doc admission mechanism, bridge bypass mechanism, persistence-hook reject-and-revert pattern, cross-process fan-out for user-global, ConfigSchema browser-compat audit, CRDT merge edge cases on Y.Text-as-YAML, awareness suppression
+- DEFERRED to Step 5: /typescript-api-design invocation for ConfigBinding + writeConfigPatch + ConfigSchema metadata
+
+**Process discipline note.** This was a five-message intake that fundamentally reshaped the spec. The discipline that worked: I investigated each user assertion (current code state, NG2 reasoning, schema fields under user-global) before responding, and surfaced the load-bearing question (web Settings UI? user-global content?) honestly each time. The user pushed at the right moment ("can we just use Hocuspocus?") to dissolve a complexity layer the existing spec had taken for granted. Captured the chain in three evidence files so Step 3 has the full trail without me re-deriving it.
+
+---
+
+## 2026-04-28 — Worldmodel + three follow-up investigations
+
+**Step 2 worldmodel landed.** `evidence/_init_worldmodel.md` (739 lines) covers the seven open technical questions raised by the architectural pivot. Key findings:
+- Doc admission, bridge bypass, schema migration, awareness suppression: HIGH confidence answers, mechanical implementations
+- Persistence rejection: Hocuspocus has NO atomic Y.Doc rollback — must implement manually
+- Cross-process fan-out: chokidar + atomic-rename detection works; lost-update window is real
+- Zod metadata propagation: `.meta()` does NOT cross `.default()` wrappers — known v4 gotcha
+
+**Three follow-up investigations completed in response to user direction:**
+
+1. **Zod v4 catalogs/registries** (Track from user message: "/research that")
+   - Dispatched `general-purpose` Task subagent loading /research
+   - Output: `reports/zod-v4-catalogs-registries/REPORT.md` (full investigation, ~600 lines with empirical Zod 4.3.6 verification)
+   - **Conclusion:** Registries do NOT solve `.default()` propagation alone — but a 6-line walker descending `_zod.def.innerType` does. Use `.register(reg, meta)` BEFORE wrappers (returns same instance; `.meta()` clones). `z.toJSONSchema(schema, { metadata: registry })` correctly emits inner-leaf metadata for SchemaStore export. No version pinning concerns at 4.3.6.
+   - **Pattern adopted:** Custom `fieldRegistry` (not `z.globalRegistry`) carrying `{scope, agentSettable, defaultScope?}`. `getFieldMeta(schema)` walker finds metadata regardless of `.default()/.optional()/.nullable()` chains.
+   - **Spec implication:** D43 (proposed scope-as-constraint) becomes mechanical to implement. Evidence in report Dimension 4.
+
+2. **Server-side validation pattern** (Track from user message: "Can we do special server side validation as well, with rejection or revert?")
+   - Output: `evidence/server-side-validation-pattern.md`
+   - **Three-layer defense-in-depth:**
+     - L1: Modal walker validates per-field commit before Y.Text (D10)
+     - L2: `writeConfigPatch()` validates merged config before fs writes (MCP/CLI/seed)
+     - L3: Hocuspocus `onStoreDocument` config-doc branch validates Y.Text → YAML → schema before disk; on rejection, reverts Y.Text via server-origin transaction using in-memory LKG cache + emits CC1 'config-validation-rejected'
+   - **Cost:** ~75-90 LoC server-side. Comparable to a single HTTP route handler.
+   - **Catches:** Direct dev-tools mutation, buggy clients, schema-version drift, hand-edits breaking YAML, non-OK writers
+   - **Proposed D45** supersedes D32's two-validator HTTP-boundary framing (collapses to one effective validator at three entry points)
+
+3. **Cross-process write strategy** (Track from user message: "happy with lock for user config writes or explore the idea of last write wins")
+   - Output: `evidence/cross-process-write-strategy.md`
+   - **Recommendation: LWW for v0.** No lock infrastructure.
+   - **Rationale:**
+     - Lost-update window is ~2 seconds (Hocuspocus persistence debounce); requires user editing same field in two `ok start` instances within window
+     - Multi-window theme sync (canonical user-global use case) does NOT race — only one write happens; the other window reads via file watcher
+     - Persistence-time validation (L3 / D45) ensures lost-updates produce stale-but-valid YAML, never broken YAML
+     - File watcher converges all windows within ~100ms of any write
+   - **Future Work (NG14):** Per-machine `proper-lockfile` advisory lock if real-world lost-updates become a complaint
+   - **Proposed D46** captures the explicit trade-off (replaces dropped D33 ETag/If-Match)
+
+**Three new decisions emerging:**
+- D45: Three-layer defense-in-depth validation (supersedes D32)
+- D46: LWW for cross-process user-global writes (replaces dropped D33)
+- D47 (proposed): Custom `fieldRegistry` + `getFieldMeta` walker pattern for scope-as-constraint metadata (resolves Zod `.default()` propagation gap; supersedes D25's "metadata as inference hint" framing)
+
+**Step 3 framing can now proceed.** All architectural risks from worldmodel either have proposed solutions (D45 for persistence rejection, D46 for cross-process LWW, D47 for Zod metadata) or are acknowledged Future Work.
+
+Next: rewrite SPEC.md primary path (Problem Statement, Goals, NG2-revised, FRs, Decision Log, Open Questions) reflecting the pivot + the three follow-up resolutions. Mark D5/D6/D14/D17/D30/D31/D32/D33/D38 with strikethrough+rationale; promote D39-D47 from "proposed" to formal entries.
+
+---
+
+## 2026-04-28 — Step 5 cascade complete: §6 FRs + §13/§14/§15/§16
+
+§6 Requirements rewritten: FR-1, FR-2, FR-3, FR-3b, FR-5, FR-6/6b/6c, FR-8, FR-9, FR-9b, FR-11, FR-15, FR-23, FR-25 reframed for pivot. FR-7 merged into FR-6c. FR-12, FR-13, FR-14, FR-24, FR-28 marked DROPPED with rationale. New FRs FR-29 through FR-40 added covering D39–D63. FR-14b added for the residual CC1 channel. Non-functional requirements rewritten: HTTP perf/security/cost references replaced with Hocuspocus equivalents; new code budget total ~1,580 LoC (comparable to original ~1,600 LoC, composed differently — heavier on UI walker + Hocuspocus integration, lighter on HTTP envelope alignment).
+
+§5 User Journeys rewritten: P1 example changed from sync interval (dropped per D29) to editor mode default; P4 agent flow shows fs-direct + file-watcher loop instead of HTTP+CC1; P3 IDE flow updated for FR-15/FR-34 path. Added pivot-reframe note.
+
+§13 In Scope: 16-step implementation list rewritten reflecting Hocuspocus admission, persistence-hook L3, fs-direct MCP, ConfigSchema migration to core, scope-as-constraint via fieldRegistry. Deployment/rollout table updated: HTTP-related rows dropped; cold-start recovery and cross-process write rows added.
+
+§14 Risks: new NR1–NR7 risks added (Hocuspocus revert pattern, cross-process LWW, Zod metadata propagation, CRDT-on-YAML, package relocation, lifecycle leaks, SchemaStore latency). Surviving risks updated to drop HTTP-specific framing.
+
+§15 Future Work: added all-routes ApiError envelope alignment (was D30, now Future Work), per-machine advisory lock (NG14), HTTP for config (NG13), auth.yml metadata migration (NG15).
+
+§16 Agent Constraints rewritten: SCOPE expanded with new core package files (writeConfigPatch, bindConfigDoc, fieldRegistry, ConfigValidationError, readConfigSafely, applyFolderRulesUpsert), server modules (config-edit-origin, config-file-watcher, persistence config-doc branch), app component (SettingsPane). EXCLUDE updated to drop HTTP files. STOP_IF and ASK_FIRST rewritten to reflect post-pivot constraints.
+
+---
+
+## 2026-04-28 — Step 6 audit + Step 7 assess findings
+
+Dispatched two parallel Task subagents:
+- **Auditor** (factual + coherence): 22 findings (8 HIGH, 9 MED, 5 LOW). HIGH-severity issues all mechanical: §9 had duplicate post-pivot + HTTP-centric sections (fixed via SUPERSEDED block); D56 row missing due to formatting bug (restored); 7 P0 NQs still showed Open in §11 despite Cluster A resolutions (NQ1/NQ2/NQ4/NQ8/NQ11/NQ18 marked RESOLVED with D-pointers; NQ12 also resolved via FR cascade); yaml@2 dep needs adding to core's package.json (added to §16 SCOPE).
+- **Challenger** (design challenges): 10 tracks reviewed; overall stance "directionally defensible." Top concerns: phasing recommendation (split MCP+CLI from Settings pane), theme UNSET-vs-localStorage gap (D29 × D55), Y.Text concurrent writes producing invalid YAML, Sheet-vs-pane UX choice.
+
+User responded to four challenge questions:
+1. **Phasing**: Ship as one v0 release (recommended option). No spec changes needed.
+2. **Theme gap**: Accept the gap (current spec position). Captured as NR8 in §14.
+3. **Y.Text concurrency**: Accept + L3 catches it (recommended). Captured as NR9 in §14.
+4. **Settings UX**: Keep editor-pane swap (current D54). No spec changes needed.
+
+Mechanical fixes applied. Two new risk rows (NR8, NR9) document the explicitly accepted trade-offs. Findings files retained at `meta/audit-findings.md` and `meta/design-challenge.md` for audit trail.
+
+---
+
+## 2026-04-28 — Step 8 verify and finalize (COMPLETE)
+
+**Mechanical adversarial checks (self-applied):**
+- ✅ Zero ASSUMED-status decisions (verified via grep)
+- ✅ Zero LOW-confidence 1-way doors (verified via grep)
+- ✅ Non-goal temporal tags accurate (NEVER for NG1/NG2/NG3/NG10/NG13; NOT NOW for NG4/NG5/NG6/NG7/NG14; NOT UNLESS for NG8/NG9/NG15)
+- ✅ Pre-mortem: D58/D42 persistence-hook revert correctness is the most fragile load-bearing assumption — captured as NR1 (HIGH likelihood, MED impact); manual revert via server-origin transaction works around Hocuspocus's lack of atomic Y.Doc rollback. Mitigation is an integration-test-coverage discipline, not a design alternative; user accepted.
+
+**Resolution completeness gate:** every In Scope item passes:
+- ✅ All decisions made (D1–D63 LOCKED or DIRECTED; superseded ones clearly point to replacements)
+- ✅ 3P deps named (yaml@2, Hocuspocus, chokidar, Zod 4.3.6, MCP TS SDK ^1.x; yaml@2 added to core's package.json per audit fix)
+- ✅ Architectural viability — worldmodel + Cluster A + Cluster B all returned HIGH confidence on every track; zero blockers
+- ✅ Integration feasibility — every component named has either an existing precedent (`__system__` doc admission, `OBSERVER_SYNC_ORIGIN`, `tracedRename`, `provider-pool.ts`) or a HIGH-confidence path (`fieldRegistry` Zod 4.3.6 verified, chokidar `awaitWriteFinish` documented)
+- ✅ Acceptance criteria verifiable — every FR has explicit ACs
+- ✅ No dependency on Out of Scope items
+
+**Collective end-to-end check:** v0 ships at least one end-to-end user-visible outcome:
+- P1 Electron user opens Settings pane → toggles `appearance.editorModeDefault` → value persists across windows
+- P4 agent calls `set_config` → fs write lands → Settings pane refreshes via Y.Text observer
+- P3 IDE user opens config.yml in VS Code → magic comment + SchemaStore unlock autocomplete + validation
+- P5 CI runs `ok config validate` → exit 0 on valid, exit 1 with source-located errors on invalid
+
+**Future Work classification:** §15 has Explored / Identified / Noted tiers. New entries added for the all-routes ApiError envelope alignment (was D30, now Future Work), per-machine advisory lock (NG14), HTTP for config (NG13), auth.yml metadata migration (NG15).
+
+**Quality bar checklist:** must-haves verified — single canonical SPEC.md ✓, Decision Log with status per decision ✓, Open Questions resolved ✓, Risks + mitigations ✓, Future Work tiered ✓, Agent Constraints (SCOPE/EXCLUDE/STOP_IF/ASK_FIRST) ✓, Personas, journeys, FRs with ACs ✓.
+
+**Artifact sync checkpoint (final):**
+- ✅ All factual findings written to `evidence/` (10 files: 3 release-pivot framing files + worldmodel + Cluster A/B + 2 design-decision files + 2 audit/challenge findings in `meta/`)
+- ✅ All SPEC.md sections affected by decisions updated
+- ✅ Decision Log (D1–D63), Open Questions (Q1–Q12 + NQ1–NQ18), Assumptions (A1–A8), Risks (NR1–NR9 + 11 surviving), Future Work (Explored/Identified/Noted) tables current
+- ✅ `meta/_changelog.md` has full session history including this closing entry
+
+**Baseline commit:** `7b0283c1` (unchanged from start of session — all changes uncommitted; user will commit + push when ready).
+
+**Spec status: READY FOR IMPLEMENTATION via `/ship`** (or manual implementation against the §13 In Scope 16-step plan).
+
+Pending items carried forward to implementation:
+- Step 8 quality bar identified some MED/LOW prose-cleanup items (legacy "Modal"/"applyConfigPatch" references in §7 success metrics + §12 assumptions) — these are wording-only and don't change semantics; can be addressed during implementation when the FR cascade lands the corresponding code.
+- Q9 (P2 Future Work) — "Modal All projects tab override-by-workspace badge" — VS Code precedent at `settingsTreeModels.ts:435-485`; ~30 LoC + CSS when ready.
+- §16 Agent Constraints includes a STOP rule about declaration order (`.register()` before wrappers) — this should also land in the repo's AGENTS.md as a permanent rule alongside the spec.
+
+End of session. Spec evolves the original 2026-04-25 draft from HTTP-centric architecture to Hocuspocus + TypeScript API + scope-as-constraint architecture per the 2026-04-28 release pivot. ~60-75% of original decision surface collapsed; new D39–D63 codify the pivot. Ready for `/ship`.
