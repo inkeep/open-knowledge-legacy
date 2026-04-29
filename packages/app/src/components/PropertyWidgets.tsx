@@ -333,7 +333,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
             type="button"
             aria-label={`Remove ${chip}`}
             onClick={() => removeChip(i)}
-            className="text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
           >
             <X className="size-3" />
           </button>
