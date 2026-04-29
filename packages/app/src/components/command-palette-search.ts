@@ -16,6 +16,17 @@ export interface WorkspaceEntry {
   modifiedTs?: number;
 }
 
+export interface WorkspaceSearchEntry extends WorkspaceEntry {
+  snippet?: string;
+  score?: number;
+}
+
+interface HighlightSegment {
+  text: string;
+  match: boolean;
+  start: number;
+}
+
 interface WorkspaceEntrySearchCorpus {
   entries: readonly WorkspaceEntry[];
   byId: ReadonlyMap<string, WorkspaceEntry>;
@@ -24,12 +35,23 @@ interface WorkspaceEntrySearchCorpus {
 
 export const EMPTY_QUERY_NAV_LIMIT = 20;
 const MATCH_QUERY_NAV_LIMIT = 50;
+const API_SEARCH_LIMIT = 30;
 
 let cachedEntriesFingerprint = '';
 let cachedEntrySearchCorpus: WorkspaceEntrySearchCorpus | null = null;
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function queryTerms(query: string): string[] {
+  const normalized = query.trim();
+  if (!normalized) return [];
+  return [...new Set(normalized.split(/\s+/).filter(Boolean))].sort((a, b) => b.length - a.length);
 }
 
 export function buildWorkspaceEntries(
@@ -132,6 +154,86 @@ function searchWorkspaceEntryCorpus(
     scopes: ['page', 'folder'],
   })
     .map((result) => entryCorpus.byId.get(result.document.id))
+    .filter((entry): entry is WorkspaceEntry => entry !== undefined);
+}
+
+export function splitTextByQueryMatches(text: string, query: string): HighlightSegment[] {
+  const terms = queryTerms(query);
+  if (terms.length === 0 || text.length === 0) return [{ text, match: false, start: 0 }];
+
+  const regex = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi');
+  const segments: HighlightSegment[] = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(regex)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, index), match: false, start: lastIndex });
+    }
+    segments.push({ text: match[0], match: true, start: index });
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), match: false, start: lastIndex });
+  }
+  return segments.length > 0 ? segments : [{ text, match: false, start: 0 }];
+}
+
+interface WorkspaceSearchApiResponse {
+  ok?: boolean;
+  error?: string;
+  results?: Array<{
+    kind?: string;
+    path?: string;
+    title?: string;
+    snippet?: string;
+    score?: number;
+  }>;
+}
+
+function toWorkspaceSearchEntry(
+  row: NonNullable<WorkspaceSearchApiResponse['results']>[number],
+): WorkspaceSearchEntry | null {
+  if ((row.kind !== 'page' && row.kind !== 'folder') || typeof row.path !== 'string') return null;
+  const name = workspaceSearchBasename(row.path);
+  return {
+    kind: row.kind === 'page' ? 'file' : 'folder',
+    path: row.path,
+    name,
+    ...(row.title && { title: row.title }),
+    ...(row.snippet && { snippet: row.snippet }),
+    ...(typeof row.score === 'number' && { score: row.score }),
+  };
+}
+
+export async function fetchWorkspaceSearchEntries(
+  query: string,
+  options: { signal?: AbortSignal; limit?: number } = {},
+): Promise<WorkspaceSearchEntry[]> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return [];
+
+  const response = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      query: normalizedQuery,
+      intent: 'full_text',
+      scopes: ['page', 'folder', 'content'],
+      limit: options.limit ?? API_SEARCH_LIMIT,
+    }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`Search failed with status ${response.status}`);
+  }
+
+  const payload = (await response.json()) as WorkspaceSearchApiResponse;
+  if (payload.ok !== true) {
+    throw new Error(payload.error ?? 'Search failed');
+  }
+
+  return (payload.results ?? [])
+    .map(toWorkspaceSearchEntry)
     .filter((entry) => !!entry);
 }
 

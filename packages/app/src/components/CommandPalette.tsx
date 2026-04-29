@@ -28,9 +28,11 @@ import {
 } from '@/components/command-palette-recents';
 import {
   buildWorkspaceEntries,
+  fetchWorkspaceSearchEntries,
   matchesCommandQuery,
-  searchWorkspaceEntries,
+  splitTextByQueryMatches,
   type WorkspaceEntry,
+  type WorkspaceSearchEntry,
 } from '@/components/command-palette-search';
 import { requestDocPanelTab } from '@/components/doc-panel-events';
 import { defaultInitialDir } from '@/components/file-tree-utils';
@@ -82,25 +84,61 @@ function resolveCreateInitialDir(
 
 function NavigationItem({
   entry,
+  query = '',
   onSelect,
 }: {
-  entry: WorkspaceEntry | OmnibarRecentEntry;
+  entry: WorkspaceEntry | WorkspaceSearchEntry | OmnibarRecentEntry;
+  query?: string;
   onSelect: () => void;
 }) {
   const Icon = entry.kind === 'folder' ? FolderOpen : FileText;
+  const title =
+    'title' in entry && entry.title ? entry.title : (entry.path.split('/').pop() ?? entry.path);
+  const snippet = 'snippet' in entry ? entry.snippet : undefined;
 
   return (
     <CommandItem
       value={`${entry.kind} ${entry.path}`}
       onSelect={onSelect}
       data-testid={`command-palette-nav-${entry.kind}-${entry.path}`}
+      className={snippet ? 'items-start' : ''}
     >
-      <Icon />
-      <div className="flex min-w-0 flex-col">
-        <span className="truncate font-medium">{entry.path.split('/').pop() ?? entry.path}</span>
-        <span className="truncate text-muted-foreground text-xs">{entry.path}</span>
+      <Icon className={snippet ? 'mt-0.5' : ''} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate font-medium">
+          <HighlightedText query={query} text={title} />
+        </span>
+        <span className="truncate text-muted-foreground text-xs">
+          <HighlightedText query={query} text={entry.path} />
+        </span>
+        {snippet ? (
+          <span className="max-h-10 overflow-hidden text-muted-foreground text-xs leading-relaxed">
+            <HighlightedText query={query} text={snippet} />
+          </span>
+        ) : null}
       </div>
     </CommandItem>
+  );
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const segments = splitTextByQueryMatches(text, query);
+  return (
+    <>
+      {segments.map((segment) => {
+        const key = `${segment.start}:${segment.match ? 'match' : 'plain'}`;
+        return segment.match ? (
+          <mark
+            key={key}
+            className="rounded-sm bg-yellow-300/20 px-0.5 text-yellow-200 underline decoration-yellow-300 underline-offset-2"
+          >
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={key}>{segment.text}</span>
+        );
+      })}
+    </>
   );
 }
 
@@ -108,6 +146,11 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
+  const trimmedDeferredQuery = deferredQuery.trim();
+  const [searchResults, setSearchResults] = useState<WorkspaceSearchEntry[]>([]);
+  const [searchStatus, setSearchStatus] = useState<'idle' | 'loading' | 'success' | 'error'>(
+    'idle',
+  );
   const [projectRecents, setProjectRecents] = useState<RecentProjectEntry[]>([]);
   const [recentNavigation, setRecentNavigation] = useState<OmnibarRecentEntry[]>([]);
   const [createDialogKind, setCreateDialogKind] = useState<'file' | 'folder' | null>(null);
@@ -119,7 +162,6 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
   const workspaceEntries = buildWorkspaceEntries(pages, folderPaths, pageTitles, pageMeta);
-  const navigationResults = searchWorkspaceEntries(workspaceEntries, deferredQuery);
   const validRecentKeys = new Set(
     workspaceEntries.map((entry) => makeOmnibarRecentKey(entry.kind, entry.path)),
   );
@@ -158,6 +200,31 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     setQuery('');
   }, [open, bridge, refreshInstallStates]);
 
+  useEffect(() => {
+    if (!open || !trimmedDeferredQuery) {
+      setSearchResults([]);
+      setSearchStatus('idle');
+      return;
+    }
+
+    const controller = new AbortController();
+    setSearchStatus('loading');
+    setSearchResults([]);
+
+    void fetchWorkspaceSearchEntries(trimmedDeferredQuery, { signal: controller.signal })
+      .then((results) => {
+        setSearchResults(results);
+        setSearchStatus('success');
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setSearchResults([]);
+        setSearchStatus('error');
+      });
+
+    return () => controller.abort();
+  }, [open, trimmedDeferredQuery]);
+
   const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
     setOpen(false);
     void runWithToast(async () => {
@@ -182,8 +249,9 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     navigateToDocHash(entry.path);
   }
 
-  const showRecentNavigation = deferredQuery.trim() === '' && visibleRecents.length > 0;
-  const showNavigation = navigationResults.length > 0;
+  const showRecentNavigation = trimmedDeferredQuery === '' && visibleRecents.length > 0;
+  const showNavigation = searchResults.length > 0;
+  const showSearchLoading = trimmedDeferredQuery !== '' && searchStatus === 'loading';
   const showCreateFile = matchesCommandQuery('New file', deferredQuery, ['create file']);
   const showCreateFolder = matchesCommandQuery('New folder', deferredQuery, ['create folder']);
   const showGraphCommand = matchesCommandQuery('Open graph', deferredQuery, [
@@ -204,12 +272,12 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const showProjectRecents =
     bridge !== null &&
     switchableProjects.length > 0 &&
-    (deferredQuery.trim() === '' ||
+    (trimmedDeferredQuery === '' ||
       switchableProjects.some((row) =>
         matchesCommandQuery(`${row.name} ${row.path}`, deferredQuery, ['recent project']),
       ));
   const showAgentGroup =
-    deferredQuery.trim() === '' ||
+    trimmedDeferredQuery === '' ||
     KNOWN_TARGETS.some((target) =>
       matchesCommandQuery(`Open in ${target.displayName}`, deferredQuery, [
         target.id,
@@ -219,6 +287,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const hasAnyResults =
     showRecentNavigation ||
     showNavigation ||
+    showSearchLoading ||
     showCreateFile ||
     showCreateFolder ||
     showGraphCommand ||
@@ -243,7 +312,12 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
           placeholder="Search files, folders, or commands…"
         />
         <CommandList className="subtle-scrollbar">
-          {!hasAnyResults ? <CommandEmpty>No matching commands.</CommandEmpty> : null}
+          {showSearchLoading && !showNavigation ? <CommandEmpty>Searching…</CommandEmpty> : null}
+          {!hasAnyResults ? (
+            <CommandEmpty>
+              {searchStatus === 'error' ? 'Search failed.' : 'No matching commands.'}
+            </CommandEmpty>
+          ) : null}
 
           {showRecentNavigation ? (
             <CommandGroup heading="Recently opened">
@@ -258,11 +332,12 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
           ) : null}
 
           {showNavigation ? (
-            <CommandGroup heading="Navigate">
-              {navigationResults.map((entry) => (
+            <CommandGroup heading="Search">
+              {searchResults.map((entry) => (
                 <NavigationItem
                   key={makeOmnibarRecentKey(entry.kind, entry.path)}
                   entry={entry}
+                  query={trimmedDeferredQuery}
                   onSelect={() => navigateToEntry(entry)}
                 />
               ))}

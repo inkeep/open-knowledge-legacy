@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
@@ -31,13 +32,18 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  createWorkspaceSearchDocument,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
   SYSTEM_DOC_NAME,
+  searchWorkspaceDocuments,
   stripFrontmatter,
+  type WorkspaceSearchDocument,
+  type WorkspaceSearchIntent,
+  type WorkspaceSearchScope,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -4175,6 +4181,154 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function deriveFolderSearchDocuments(
+    pages: readonly WorkspaceSearchDocument[],
+  ): WorkspaceSearchDocument[] {
+    const folderModified = new Map<string, number>();
+    for (const page of pages) {
+      const segments = page.path.split('/').filter(Boolean);
+      segments.pop();
+      for (let i = 1; i <= segments.length; i++) {
+        const folderPath = segments.slice(0, i).join('/');
+        folderModified.set(
+          folderPath,
+          Math.max(folderModified.get(folderPath) ?? 0, page.modifiedTs),
+        );
+      }
+    }
+    return [...folderModified.entries()].map(([path, modifiedTs]) =>
+      createWorkspaceSearchDocument({ kind: 'folder', path, modifiedTs }),
+    );
+  }
+
+  function buildSearchSnippet(content: string, query: string): string | undefined {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery || !content) return undefined;
+    const normalizedContent = content.toLowerCase();
+    const index = normalizedContent.indexOf(normalizedQuery);
+    if (index < 0) return undefined;
+    const start = Math.max(0, index - 80);
+    const end = Math.min(content.length, index + normalizedQuery.length + 120);
+    const prefix = start > 0 ? '...' : '';
+    const suffix = end < content.length ? '...' : '';
+    return `${prefix}${content.slice(start, end).replace(/\s+/g, ' ').trim()}${suffix}`;
+  }
+
+  function parseSearchIntent(value: unknown): WorkspaceSearchIntent {
+    if (value === 'autocomplete' || value === 'full_text' || value === 'omnibar') return value;
+    return 'omnibar';
+  }
+
+  function parseSearchScopes(value: unknown): WorkspaceSearchScope[] | undefined {
+    const rawScopes =
+      typeof value === 'string' ? value.split(',') : Array.isArray(value) ? value : undefined;
+    if (!rawScopes) return undefined;
+    const scopes = rawScopes.filter(
+      (scope): scope is WorkspaceSearchScope =>
+        scope === 'page' || scope === 'folder' || scope === 'content',
+    );
+    return scopes.length > 0 ? scopes : undefined;
+  }
+
+  async function readSearchRequest(req: IncomingMessage): Promise<{
+    query: string;
+    intent: WorkspaceSearchIntent;
+    scopes?: WorkspaceSearchScope[];
+    limit?: number;
+  }> {
+    if (req.method === 'GET') {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const limit = url.searchParams.get('limit');
+      return {
+        query: url.searchParams.get('query') ?? '',
+        intent: parseSearchIntent(url.searchParams.get('intent')),
+        scopes: parseSearchScopes(url.searchParams.get('scope') ?? url.searchParams.get('scopes')),
+        limit: limit === null ? undefined : Number(limit),
+      };
+    }
+
+    const body = await readBody(req);
+    const parsed = JSON.parse(body.toString()) as {
+      query?: unknown;
+      intent?: unknown;
+      scope?: unknown;
+      scopes?: unknown;
+      limit?: unknown;
+    };
+    return {
+      query: typeof parsed.query === 'string' ? parsed.query : '',
+      intent: parseSearchIntent(parsed.intent),
+      scopes: parseSearchScopes(parsed.scopes ?? parsed.scope),
+      limit: typeof parsed.limit === 'number' ? parsed.limit : Number(parsed.limit),
+    };
+  }
+
+  function buildWorkspaceSearchDocumentsFromIndex(): WorkspaceSearchDocument[] {
+    const pages: WorkspaceSearchDocument[] = [];
+    for (const [docName, entry] of getFileIndex()) {
+      if (isSystemDoc(docName)) continue;
+      let content = '';
+      let title = docName;
+      try {
+        content = readFileSync(entry.canonicalPath, 'utf-8');
+        title = extractPageTitle(content, docName);
+      } catch (err) {
+        console.warn(`[search] Failed to index ${docName}:`, err);
+      }
+      pages.push(
+        createWorkspaceSearchDocument({
+          kind: 'page',
+          path: docName,
+          title,
+          content,
+          modifiedTs: Date.parse(entry.modified),
+        }),
+      );
+    }
+    return [...pages, ...deriveFolderSearchDocuments(pages)];
+  }
+
+  async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const startedAt = performance.now();
+      const request = await readSearchRequest(req);
+      if (request.query.length > 200) {
+        json(res, 400, { ok: false, error: 'Query is too long' });
+        return;
+      }
+      const documents = buildWorkspaceSearchDocumentsFromIndex();
+      const results = searchWorkspaceDocuments(documents, request.query, {
+        intent: request.intent,
+        scopes: request.scopes,
+        limit: request.limit,
+      });
+      json(res, 200, {
+        ok: true,
+        query: request.query,
+        intent: request.intent,
+        results: results.map((result) => ({
+          kind: result.document.kind,
+          path: result.document.path,
+          title: result.document.title,
+          score: result.score,
+          signals: result.signals,
+          snippet:
+            result.document.kind === 'page'
+              ? buildSearchSnippet(result.document.content, request.query)
+              : undefined,
+        })),
+        elapsedMs: Math.max(0, performance.now() - startedAt),
+      });
+    } catch (err) {
+      console.error('[search]', err);
+      json(res, 500, { ok: false, error: 'Failed to search workspace' });
+    }
+  }
+
   async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -5548,6 +5702,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
+    '/api/search': handleSearch,
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,

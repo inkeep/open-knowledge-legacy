@@ -132,6 +132,24 @@ export {
   normalizeBridge,
   type Scheduler,
 } from './bridge/index.ts';
+export {
+  createWorkspaceSearchCorpus,
+  createWorkspaceSearchDocument,
+  createWorkspaceSearchIndex,
+  DEFAULT_WORKSPACE_SEARCH_LIMIT,
+  MAX_WORKSPACE_SEARCH_LIMIT,
+  searchWorkspaceCorpus,
+  searchWorkspaceDocuments,
+  type WorkspaceSearchCorpus,
+  type WorkspaceSearchDocument,
+  type WorkspaceSearchIntent,
+  type WorkspaceSearchKind,
+  type WorkspaceSearchOptions,
+  type WorkspaceSearchResult,
+  type WorkspaceSearchScope,
+  workspaceSearchBasename,
+  workspaceSearchPathSegments,
+} from './search/workspace-search.ts';
 // Types
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
@@ -150,7 +168,6 @@ export type {
   ShadowContributor,
   TimelineEntry,
 } from './types/timeline.ts';
-
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';

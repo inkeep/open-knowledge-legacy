@@ -1,10 +1,18 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   buildWorkspaceEntries,
   EMPTY_QUERY_NAV_LIMIT,
+  fetchWorkspaceSearchEntries,
   matchesCommandQuery,
   searchWorkspaceEntries,
+  splitTextByQueryMatches,
 } from './command-palette-search';
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe('buildWorkspaceEntries', () => {
   test('builds sorted file and folder entries from page and folder sets', () => {
@@ -69,5 +77,68 @@ describe('matchesCommandQuery', () => {
 
   test('returns false when neither label nor keywords include the query', () => {
     expect(matchesCommandQuery('Open graph', 'cursor')).toBe(false);
+  });
+});
+
+describe('splitTextByQueryMatches', () => {
+  test('marks query words case-insensitively', () => {
+    expect(splitTextByQueryMatches('Homepage content on the home page', 'homepage home')).toEqual([
+      { text: 'Homepage', match: true, start: 0 },
+      { text: ' content on the ', match: false, start: 8 },
+      { text: 'home', match: true, start: 24 },
+      { text: ' page', match: false, start: 28 },
+    ]);
+  });
+
+  test('treats regex metacharacters as literal query text', () => {
+    expect(splitTextByQueryMatches('Use api/search?query=home', 'api/search?query=home')).toEqual([
+      { text: 'Use ', match: false, start: 0 },
+      { text: 'api/search?query=home', match: true, start: 4 },
+    ]);
+  });
+});
+
+describe('fetchWorkspaceSearchEntries', () => {
+  test('posts a full-text search request and maps server rows to palette entries', async () => {
+    let requestBody: unknown = null;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          results: [
+            {
+              kind: 'page',
+              path: 'THIRD_PARTY_NOTICES',
+              title: 'Third Party Notices',
+              snippet: 'Homepage: https://example.test',
+              score: 42,
+            },
+            { kind: 'folder', path: 'docs', title: 'docs', score: 12 },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const results = await fetchWorkspaceSearchEntries('homepage');
+
+    expect(requestBody).toEqual({
+      query: 'homepage',
+      intent: 'full_text',
+      scopes: ['page', 'folder', 'content'],
+      limit: 30,
+    });
+    expect(results).toEqual([
+      {
+        kind: 'file',
+        path: 'THIRD_PARTY_NOTICES',
+        name: 'THIRD_PARTY_NOTICES',
+        title: 'Third Party Notices',
+        snippet: 'Homepage: https://example.test',
+        score: 42,
+      },
+      { kind: 'folder', path: 'docs', name: 'docs', title: 'docs', score: 12 },
+    ]);
   });
 });
