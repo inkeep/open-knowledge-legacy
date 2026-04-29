@@ -84,6 +84,7 @@ describe('handleUploadImage', () => {
       sessionManager,
       contentDir,
       getFileIndex: () => new Map(),
+      serverInstanceId: 'test-instance',
     });
 
     const { createServer } = await import('node:http');
@@ -260,6 +261,7 @@ async function setupUploadTestServer(prefix: string): Promise<UploadTestServer> 
     sessionManager,
     contentDir,
     getFileIndex: () => new Map(),
+    serverInstanceId: 'test-instance',
   });
 
   const { createServer } = await import('node:http');
@@ -466,12 +468,12 @@ describe('handleUploadAudio', () => {
     expect(body.error).toBe('Payload too large');
   });
 
-  test('cross-endpoint isolation: video endpoint rejects mp3', async () => {
+  test('cross-endpoint isolation: audio endpoint rejects mp4', async () => {
     const res = await postUpload(
       s.port,
-      '/api/upload-video',
-      createMp3Buffer(),
-      'song.mp3',
+      '/api/upload-audio',
+      createMp4Buffer(),
+      'video.mp4',
       'docs/guide.md',
     );
     expect(res.status).toBe(400);
