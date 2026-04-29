@@ -145,7 +145,10 @@ describe('handleUploadImage', () => {
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.src).toBe('screenshot.png');
+    // Server-absolute, contentDir-relative URL — see bare-filename → server-
+    // absolute fix in api-extension.ts uploadMediaCore. Resolves correctly
+    // against the page's hash-route base URL regardless of the doc's depth.
+    expect(body.src).toBe('/docs/screenshot.png');
     expect(existsSync(join(contentDir, 'docs', 'screenshot.png'))).toBe(true);
   });
 
@@ -186,7 +189,7 @@ describe('handleUploadImage', () => {
     const res = await uploadImage(createPngBuffer(), 'image.png', 'docs/guide.md');
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(res.status).toBe(200);
-    expect(body.src).toMatch(/^pasted-\d{8}-\d{6}\.png$/);
+    expect(body.src).toMatch(/^\/docs\/pasted-\d{8}-\d{6}\.png$/);
   });
 
   test('rejects spoofed MIME (exe renamed to .png)', async () => {
@@ -202,7 +205,7 @@ describe('handleUploadImage', () => {
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.src).toBe('diagram.svg');
+    expect(body.src).toBe('/docs/diagram.svg');
   });
 
   test('numeric suffix collision handling', async () => {
@@ -211,7 +214,7 @@ describe('handleUploadImage', () => {
     const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(res.status).toBe(200);
-    expect(body.src).toBe('screenshot-1.png');
+    expect(body.src).toBe('/docs/screenshot-1.png');
   });
 
   test('symlink escape rejected', async () => {
@@ -377,7 +380,7 @@ describe('handleUploadVideo', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(body.ok).toBe(true);
-    expect(body.src).toBe('demo.mp4');
+    expect(body.src).toBe('/docs/demo.mp4');
     expect(existsSync(join(s.contentDir, 'docs', 'demo.mp4'))).toBe(true);
   });
 
@@ -438,7 +441,7 @@ describe('handleUploadAudio', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; src: string };
     expect(body.ok).toBe(true);
-    expect(body.src).toBe('song.mp3');
+    expect(body.src).toBe('/docs/song.mp3');
     expect(existsSync(join(s.contentDir, 'docs', 'song.mp3'))).toBe(true);
   });
 

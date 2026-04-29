@@ -4389,8 +4389,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
+      // Server-absolute, POSIX-normalized path. Doc-relative bare filename
+      // resolves wrong under hash routing for subdir docs: page URL
+      // `/#/showcase/02-image` has base `localhost:5173/`, so a bare
+      // `foo.png` in <img src> fetches `/foo.png` while the file is at
+      // `/showcase/foo.png`. The leading slash anchors the resolution to
+      // the server root regardless of the doc's location in the tree.
+      const src = `/${relPath.split(sep).join('/')}`;
       console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src: destFilename });
+      json(res, 200, { ok: true, src });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);

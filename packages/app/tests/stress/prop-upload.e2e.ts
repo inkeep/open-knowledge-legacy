@@ -183,6 +183,8 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     });
     const srcAfterFirst = await waitForSrcChange(page, c.tag, c.initialSrc);
     expect(srcAfterFirst).not.toBe(c.initialSrc);
+    // Server returns server-absolute URLs (leading slash, contentDir-relative).
+    expect(srcAfterFirst).toMatch(/^\//);
     expect(srcAfterFirst).toContain(c.payloads[0].name.replace(/\.\w+$/, ''));
     expect(existsSync(join(workerServer.contentDir, srcAfterFirst))).toBe(true);
 
@@ -195,10 +197,82 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     });
     const srcAfterSecond = await waitForSrcChange(page, c.tag, srcAfterFirst);
     expect(srcAfterSecond).not.toBe(srcAfterFirst);
+    expect(srcAfterSecond).toMatch(/^\//);
     expect(srcAfterSecond).toContain(c.payloads[1].name.replace(/\.\w+$/, ''));
     expect(existsSync(join(workerServer.contentDir, srcAfterSecond))).toBe(true);
   });
 }
+
+// ---------------------------------------------------------------------------
+// UPLOAD-IMG-SUBDIR-01 — doc in a subdir uploads + browser-fetches the file
+//
+// Regression guard for the doc-relative-URL bug: if the server returns a
+// bare filename (`foo.png`) instead of a server-absolute path
+// (`/subdir/foo.png`), the renderer's `<img src="foo.png">` resolves
+// against the page base (`http://localhost:5173/` — hash fragment doesn't
+// affect URL base) and fetches `localhost:5173/foo.png`. sirv looks at
+// contentDir root, doesn't find it, falls through to Vite's SPA fallback
+// which returns index.html with text/html — the `<img>` shows broken-icon.
+//
+// UPLOAD-IMG-01 above doesn't catch this because it seeds at contentDir
+// root (no subdir), so bare-filename and server-absolute paths happen to
+// coincide. This test puts the doc in a subdir so the two paths diverge,
+// and verifies the rendered <img>'s src actually resolves to the file
+// (Content-Type starts with image/, not text/html).
+//
+// Uses the worker fixture's pre-seeded `sidebar-folder/` (which contains
+// `nested-doc.md` at boot) so the content filter's `dirCount[sidebar-
+// folder]` is warm by the time the test runs. Freshly-created subdirs
+// hit a separate filter race (parcel-watcher's async `create` event lags
+// the synchronous `/api/create-page` response by hundreds of ms, leaving
+// dirCount stale during the upload window). That race is fixed in
+// PR #270's `e9c2c034` (synchronous `incrementMdDir` in `handleCreatePage`)
+// — out of scope for this PR; document and pin to a pre-warmed subdir.
+// ---------------------------------------------------------------------------
+
+test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the asset (not SPA fallback)', async ({
+  page,
+  api,
+  workerServer,
+}) => {
+  const docName = `sidebar-folder/upload-${randomUUID().slice(0, 8)}`;
+  await api.seedDocs([{ name: docName, markdown: cases.img.initialMarkdown }]);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+
+  expect(await readSrc(page, 'img')).toBe(cases.img.initialSrc);
+
+  const panel = await openPropPanel(page);
+  const fileInput = panel.locator('[data-prop-upload-input]').first();
+  await fileInput.waitFor({ state: 'attached', timeout: 5000 });
+
+  await fileInput.setInputFiles({
+    name: cases.img.payloads[0].name,
+    mimeType: cases.img.payloads[0].mimeType,
+    buffer: cases.img.payloads[0].buffer,
+  });
+
+  const newSrc = await waitForSrcChange(page, 'img', cases.img.initialSrc);
+  expect(newSrc).not.toBe(cases.img.initialSrc);
+
+  // Server-absolute URL shape — leading slash + contains the doc's subdir.
+  expect(newSrc).toMatch(/^\/sidebar-folder\//);
+
+  // The file must exist on disk under the doc's subdir.
+  expect(existsSync(join(workerServer.contentDir, newSrc))).toBe(true);
+
+  // Critical: when the browser resolves <img src=...>, it must hit the
+  // actual file (Content-Type: image/*), not Vite's SPA fallback
+  // (Content-Type: text/html). This is the regression that bare-filename
+  // src would silently fail.
+  const baseURL = page.url().split('#')[0]; // strip hash
+  const resolved = new URL(newSrc, baseURL).toString();
+  const response = await page.request.get(resolved);
+  expect(response.status()).toBe(200);
+  const contentType = response.headers()['content-type'] ?? '';
+  expect(contentType).toMatch(/^image\//);
+});
 
 // ---------------------------------------------------------------------------
 // UPLOAD-IMG-ERR — server-side magic-byte rejection surfaces toast.error,
