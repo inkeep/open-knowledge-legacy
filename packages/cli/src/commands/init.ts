@@ -195,27 +195,9 @@ interface InitCommandOptions {
   mcp?: boolean;
   /** Register a local dev MCP entry using `node` + this repo's built dist CLI. */
   devMcp?: boolean;
-  /**
-   * Pin the MCP entry to the absolute path of the current CLI binary instead
-   * of the default `npx @inkeep/open-knowledge mcp` (specs/2026-04-24-cross-install-version-handshake
-   * §3 G7 + D14). Default `false` — `npx` self-heals after CLI reinstalls;
-   * `--pin` serves the audience that wants reproducibility, accepting that
-   * the absolute path silently breaks if the CLI is moved or removed.
-   *
-   * Recommended pin target is M6's stable shim at `/usr/local/bin/ok` (which
-   * the desktop's "Install Command-Line Tools…" menu writes); that path
-   * survives CLI upgrades because the desktop's auto-updater replaces the
-   * symlink target atomically. Volatile-path pins (e.g., a worktree
-   * `dist/cli.mjs` or an npx-cache path) silently stale on upgrade — the
-   * pinned MCP either runs the old version (G6 protocol-mismatch exit 1) or
-   * fails ENOENT.
-   */
-  pin?: boolean;
   editors?: EditorId[];
   /** Override home directory (test-only, for global editor config paths). */
   home?: string;
-  /** Override the current CLI entry path (test-only; used by --dev-mcp / --pin). */
-  cliEntryPath?: string;
   /**
    * Inject a pre-fabricated `installUserSkill` implementation (test hook).
    * Production callers omit this and hit the real `installUserSkill` from
@@ -312,7 +294,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       ? {
           name: LAUNCH_CONFIG_NAME,
           runtimeExecutable: 'node',
-          runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
+          runtimeArgs: [resolveDevCliDistPath(), 'ui'],
           port: 3000,
         }
       : {
@@ -631,11 +613,7 @@ export function readExistingMcpEntry(
 export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const installOptions: McpInstallOptions = {
-    // --pin takes precedence over --dev-mcp (both flags exclusive in practice;
-    // --pin is for reproducibility, --dev-mcp is for monorepo dev). Default
-    // 'published' = unpinned `npx` per D8.
-    mode: options.pin ? 'pinned' : options.devMcp ? 'dev' : 'published',
-    cliEntryPath: options.cliEntryPath,
+    mode: options.devMcp ? 'dev' : 'published',
   };
 
   // 0. Ensure the project has a `.git/` (SPEC D9 — `ok init` is the explicit
@@ -1048,12 +1026,7 @@ export function initCommand(): Command {
         'Write MCP config at user level, project level, or both',
       ).choices(['user', 'project', 'both']),
     )
-    .option(
-      '--pin',
-      'Pin the MCP entry to the absolute path of the current CLI binary instead of `npx`. Use a stable shim like /usr/local/bin/ok for upgrade-safe pinning; npx-cache or worktree paths will go stale on reinstall.',
-    )
-    .option('--no-pin', 'Use the default unpinned `npx @inkeep/open-knowledge mcp` MCP entry')
-    .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope; pin?: boolean }) => {
+    .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope }) => {
       const cwd = process.cwd();
 
       let result: InitCommandResult;
@@ -1063,7 +1036,6 @@ export function initCommand(): Command {
           mcp: opts.mcp,
           devMcp: opts.devMcp,
           scope: opts.scope,
-          pin: opts.pin,
         });
       } catch (err) {
         if (err instanceof ProjectGitInitError) {

@@ -24,7 +24,6 @@ export const ALL_EDITOR_IDS: EditorId[] = [
 const PUBLISHED_MCP_SERVER_COMMAND = 'npx';
 const PUBLISHED_MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
 const DEV_MCP_SERVER_COMMAND = 'node';
-const PINNED_MCP_SERVER_COMMAND = 'node';
 const DEV_MCP_ENV = {
   MCP_DEBUG: '1',
   OK_LOG_FILE: '/tmp/ok-mcp.log',
@@ -38,18 +37,11 @@ const DEV_MCP_ENV = {
  *   the running `ok start` process owns the MCP implementation.
  * - `'dev'` — `{command: 'node', args: [<dist/cli.mjs>, 'mcp'], env: {...}}`.
  *   Used by `--dev-mcp` for monorepo development against a worktree-local CLI.
- * - `'pinned'` — `{command: 'node', args: [<absolute process.argv[1]>, 'mcp']}`.
- *   Used by `ok init --pin` (specs/2026-04-24-cross-install-version-handshake
- *   §3 G7 + D14). The absolute path is the cli entry of whatever ran `ok init`.
- *   Recommended pin target is M6's stable shim at `/usr/local/bin/ok` (the
- *   desktop's auto-updater replaces the symlink target atomically); volatile
- *   pins (worktree dist, npx-cache) silently stale.
  */
-type McpInstallMode = 'published' | 'dev' | 'pinned';
+type McpInstallMode = 'published' | 'dev';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
-  cliEntryPath?: string;
   /**
    * Absolute path to a CLI binary that spawns the Open Knowledge MCP server
    * directly (e.g. the Electron-bundled `ok.sh` wrapper, or the `/usr/local/bin/ok`
@@ -74,14 +66,14 @@ export interface McpInstallOptions {
   skipAvailabilityCheck?: boolean;
 }
 
-export function resolveDevCliDistPath(cliEntryPath = process.argv[1]): string {
-  if (!cliEntryPath) {
+export function resolveDevCliDistPath(entryPath: string = process.argv[1]): string {
+  if (!entryPath) {
     throw new Error(
       'Cannot infer the local CLI entry for --dev-mcp because process.argv[1] is empty.',
     );
   }
 
-  const resolvedEntry = resolve(cliEntryPath);
+  const resolvedEntry = resolve(entryPath);
   if (basename(resolvedEntry) === 'cli.mjs' && basename(dirname(resolvedEntry)) === 'dist') {
     return resolvedEntry;
   }
@@ -107,23 +99,10 @@ export function buildManagedServerEntry(options: McpInstallOptions = {}): Record
     };
   }
 
-  if (options.mode === 'pinned') {
-    const cliEntry = options.cliEntryPath ?? process.argv[1];
-    if (!cliEntry) {
-      throw new Error(
-        'Cannot pin MCP entry — process.argv[1] is empty. Pass --no-pin to use the default `npx` entry.',
-      );
-    }
-    return {
-      command: PINNED_MCP_SERVER_COMMAND,
-      args: [resolve(cliEntry), 'mcp'],
-    };
-  }
-
   if (options.mode === 'dev') {
     return {
       command: DEV_MCP_SERVER_COMMAND,
-      args: [resolveDevCliDistPath(options.cliEntryPath), 'mcp'],
+      args: [resolveDevCliDistPath(), 'mcp'],
       env: { ...DEV_MCP_ENV },
     };
   }
