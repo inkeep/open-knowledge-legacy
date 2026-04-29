@@ -503,10 +503,10 @@ export interface UserMcpConfigsOptions {
    * Editors whose MCP config to write. Caller (mcp-wiring.ts confirmHandler)
    * is responsible for filtering out editors whose existing entry is a
    * customized shape that should be preserved — those are classified via
-   * `readExistingMcpEntry` + `computeForce` and excluded from this array
-   * BEFORE the call. This function unconditionally overwrites every editor
-   * it receives (aligning with main's `writeEditorMcpConfig` always-rewrite
-   * semantic from PR #282 / "installs stay aligned with current defaults").
+   * `readExistingMcpEntry` + `isPublishedCanonical` and excluded from this
+   * array BEFORE the call. This function unconditionally overwrites every
+   * editor it receives (aligning with `writeEditorMcpConfig`'s always-rewrite
+   * semantic — installs stay aligned with current defaults).
    */
   editors: EditorId[];
   /**
@@ -553,18 +553,18 @@ export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<
 }
 
 /**
- * Read a single editor's existing MCP server entry for use with
- * `computeForce`-style classification (M6b). Reads the user-scoped config
- * (format-aware — JSON or TOML), looks up `config[topLevelKey][serverName]`,
- * and returns it as a plain object. Returns `null` when the config file is
- * absent, unreadable, unparseable, or has no entry for this editor's
- * server name.
+ * Read a single editor's existing MCP server entry for use with the
+ * desktop confirm-flow's canonical-shape classification. Reads the
+ * user-scoped config (format-aware — JSON or TOML), looks up
+ * `config[topLevelKey][serverName]`, and returns it as a plain object.
+ * Returns `null` when the config file is absent, unreadable,
+ * unparseable, or has no entry for this editor's server name.
  *
- * **Never-throws contract (load-bearing — Pass 0 Major #13):** the M6b
- * first-launch consent flow MUST be able to classify every selected editor
- * without aborting on one malformed config. A corrupt user config (e.g.,
- * stale `~/.codex/config.toml` from a half-completed third-party edit) on
- * ANY selected editor would otherwise crash `confirmHandler`, leave the
+ * **Never-throws contract (load-bearing):** the first-launch consent flow
+ * MUST be able to classify every selected editor without aborting on one
+ * malformed config. A corrupt user config (e.g., stale
+ * `~/.codex/config.toml` from a half-completed third-party edit) on ANY
+ * selected editor would otherwise crash `confirmHandler`, leave the
  * marker absent, and create an infinite dialog re-fire loop on the user's
  * machine. Every reachable failure path here returns `null`:
  *   - configPath() throws → null (platform-mismatched target, e.g.
@@ -575,12 +575,11 @@ export async function writeUserMcpConfigs(opts: UserMcpConfigsOptions): Promise<
  *   - server entry value not a plain object → null (e.g., bare string)
  *
  * Note: `null` deliberately conflates "absent" with "malformed" — both mean
- * "no compatible existing entry to merge into" from `computeForce`'s
+ * "no compatible existing entry to merge into" from the desktop classifier's
  * perspective. The downstream `writeEditorMcpConfig` re-reads via the same
  * format-aware parser and would itself throw on truly corrupt files; that
  * write-side error path is what surfaces the corruption to the user via
- * the `mcp-wiring-write-failed` event in `mcp-wiring.ts` (Pass 0 Critical
- * #1's toast contract).
+ * the `mcp-wiring-write-failed` event in `mcp-wiring.ts`.
  */
 export function readExistingMcpEntry(
   target: EditorMcpTarget,

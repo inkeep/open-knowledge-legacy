@@ -127,11 +127,11 @@ Subscription methods on the bridge (`onProjectSwitched`, `onMenuAction`, etc.) *
 
 Three channels added for the [[Open in Agent Desktop|Open-in-Agent]] handoff feature (SPEC `2026-04-21-open-in-agent-desktop`). Handlers are pure injectable functions in `src/main/ipc-handlers.ts` (registered from `main/index.ts`, the only file on the D19 direct-IPC allowlist). The same channels are mirrored in `src/shared/bridge-contract.ts` and `packages/core/src/desktop-bridge.ts` so the typed `window.okDesktop.shell.*` surface stays in sync via the contract-equality integration test.
 
-| Channel                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ok:shell:detect-protocol` | Probe whether `<scheme>://` has a registered handler. macOS + Windows use `app.getApplicationInfoForProtocol` (2 s timeout); Linux falls back to `xdg-mime query default x-scheme-handler/<scheme>` because the Electron API is mac+win only. Returns `{ installed, displayName? }`; any failure collapses to `{ installed: false }`.                                                                                                                                                                                          |
-| `ok:shell:spawn-cursor`    | Step 1 of Cursor's two-step handoff — spawn `cursor <projectDir>` so the workspace is open before the `cursor://` prompt URL fires. Binary resolution prefers `getApplicationInfoForProtocol('cursor://').path`, falls back to `which cursor` / `where cursor` (500 ms budget). Spawn uses argv array + `shell: false` + 2 s timeout. Deliberately a separate channel from `ok:shell:open-external` — the threat model is command allowlisting with argument-injection + PATH-hijacking concerns, not URL-scheme allowlisting. |
-| `ok:shell:record-handoff`  | Append one JSONL line per dispatch to `~/.open-knowledge/stats.jsonl`. Local-only telemetry; failures are logged and swallowed so dispatch never depends on telemetry success. Zero network. Named under the `ok:shell:*` namespace to match the `shell.recordHandoff` bridge location.                                                                                                                                                                                                                                        |
+| Channel                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok:shell:detect-protocol`     | Probe whether `<scheme>://` has a registered handler. macOS + Windows use `app.getApplicationInfoForProtocol` (2 s timeout); Linux falls back to `xdg-mime query default x-scheme-handler/<scheme>` because the Electron API is mac+win only. Returns `{ installed, displayName? }`; any failure collapses to `{ installed: false }`.                                                                                                                                                                                                          |
+| `ok:shell:spawn-cursor`        | Step 1 of Cursor's two-step handoff — spawn `cursor <projectDir>` so the workspace is open before the `cursor://` prompt URL fires. Binary resolution prefers `getApplicationInfoForProtocol('cursor://').path`, falls back to `which cursor` / `where cursor` (500 ms budget). Spawn uses argv array + `shell: false` + 2 s timeout. Deliberately a separate channel from `ok:shell:open-external` — the threat model is command allowlisting with argument-injection + PATH-hijacking concerns, not URL-scheme allowlisting.                 |
+| `ok:shell:record-handoff`      | Append one JSONL line per dispatch to `~/.open-knowledge/stats.jsonl`. Local-only telemetry; failures are logged and swallowed so dispatch never depends on telemetry success. Zero network. Named under the `ok:shell:*` namespace to match the `shell.recordHandoff` bridge location.                                                                                                                                                                                                                                                        |
 | `ok:shell:show-item-in-folder` | Reveal a file or folder in the OS file manager (Finder / File Explorer / default Linux file manager). Wraps Electron's `shell.showItemInFolder`. Path is validated against the caller window's `projectPath` via `isPathWithinProject`; out-of-project, non-absolute, or null-byte-bearing paths refuse silently (wire returns `undefined`; main-side `console.warn` logs the refusal reason for debugging). Same defense pattern as `ok:shell:spawn-cursor`. Surfaces in the file-tree right-click menu (Electron host only — hidden on web). |
 
 The Cursor two-step step 1 is wired on the Electron host only — the web host renders the Cursor row disabled-with-tooltip ("Cursor handoff requires the desktop build") per E4 DIRECTED. Claude and Codex dispatch via `ok:shell:open-external` with the URL builders in `packages/core/src/handoff/`.
@@ -196,7 +196,7 @@ bun run build:desktop
 OK_DESKTOP_E2E_SMOKE=1 bunx playwright test packages/desktop/tests/smoke/deep-link.e2e.ts
 ```
 
-The test polls `app.windows()` for a hash ending in the target doc, with a 5s budget. Passes in ~2.3s locally.
+The test polls `app.windows()` for a hash ending in the target doc, with a 5s budget. Passes in \~2.3s locally.
 
 **Cold-start Apple-Event simulation is a documented deferred gap.** Playwright's `_electron.launch({ args: [url] })` delivers the URL via `process.argv` (exercising the `second-instance` argv path), NOT via an `open-url` Apple Event. True cold-start Apple-Event simulation requires a signed/notarized DMG so macOS Launch Services binds the scheme to this specific bundle instead of the generic Electron shell — tracked alongside the M2 packaged-build harness.
 
@@ -212,23 +212,23 @@ This is how MCP tool responses (e.g. `write_document` returning a `previewUrl`) 
 
 ## Testing
 
-| File                                                         | What it covers                                                                                                      |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `tests/integration/m1-smoke.test.ts`                         | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release         |
-| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                   |
-| `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:` |
-| `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                             |
+| File                                                         | What it covers                                                                                                                                          |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/integration/m1-smoke.test.ts`                         | End-to-end Definition of Done: dev loop, keyring round-trip, parent-death exit, server.lock acquire/release                                             |
+| `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` | D19 rule asserts on a seeded violation and passes on current code                                                                                       |
+| `tests/main/shell-allowlist.test.ts`                         | D47 scheme allowlist: accepts `https:`/`http:`/`mailto:`/`openknowledge:`, rejects `ms-msdt:`/`file:`/`javascript:`                                     |
+| `tests/main/state-store.test.ts`                             | electron-store shape — recents cap 20, window-bounds persistence, corrupt-file recovery                                                                 |
 | `tests/main/window-manager.test.ts`                          | Spawning + tracking + collision-dialog dispatch, `focusWindowForProject` warm-deep-link path; M5 `ok:debug:keyring-smoke` routing to per-window utility |
-| `tests/main/url-scheme-handler.test.ts`                      | M4 handler: queue-then-flush retry loop, argv scan, dev-mode `setAsDefaultProtocolClient`, routing dispatch          |
-| `src/main/url-scheme.test.ts`                                | M4 parser: valid/malformed/null-byte/path-traversal fixtures for `parseOpenKnowledgeUrl`                            |
-| `src/main/utility-fork-env.test.ts`                          | M4 env injection: `buildUtilityForkEnv` sets `OK_ELECTRON_PROTOCOL_HOST=1` without bleeding to other forks           |
-| `src/main/debug-ipc.test.ts`                                 | M5 main↔utility debug IPC relay: correlation-ID map, 10 s default timeout, clean-on-resolve / clean-on-timeout        |
-| `tests/smoke/deep-link.e2e.ts`                               | M4 warm-start smoke (opt-in via `OK_DESKTOP_E2E_SMOKE=1` + `bun run build:desktop`)                                  |
-| `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                 |
-| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit, M5 `debug-request` dispatcher + boot-time auto-smoke      |
-| `src/utility/keyring-smoke.test.ts`                          | M5 `runKeyringSmoke(deps?)` primitive: success round-trip + cleanup, error shapes, injectable-dep YAML-fallback path |
-| `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                       |
-| `tests/unit/verify-keyring-driver.test.mjs`                  | M5 `scripts/verify-keyring-in-packaged-dmg.mjs` driver: exit-code mapping (0/1/2/3), arg parsing, env-var plumbing   |
+| `tests/main/url-scheme-handler.test.ts`                      | M4 handler: queue-then-flush retry loop, argv scan, dev-mode `setAsDefaultProtocolClient`, routing dispatch                                             |
+| `src/main/url-scheme.test.ts`                                | M4 parser: valid/malformed/null-byte/path-traversal fixtures for `parseOpenKnowledgeUrl`                                                                |
+| `src/main/utility-fork-env.test.ts`                          | M4 env injection: `buildUtilityForkEnv` sets `OK_ELECTRON_PROTOCOL_HOST=1` without bleeding to other forks                                              |
+| `src/main/debug-ipc.test.ts`                                 | M5 main↔utility debug IPC relay: correlation-ID map, 10 s default timeout, clean-on-resolve / clean-on-timeout                                          |
+| `tests/smoke/deep-link.e2e.ts`                               | M4 warm-start smoke (opt-in via `OK_DESKTOP_E2E_SMOKE=1` + `bun run build:desktop`)                                                                     |
+| `tests/preload/bridge.test.ts`                               | `window.okDesktop` config parsing, subscription wrapper correctness                                                                                     |
+| `tests/utility/server-entry.test.ts`                         | IPC handshake, graceful shutdown drain, parent-death exit, M5 `debug-request` dispatcher + boot-time auto-smoke                                         |
+| `src/utility/keyring-smoke.test.ts`                          | M5 `runKeyringSmoke(deps?)` primitive: success round-trip + cleanup, error shapes, injectable-dep YAML-fallback path                                    |
+| `tests/unit/scaffold.test.ts`                                | Smoke: `OK_DIR` (core) and `bootServer` (server) imports resolve from desktop                                                                           |
+| `tests/unit/verify-keyring-driver.test.mjs`                  | M5 `scripts/verify-keyring-in-packaged-dmg.mjs` driver: exit-code mapping (0/1/2/3), arg parsing, env-var plumbing                                      |
 
 Run the full gate from the repo root (`bun run check`) or scope to this package with `cd packages/desktop && bun test`.
 
@@ -322,6 +322,7 @@ M3 wires [electron-updater](https://www.electron.build/auto-update) into the mai
 Six `autoUpdater` events subscribed (AC2): `checking-for-update`, `update-available`, `update-not-available`, `download-progress` (debug-level log only), `update-downloaded`, `error`. NOT subscribed: `login`, `update-cancelled`, `appimage-filename-updated`.
 
 Four AppState fields persisted in [`src/main/state-store.ts`](src/main/state-store.ts):
+
 - `versionPendingInstall: string | null` — Toast A once-per-version gate (D11).
 - `lastSeenVersion: string | null` — Toast B once-per-version-transition gate (D9/D11).
 - `lastSuccessfulCheckAt: string | null` — D12 stuck-hint 7-day counter baseline.
@@ -330,11 +331,13 @@ Four AppState fields persisted in [`src/main/state-store.ts`](src/main/state-sto
 ### IPC surface
 
 Three main→renderer push events (in `src/shared/ipc-events.ts` `EventChannels`):
+
 - `ok:update:downloaded` `{ version }` → Toast A in renderer.
 - `ok:update:whats-new` `{ version, releaseUrl }` → Toast B in renderer.
 - `ok:update:stuck-hint` `{ downloadUrl }` → Toast C in renderer.
 
 One renderer→main request (in `src/shared/ipc-channels.ts` `RequestChannels`):
+
 - `ok:update:relaunch-now` → main calls `autoUpdater.quitAndInstall()` (Toast A action).
 
 All four new channels exposed on `window.okDesktop` via the triple-copy bridge contract (core/desktop/app per CLAUDE.md deliberate-duplication). Added `createSender()` typed wrapper to `src/shared/ipc-events.ts` — the third IPC wrapper alongside `createHandler` / `createInvoker`; main→renderer fan-out is type-checked against `EventChannels`.
@@ -343,10 +346,10 @@ All four new channels exposed on `window.okDesktop` via the triple-copy bridge c
 
 Three verification tiers per SPEC §7 D4:
 
-| Tier | Where | What it exercises |
-|------|-------|-------------------|
-| 1 — unit | `tests/integration/auto-updater.test.ts` | 6 events + error classification + Toast gates + IPC handlers — FakeUpdater event-stub, no Electron runtime. 51 tests, ~40ms. |
-| 2 — HTTP smoke | `scripts/smoke-mock-update.mjs` (pure node) | `GenericProvider` HTTP plumbing: `latest-mac.yml` + fake `.zip` with valid sha512 served on `127.0.0.1:<ephemeral>`. Self-tests via its own `fetch`. |
+| Tier                       | Where                                                                     | What it exercises                                                                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 — unit                   | `tests/integration/auto-updater.test.ts`                                  | 6 events + error classification + Toast gates + IPC handlers — FakeUpdater event-stub, no Electron runtime. 51 tests, \~40ms.                                                                        |
+| 2 — HTTP smoke             | `scripts/smoke-mock-update.mjs` (pure node)                               | `GenericProvider` HTTP plumbing: `latest-mac.yml` + fake `.zip` with valid sha512 served on `127.0.0.1:<ephemeral>`. Self-tests via its own `fetch`.                                                 |
 | 3 — end-state (post-creds) | `packages/desktop/build/dev-app-update.yml` + `forceDevUpdateConfig=true` | `GitHubProvider` URL resolution against a staged pre-release tag. Canonical approach per [electron.build/auto-update](https://www.electron.build/auto-update); runs only after M2 creds procurement. |
 
 Run Tier 2 in isolation:
@@ -360,6 +363,7 @@ bun run --cwd packages/desktop smoke:mock-update
 Tier 2 paired with a dev Electron build (full round-trip short of the Squirrel.Mac swap):
 
 1. Terminal A: `bun run --cwd packages/desktop smoke:mock-update`. Note the printed port.
+
 2. Write `packages/desktop/dev-app-update.yml`:
 
    ```yaml
@@ -368,6 +372,7 @@ Tier 2 paired with a dev Electron build (full round-trip short of the Squirrel.M
    ```
 
 3. Terminal B: `OK_UPDATER_FORCE_DEV=1 bun run --filter=@inkeep/open-knowledge-desktop dev`.
+
 4. Electron's main-process auto-updater (with `OK_UPDATER_FORCE_DEV=1` bypassing the `!app.isPackaged` guard, and `forceDevUpdateConfig=true` causing the feed to be read from `dev-app-update.yml`) hits the local server, downloads the fake zip, fires `update-downloaded`. Renderer Toast A renders.
 
 ### Cutting a release
@@ -511,10 +516,10 @@ If a second path shows up (e.g. `/opt/homebrew/bin/ok`), an npm-global install c
 
 Two origins of `ok` can live on the same machine — the DMG's wrapper (M6a) and a published npm global install. macOS resolution depends on the chip:
 
-| Architecture  | Homebrew prefix      | Typical `$PATH` order                           | Effect                                                                                                                                                                                                                                                                 |
-| ------------- | -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Apple Silicon | `/opt/homebrew/bin`  | `/opt/homebrew/bin` precedes `/usr/local/bin`   | Terminal-typed `ok` resolves to the npm install; M6b writes MCP configs that point at the DMG wrapper (distinct binaries). Same codebase today, but versions can drift if you upgrade one without the other.                                                          |
-| Intel         | `/usr/local/bin`     | `/usr/local/bin` IS Homebrew's default prefix   | M6a and `npm -g` compete for the same path. G4's collision guard prompts before overwriting. If `npm install -g` later stomps the M6a symlink, re-run **File → Install Command-Line Tools…** to restore.                                                              |
+| Architecture  | Homebrew prefix     | Typical `$PATH` order                         | Effect                                                                                                                                                                                                       |
+| ------------- | ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Apple Silicon | `/opt/homebrew/bin` | `/opt/homebrew/bin` precedes `/usr/local/bin` | Terminal-typed `ok` resolves to the npm install; M6b writes MCP configs that point at the DMG wrapper (distinct binaries). Same codebase today, but versions can drift if you upgrade one without the other. |
+| Intel         | `/usr/local/bin`    | `/usr/local/bin` IS Homebrew's default prefix | M6a and `npm -g` compete for the same path. G4's collision guard prompts before overwriting. If `npm install -g` later stomps the M6a symlink, re-run **File → Install Command-Line Tools…** to restore.     |
 
 The diagnostic posture is the same on both chips: `which -a ok` shows every copy. Note that M6b resolves `cliPath` for MCP configs via a hybrid path per D-M6-R9 — the symlink at `/usr/local/bin/ok` is preferred when present AND ownership-checked (`readlink` target lives inside the current bundle), with a bundle-absolute fallback (`.../Contents/Resources/cli/bin/ok.sh`) otherwise. Foreign symlinks are never trusted.
 
@@ -592,13 +597,9 @@ OK_M6B_FORCE=1 HOME=/tmp/ok-m6b-home \
 
 ### Merge semantics
 
-`computeForce(existing, target)` classifies each editor's existing OK entry in three tiers:
+`isPublishedCanonical(existing, target)` rates an editor's existing OK entry as overwriteable iff `target.isCompatible(existing, '', {mode: 'published'})` matches today's canonical `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}` shape — user-added `env` (or other non-managed sibling fields) still rates as canonical because the matcher iterates only managed keys.
 
-1. `target.isCompatible(existing, '', {mode: 'published'})` — canonical `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}` (including user-added `env` augmentation).
-2. Historical `-y npx` variant (`{command: 'npx', args: ['-y', '@inkeep/open-knowledge', 'mcp']}`).
-3. Prior `cliPath` shape from an earlier M6b run (`{command: <path-ending-in-ok.sh-or-ok>, args: ['mcp']}`).
-
-Any match → overwrite with the current cliPath shape (preserving `env` / other managed fields). Foreign customization (`{command: 'custom-wrapper', ...}`) is preserved; `mcp-wiring-skip-customized` JSON event emitted for observability.
+Any other shape — foreign customization (`{command: 'custom-wrapper', ...}`), historical `-y npx` variants, prior cliPath shapes from earlier installs — is left alone, with a `mcp-wiring-skip-customized` JSON event for observability. Users with stale managed entries from an earlier published install hit the manual reset path: delete the editor's MCP server entry by hand, then re-run the consent dialog from the File menu.
 
 ### Partial-failure recovery (OQ-19)
 

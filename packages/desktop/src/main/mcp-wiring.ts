@@ -1,7 +1,7 @@
 /**
  * First-launch MCP wiring — pure helpers.
  *
- * Three pure pieces, all dependency-injected for bun-test loadability:
+ * Two pure pieces, all dependency-injected for bun-test loadability:
  *
  *   1. Marker read/write at `<home>/.open-knowledge/mcp-status.json`. The
  *      user-scoped marker fires the consent dialog exactly once per user per
@@ -17,16 +17,13 @@
  *      auto-update + app-move robustness when the CLI symlink is installed
  *      AND self-contained working MCP when it is NOT.
  *
- *   3. `computeForce(existing, target)` — classifies each editor's existing
- *      MCP entry against the OK-managed shapes. Returns `true` for:
- *        - Published canonical `{command:'npx', args:['@inkeep/open-knowledge','mcp']}`
- *          (verified via `target.isCompatible(existing, '', {mode:'published'})`)
- *        - Historical `-y` variant `{command:'npx', args:['-y','@inkeep/open-knowledge','mcp']}`
- *        - Any prior cliPath shape `{command:<path>, args:['mcp']}` (from
- *          an earlier first-launch run before auto-update / app-move /
- *          CLI-symlink install changed the preferred cliPath)
- *      Returns `false` for user customizations — call site preserves the
- *      entry and emits a structured `mcp-wiring-skip-customized` log.
+ * Editor-entry overwrite policy: only entries that exactly match today's
+ * canonical published shape (`target.isCompatible(existing, '', {mode:'published'})`)
+ * are overwritten. Every other shape — foreign customization, historical
+ * `-y` variants, prior cliPath shapes, anything we don't recognize — is
+ * left alone and logged as `mcp-wiring-skip-customized`. A user with a
+ * stale managed entry from an earlier published install hits the manual
+ * reset path documented in the desktop install docs.
  *
  * Pattern mirrors `cli-install.ts`: pure layer uses `electron`-free imports
  * + an injectable `FsOps` so bun-test can load the module without an
@@ -266,8 +263,8 @@ export function resolveCliPath(executablePath: string, fs: McpWiringFsOps = defa
 }
 
 /**
- * Subset of `EditorMcpTarget` that `computeForce` needs — just
- * `isCompatible`. Kept as a type alias rather than a hand-rolled
+ * Subset of `EditorMcpTarget` that the canonical-shape predicate needs —
+ * just `isCompatible`. Kept as a type alias rather than a hand-rolled
  * structural interface now that desktop has a real workspace dep on
  * `@inkeep/open-knowledge`, so the authoritative type shape comes from
  * the CLI package rather than a duplicated interface that can drift.
@@ -275,97 +272,22 @@ export function resolveCliPath(executablePath: string, fs: McpWiringFsOps = defa
 export type ForceComputeTarget = Pick<EditorMcpTarget, 'isCompatible'>;
 
 /**
- * Decide whether to overwrite an editor's existing entry with the new
- * cliPath shape.
+ * Decide whether to overwrite an editor's existing entry. Returns `true`
+ * iff the entry exactly matches today's canonical published shape
+ * (`{command:'npx', args:['@inkeep/open-knowledge','mcp']}`, plus any
+ * user-augmented sibling fields like `env` that `hasMatchingManagedFields`
+ * ignores). Every other shape — foreign customization, historical `-y`
+ * variant, prior cliPath shape — returns `false`; the caller preserves
+ * the entry verbatim and emits `mcp-wiring-skip-customized`.
  *
- * Returns `true` for every OK-managed shape:
- *
- *   - **Fixture A** — published canonical `{command:'npx',
- *     args:['@inkeep/open-knowledge','mcp']}` → matched by
- *     `target.isCompatible(existing, '', {mode:'published'})`.
- *   - **Fixture B** — historical `-y` variant `{command:'npx',
- *     args:['-y','@inkeep/open-knowledge','mcp']}` → caught by
- *     `isHistoricalNpxVariant` because the 3-arg shape diverges from
- *     the 2-arg canonical that `isCompatible` encodes.
- *   - **Fixture C** — canonical + user-augmented env `{command:'npx',
- *     args:[...'canonical'], env:{OK_LOG_LEVEL:'debug'}}` → matched by
- *     `isCompatible` because `hasMatchingManagedFields` iterates only
- *     the managed keys (`command`, `args`); existing's extra `env` is
- *     ignored, so the fixture passes the compatibility check. Caller's
- *     subsequent `target.mergeManagedFields` preserves `env`.
- *   - **Prior cliPath** — `{command:<path>, args:['mcp']}` from an
- *     earlier first-launch run before an auto-update / app-move /
- *     CLI-symlink install shifted the preferred cliPath. Caught by
- *     `isPriorCliPathShape`.
- *
- * Returns `false` for:
- *
- *   - **Fixture D** — custom wrappers `{command:'custom-wrapper', args:[...]}`
- *     or any user-edited shape that doesn't match the above. Caller
- *     preserves the entry and logs `mcp-wiring-skip-customized`.
+ * Users with a stale managed entry from an earlier published install hit
+ * the manual reset path documented in the desktop install docs.
  */
-export function computeForce(
+export function isPublishedCanonical(
   existing: Record<string, unknown>,
   target: ForceComputeTarget,
 ): boolean {
-  if (target.isCompatible(existing, '', { mode: 'published' })) return true;
-  if (isHistoricalNpxVariant(existing)) return true;
-  if (isPriorCliPathShape(existing)) return true;
-  return false;
-}
-
-/**
- * Match `{command:'npx', args:['-y','@inkeep/open-knowledge','mcp']}`
- * — the `-y` variant an earlier CLI user might have accumulated. `npm`
- * / `npx` aliases sometimes produced this shape; we treat it as
- * managed because its semantics are identical to the canonical
- * 2-arg form.
- */
-function isHistoricalNpxVariant(existing: Record<string, unknown>): boolean {
-  if (existing.command !== 'npx') return false;
-  if (!Array.isArray(existing.args)) return false;
-  return (
-    existing.args.length === 3 &&
-    existing.args[0] === '-y' &&
-    existing.args[1] === '@inkeep/open-knowledge' &&
-    existing.args[2] === 'mcp'
-  );
-}
-
-/**
- * Match a PRIOR OK cliPath shape: `{command:<path-ending-in-ok-wrapper-basename>, args:['mcp']}`
- * where the basename identifies the binary as an OK bin (not some
- * third-party tool that happens to take `mcp` as its sole argument).
- *
- * The arg-shape discriminator (`['mcp']` — exactly one element, value
- * `'mcp'`) is necessary but NOT sufficient. Published canonical has
- * `args.length === 2` (`[@inkeep/..., 'mcp']`), dev-mode has
- * `args.length === 2` (`[<cli.mjs>, 'mcp']`), and the `-y` variant has
- * `args.length === 3` — all distinct from our cliPath shape. But a
- * foreign tool like `{command:'/opt/homebrew/bin/some-other-mcp-tool',
- * args:['mcp']}` would also match the arg shape alone. The command match
- * is tightened to the OK-owned wrapper basenames so a non-OK binary with
- * incidental `['mcp']` args is not silently stomped.
- *
- * Accepted basenames:
- *   - `ok` / `ok.sh` — the short-form symlink created by the CLI install
- *     flow + the bundled wrapper script.
- *   - `open-knowledge` — the long-form symlink.
- *
- * This stays robust to path variation: auto-update moves the bundle but
- * the basename is stable; user installs to `/Applications/` or
- * `~/Applications/` — same basename; symlink at `/usr/local/bin/ok` or
- * `/usr/local/bin/open-knowledge` — same basenames. Non-OK binaries
- * like `mcp-tool`, `llm-gateway`, or `some-mcp-wrapper.sh` fall through
- * to foreign-shape preservation.
- */
-function isPriorCliPathShape(existing: Record<string, unknown>): boolean {
-  if (typeof existing.command !== 'string') return false;
-  if (existing.command === 'npx') return false;
-  if (!Array.isArray(existing.args)) return false;
-  if (existing.args.length !== 1 || existing.args[0] !== 'mcp') return false;
-  const basename = existing.command.split('/').pop();
-  return basename === 'ok' || basename === 'ok.sh' || basename === 'open-knowledge';
+  return target.isCompatible(existing, '', { mode: 'published' });
 }
 
 /**
@@ -601,13 +523,14 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       if (!target) {
         throw new Error(`editorTargets missing entry for id=${id}`);
       }
-      // Compute `willReplace` at arming time using the same classifier
-      // the confirm handler runs at write time — any OK-managed shape
-      // (canonical npx, `-y` variant, prior cliPath) resolves
-      // `computeForce → true`, meaning Add would overwrite. Surfaced in
-      // the dialog so long-time CLI users who wrote their MCP entry via
-      // an earlier `ok init` see which rows will be stomped BEFORE
-      // clicking Add, not as a silent after-the-fact side effect.
+      // Compute `willReplace` at arming time using the same canonical-
+      // shape predicate the confirm handler runs at write time —
+      // entries matching today's published `{command:'npx',
+      // args:['@inkeep/open-knowledge','mcp']}` shape resolve to `true`,
+      // meaning Add would overwrite. Foreign customizations (including
+      // historical `-y` and prior cliPath shapes) resolve to `false`;
+      // the dialog surfaces this so users see which rows will be stomped
+      // BEFORE clicking Add, not as a silent after-the-fact side effect.
       // `readExistingMcpEntry` returns null when the config file is
       // absent or has no entry for this editor — those rows render as
       // "Not yet configured" rather than "Will replace".
@@ -615,7 +538,7 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
       try {
         const existing = cli.readExistingMcpEntry(id, home);
         if (existing !== null) {
-          willReplace = computeForce(existing, target);
+          willReplace = isPublishedCanonical(existing, target);
         }
       } catch (err) {
         // Tolerant on purpose: a read failure in one editor's config
@@ -685,12 +608,12 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
 
     const cliPath = resolveCliPath(executablePath, fs);
 
-    // Per-editor customized-entry classification. `writeUserMcpConfigs`
+    // Per-editor canonical-shape classification. `writeUserMcpConfigs`
     // always overwrites every editor it receives, so we FILTER here:
-    // editors with a foreign (non-OK-managed) existing entry are excluded
-    // from the write call, preserving their customization. Editors with
-    // no existing entry OR with an OK-managed shape (canonical npx, -y
-    // variant, prior cliPath) are passed through for overwrite.
+    // editors with a non-canonical existing entry are excluded from the
+    // write call, preserving their customization. Editors with no
+    // existing entry OR with the published canonical shape are passed
+    // through for overwrite.
     const editorsToWrite: McpWiringEditorId[] = [];
     for (const editor of selectedEditors) {
       const target = cli.editorTargets[editor];
@@ -701,11 +624,11 @@ export function runMcpWiringOnFirstLaunch(opts: RunMcpWiringOpts): RunMcpWiringH
         editorsToWrite.push(editor);
         continue;
       }
-      if (computeForce(existing, target)) {
-        // OK-managed shape → overwrite.
+      if (isPublishedCanonical(existing, target)) {
+        // Canonical published shape → overwrite.
         editorsToWrite.push(editor);
       } else {
-        // Foreign customization → preserve, skip the write.
+        // Foreign / non-canonical → preserve, skip the write.
         logger.event({
           event: 'mcp-wiring-skip-customized',
           editor,

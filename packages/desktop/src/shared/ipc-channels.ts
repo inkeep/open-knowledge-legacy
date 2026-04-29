@@ -223,14 +223,15 @@ export interface RequestChannels {
    */
   'ok:seed:apply': { args: [plan: ScaffoldPlan]; result: SeedApplyResult };
   /**
-   * M6b first-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
-   * Main resolves the hybrid `cliPath` per D-M6-R9, classifies each editor's
-   * existing entry via `computeForce`, calls `writeUserMcpConfigs`, and writes
+   * First-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
+   * Main resolves the hybrid `cliPath`, classifies each editor's existing
+   * entry via `isPublishedCanonical`, calls `writeUserMcpConfigs`, and writes
    * the user-scoped marker at `<home>/.open-knowledge/mcp-status.json` IFF
-   * every per-editor write succeeds (deferred-marker per OQ-19). Per-editor
+   * every per-editor write succeeds (deferred-marker pattern). Per-editor
    * failures emit `mcp-wiring-write-failed` structured logs and leave the
-   * marker absent so the dialog re-fires next launch. Foreign (user-customized)
-   * entries are preserved and logged as `mcp-wiring-skip-customized`.
+   * marker absent so the dialog re-fires next launch. Non-canonical (user-
+   * customized or stale-managed) entries are preserved and logged as
+   * `mcp-wiring-skip-customized`.
    */
   'ok:mcp-wiring:confirm': {
     args: [request: McpWiringConfirmRequest];

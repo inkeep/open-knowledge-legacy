@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '@inkeep/open-knowledge';
 import {
-  computeForce,
   type ForceComputeTarget,
   formatPartialFailureMessage,
   type IpcMainEventLike,
   type IpcMainLike,
+  isPublishedCanonical,
   type McpStatusMarker,
   type McpWiringCliSurface,
   type McpWiringFsOps,
@@ -22,11 +22,12 @@ import {
  * Pure-function coverage for first-launch MCP wiring.
  *
  * Every test runs against an injected `FsOps` stub — no real filesystem
- * touched. `computeForce` tests import the real `EDITOR_TARGETS` from
- * the CLI via relative source path (CLAUDE.md worktree-local pattern)
- * so fixtures exercise the authoritative `isCompatible` implementation,
- * not a hand-rolled mirror. Pure-function discipline: zero `electron`
- * imports, zero `osascript` spawns, zero `node:fs` side effects.
+ * touched. `isPublishedCanonical` tests import the real `EDITOR_TARGETS`
+ * from the CLI via relative source path (CLAUDE.md worktree-local
+ * pattern) so fixtures exercise the authoritative `isCompatible`
+ * implementation, not a hand-rolled mirror. Pure-function discipline:
+ * zero `electron` imports, zero `osascript` spawns, zero `node:fs` side
+ * effects.
  */
 
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
@@ -347,42 +348,31 @@ describe('resolveCliPath — hybrid symlink-or-bundle resolution', () => {
   });
 });
 
-describe('computeForce — isCompatible-based merge classification', () => {
+describe('isPublishedCanonical — exact canonical-shape predicate', () => {
   // Use real EDITOR_TARGETS from the CLI package via relative source import
   // (CLAUDE.md worktree-local pattern) so fixtures exercise the authoritative
   // `isCompatible` implementation rather than a hand-rolled mirror.
   const claude = EDITOR_TARGETS.claude;
   const vscode = EDITOR_TARGETS.vscode;
 
-  test('Fixture A — canonical published npx shape → force=true (Claude)', () => {
+  test('Fixture A — canonical published npx shape → true (Claude)', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
 
-  test('Fixture A — canonical published npx shape → force=true (VS Code with type:stdio)', () => {
+  test('Fixture A — canonical published npx shape → true (VS Code with type:stdio)', () => {
     const existing: Record<string, unknown> = {
       type: 'stdio',
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, vscode)).toBe(true);
+    expect(isPublishedCanonical(existing, vscode)).toBe(true);
   });
 
-  test('Fixture B — historical -y variant → force=true', () => {
-    // Earlier CLI versions sometimes produced `npx -y @inkeep/open-knowledge mcp`.
-    // `isCompatible` returns false on the 3-arg diff, so `isHistoricalNpxVariant`
-    // carries the load here — we treat it as OK-managed.
-    const existing: Record<string, unknown> = {
-      command: 'npx',
-      args: ['-y', '@inkeep/open-knowledge', 'mcp'],
-    };
-    expect(computeForce(existing, claude)).toBe(true);
-  });
-
-  test('Fixture C — canonical + user-augmented env → force=true', () => {
+  test('Fixture C — canonical + user-augmented env → true', () => {
     // `hasMatchingManagedFields` iterates only the managed keys (command, args);
     // existing's extra `env: {OK_LOG_LEVEL:'debug'}` is ignored by the matcher
     // AND preserved by `mergeManagedFields` on the subsequent write.
@@ -391,59 +381,54 @@ describe('computeForce — isCompatible-based merge classification', () => {
       args: ['@inkeep/open-knowledge', 'mcp'],
       env: { OK_LOG_LEVEL: 'debug' },
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
 
-  test('Fixture D — foreign customization → force=false', () => {
+  test('historical -y variant → false (foreign-customized; left alone)', () => {
+    // Earlier CLI versions sometimes produced `npx -y @inkeep/open-knowledge mcp`.
+    // Per D-7 + D-8 (no back-compat for previously published installs), the
+    // 3-arg variant no longer rates as managed — it is treated as a foreign
+    // customization and left alone.
     const existing: Record<string, unknown> = {
-      command: 'custom-wrapper',
-      args: ['--special-mode', 'run-mcp'],
+      command: 'npx',
+      args: ['-y', '@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Fixture D — foreign customization (VS Code with type:stdio) → force=false', () => {
-    const existing: Record<string, unknown> = {
-      type: 'stdio',
-      command: 'custom-wrapper',
-      args: ['--special-mode', 'run-mcp'],
-    };
-    expect(computeForce(existing, vscode)).toBe(false);
-  });
-
-  test('Prior cliPath shape (bundle-absolute from earlier first-launch run) → force=true', () => {
-    // User ran first-launch before auto-update or CLI-symlink install; the
-    // prior cliPath was bundle-absolute. After auto-update moves the bundle,
-    // or after the user later installs the CLI symlink, the preferred cliPath
-    // shifts — overwrite it.
+  test('prior cliPath shape (bundle-absolute) → false (foreign-customized; left alone)', () => {
+    // Previously rated as managed by a heuristic that recognized
+    // `{command:<bundle-absolute>, args:['mcp']}`. Per the greenfield contract,
+    // foreign-shape preservation now applies to this case too. Users on a
+    // stale cliPath entry hit the manual reset path.
     const existing: Record<string, unknown> = {
       command: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
       args: ['mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Prior cliPath shape (symlink /usr/local/bin/ok) → force=true', () => {
+  test('prior cliPath shape (symlink /usr/local/bin/ok) → false (foreign-customized)', () => {
     const existing: Record<string, unknown> = {
       command: '/usr/local/bin/ok',
       args: ['mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Entry with non-string command → force=false', () => {
+  test('Entry with non-string command → false', () => {
     const existing: Record<string, unknown> = { command: 42, args: ['mcp'] };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Entry with non-array args → force=false', () => {
+  test('Entry with non-array args → false', () => {
     const existing: Record<string, unknown> = { command: 'npx', args: 'mcp' };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Empty shape → force=false (no command match)', () => {
+  test('Empty shape → false (no command match)', () => {
     const existing: Record<string, unknown> = {};
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
   test('Accepts any structurally-compatible target (interface assignability)', () => {
@@ -463,9 +448,12 @@ describe('computeForce — isCompatible-based merge classification', () => {
       },
     };
     expect(
-      computeForce({ command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] }, minimalTarget),
+      isPublishedCanonical(
+        { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        minimalTarget,
+      ),
     ).toBe(true);
-    expect(computeForce({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
+    expect(isPublishedCanonical({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
   });
 });
 
@@ -900,9 +888,9 @@ describe('runMcpWiringOnFirstLaunch — show dispatch via renderer-ready handsha
       const claude = payload.detectedEditors.find((d) => d.id === 'claude');
       const cursor = payload.detectedEditors.find((d) => d.id === 'cursor');
       const vscode = payload.detectedEditors.find((d) => d.id === 'vscode');
-      // Claude's canonical npx shape → computeForce returns true → willReplace.
+      // Claude's canonical npx shape → isPublishedCanonical returns true → willReplace.
       expect(claude?.willReplace).toBe(true);
-      // Cursor's foreign shape → computeForce returns false → NOT replaced,
+      // Cursor's foreign shape → isPublishedCanonical returns false → NOT replaced;
       // the existing entry is preserved with a `mcp-wiring-skip-customized`
       // log at confirm time. Dialog correctly reflects that Add won't stomp.
       expect(cursor?.willReplace).toBe(false);
@@ -1117,13 +1105,12 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with existing canonical npx entry → editor is included in the write call (main PR #282 reconciliation: always-overwrite semantic)', async () => {
-    // Post-rebase (2026-04-23): the `force: Set<EditorId>` parameter is
-    // gone from writeUserMcpConfigs — main's refactored writeEditorMcpConfig
-    // always overwrites. The mcp-wiring.ts confirmHandler now FILTERS at the
-    // caller level: editors whose existing entry is OK-managed (npx shape,
-    // -y variant, prior cliPath) stay in the editors[] array; foreign ones
-    // are excluded. This test asserts the "managed shape → included" branch.
+  test('confirm with existing canonical npx entry → editor is included in the write call', async () => {
+    // `writeUserMcpConfigs` always overwrites every editor it receives; the
+    // confirmHandler in `mcp-wiring.ts` filters at the caller level. Editors
+    // whose existing entry exactly matches today's canonical published shape
+    // stay in `editors[]`; everything else (foreign or stale-managed) is
+    // excluded. This test asserts the "canonical → included" branch.
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({
@@ -1157,12 +1144,12 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
   });
 
   test('confirm with foreign customization → editor is excluded from the write call + emits mcp-wiring-skip-customized event', async () => {
-    // Post-rebase (2026-04-23): preservation of foreign customizations is
-    // now enforced at the caller-side filter in mcp-wiring.ts confirmHandler,
-    // not at writeEditorMcpConfig (which always overwrites). This test
-    // asserts foreign-shape entries are EXCLUDED from editors[] before
-    // writeUserMcpConfigs is called — so main's always-overwrite semantic
-    // can't stomp them even if they somehow flowed through.
+    // Preservation of non-canonical entries is enforced at the caller-side
+    // filter in `mcp-wiring.ts` confirmHandler — not at `writeEditorMcpConfig`,
+    // which always overwrites. This test asserts foreign-shape entries are
+    // EXCLUDED from `editors[]` before `writeUserMcpConfigs` is called, so
+    // the always-overwrite semantic can't stomp them even if they somehow
+    // flowed through.
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({

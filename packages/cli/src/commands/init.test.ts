@@ -1623,13 +1623,12 @@ describe('writeUserMcpConfigs', () => {
     expect(existsSync(join(fakeHome, '.mcp.json'))).toBe(false);
   });
 
-  it('unconditionally overwrites a differing existing entry (M6b always-write semantic)', async () => {
-    // Post-main-PR-#282 semantic (reconciled 2026-04-23): writeEditorMcpConfig
-    // dropped its `force` parameter and now always overwrites. `writeUserMcpConfigs`
-    // inherits that — the caller (mcp-wiring.ts confirmHandler) filters foreign
-    // customizations via `computeForce` + `readExistingMcpEntry` BEFORE this call,
-    // so every editor that reaches this function is one the caller decided to
-    // overwrite.
+  it('unconditionally overwrites a differing existing entry (always-write semantic)', async () => {
+    // `writeEditorMcpConfig` always overwrites; `writeUserMcpConfigs` inherits
+    // that. The caller (mcp-wiring.ts confirmHandler) filters foreign
+    // customizations via `isPublishedCanonical` + `readExistingMcpEntry`
+    // BEFORE this call, so every editor that reaches this function is one
+    // the caller decided to overwrite.
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
     writeFileSync(
@@ -1657,11 +1656,11 @@ describe('writeUserMcpConfigs', () => {
   });
 
   it('caller controls which editors get overwritten by omitting them from the editors array', async () => {
-    // Regression gate for the reconciliation with main PR #282: the
-    // mcp-wiring.ts confirmHandler classifies existing entries via
-    // `readExistingMcpEntry` + `computeForce` and only passes MANAGED-SHAPE
-    // editors to writeUserMcpConfigs. This test proves the contract: if a
-    // foreign editor is not in `editors[]`, its config is left untouched.
+    // The mcp-wiring.ts confirmHandler classifies existing entries via
+    // `readExistingMcpEntry` + `isPublishedCanonical` and only passes
+    // canonical-shape editors to writeUserMcpConfigs. This test proves the
+    // contract: if a foreign editor is not in `editors[]`, its config is
+    // left untouched.
     const claudePath = resolveClaudeCodeConfigPath({ home: fakeHome });
     const cursorPath = resolveCursorConfigPath({ home: fakeHome });
     mkdirSync(dirname(claudePath), { recursive: true });
