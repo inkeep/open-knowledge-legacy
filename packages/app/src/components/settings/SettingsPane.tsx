@@ -35,7 +35,6 @@ import {
   isKnownConfigError,
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
-import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
@@ -253,29 +252,10 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   const { collabUrl } = useDocumentContext();
   const connection = useConfigDocConnection(collabUrl, scope);
 
-  // Bridge `appearance.theme` → next-themes (FR-40 / D55 dual-track). The
-  // chrome `<ThemeToggle>` and FOUC script in index.html still own the
-  // localStorage 'ok-theme-v1' key; calling `setTheme()` from next-themes
-  // updates both the in-memory theme AND that localStorage cache, so the
-  // chrome FOUC always has the latest value on next reload.
-  //
-  // Fires for both scopes — workspace overrides at the merged-config level
-  // take precedence over user-global, but at the binding level we only see
-  // the current scope's YAML. Bridging on any non-empty value matches
-  // user expectation: clicking on a tab that has the value set updates
-  // the page.
-  //
-  // Bridge fires only while the Settings pane is mounted — that's the v0
-  // scope. A top-level ConfigProvider that holds the user-binding for the
-  // app session (and picks up CC1-broadcast or file-watcher changes from
-  // outside the pane) is a follow-up; v0 acceptable per D55.
-  const { setTheme } = useTheme();
-  const themeValue = connection?.config.appearance?.theme;
-  useEffect(() => {
-    if (themeValue === 'light' || themeValue === 'dark' || themeValue === 'system') {
-      setTheme(themeValue);
-    }
-  }, [themeValue, setTheme]);
+  // The next-themes bridge for `appearance.theme` lives in <ConfigProvider>
+  // (mounted at App root) — it's app-wide, not pane-scoped, so chrome
+  // controls and external file edits propagate to next-themes whether
+  // Settings is open or not.
 
   // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
   // and triggers a brief red flash on the affected field.

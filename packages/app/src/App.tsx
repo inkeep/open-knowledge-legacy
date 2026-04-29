@@ -16,6 +16,7 @@ import {
   useDocumentContext,
   useDocumentTransition,
 } from '@/editor/DocumentContext';
+import { ConfigProvider } from '@/lib/config-provider';
 import { docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
@@ -187,26 +188,28 @@ export function App() {
   return (
     <ProfilerBoundary name="app">
       <DocumentProvider>
-        <ConnectingBanner />
-        <PageListProvider>
-          <SystemDocSubscriber />
-          <NavigationHandler />
-          <NewItemShortcutHandler />
-          <SettingsShortcutHandler />
-          <InstallInClaudeDesktopTrigger />
-          {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
-              Self-gates on the shared `mcpConsentStore` snapshot; renders
-              nothing until main fires `ok:mcp-wiring:show`. Mounted
-              identically in NavigatorApp. */}
-          <McpConsentDialog />
-          {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
-          <SidebarProvider className="h-screen overflow-hidden">
-            <FileSidebar />
-            <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-              <EditorPane />
-            </SidebarInset>
-          </SidebarProvider>
-        </PageListProvider>
+        <ConfigProvider>
+          <ConnectingBanner />
+          <PageListProvider>
+            <SystemDocSubscriber />
+            <NavigationHandler />
+            <NewItemShortcutHandler />
+            <SettingsShortcutHandler />
+            <InstallInClaudeDesktopTrigger />
+            {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
+                Self-gates on the shared `mcpConsentStore` snapshot; renders
+                nothing until main fires `ok:mcp-wiring:show`. Mounted
+                identically in NavigatorApp. */}
+            <McpConsentDialog />
+            {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+            <SidebarProvider className="h-screen overflow-hidden">
+              <FileSidebar />
+              <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+                <EditorPane />
+              </SidebarInset>
+            </SidebarProvider>
+          </PageListProvider>
+        </ConfigProvider>
       </DocumentProvider>
     </ProfilerBoundary>
   );
