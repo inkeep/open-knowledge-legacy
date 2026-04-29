@@ -1,8 +1,16 @@
 ---
 title: Configuration
-description: Config schema, YAML hierarchy, environment variables, and CLI flag overrides.
+description: Config schema, YAML hierarchy, environment variables, CLI flag overrides, and the in-app Settings pane.
 ---
 Open Knowledge uses hierarchical YAML configuration stored in `.open-knowledge/config.yml` files. Both config files are optional -- sensible defaults cover everything.
+
+There are three ways to edit config:
+
+- **Settings pane** in the editor (Cmd-, or App menu → Settings…). Schema-driven form, auto-save per field.
+- **Your IDE**, with `$schema`-driven autocomplete + validation (scaffolded by `ok init`).
+- **AI agents** via the `set_config` / `get_config` / `set_folder_rule` MCP tools.
+
+All three share a single Zod schema and a single validation core, so a write that lands one way reflects everywhere — Settings panes refresh live when an external editor or MCP tool changes the file.
 
 ## Config hierarchy
 
@@ -18,28 +26,25 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 1. **User config** -- `~/.open-knowledge/config.yml`
 2. **Workspace config** -- `./.open-knowledge/config.yml` (relative to the working directory)
 
+Every schema section uses Zod's `looseObject` mode: unknown keys are preserved on disk through round-trip writes rather than rejected at load time. This makes upgrades forgiving -- an existing file with a removed field (e.g., a leftover `sync.pushIntervalSeconds: 30`) loads cleanly, the engine ignores it, and `ok config migrate` can drop it later. Schema-shaped fields still validate strictly; loose-mode only relaxes the "no extra keys" check.
+
 ## Schema reference
 
-| Field                       | Type       | Default                   | Description                                                                                                                                                                                          |
-| --------------------------- | ---------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `content.dir`               | `string`   | `"."`                     | Content directory relative to project root                                                                                                                                                           |
-| `content.include`           | `string[]` | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
-| `content.exclude`           | `string[]` | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore). See built-in skips below.                                                                                 |
-| `server.port`               | `number`   | `0`                       | Collab server port. `0` asks the kernel for a free port; the resolved value is written to `server.lock` for MCP discovery. Set an explicit value (e.g. `3000`) to bind a well-known port.            |
-| `server.host`               | `string`   | `"localhost"`             | Server bind address                                                                                                                                                                                  |
-| `server.openOnAgentEdit`    | `boolean`  | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
-| `persistence.debounceMs`    | `number`   | `2000`                    | Quiet period before CRDT changes flush to disk (ms)                                                                                                                                                  |
-| `persistence.maxDebounceMs` | `number`   | `10000`                   | Maximum wait before forced flush to disk (ms)                                                                                                                                                        |
-| `mcp.autoStart`             | `boolean`  | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
-| `preview.baseUrl`           | `string?`  | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting.                                     |
-| `sync.enabled`              | `boolean?` | auto-detect               | Enable/disable GitHub sync. Auto-detected from git remote presence when omitted.                                                                                                                     |
-| `sync.pullIntervalSeconds`  | `number`   | `30`                      | Seconds between fetch/pull cycles. +/-15% jitter applied per cycle.                                                                                                                                   |
-| `sync.pushIntervalSeconds`  | `number`   | `60`                      | Seconds between push cycles. +/-15% jitter applied per cycle.                                                                                                                                         |
-| `sync.autoCommit`           | `boolean`  | `true`                    | Automatically commit content changes at L2 flush                                                                                                                                                     |
-| `sync.autoPush`             | `boolean`  | `true`                    | Automatically push after each commit                                                                                                                                                                 |
-| `sync.autoPull`             | `boolean`  | `true`                    | Automatically pull remote changes each cycle                                                                                                                                                         |
-| `sync.commitMessage`        | `string`   | `"auto"`                  | Commit message for auto-commits. `"auto"` uses `WIP auto-save <timestamp>`.                                                                                                                           |
-| `github.oauthAppClientId`   | `string`   | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
+| Field                                 | Type                         | Default                   | Description                                                                                                                                                                                          |
+| ------------------------------------- | ---------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content.dir`                         | `string`                     | `"."`                     | Content directory relative to project root                                                                                                                                                           |
+| `content.include`                     | `string[]`                   | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
+| `content.exclude`                     | `string[]`                   | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore). See built-in skips below.                                                                                 |
+| `server.host`                         | `string`                     | `"localhost"`             | Server bind address                                                                                                                                                                                  |
+| `server.openOnAgentEdit`              | `boolean`                    | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
+| `mcp.autoStart`                       | `boolean`                    | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
+| `mcp.tools.search.maxResults`         | `number`                     | `50`                      | Max rows returned by the MCP `search` tool.                                                                                                                                                          |
+| `mcp.tools.read_document.historyDepth`| `number`                     | `5`                       | Number of shadow-repo history entries surfaced by the MCP `read_document` tool.                                                                                                                      |
+| `preview.baseUrl`                     | `string?`                    | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Workspace-only — illegal at user scope. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting. |
+| `folders[]`                           | `FolderRule[]`               | `[]`                      | Per-folder default frontmatter. Each entry is `{match: glob, frontmatter: {title?, description?, tags?}}`. Edit per-rule via the `set_folder_rule` MCP tool.                                          |
+| `appearance.theme`                    | `"light" \| "dark" \| "system"`? | (unset)              | Editor theme. User-scope by default. When unset, the chrome FOUC script falls back to `localStorage` + system preference; the first explicit Settings-pane write canonicalizes the value into config.yml. |
+| `appearance.editorModeDefault`        | `"wysiwyg" \| "source"`?     | (unset)                   | Initial editor mode for newly opened documents. Same dual-track behavior as `appearance.theme`.                                                                                                       |
+| `github.oauthAppClientId`             | `string`                     | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
 
 ## Built-in directory skips
 
@@ -58,11 +63,15 @@ These skips apply when the directory name appears as the first path segment. For
 
 <Tabs items={["User config", "Workspace config"]}>
 <Tab value="User config">
-Set a different default port for all projects:
+Apply a default editor theme + MCP search cap to all projects on this machine:
 
 ```yaml title="~/.open-knowledge/config.yml"
-server:
-  port: 4000
+appearance:
+  theme: dark
+mcp:
+  tools:
+    search:
+      maxResults: 100
 ```
 </Tab>
 <Tab value="Workspace config">
@@ -80,24 +89,15 @@ content:
 
 ### Sync configuration
 
-Projects with a git remote auto-enable sync. Override the defaults to tune sync behavior or disable it entirely:
+Projects with a git remote auto-enable sync. The sync engine ships opinionated defaults (pull every 30s, push every 60s, auto-commit + auto-push + auto-pull on); these are no longer YAML-tunable -- the prior `sync.*` schema fields were dropped to keep the engine's lifecycle in one place. Loose-mode preserves any leftover `sync.*` keys on disk, but the engine ignores them; run [`ok config migrate`](/guides/cli-reference#config-migrate) to clean them up.
 
-```yaml title=".open-knowledge/config.yml"
-sync:
-  pullIntervalSeconds: 60    # slower fetch cycle
-  pushIntervalSeconds: 120   # less frequent pushes
-  autoCommit: true
-  autoPush: true
-  autoPull: true
-```
-
-Set `sync.enabled: false` to disable sync for a project even when a remote exists. See [GitHub Sync](/guides/github-sync) for the full sync guide.
+See [GitHub Sync](/guides/github-sync) for the engine's full behavior.
 
 ## Environment variables
 
 | Variable                          | Overrides                                                                                                                                                               |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                            | `server.port` (for `ok start`); also consumed by `ok ui` as its bind port                                                                                               |
+| `PORT`                            | Bind port for `ok start` (and `ok ui`). Per-machine only -- there is no schema field; use this env var or the `--port` CLI flag.                                       |
 | `HOST`                            | `server.host`                                                                                                                                                           |
 | `OK_MCP_AUTOSTART`                | Set to `0` to disable `ok mcp`'s auto-spawn of `ok start`. Overrides `mcp.autoStart` in config.                                                                         |
 | `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Overrides the `previewUrl` base emitted by every MCP tool. Wins over `ui.lock` discovery and `preview.baseUrl` config. Use for tunnels, CI, or cloud-deployed previews. |
@@ -112,6 +112,49 @@ Precedence: **CLI flags > environment variables > workspace config > user config
 ```bash
 npx @inkeep/open-knowledge start --port 8080
 ```
+
+## Settings pane
+
+Open the Settings pane from anywhere in the editor:
+
+- Cmd-, (or Ctrl-, on Linux/Windows builds)
+- App menu → **Settings…** (Electron desktop)
+- HelpPopover → **Settings…**
+- Command Palette → "Settings"
+
+The pane has two sub-tabs:
+
+- **This project** — workspace-scope fields, persisted to `./.open-knowledge/config.yml`.
+- **All projects** — user-scope fields, persisted to `~/.open-knowledge/config.yml`.
+
+Either-scope fields appear in both tabs with a "modified at this scope" indicator showing where the current value lives. Edits auto-save per field — text inputs commit on blur or Enter; toggles and selects commit on change. Hover any modified field for a "Reset to default" affordance.
+
+Editing is real-time: the pane is bound to two Hocuspocus Y.Text-only synthetic docs (`__config__/workspace` and `__user__/config.yml`) over the same WebSocket as the editor. External edits — from your IDE, an MCP tool, or another `ok start` instance — propagate via a chokidar file watcher into Y.Text and the open Settings pane refreshes within ~500ms. No reload needed.
+
+Validation runs in three places (defense-in-depth):
+
+1. **Client-side walker** rejects invalid intermediate values before they leave the browser.
+2. **Headless writers** (MCP / CLI / seed) run the same Zod parse before any disk write.
+3. **Persistence hook** parses + validates Y.Text on every commit; if a malformed mutation slips past 1+2 (a buggy client, a hand-edit during the transaction window), the server reverts Y.Text to last-known-good and broadcasts a `config-validation-rejected` notification — the pane shows a toast and flashes the offending field.
+
+Settings is unavailable in the Electron Navigator window — it has no project context to scope config to.
+
+## IDE intellisense
+
+`ok init` scaffolds a magic comment on line 1 of generated `.open-knowledge/config.yml`:
+
+```yaml title=".open-knowledge/config.yml"
+# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@0.2/dist/config-schema.json
+# Open Knowledge — workspace configuration
+content:
+  include: ["**/*.md", "**/*.mdx"]
+```
+
+Any LSP-aware editor (VS Code, JetBrains, Helix, Zed, vim with `yaml-language-server`) picks this up and provides autocomplete, hover docs, and inline validation against the published JSON Schema. The URL is pinned to the installed CLI's MAJOR.MINOR version so your autocomplete stays locked to the schema you wrote against; re-run `ok init` after upgrading to bump the pin.
+
+The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. SchemaStore registration ships a `fileMatch` of `**/.open-knowledge/config.{yml,yaml}` so editors that consult SchemaStore (most JetBrains IDEs by default) auto-detect without needing the magic comment.
+
+For CI / pre-commit hooks, [`ok config validate`](/guides/cli-reference#config-validate) loads the merged config through the same Zod gate and exits non-zero with a `file:line:col` snippet on failure.
 
 ## Verifying config changes
 
