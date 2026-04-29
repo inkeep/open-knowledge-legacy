@@ -26,7 +26,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -75,7 +76,7 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
           (e.currentTarget as HTMLInputElement).blur();
         }
       }}
-      className="h-7 border-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 hover:bg-muted/50 focus-visible:bg-background"
+      className="h-7 border-transparent dark:bg-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
     />
   );
 }
@@ -113,7 +114,7 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
           (e.currentTarget as HTMLInputElement).blur();
         }
       }}
-      className="h-7 border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/50 focus-visible:bg-background"
+      className="h-7 border-transparent bg-transparent dark:bg-transparent px-2 text-sm shadow-none focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
     />
   );
 }
@@ -204,7 +205,7 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
             setOpen(true);
           }
         }}
-        className="h-7 border-transparent bg-transparent pr-7 pl-2 text-sm shadow-none placeholder:text-muted-foreground/60 hover:bg-muted/50 focus-visible:bg-background"
+        className="h-7 border-transparent bg-transparent dark:bg-transparent pr-7 pl-2 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
       />
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -273,7 +274,7 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     <div
       data-testid="list-widget"
       data-key={keyName}
-      className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2 hover:bg-muted/50 focus-within:bg-background"
+      className="flex h-7 min-h-7 flex-wrap items-center gap-1 rounded-md px-2 focus-within:bg-background"
     >
       {value.map((chip, i) => (
         <span
@@ -333,7 +334,7 @@ const TYPE_ICON: Record<FrontmatterType, typeof Type> = {
 const TYPE_LABEL: Record<FrontmatterType, string> = {
   text: 'Text',
   number: 'Number',
-  boolean: 'Boolean',
+  boolean: 'Checkbox',
   date: 'Date',
   list: 'List',
 };
@@ -358,20 +359,20 @@ export function TypeIconButton({ keyName, type, onChangeType }: TypeIconButtonPr
         <Icon className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" data-testid="type-picker-menu">
-        {(Object.keys(TYPE_ICON) as FrontmatterType[]).map((t) => {
-          const ItemIcon = TYPE_ICON[t];
-          return (
-            <DropdownMenuItem
-              key={t}
-              data-testid="type-picker-item"
-              data-type={t}
-              onSelect={() => onChangeType(t)}
-            >
-              <ItemIcon className="size-3.5" />
-              <span>{TYPE_LABEL[t]}</span>
-            </DropdownMenuItem>
-          );
-        })}
+        <DropdownMenuRadioGroup
+          value={type}
+          onValueChange={(next) => onChangeType(next as FrontmatterType)}
+        >
+          {(Object.keys(TYPE_ICON) as FrontmatterType[]).map((t) => {
+            const ItemIcon = TYPE_ICON[t];
+            return (
+              <DropdownMenuRadioItem key={t} value={t} data-testid="type-picker-item" data-type={t}>
+                <ItemIcon className="size-3.5 text-muted-foreground" />
+                <span>{TYPE_LABEL[t]}</span>
+              </DropdownMenuRadioItem>
+            );
+          })}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );

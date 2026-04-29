@@ -6,7 +6,7 @@ import {
   getFrontmatterMap,
   inferType,
 } from '@inkeep/open-knowledge-core';
-import { ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   BooleanWidget,
@@ -305,15 +305,17 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
               onCancel={cancelAdd}
             />
           ) : (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               data-testid="add-property-trigger"
               onClick={beginAdd}
-              className="mt-1 flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              className="mt-1 flex items-center gap-1.5 rounded px-2 py-1 font-medium text-sm hover:bg-muted/50 hover:text-foreground"
             >
               <Plus className="size-3.5" />
               <span>Add property</span>
-            </button>
+            </Button>
           )}
         </CollapsibleContent>
       </Collapsible>
@@ -399,11 +401,10 @@ function PropertyRow({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
               data-testid="property-name-button"
               data-key={keyName}
               onClick={onBeginRename}
-              className="block h-auto w-full truncate px-1 py-0.5 text-left text-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+              className="block h-7 w-full truncate px-2 py-0.5 text-left text-sm rounded-sm font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
             >
               {keyName}
             </Button>
@@ -425,8 +426,8 @@ function PropertyRow({
           aria-label={`Remove ${keyName}`}
           onClick={onRemove}
           variant="ghost"
-          size="sm"
-          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground focus-visible:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-muted-foreground"
+          size="icon-sm"
+          className="flex shrink-0 items-center justify-center rounded text-muted-foreground/0 hover:bg-muted hover:text-foreground focus-visible:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-muted-foreground"
         >
           <Trash2 className="size-3.5" />
         </Button>
@@ -481,7 +482,7 @@ function RenameInput({
             onCancel();
           }
         }}
-        className="h-6 px-1 py-0"
+        className="h-7 border-transparent bg-transparent dark:bg-transparent px-2 text-sm shadow-none focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm dark:focus-visible:bg-muted"
       />
       {error ? (
         <div data-testid="property-name-rename-error" className="text-[10px] text-destructive">
@@ -533,7 +534,7 @@ function AddPropertyRow({
               onCancel();
             }
           }}
-          className="h-6 w-32 px-1 py-0"
+          className="h-7 w-32 border-transparent bg-transparent px-2 text-sm shadow-none placeholder:text-muted-foreground/60 focus-visible:border-transparent focus-visible:bg-muted focus-visible:ring-0 rounded-sm"
         />
         <div className="flex-1">
           <Widget
@@ -543,23 +544,26 @@ function AddPropertyRow({
             onCommit={onChangeValue}
           />
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-testid="add-property-cancel"
-          onClick={onCancel}
-          className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-        >
-          Cancel
-        </Button>
+
         <Button
           type="button"
           data-testid="add-property-commit"
           onClick={onCommit}
-          className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground hover:bg-primary/90"
+          size="sm"
+          className="rounded bg-primary text-xs text-primary-foreground hover:bg-primary/90"
         >
           Add
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          data-testid="add-property-cancel"
+          onClick={onCancel}
+          aria-label="Cancel"
+          className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" />
         </Button>
       </div>
       {draft.error ? (
