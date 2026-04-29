@@ -26,7 +26,13 @@ interface ActorMetadata {
   clientName?: string;
   /** MCP `clientInfo.version`. */
   clientVersion?: string;
-  /** AGENT_LABEL env (user-set label, e.g., 'refactor-1'). */
+  /**
+   * Optional free-form label propagated through the request body when an
+   * upstream caller (currently no live caller; kept on the actor tuple for
+   * future API-boundary use) wants to disambiguate a writer beyond
+   * `clientInfo.name`. Per-session identity now derives from `clientInfo.name`
+   * + `connectionId` (US-008 / D-10), so this field stays nullable.
+   */
   label?: string;
 }
 

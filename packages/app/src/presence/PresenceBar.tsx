@@ -153,8 +153,8 @@ function HumanAvatar({
 
 /**
  * Friendly display name for an agent. Prefers the explicit displayName
- * (may be the user's AGENT_LABEL) falling back to the icon-derived name
- * for well-known brands, finally to displayName.
+ * (typically the MCP `clientInfo.name`) falling back to the icon-derived
+ * name for well-known brands, finally to displayName.
  */
 function agentTooltipName(presence: AgentParticipant['presence']): string {
   const iconName = AGENT_DISPLAY_NAME[presence.icon];

@@ -171,7 +171,6 @@ function summarizeIdentityForLog(identity: AgentIdentity): Record<string, unknow
     connectionId: identity.connectionId.slice(0, 8),
     displayName: identity.displayName,
     ...(identity.clientInfo?.name ? { clientName: identity.clientInfo.name } : {}),
-    ...(identity.label ? { label: identity.label } : {}),
   };
 }
 
