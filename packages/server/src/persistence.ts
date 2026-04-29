@@ -38,6 +38,7 @@ import {
   swapContributors,
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
+import { applyDiskContentToDoc } from './external-change.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
@@ -47,6 +48,7 @@ import {
   incrementGitWriterCommitFailure,
   incrementPersistenceDiskWrite,
 } from './metrics.ts';
+import { classifyDuplication } from './persistence-tripwire.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import {
   buildWipTree,
@@ -852,16 +854,42 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             // docName already when it fired recordContributor for this write.
           }
 
-          // Debug: detect duplication before writing
-          if (currentBase && markdown.length > currentBase.length * 1.5) {
-            log.warn(
-              { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
-              `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
-            );
-            log.warn(
-              { documentName, children: document.getXmlFragment('default').length },
-              `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
-            );
+          // Structural-duplication tripwire. Refuses to overwrite the disk
+          // file when the candidate body is an integer concatenation (k≥2) of
+          // the bridge-normalized base body — the failure shape the stale
+          // browser-IDB merge causes. Resets the live Y.Doc to the disk
+          // canonical state so the in-memory duplicate doesn't keep
+          // re-triggering this hook on its 2s debounce. First writes (no
+          // currentBase) bypass — there's nothing to duplicate yet.
+          if (currentBase !== undefined) {
+            const classification = classifyDuplication(markdown, currentBase);
+            if (classification.kind === 'block') {
+              const fragmentChildren = document.getXmlFragment('default').length;
+              console.warn(
+                JSON.stringify({
+                  event: 'ok-persistence-duplication-blocked',
+                  'doc.name': documentName,
+                  candidateBytes: markdown.length,
+                  baseBytes: currentBase.length,
+                  fragmentChildren,
+                  copies: classification.copies,
+                  reason: classification.reason,
+                }),
+              );
+              try {
+                const requestedDiskPath = safeContentPath(documentName, contentDir);
+                const diskContent = existsSync(requestedDiskPath)
+                  ? readFileSync(requestedDiskPath, 'utf-8')
+                  : currentBase;
+                applyDiskContentToDoc(document, diskContent);
+              } catch (err) {
+                log.warn(
+                  { err, documentName },
+                  `[persistence] Tripwire reset failed for ${documentName}`,
+                );
+              }
+              return;
+            }
           }
 
           const requestedPath = safeContentPath(documentName, contentDir);
