@@ -232,9 +232,7 @@ export async function fetchWorkspaceSearchEntries(
     throw new Error(payload.error ?? 'Search failed');
   }
 
-  return (payload.results ?? [])
-    .map(toWorkspaceSearchEntry)
-    .filter((entry) => !!entry);
+  return (payload.results ?? []).map(toWorkspaceSearchEntry).filter((entry) => !!entry);
 }
 
 export function matchesCommandQuery(

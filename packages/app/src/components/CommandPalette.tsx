@@ -30,6 +30,7 @@ import {
   buildWorkspaceEntries,
   fetchWorkspaceSearchEntries,
   matchesCommandQuery,
+  searchWorkspaceEntries,
   splitTextByQueryMatches,
   type WorkspaceEntry,
   type WorkspaceSearchEntry,
@@ -57,6 +58,8 @@ import { useWorkspace } from '@/lib/use-workspace';
 import { isMacOs } from '@/lib/utils.ts';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
+
+const COMMAND_PALETTE_SEARCH_TIMEOUT_MS = 3000;
 
 export const runWithToast = (
   fn: () => Promise<void>,
@@ -169,6 +172,10 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const currentPath = bridge?.config.projectPath ?? null;
   const switchableProjects = bridge ? projectRecents.filter((row) => row.path !== currentPath) : [];
   const initialCreateDir = resolveCreateInitialDir(activeTarget, activeDocName);
+  const fallbackSearchResults =
+    trimmedDeferredQuery === ''
+      ? []
+      : searchWorkspaceEntries(workspaceEntries, trimmedDeferredQuery, 8);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -210,19 +217,31 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
     const controller = new AbortController();
     setSearchStatus('loading');
     setSearchResults([]);
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      setSearchResults([]);
+      setSearchStatus('error');
+    }, COMMAND_PALETTE_SEARCH_TIMEOUT_MS);
 
     void fetchWorkspaceSearchEntries(trimmedDeferredQuery, { signal: controller.signal })
       .then((results) => {
+        window.clearTimeout(timeout);
         setSearchResults(results);
         setSearchStatus('success');
       })
       .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return;
+        window.clearTimeout(timeout);
+        if (error instanceof Error && error.name === 'AbortError' && !timedOut) return;
         setSearchResults([]);
         setSearchStatus('error');
       });
 
-    return () => controller.abort();
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, [open, trimmedDeferredQuery]);
 
   const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
@@ -250,8 +269,11 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   }
 
   const showRecentNavigation = trimmedDeferredQuery === '' && visibleRecents.length > 0;
-  const showNavigation = searchResults.length > 0;
-  const showSearchLoading = trimmedDeferredQuery !== '' && searchStatus === 'loading';
+  const visibleSearchResults =
+    searchResults.length > 0 || searchStatus === 'success' ? searchResults : fallbackSearchResults;
+  const showNavigation = visibleSearchResults.length > 0;
+  const showSearchLoading =
+    trimmedDeferredQuery !== '' && searchStatus === 'loading' && !showNavigation;
   const showCreateFile = matchesCommandQuery('New file', deferredQuery, ['create file']);
   const showCreateFolder = matchesCommandQuery('New folder', deferredQuery, ['create folder']);
   const showGraphCommand = matchesCommandQuery('Open graph', deferredQuery, [
@@ -333,7 +355,7 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
 
           {showNavigation ? (
             <CommandGroup heading="Search">
-              {searchResults.map((entry) => (
+              {visibleSearchResults.map((entry) => (
                 <NavigationItem
                   key={makeOmnibarRecentKey(entry.kind, entry.path)}
                   entry={entry}

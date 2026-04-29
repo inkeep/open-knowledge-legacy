@@ -714,6 +714,11 @@ Homepage: https://github.com/open-telemetry/opentelemetry-js/tree/main/semantic-
 
 _(LICENSE template present but no copyright line filled in; refer to the package source for canonical attribution.)_
 
+### `@orama/orama@3.1.18`
+Homepage: https://github.com/oramasearch/orama
+
+Copyright 2023 OramaSearch Inc
+
 ### `@pierre/trees@1.0.0-beta.3`
 
 Copyright 2025 Pierre Computer Company

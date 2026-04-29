@@ -32,6 +32,7 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  createWorkspaceSearchCorpus,
   createWorkspaceSearchDocument,
   getHeadingSlug,
   getParseHealth,
@@ -39,8 +40,9 @@ import {
   type Principal,
   prependFrontmatter,
   SYSTEM_DOC_NAME,
-  searchWorkspaceDocuments,
+  searchWorkspaceCorpus,
   stripFrontmatter,
+  type WorkspaceSearchCorpus,
   type WorkspaceSearchDocument,
   type WorkspaceSearchIntent,
   type WorkspaceSearchScope,
@@ -644,6 +646,13 @@ export interface ApiExtensionOptions {
    */
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
 }
+
+interface WorkspaceSearchCacheEntry {
+  fingerprint: string;
+  corpus: WorkspaceSearchCorpus;
+}
+
+const workspaceSearchCaches = new Map<string, WorkspaceSearchCacheEntry>();
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -4288,6 +4297,45 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return [...pages, ...deriveFolderSearchDocuments(pages)];
   }
 
+  function workspaceSearchFingerprint(): string {
+    return [...getFileIndex()]
+      .filter(([docName]) => !isSystemDoc(docName))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(
+        ([docName, entry]) =>
+          `${docName}\u0000${entry.modified}\u0000${entry.size}\u0000${entry.canonicalPath}\u0000${entry.inode}\u0000${entry.aliases.join(',')}`,
+      )
+      .join('\u0001');
+  }
+
+  function getWorkspaceSearchCorpus(): WorkspaceSearchCorpus {
+    const cacheKey = `${contentDir}\u0000${projectDir ?? ''}`;
+    const fingerprint = workspaceSearchFingerprint();
+    const workspaceSearchCache = workspaceSearchCaches.get(cacheKey);
+    if (workspaceSearchCache?.fingerprint === fingerprint) {
+      return workspaceSearchCache.corpus;
+    }
+
+    const corpus = createWorkspaceSearchCorpus(buildWorkspaceSearchDocumentsFromIndex());
+    workspaceSearchCaches.set(cacheKey, { fingerprint, corpus });
+    return corpus;
+  }
+
+  function prewarmWorkspaceSearchCache(): void {
+    if (process.env.NODE_ENV === 'test') return;
+    for (const delayMs of [0, 1000, 3000]) {
+      setTimeout(() => {
+        try {
+          getWorkspaceSearchCorpus();
+        } catch (err) {
+          console.warn('[search] Failed to prewarm workspace search cache:', err);
+        }
+      }, delayMs);
+    }
+  }
+
+  prewarmWorkspaceSearchCache();
+
   async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET' && req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4300,8 +4348,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Query is too long' });
         return;
       }
-      const documents = buildWorkspaceSearchDocumentsFromIndex();
-      const results = searchWorkspaceDocuments(documents, request.query, {
+      const corpus = getWorkspaceSearchCorpus();
+      const results = searchWorkspaceCorpus(corpus, request.query, {
         intent: request.intent,
         scopes: request.scopes,
         limit: request.limit,
