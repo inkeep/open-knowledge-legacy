@@ -24,6 +24,7 @@ import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { cloneCommand } from './commands/clone.ts';
+import { configCommand } from './commands/config.ts';
 import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -112,6 +113,11 @@ program.addCommand(ui);
 program.addCommand(stopCommand(() => resolvedConfig));
 program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
+
+// config command group — inspect + migrate `.open-knowledge/config.yml`
+// (config-edit-paths spec FR-16, FR-26 / D37). Stateless — no resolved config
+// dependency; both subcommands re-load fresh from disk via core helpers.
+program.addCommand(configCommand());
 
 // auth command group — login, status, repos, signout, pat, git-credential
 program.addCommand(authCommand(() => resolvedConfig));
