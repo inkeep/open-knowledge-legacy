@@ -23,7 +23,7 @@ export function packageVersionMajorMinor(version: string): string {
 
 export function buildConfigYmlContent(version: string): string {
   const majorMinor = packageVersionMajorMinor(version);
-  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@${majorMinor}/dist/config-schema.json
+  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@${majorMinor}/dist/config.workspace.schema.json
 # Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below

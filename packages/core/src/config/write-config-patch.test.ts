@@ -47,9 +47,11 @@ describe('writeConfigPatch — workspace scope', () => {
     expect(result.appliedPaths).toContain('content.dir');
     expect(existsSync(workspaceConfigPath())).toBe(true);
     const onDisk = readFileSync(workspaceConfigPath(), 'utf-8');
-    // Lazy first-write writes the magic-comment header
+    // Lazy first-write writes the magic-comment header pointing at the
+    // workspace per-scope schema (autocomplete only suggests workspace
+    // fields here).
     expect(onDisk).toMatch(
-      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@\d+\.\d+\/dist\/config-schema\.json/,
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@\d+\.\d+\/dist\/config\.workspace\.schema\.json/,
     );
     expect(onDisk).toContain('content:');
     expect(onDisk).toContain('dir: docs');

@@ -40,8 +40,17 @@ const CONFIG_FILENAME = 'config.yml';
  *
  * `ok init` scaffolds its own header for workspace files; this helper covers
  * the user-global lazy-write path.
+ *
+ * `scope` selects between the per-scope schemas built by
+ * `packages/cli/scripts/build-config-schema.mjs`. The user schema only
+ * lists user-scope fields; the workspace schema only lists workspace-scope
+ * fields. This way the IDE's autocomplete + validation in either file
+ * surfaces only the fields valid AT that scope, instead of showing every
+ * field everywhere and silently letting users put `appearance.theme` in
+ * workspace YAML.
  */
-function packageVersionPinnedUrl(): string {
+function packageVersionPinnedUrl(scope: 'workspace' | 'user'): string {
+  const filename = scope === 'user' ? 'config.user.schema.json' : 'config.workspace.schema.json';
   try {
     // From `<core>/src/config/write-config-patch.ts` (dev) or
     // `<core>/dist/index.mjs` (built), `<core>/package.json` is reliably
@@ -55,7 +64,7 @@ function packageVersionPinnedUrl(): string {
         const version = parsed.version;
         if (typeof version === 'string') {
           const [major = '0', minor = '0'] = version.split('.');
-          return `https://unpkg.com/@inkeep/open-knowledge@${major}.${minor}/dist/config-schema.json`;
+          return `https://unpkg.com/@inkeep/open-knowledge@${major}.${minor}/dist/${filename}`;
         }
       } catch {
         // try next candidate
@@ -64,10 +73,12 @@ function packageVersionPinnedUrl(): string {
   } catch {
     // fall through
   }
-  return 'https://unpkg.com/@inkeep/open-knowledge/dist/config-schema.json';
+  return `https://unpkg.com/@inkeep/open-knowledge/dist/${filename}`;
 }
 
-const DEFAULT_FIRST_WRITE_HEADER = `# yaml-language-server: $schema=${packageVersionPinnedUrl()}\n`;
+function defaultFirstWriteHeader(scope: 'workspace' | 'user'): string {
+  return `# yaml-language-server: $schema=${packageVersionPinnedUrl(scope)}\n`;
+}
 
 export interface WriteConfigPatchOptions {
   /** Project root (workspace scope) or any path (user scope ignores this). */
@@ -256,7 +267,7 @@ async function writeConfigPatchInner(
   let serialized = doc.toString();
   if (!fileExists) {
     const header =
-      firstWriteHeader === undefined ? DEFAULT_FIRST_WRITE_HEADER : (firstWriteHeader ?? '');
+      firstWriteHeader === undefined ? defaultFirstWriteHeader(scope) : (firstWriteHeader ?? '');
     if (header.length > 0) {
       // Ensure exactly one newline between header and body.
       const headerNormalized = header.endsWith('\n') ? header : `${header}\n`;

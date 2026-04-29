@@ -25,11 +25,34 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PUBLISHED_SCHEMA_PATH = resolve(here, '..', '..', 'dist', 'config-schema.json');
+const DIST = resolve(here, '..', '..', 'dist');
+const PUBLISHED_SCHEMA_PATH = resolve(DIST, 'config-schema.json');
+const WORKSPACE_SCHEMA_PATH = resolve(DIST, 'config.workspace.schema.json');
+const USER_SCHEMA_PATH = resolve(DIST, 'config.user.schema.json');
 
 describe('published dist/config-schema.json', () => {
   test('artifact exists at the path npm ships via files:["dist"]', () => {
     expect(existsSync(PUBLISHED_SCHEMA_PATH)).toBe(true);
+  });
+
+  test('per-scope artifacts exist (used by ok init + writeConfigPatch lazy first-write)', () => {
+    expect(existsSync(WORKSPACE_SCHEMA_PATH)).toBe(true);
+    expect(existsSync(USER_SCHEMA_PATH)).toBe(true);
+  });
+
+  test('per-scope artifacts disjointly cover scope-specific fields', () => {
+    const workspace = JSON.parse(readFileSync(WORKSPACE_SCHEMA_PATH, 'utf-8')) as {
+      properties?: Record<string, unknown>;
+    };
+    const user = JSON.parse(readFileSync(USER_SCHEMA_PATH, 'utf-8')) as {
+      properties?: Record<string, unknown>;
+    };
+    // workspace-only top-level sections
+    expect(workspace.properties).toHaveProperty('content');
+    expect(user.properties).not.toHaveProperty('content');
+    // user-only top-level sections
+    expect(user.properties).toHaveProperty('appearance');
+    expect(workspace.properties).not.toHaveProperty('appearance');
   });
 
   test('artifact is JSON-parsable + declares draft-07', () => {
