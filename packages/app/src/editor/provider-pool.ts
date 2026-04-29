@@ -37,6 +37,8 @@ export type ServerRestartRecoveryState =
       docNames: readonly string[];
       failedDocNames: readonly string[];
       startedAt: number;
+      /** Present when `failedDocNames` is non-empty — survives until active doc syncs. */
+      clearFailureReason?: 'clear-data-failed' | 'clear-data-timeout';
     }
   | {
       kind: 'failed';
@@ -637,6 +639,7 @@ export class ProviderPool {
       docNames,
       failedDocNames,
       startedAt,
+      ...(failedDocNames.length > 0 ? { clearFailureReason: failureReason } : {}),
     };
     this.notify();
   }
@@ -655,7 +658,7 @@ export class ProviderPool {
     if (state.failedDocNames.length > 0) {
       this.serverRestartRecoveryState = {
         kind: 'failed',
-        reason: 'clear-data-failed',
+        reason: state.clearFailureReason ?? 'clear-data-failed',
         docNames: state.failedDocNames,
         failedDocNames: state.failedDocNames,
         startedAt: state.startedAt,
@@ -1242,6 +1245,7 @@ export class ProviderPool {
         }
         return;
       }
+      // `failureReason` is only read when `failedDocNames` is non-empty; this branch is all clears OK.
       this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, 'clear-data-failed');
       this.recycleAllEntries();
     });

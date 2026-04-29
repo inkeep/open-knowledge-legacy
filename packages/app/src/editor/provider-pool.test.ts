@@ -1856,6 +1856,47 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     // to compare against.
     void preProvider3;
   });
+
+  test('partial clearData with timeout preserves timeout reason after active reconnect syncs', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 15 });
+    pool.setExpectedServerInstanceId('server-old');
+    const docActive = uniqueDocName('pp-partial-timeout-active');
+    const docHung = uniqueDocName('pp-partial-timeout-hung');
+    const ea = pool.open(docActive);
+    const eb = pool.open(docHung);
+    if (!ea?.persistence || !eb?.persistence) {
+      throw new Error('expected persistences');
+    }
+    pool.setActive(docActive);
+    ea.observerCleanup = () => {};
+    eb.observerCleanup = () => {};
+
+    ea.persistence.clearData = mock(async () => {});
+    eb.persistence.clearData = mock(() => new Promise<void>(() => {}));
+
+    ea.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(60);
+
+    const postActive = pool.entries.get(docActive);
+    if (!postActive || postActive.kind !== 'active')
+      throw new Error('expected active doc post-recycle');
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames: [docActive],
+      failedDocNames: [docHung],
+      clearFailureReason: 'clear-data-timeout',
+    });
+
+    postActive.provider.emit('synced', { state: true });
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-timeout',
+      docNames: [docHung],
+      failedDocNames: [docHung],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
