@@ -134,27 +134,30 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
   const [popoverOpen, setPopoverOpen] = useState(false);
   const wasSelected = useRef(false);
 
-  // Open the popover when this atom becomes the selected node. Two paths:
-  //   1. Slash-insert auto-open: `consumeAutoOpen(pos)` drains the pending
-  //      flag set by the slash-menu command, opens the popover on the
-  //      first selected→true transition.
-  //   2. Click-to-edit: PM produces a NodeSelection on click; `selected`
-  //      flips true; we open the popover. (No auto-open flag needed —
-  //      every selection of this atom opens the editor.)
+  // Sync popover open state to selection. Two paths in:
+  //   1. Slash-insert auto-open — `consumeAutoOpen(pos)` drains the
+  //      pending flag set by the slash-menu command on the first
+  //      selected→true transition.
+  //   2. Click-to-edit — PM produces a NodeSelection on click; `selected`
+  //      flips true; we open the popover.
   //
-  // We do NOT close the popover when `selected` flips false. Reason:
-  // PropPanel's `setNodeMarkup` dispatch on every keystroke can briefly
-  // de-select the atom (PM rebuilds the selection in the new doc state),
-  // which used to dismiss the popover after the first character — Radix's
-  // own outside-click / Escape handlers cover dismiss instead.
+  // And one path out:
+  //   3. Close on selected→false — covers genuine navigation away
+  //      (arrow keys moving cursor off the atom, programmatic
+  //      `setTextSelection`, collaborative edits). Safe to reinstate
+  //      because the PropPanel `onChange` re-applies NodeSelection on
+  //      every keystroke (see `tr.setSelection(NodeSelection.create…)`
+  //      below), so editing-driven selection rebuilds no longer flicker
+  //      `selected` to false. Outside-click and Escape are still handled
+  //      by Radix's defaults; this branch covers selection-only changes
+  //      that bypass those.
   useEffect(() => {
     if (selected && !wasSelected.current) {
       const pos = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
-      // Drain any pending auto-open flag (slash-insert path) — non-load-
-      // bearing here because we open on every fresh selection anyway, but
-      // calling it keeps the queue tidy for the next inline-math insert.
       consumeAutoOpen(pos);
       setPopoverOpen(true);
+    } else if (!selected && wasSelected.current) {
+      setPopoverOpen(false);
     }
     wasSelected.current = selected;
   }, [selected, getPos]);

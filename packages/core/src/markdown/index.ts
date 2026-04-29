@@ -781,7 +781,15 @@ function buildMdastToPmHandlers(
           );
           const formula =
             formulaAttr && typeof formulaAttr.value === 'string' ? formulaAttr.value : '';
-          return n.mathInline.createAndFill({ formula });
+          // Preserve `id` (deep-link anchor) — `<InlineMath id="eq-1" formula="x" />`
+          // is the only inline-math source form that can carry an id (the
+          // `$$x$$` shorthand has no attribute syntax), so dropping it on
+          // parse would be permanent data loss for authors who rely on it.
+          const idAttr = node.attributes?.find(
+            (a) => a.type === 'mdxJsxAttribute' && a.name === 'id',
+          );
+          const id = idAttr && typeof idAttr.value === 'string' ? idAttr.value : null;
+          return n.mathInline.createAndFill({ formula, id });
         }
         const raw = rawFromData(node.data) ?? '';
         return n.jsxInline.createAndFill({}, raw ? [schema.text(raw)] : null);
