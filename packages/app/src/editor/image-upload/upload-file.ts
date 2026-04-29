@@ -1,15 +1,12 @@
 /**
- * Generalized media-upload helper. Routes a File to the appropriate server
- * endpoint by MIME-type prefix (image/, video/, audio/) and returns the
- * resolved relative URL on success.
+ * Generalized media-upload helper. POSTs a File to the unified `/api/upload`
+ * endpoint and returns the resolved relative URL on success.
  *
- * Per D4/D5 LOCKED in `specs/2026-04-28-cb-v2-prop-file-upload/SPEC.md`: the
- * `accept` argument is a UX hint only — this helper does NOT re-validate
- * against it. The server's per-endpoint allowlist is the security boundary
- * (NFR-1). The hint is passed through for inclusion in the
- * unsupported-prefix error message so callers (e.g., toasts) get useful
- * context when a user picks a file outside the picker's `accept` set via the
- * "all files" override.
+ * The `accept` argument is a UX hint only — passed through to the picker's
+ * `<input accept>` attribute and not re-validated here. The server is the
+ * sole policy point: `/api/upload` is accept-all (extension-classified
+ * admission via `ASSET_EXTENSIONS`), with magic-byte sniffing + path-escape
+ * + symlink-realpath as the security boundary.
  */
 import { getCurrentDocName } from './current-doc-name.ts';
 
@@ -17,18 +14,7 @@ interface UploadFileResult {
   url: string;
 }
 
-const ENDPOINT_BY_MIME_PREFIX: Readonly<Record<string, string>> = {
-  'image/': '/api/upload-image',
-  'video/': '/api/upload-video',
-  'audio/': '/api/upload-audio',
-};
-
-function resolveEndpoint(mimeType: string): string | undefined {
-  for (const [prefix, endpoint] of Object.entries(ENDPOINT_BY_MIME_PREFIX)) {
-    if (mimeType.startsWith(prefix)) return endpoint;
-  }
-  return undefined;
-}
+const UPLOAD_ENDPOINT = '/api/upload';
 
 /**
  * Optional dependency injection bag — production callers omit this and the
@@ -48,17 +34,11 @@ interface UploadFileDeps {
 
 export async function uploadFile(
   file: File,
+  // biome-ignore lint/correctness/noUnusedFunctionParameters: kept on the public signature so PropPanel + PropUploadButton compile unchanged after the per-MIME → unified endpoint flip; the picker's <input accept> already filters at the OS dialog
   accept: readonly string[],
   deps: UploadFileDeps = {},
 ): Promise<UploadFileResult> {
   const fetchImpl = deps.fetch ?? globalThis.fetch;
-  const endpoint = resolveEndpoint(file.type);
-  if (!endpoint) {
-    const hint = accept.length > 0 ? accept.join(', ') : 'none';
-    throw new Error(
-      `Cannot upload file with type "${file.type}" — supported prefixes are image/, video/, audio/ (accept hint: ${hint})`,
-    );
-  }
 
   const docName = deps.docName !== undefined ? deps.docName : getCurrentDocName();
   if (!docName) {
@@ -75,7 +55,7 @@ export async function uploadFile(
 
   let res: Response;
   try {
-    res = await fetchImpl(endpoint, { method: 'POST', body: formData });
+    res = await fetchImpl(UPLOAD_ENDPOINT, { method: 'POST', body: formData });
   } catch (networkError) {
     const message = networkError instanceof Error ? networkError.message : String(networkError);
     throw new Error(`Upload failed: ${message}`);
@@ -92,17 +72,22 @@ export async function uploadFile(
     throw new Error(errorMessage);
   }
 
-  let src: string;
+  // Server response shape: `{ ok: true, src, path, deduped }`. Prefer `path`
+  // (contentDir-relative; honors a non-default `attachmentFolderPath`) over
+  // `src` (bare basename — co-located-with-parent assumption that breaks
+  // under Obsidian-style global attachment paths). Both POSIX-normalized.
+  let url: string;
   try {
-    const body = (await res.json()) as { src?: string };
-    if (typeof body.src !== 'string') {
-      throw new Error('Server response missing "src" field');
+    const body = (await res.json()) as { src?: string; path?: string };
+    const resolved = body.path ?? body.src;
+    if (typeof resolved !== 'string') {
+      throw new Error('Server response missing "path"/"src" field');
     }
-    src = body.src;
+    url = resolved;
   } catch (parseError) {
     const message = parseError instanceof Error ? parseError.message : String(parseError);
     throw new Error(`Upload response parse error: ${message}`);
   }
 
-  return { url: src };
+  return { url };
 }
