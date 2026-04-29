@@ -242,6 +242,14 @@ test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the ass
   api,
   workerServer,
 }) => {
+  // Pre-condition guard: the worker fixture seeds `sidebar-folder/nested-doc.md`
+  // at boot (see `_helpers/fixtures.ts:171` `seedRequiredFixtureFiles`). If the
+  // seed is missing, the content filter's `dirCount[sidebar-folder]` is cold
+  // and the upload returns 400 from the filter rather than from the path-escape
+  // / MIME validation under test. Fail-fast here so the failure points at the
+  // missing prerequisite instead of the upload step.
+  expect(existsSync(join(workerServer.contentDir, 'sidebar-folder', 'nested-doc.md'))).toBe(true);
+
   const docName = `sidebar-folder/upload-${randomUUID().slice(0, 8)}`;
   await api.seedDocs([{ name: docName, markdown: cases.img.initialMarkdown }]);
   await page.goto(`/#/${docName}`);

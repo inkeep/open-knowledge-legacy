@@ -78,6 +78,11 @@ const HTML_PRIMITIVE_TAGS = new Set(['img', 'video', 'audio']);
 function tryNativeHtmlPrimitive(node: MdxJsxFlowElement | MdxJsxTextElement): Element | null {
   const name = node.name;
   if (!name || !HTML_PRIMITIVE_TAGS.has(name)) return null;
+  // hast property keys carry the MDX-JSX attribute name verbatim (`autoPlay`,
+  // `playsInline`, `crossOrigin`). hast-util-to-html's html schema looks each
+  // one up in property-information's table and emits the canonical lowercase
+  // HTML attribute (`autoplay`, `playsinline`, `crossorigin`) at serialize
+  // time, so we don't pre-translate here.
   const properties: Properties = {};
   for (const attr of node.attributes) {
     if (attr.type !== 'mdxJsxAttribute') return null;
