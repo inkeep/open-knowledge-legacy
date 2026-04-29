@@ -32,7 +32,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
-  ALLOWED_IMAGE_MIME_TYPES,
   ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
@@ -926,21 +925,6 @@ export interface ApiExtensionOptions {
   sessionManager: AgentSessionManager;
   contentDir: string;
   /**
-   * Shared content filter. Threaded so `/api/create-page` can synchronously
-   * call `incrementMdDir(dirname(path))` after the file write, eliminating
-   * the window where a freshly-created doc's sibling assets get excluded by
-   * the filter's `ASSET_EXTENSIONS` + `dirCount.get(normalizedDir) > 0`
-   * rule because the file watcher hasn't processed the create event yet.
-   * Without this, a dropped sibling asset (PNG/PDF) requested via sirv
-   * falls through to the Vite SPA fallback and is served as `text/html`.
-   * Optional — when absent, the watcher's async `incrementMdDir` call
-   * remains the only path (pre-fix behavior).
-   */
-  contentFilter?: {
-    incrementMdDir: (dir: string) => void;
-    decrementMdDir: (dir: string) => void;
-  };
-  /**
    * Per-process UUID advertised via `GET /api/server-info` and the
    * `__system__` CC1 `server-info` broadcast. Clients cache this value
    * and claim it in the `expectedServerInstanceId` field of their auth
@@ -1175,7 +1159,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getPrincipal,
     contentFilter,
     installedAgentsProbe,
-    contentFilter,
     forceUnloadDocument,
   } = options;
 
@@ -1564,6 +1547,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // only backstop against silent data loss.
           const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
           const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
+          // Handles the case where the client sends an explicit extension that
+          // matches the source's existing one (e.g. `toPath: "foo.md"` when
+          // the file is already `foo.md`) — `fromPath !== toPath` textually
+          // but the on-disk paths resolve to the same file. Treat as no-op,
+          // mirroring the extension-less `fromPath === toPath` short-circuit
+          // in the handler. Returning empty arrays here propagates as
+          // `{ ok: true, renamed: [], rewrittenDocs: [] }` to the caller.
+          if (sourcePathRoot === destinationPathRoot) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
           if (!existsSync(sourcePathRoot)) {
             throw new ManagedRenameSourceNotFoundError(kind);
           }
