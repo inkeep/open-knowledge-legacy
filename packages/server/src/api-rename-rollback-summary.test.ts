@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -107,6 +108,7 @@ async function callApi(
   backlinkIndex?: BacklinkIndex,
   flushGitCommit?: () => Promise<void>,
   getPrincipal?: () => Principal | null,
+  contentFilter?: Parameters<typeof createApiExtension>[0]['contentFilter'],
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {
@@ -133,6 +135,7 @@ async function callApi(
     backlinkIndex: backlinkIndex ?? buildBacklinkIndex(contentDir),
     ...(flushGitCommit ? { flushGitCommit } : {}),
     ...(getPrincipal ? { getPrincipal } : {}),
+    ...(contentFilter ? { contentFilter } : {}),
   });
   const req = makeReq(url, 'POST', body);
   const { res, captured } = makeRes();
@@ -763,5 +766,97 @@ describe('handleRenamePath — folder rename via consolidated endpoint', () => {
     } finally {
       rmSync(setupDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('handleRenamePath — content-filter admission (FR11)', () => {
+  function makeFilter(opts: {
+    excludedFiles?: string[];
+    excludedDirs?: string[];
+  }): Parameters<typeof createApiExtension>[0]['contentFilter'] {
+    const excludedFiles = new Set(opts.excludedFiles ?? []);
+    const excludedDirs = new Set(opts.excludedDirs ?? []);
+    return {
+      isExcluded: (relativePath: string) => excludedFiles.has(relativePath),
+      isDirExcluded: (relativePath: string) => excludedDirs.has(relativePath),
+      getWatcherIgnoreGlobs: () => [],
+      incrementMdDir: () => {},
+      decrementMdDir: () => {},
+    };
+  }
+
+  test('file rename to excluded destination → 400 with admission error; source untouched', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'drafts/private' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedFiles: ['drafts/private.md'] }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Destination document is excluded by the workspace content config',
+    });
+    expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+  });
+
+  test('folder rename to excluded destination → 400 with admission error; source untouched', async () => {
+    const folder = join(tmpDir, 'articles');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'auth.md'), '# Auth\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'folder', fromPath: 'articles', toPath: 'archive/old' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedDirs: ['archive/old'] }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Destination folder is excluded by the workspace content config',
+    });
+    expect(readFileSync(join(folder, 'auth.md'), 'utf-8')).toBe('# Auth\n');
+  });
+
+  test('rename to admitted destination passes content-filter check (no false positive)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedFiles: ['drafts/private.md'] }),
+    );
+
+    expect(response.status).toBe(200);
+    const parsed = JSON.parse(response.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed' }]);
+  });
+
+  test('contentFilter omitted → admission check is a no-op (back-compat)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'drafts/private',
+    });
+
+    expect(response.status).toBe(200);
   });
 });

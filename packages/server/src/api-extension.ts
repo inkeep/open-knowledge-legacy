@@ -113,6 +113,7 @@ import {
 } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
+import type { ContentFilter } from './content-filter.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
@@ -992,6 +993,14 @@ export interface ApiExtensionOptions {
    */
   getPrincipal?: () => Principal | null;
   /**
+   * Active ContentFilter (the same instance threaded into the file watcher).
+   * When present, `POST /api/rename-path` rejects destinations excluded by
+   * the workspace's `content.include`/`content.exclude` config so renames
+   * cannot land outside the watched scope. Omit in tests where admission
+   * checks aren't relevant.
+   */
+  contentFilter?: ContentFilter;
+  /**
    * OS-scheme install probe used by `GET /api/installed-agents` (web-host
    * parity for the Electron `ok:shell:detect-protocol` IPC — see
    * `handoff-api.ts`). When omitted, the platform's default probe is used
@@ -1119,6 +1128,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     localOpCliArgs = ['open-knowledge'],
     projectDir,
     getPrincipal,
+    contentFilter,
     installedAgentsProbe,
     contentFilter,
     forceUnloadDocument,
@@ -4285,6 +4295,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (fromPath.toLowerCase() === toPath.toLowerCase()) {
         json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;
+      }
+
+      if (contentFilter) {
+        const excluded =
+          kind === 'file'
+            ? contentFilter.isExcluded(`${toPath}${getDocExtension(fromPath)}`)
+            : contentFilter.isDirExcluded(toPath);
+        if (excluded) {
+          json(res, 400, {
+            ok: false,
+            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+          });
+          return;
+        }
       }
 
       const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);

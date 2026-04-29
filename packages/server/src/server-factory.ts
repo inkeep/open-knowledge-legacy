@@ -598,6 +598,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       projectDir,
       resolveEmbed,
       getPrincipal: () => loadedPrincipal,
+      contentFilter,
       forceUnloadDocument,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
