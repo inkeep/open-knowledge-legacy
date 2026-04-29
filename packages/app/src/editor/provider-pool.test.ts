@@ -27,6 +27,11 @@ function uniqueDocName(prefix = 'pp-us003'): string {
 // Use a dummy URL — providers won't connect but pool logic still works
 const DUMMY_WS = 'ws://localhost:1/collab';
 
+// Persistence attaches only after a serverInstanceId is known
+// (epoch-scoped IDB DB names). Tests that depend on `entry.persistence`
+// being non-null must seed the live epoch before `pool.open()`.
+const TEST_SERVER_INSTANCE_ID = 'test-server-instance';
+
 let pool: ProviderPool;
 
 afterEach(() => {
@@ -1633,11 +1638,12 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 //
 // Uses unique doc names per test (randomUUID) so fake-indexeddb state from a
 // prior test doesn't leak across cases — different docNames map to different
-// IDB databases (named `ok-ydoc:${docName}`).
+// IDB databases (named `ok-ydoc:${branch}:${serverInstanceId}:${docName}`).
 // ---------------------------------------------------------------------------
 describe('ProviderPool client-persistence attachment (US-003)', () => {
   test('open() attaches a ClientPersistenceProvider to the pool entry', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName();
     const entry = pool.open(docName);
     if (!entry) throw new Error('expected entry');
@@ -1648,8 +1654,17 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     expect(typeof persistence.clearData).toBe('function');
   });
 
+  test('open() before serverInstanceId is known leaves persistence null', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    expect(entry.persistence).toBeNull();
+  });
+
   test('re-opening the same docName reuses the existing persistence instance', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName();
     const entry1 = pool.open(docName);
     const persistence1 = entry1?.persistence;
@@ -1659,6 +1674,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('prewarm() also attaches a persistence instance', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-prewarm');
     const entry = pool.prewarm(docName);
     if (!entry) throw new Error('expected prewarmed entry');
@@ -1667,6 +1683,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('close() destroys the persistence before the provider', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-close');
     const entry = pool.open(docName);
     if (!entry?.persistence) throw new Error('expected persistence');
@@ -1692,6 +1709,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('recycleDisconnectedEntry destroys the persistence before the provider', async () => {
     pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-recycle');
     const entry = pool.open(docName);
     if (!entry?.persistence) throw new Error('expected persistence');
@@ -1726,6 +1744,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('evictLru destroys the persistence on the evicted entry', () => {
     pool = new ProviderPool(2, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const doc1 = uniqueDocName('pp-evict');
     const doc2 = uniqueDocName('pp-evict');
     const doc3 = uniqueDocName('pp-evict');
@@ -1746,6 +1765,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('dispose() destroys every pool entry’s persistence', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const doc1 = uniqueDocName('pp-dispose');
     const doc2 = uniqueDocName('pp-dispose');
     const e1 = pool.open(doc1);

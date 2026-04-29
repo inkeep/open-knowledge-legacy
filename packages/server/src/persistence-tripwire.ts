@@ -14,7 +14,7 @@
  */
 import { normalizeBridge, stripFrontmatter } from '@inkeep/open-knowledge-core';
 
-export type DuplicationReason =
+type DuplicationReason =
   | 'empty-base'
   | 'identical'
   | 'too-short'
@@ -22,7 +22,7 @@ export type DuplicationReason =
   | 'single-copy'
   | 'structural-duplication';
 
-export type DuplicationClassification =
+type DuplicationClassification =
   | { kind: 'allow'; reason: Exclude<DuplicationReason, 'structural-duplication'> }
   | { kind: 'block'; reason: 'structural-duplication'; copies: number };
 

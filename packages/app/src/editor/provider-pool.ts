@@ -111,7 +111,16 @@ interface PoolEntryBase {
 
 /**
  * Live pool entry. Most consumers narrow to this kind via
- * `if (entry.kind === 'active') { … }` so `persistence` is non-null.
+ * `if (entry.kind === 'active') { … }`.
+ *
+ * `persistence` is `null` only on entries opened before the live
+ * server epoch (`cachedServerInstanceId`) was known. The DB-name shape
+ * `ok-ydoc:${branch}:${serverInstanceId}:${docName}` carries the
+ * server epoch as a structural correctness signal, so the IndexedDB
+ * cache cannot be attached until the epoch is known. The
+ * `HocuspocusProvider` is constructed eagerly so the WebSocket
+ * handshake can begin in parallel, but no persistent IDB ever points
+ * at an unknown-epoch DB name.
  */
 interface ActivePoolEntry extends PoolEntryBase {
   kind: 'active';
@@ -119,9 +128,10 @@ interface ActivePoolEntry extends PoolEntryBase {
    * Client-side Yjs persistence attached to this entry's Y.Doc. Hydrates
    * from IndexedDB on cold mount (instant Cmd-R), persists every
    * non-self update back, and is the handle the mismatch recycle flow
-   * uses to `clearData()` before destroying the provider.
+   * uses to `clearData()` before destroying the provider. `null` when
+   * the live server epoch was not yet known at `open()` time.
    */
-  persistence: ClientPersistenceProvider;
+  persistence: ClientPersistenceProvider | null;
   /** Wired by `setupObservers` after first sync; null until then. */
   observerCleanup: (() => void) | null;
   /** Set when a disconnect schedules a debounced recycle; null otherwise. */
@@ -844,20 +854,34 @@ export class ProviderPool {
     });
 
     // Attach client-side Yjs persistence to the provider's Y.Doc. Hydrates
-    // from `ok-ydoc:${branch}:${docName}` on cold mount and persists every
-    // non-self update back. On server-instance-mismatch, buffer-and-replay
-    // captures unsynced edits before clearData + recycle. The branch
-    // prefix isolates per-branch state by IDB-name boundary — different
-    // branches → different IDBs by construction. `UNKNOWN_BRANCH_SENTINEL`
-    // is used when no branch has been observed yet (fresh tab); the
+    // from `ok-ydoc:${branch}:${serverInstanceId}:${docName}` on cold mount
+    // and persists every non-self update back. On server-instance-mismatch,
+    // buffer-and-replay captures unsynced edits before clearData + recycle.
+    // The branch + epoch prefix isolates state by IDB-name boundary —
+    // different branches → different IDBs by construction; different
+    // server epochs → different IDBs by construction, so stale CRDT items
+    // from a prior server instance can never be hydrated into a provider
+    // that will sync with the current server. `UNKNOWN_BRANCH_SENTINEL` is
+    // used when no branch has been observed yet (fresh tab); the
     // auth-token mismatch on first connect drives the recycle to the
     // correct branch-prefixed name.
+    //
+    // When the live server epoch (`cachedServerInstanceId`) is not yet
+    // known, persistence stays null — the persistent IDB cache must not
+    // attach to an unknown-epoch DB name that could later be re-used
+    // across server restarts. The provider is still constructed so the
+    // WebSocket handshake can begin in parallel.
     const branch = this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL;
-    const persistence = createClientPersistence({
-      branch,
-      docName,
-      doc: provider.document,
-    });
+    const persistenceServerInstanceId = this.cachedServerInstanceId;
+    const persistence: ClientPersistenceProvider | null =
+      persistenceServerInstanceId !== null && persistenceServerInstanceId.length > 0
+        ? createClientPersistence({
+            branch,
+            serverInstanceId: persistenceServerInstanceId,
+            docName,
+            doc: provider.document,
+          })
+        : null;
 
     const entry: ActivePoolEntry = {
       kind: 'active',
@@ -1182,11 +1206,14 @@ export class ProviderPool {
     // recycled unconditionally).
     const clears: { docName: string; promise: Promise<void> }[] = [];
     for (const [docName, poolEntry] of snapshot) {
-      // TearingDown entries have null persistence by construction; the
-      // discriminator narrowing ensures we never call .clearData() on a
-      // null. BridgeFailed entries (Active with bridgeSetupFailed=true)
-      // still have persistence attached and SHOULD be cleared.
+      // TearingDown entries have null persistence by construction; Active
+      // entries opened before the live server epoch was known also have
+      // null persistence — the persistent IDB cache wasn't attached, so
+      // there's nothing to clear. BridgeFailed entries (Active with
+      // bridgeSetupFailed=true) still have persistence attached and
+      // SHOULD be cleared.
       if (poolEntry.kind !== 'active') continue;
+      if (poolEntry.persistence === null) continue;
       clears.push({
         docName,
         promise: this.withClearDataTimeout(docName, poolEntry.persistence.clearData()),
@@ -1501,10 +1528,12 @@ export class ProviderPool {
     // to run asynchronously against a separate IDB handle. We intentionally
     // do not `await` here — keeping `destroyEntry` synchronous preserves all
     // call-site shapes.
-    const pendingPersistenceDestroy = persistence.destroy();
-    pendingPersistenceDestroy.catch((err) => {
-      console.warn(`[ProviderPool] persistence destroy failed for ${docName}:`, err);
-    });
+    if (persistence !== null) {
+      const pendingPersistenceDestroy = persistence.destroy();
+      pendingPersistenceDestroy.catch((err) => {
+        console.warn(`[ProviderPool] persistence destroy failed for ${docName}:`, err);
+      });
+    }
 
     try {
       torn.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
