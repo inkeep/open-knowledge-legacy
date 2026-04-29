@@ -55,7 +55,7 @@ describe('SettingsPane source-level guards', () => {
 
   test('renders both scope sub-tabs', () => {
     expect(SRC).toContain('This project');
-    expect(SRC).toContain('All projects');
+    expect(SRC).toContain('User');
   });
 
   test('uses sonner for L3 rejection toast', () => {

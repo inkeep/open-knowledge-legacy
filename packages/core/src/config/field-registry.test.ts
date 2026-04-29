@@ -140,13 +140,19 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     );
   });
 
-  test('preview.baseUrl is the only scope:workspace strict field (per spec §9.5.4 ❌ marker)', () => {
+  test('workspace-strict fields cover content.* + preview.baseUrl', () => {
+    // `content.dir` / `content.include` / `content.exclude` are workspace-only
+    // per user direction 2026-04-29 — they define which files are part of *this*
+    // project's knowledge graph; a user-global override doesn't make sense.
+    // `preview.baseUrl` is workspace-only per spec §9.5.4 ❌ marker.
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const workspaceStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'workspace')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(workspaceStrict).toEqual(['preview.baseUrl']);
+    expect(workspaceStrict).toEqual(
+      ['content.dir', 'content.exclude', 'content.include', 'preview.baseUrl'].sort(),
+    );
   });
 });

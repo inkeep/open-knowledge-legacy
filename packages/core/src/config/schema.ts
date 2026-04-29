@@ -18,12 +18,20 @@ export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
 export const ConfigSchema = z.looseObject({
+  // `content.*` is WORKSPACE-scope. `dir` / `include` / `exclude` define
+  // which files are part of *this* project's knowledge graph; a user-global
+  // override doesn't make sense (each project has its own files, and a
+  // user-level glob would either be ignored or actively wrong when working
+  // across multiple repos). Settings pane hides these on the user tab via
+  // `isFieldVisibleAtScope`; loader rejects them in user YAML with a
+  // source-located error per the existing `preview.baseUrl` precedent.
+  // Supersedes the original 'either' framing per user direction 2026-04-29.
   content: z
     .looseObject({
       dir: z
         .string()
         .register(fieldRegistry, {
-          scope: 'either',
+          scope: 'workspace',
           agentSettable: false,
           defaultScope: 'workspace',
         })
@@ -32,7 +40,7 @@ export const ConfigSchema = z.looseObject({
         .array(z.string())
         .min(1)
         .register(fieldRegistry, {
-          scope: 'either',
+          scope: 'workspace',
           agentSettable: true,
           defaultScope: 'workspace',
         })
@@ -40,7 +48,7 @@ export const ConfigSchema = z.looseObject({
       exclude: z
         .array(z.string())
         .register(fieldRegistry, {
-          scope: 'either',
+          scope: 'workspace',
           agentSettable: true,
           defaultScope: 'workspace',
         })

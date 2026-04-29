@@ -3,7 +3,7 @@
  *
  * Replaces the document view in the main editor area when invoked via Cmd-,,
  * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
- * workspace ("This project") and user-global ("All projects") scopes;
+ * workspace ("This project") and user-global ("User") scopes;
  * each tab acquires its own `HocuspocusProvider` and binds via
  * `bindConfigDoc`.
  *
@@ -310,7 +310,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
               This project
             </ToggleGroupItem>
             <ToggleGroupItem value="user" className="text-xs">
-              All projects
+              User
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -533,7 +533,7 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
           meta?.scope === 'workspace' && scope !== 'workspace'
             ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
             : meta?.scope === 'user' && scope !== 'user'
-              ? "This field can only be set globally. Switch to the 'All projects' tab to edit it."
+              ? "This field can only be set globally. Switch to the 'User' tab to edit it."
               : null
         }
       />
