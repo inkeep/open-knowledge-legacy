@@ -76,7 +76,7 @@ const inlineMathDescriptor = {
 const KatexInlineRender = lazy(async () => {
   const { default: katex } = await import('katex');
 
-  function KatexInlineInner(props: { formula: string; id?: string }) {
+  function KatexInlineInner(props: { formula: string }) {
     const html = katex.renderToString(props.formula, {
       displayMode: false,
       throwOnError: false,
@@ -85,10 +85,8 @@ const KatexInlineRender = lazy(async () => {
     return (
       <span
         className="math math-inline"
-        data-component-type="math-inline"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX renderToString returns a strict HTML-allowlist string with no script execution; this is the documented integration path.
         dangerouslySetInnerHTML={{ __html: html }}
-        {...(props.id ? { id: props.id } : {})}
       />
     );
   }
@@ -96,19 +94,35 @@ const KatexInlineRender = lazy(async () => {
   return { default: KatexInlineInner };
 });
 
-function InlinePlaceholder(props: { formula: string; id?: string }) {
-  // `​` (zero-width space) keeps the atom's inline box alive so PM's
-  // cursor-position machinery has somewhere to land while KaTeX is
-  // resolving. Visible text falls back to the formula source so a
-  // network-stalled lazy import still shows the user's input rather than
-  // a blank gap.
+/**
+ * Visible empty-state placeholder for atoms with no formula yet (post-
+ * slash-insert, pre-edit). Shows a pill with `f(x)` so the user can see
+ * the atom landed and click it to open the editor — earlier iterations
+ * used a zero-width space which was literally invisible. Italic + muted
+ * styling distinguishes it from rendered math without competing for
+ * attention.
+ */
+function EmptyInlineMathPlaceholder() {
   return (
     <span
-      className="math math-inline math-placeholder"
+      className="math math-inline math-placeholder math-placeholder-empty inline-flex items-center gap-1 rounded-sm border border-dashed border-muted-foreground/40 bg-muted/30 px-1.5 py-0.5 text-xs italic text-muted-foreground hover:bg-muted/60 cursor-pointer"
       data-component-type="math-inline"
-      {...(props.id ? { id: props.id } : {})}
     >
-      {props.formula || '​'}
+      f(x)
+    </span>
+  );
+}
+
+/**
+ * Loading-state placeholder shown while KaTeX is lazy-importing or
+ * before the dynamic import resolves. Renders the formula source
+ * verbatim so a network-stalled lazy import still shows the user's
+ * input rather than a blank gap.
+ */
+function InlineLoadingPlaceholder(props: { formula: string }) {
+  return (
+    <span className="math math-inline math-placeholder" data-component-type="math-inline">
+      {props.formula}
     </span>
   );
 }
@@ -146,14 +160,26 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
   return (
     <NodeViewWrapper as="span" className={selected ? 'math-inline-selected' : undefined}>
       <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+        {/* PopoverTrigger asChild needs a single ref-able element. Wrap the
+            conditional render in a stable <span> so Radix can attach its
+            trigger ref (Suspense doesn't forward refs reliably across the
+            fallback/rendered boundary). The wrapper also gives us a single
+            place to hang `id` for deep-link anchors and the
+            data-component-type attribute consistently across all states. */}
         <PopoverTrigger asChild>
-          {formula ? (
-            <Suspense fallback={<InlinePlaceholder formula={formula} id={id} />}>
-              <KatexInlineRender formula={formula} id={id} />
-            </Suspense>
-          ) : (
-            <InlinePlaceholder formula={formula} id={id} />
-          )}
+          <span
+            className="math-inline-trigger"
+            data-component-type="math-inline"
+            {...(id ? { id } : {})}
+          >
+            {formula ? (
+              <Suspense fallback={<InlineLoadingPlaceholder formula={formula} />}>
+                <KatexInlineRender formula={formula} />
+              </Suspense>
+            ) : (
+              <EmptyInlineMathPlaceholder />
+            )}
+          </span>
         </PopoverTrigger>
         <PopoverContent
           className="z-[60] w-72 p-0"
