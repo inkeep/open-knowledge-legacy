@@ -937,6 +937,43 @@ test.describe('docs-open — hybrid navigation UX', () => {
     expect(after.poolSize).toBeGreaterThanOrEqual(0);
     expect(after.poolSize).toBeLessThanOrEqual(1);
   });
+
+  test('F0-mdx: sidebar click on a .mdx file loads and renders its content', async ({
+    page,
+    api,
+  }) => {
+    // End-to-end proof of first-class .mdx admission: an .mdx file on disk
+    // must appear in the sidebar, be clickable, and render its body in the
+    // editor. Pairs with the integration-tier coverage in
+    // `packages/app/tests/integration/mdx-extension.test.ts` (which exercises
+    // watcher→CRDT) — this test adds the browser-side DOM path that
+    // integration can't reach (sidebar DOM → hash nav → editor mount).
+    const docName = 'mdx-sidebar-proof';
+    const mdxBody = '# MDX Sidebar Proof\n\nContent rendered from a .mdx file via sidebar click.\n';
+    await api.testReset();
+    await api.createPage(`${docName}.mdx`);
+    await api.replaceDoc(docName, mdxBody);
+
+    await page.goto('/');
+    // The sidebar displays the filename with extension — so the text to click
+    // is `${docName}.mdx`, not the extension-less docName.
+    await openFromSidebar(page, `${docName}.mdx`);
+    await waitForActiveProviderSynced(page);
+
+    // The body content must be in the live editor DOM. Wait for it — the
+    // editor mount is async after the shell snaps.
+    await expect(page.getByText('Content rendered from a .mdx file')).toBeVisible({
+      timeout: 10_000,
+    });
+    // Shell confirmation: the rename-affordance button in the editor header
+    // renders the filename-with-extension as its accessible name. Proves the
+    // header is extension-aware (reads from PageListContext.pageMeta.docExt)
+    // rather than hard-coding `.md`. Scoped to main so we don't collide with
+    // the identically-named sidebar list item.
+    await expect(
+      page.getByRole('main').getByRole('button', { name: `${docName}.mdx`, exact: true }),
+    ).toBeVisible();
+  });
 });
 
 // ── WS-interception tests (context.routeWebSocket before goto) ──────────

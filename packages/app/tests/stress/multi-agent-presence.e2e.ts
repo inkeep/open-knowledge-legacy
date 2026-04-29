@@ -224,4 +224,12 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     expect(page.url()).toContain(`#/${docFoo}`);
     expect(page.url()).not.toContain(`#/${docBar}`);
   });
+
+  // Note: the prior `.mdx target doc` cross-doc-nav test was removed when
+  // D-P9 (agent-activity-panel SPEC) flipped the cross-doc-avatar click
+  // contract from "navigate to target doc" to "open activity panel for that
+  // agent". The `.md` sibling test above now asserts the new contract;
+  // adding a parallel `.mdx`-target variant would test the activity-panel
+  // feature, not the `.mdx` extension. `.mdx`-extension nav coverage stays
+  // through F0-mdx in `docs-open.e2e.ts` (sidebar click → .mdx file loads).
 });

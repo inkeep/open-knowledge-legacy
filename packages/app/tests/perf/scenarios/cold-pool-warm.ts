@@ -38,7 +38,7 @@
  * gap discovered").
  *
  * Default (BIG_DOC=PROJECT) is a 768-view stress case used for attribution
- * measurements and precedent #25 validation — informative but outside the
+ * measurements and precedent #27 validation — informative but outside the
  * G2 target scope. Use it for "how bad was pre-V2 on the worst case" and
  * the STORIES invocation for "does V2 still hit the G2 gate."
  */

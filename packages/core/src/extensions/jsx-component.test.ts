@@ -19,22 +19,25 @@ describe('jsxComponent schema', () => {
     expect(schema.nodes.jsxComponent).toBeDefined();
   });
 
-  test('jsxComponent is an atom node', () => {
-    expect(schema.nodes.jsxComponent.spec.atom).toBe(true);
+  test('jsxComponent is a non-atom block node with block* content', () => {
+    expect(schema.nodes.jsxComponent.spec.atom).toBeFalsy();
+    expect(schema.nodes.jsxComponent.spec.content).toBe('block*');
+    expect(schema.nodes.jsxComponent.spec.isolating).toBe(true);
+    expect(schema.nodes.jsxComponent.spec.defining).toBe(true);
   });
 
-  test('jsxComponent has content attribute', () => {
-    expect(schema.nodes.jsxComponent.spec.attrs?.content).toBeDefined();
+  test('jsxComponent has sourceRaw attribute for γ pristine path', () => {
+    expect(schema.nodes.jsxComponent.spec.attrs?.sourceRaw).toBeDefined();
   });
 });
 
 describe('jsxComponent via native MDX', () => {
-  test('self-closing MDX component stores raw source in content', () => {
+  test('self-closing MDX component stores raw source in sourceRaw', () => {
     const md = '<Button variant="primary" />\n';
     const json = mdManager.parse(md);
     const jsxNode = json.content?.find((n) => n.type === 'jsxComponent');
     expect(jsxNode).toBeDefined();
-    expect(jsxNode?.attrs.content).toContain('Button');
+    expect(jsxNode?.attrs.sourceRaw).toContain('Button');
   });
 
   test('self-closing MDX component round-trips', () => {
