@@ -139,6 +139,33 @@ export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): boolean {
 }
 
 /**
+ * Atomic dual-write of a fenced YAML frontmatter string into both
+ * representations: per-key `Y.Map('metadata')` entries (via
+ * `setFrontmatterFromYaml`) and the legacy `'frontmatter'` slot (verbatim
+ * mirror so comment-bearing input round-trips through
+ * `composeFrontmatterForStore`).
+ *
+ * **Use this at every FM-touching server-side write surface.** Inlining the
+ * pair has surfaced bugs (e.g. rollback handler missing the per-key call —
+ * stale per-key state silently overwrites disk on the next persistence
+ * cycle). Consolidating here means a future write site cannot forget half
+ * of the pair.
+ *
+ * `fencedYaml` is the full fenced string (e.g. `---\ntitle: X\n---\n`) or
+ * `''` for empty FM. Caller wraps in `doc.transact(fn, origin)`.
+ *
+ * Returns the `setFrontmatterFromYaml` boolean so callers can log when
+ * malformed YAML left per-key state stale (callers still see the legacy
+ * mirror updated — that's the documented contract: keep last valid per-key
+ * state, mirror as-supplied).
+ */
+export function writeFrontmatterDualSlot(doc: Y.Doc, fencedYaml: string): boolean {
+  const ok = setFrontmatterFromYaml(doc, unwrapFrontmatterFences(fencedYaml));
+  doc.getMap('metadata').set(LEGACY_FRONTMATTER_KEY, fencedYaml);
+  return ok;
+}
+
+/**
  * Set or delete a single frontmatter property in `Y.Map('metadata')`. Pass
  * `null` (or omit `value`) to delete. Caller wraps in `doc.transact(fn, origin)`.
  *

@@ -34,9 +34,8 @@ import {
   mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
-  setFrontmatterFromYaml,
   stripFrontmatter,
-  unwrapFrontmatterFences,
+  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -573,8 +572,12 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const currentFm = metaMap.get('frontmatter');
         if ((currentFm ?? '') !== frontmatter) {
           doc.transact(() => {
-            setFrontmatterFromYaml(doc, unwrapFrontmatterFences(frontmatter));
-            metaMap.set('frontmatter', frontmatter);
+            const fmOk = writeFrontmatterDualSlot(doc, frontmatter);
+            if (!fmOk) {
+              console.warn(
+                '[Server Observer B] Malformed YAML in source-mode FM (early-exit branch) — per-key entries unchanged; legacy slot mirrored as-supplied',
+              );
+            }
           }, OBSERVER_SYNC_ORIGIN);
           recordFrontmatterEditSurface('source-mode');
         }
@@ -606,13 +609,16 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);
-        // Per-key diff (D13) + legacy mirror — same pattern as the early-exit
-        // branch above. Malformed YAML keeps last valid per-key state via
-        // `setFrontmatterFromYaml`'s no-op-on-failure semantics; the legacy
-        // slot still tracks the verbatim Y.Text FM string for the transition
-        // window.
-        setFrontmatterFromYaml(doc, unwrapFrontmatterFences(frontmatter));
-        metaMap.set('frontmatter', frontmatter);
+        // Per-key diff (D13) + legacy mirror via writeFrontmatterDualSlot.
+        // Malformed YAML keeps last valid per-key state (helper returns false
+        // and logs); the legacy slot still tracks the verbatim Y.Text FM
+        // string for the transition window.
+        const fmOk = writeFrontmatterDualSlot(doc, frontmatter);
+        if (!fmOk) {
+          console.warn(
+            '[Server Observer B] Malformed YAML in source-mode FM (parse branch) — per-key entries unchanged; legacy slot mirrored as-supplied',
+          );
+        }
       }, OBSERVER_SYNC_ORIGIN);
 
       if (priorFm !== frontmatter) {

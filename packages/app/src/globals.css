@@ -293,6 +293,33 @@
   }
 }
 
+/* Reduced-motion override — keep the opacity crossfade as a comprehension
+   aid (the panel still appears/disappears) but pin the height so the
+   layout-triggering animation doesn't fire. Matches the rest of this
+   file's reduced-motion discipline. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes collapsible-down {
+    from {
+      height: var(--radix-collapsible-content-height);
+      opacity: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+  }
+  @keyframes collapsible-up {
+    from {
+      height: var(--radix-collapsible-content-height);
+      opacity: 1;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+      opacity: 0;
+    }
+  }
+}
+
 /* Base styles */
 @layer base {
   *,

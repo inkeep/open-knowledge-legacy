@@ -11,7 +11,7 @@
  * 30-day deprecation window) — `edit_document` remains the surface for body
  * edits.
  */
-import { FRONTMATTER_TYPES } from '@inkeep/open-knowledge-core';
+import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -51,8 +51,12 @@ interface FrontmatterPatchDeps {
   identityRef?: { current: AgentIdentity };
 }
 
+// Compose against the canonical FrontmatterValueSchema in core so the MCP
+// tool stays aligned with server-side validation. Adding `null` here adds
+// the delete sentinel for JSON Merge Patch (RFC 7396) — a `null` value
+// deletes the key.
 const PatchValueSchema = z
-  .union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()])
+  .union([FrontmatterValueSchema, z.null()])
   .describe('Property value (string|number|boolean|string[]) — `null` deletes the key');
 
 export function register(server: ServerInstance, deps: FrontmatterPatchDeps): void {

@@ -150,6 +150,11 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   }
 
   useEffect(() => {
+    // Mirrors `beginAdd` above. Inlined (not a delegating closure) because
+    // referencing `beginAdd` directly trips
+    // `useExhaustiveDependencies`/React Compiler — each render gets a fresh
+    // closure, and adding it to the dep array thrashes the listener every
+    // render. Keep the two bodies in sync.
     const handler = () => {
       setAdding({ name: '', type: 'text', value: '', error: null });
       setCollapsed(false);
@@ -434,6 +439,14 @@ function PropertyRow({
       </div>
       {error ? (
         <div
+          // Live region — error appears asynchronously after a network
+          // request, so screen readers need role="alert" to announce it.
+          // Sibling RenameInput / AddPropertyRow use the matched
+          // aria-invalid + aria-describedby pattern; PropertyRow's error is
+          // less directly tied to one focusable target (commits fire from
+          // multiple widget surfaces) so role="alert" carries the
+          // announcement responsibility.
+          role="alert"
           data-testid="property-error"
           data-key={keyName}
           className="pl-9 text-[10px] text-destructive"

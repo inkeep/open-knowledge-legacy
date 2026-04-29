@@ -17,6 +17,7 @@ export {
   getFrontmatterMap,
   setFrontmatterFromYaml,
   setFrontmatterProperty,
+  writeFrontmatterDualSlot,
 } from './frontmatter-y.ts';
 export {
   assertContentPreservation,

@@ -50,6 +50,7 @@ import {
   stripFrontmatter,
   unwrapFrontmatterFences,
   withFences,
+  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -2322,10 +2323,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget) {
+        if (!notFound && !staleTarget && !fmIntersect) {
           // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 so adoption rate reflects successful
-          // writes, not total attempts.
+          // denominator excludes 404/409 + FM-intersect 400 so adoption
+          // rate reflects successful writes, not total attempts.
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
@@ -2612,6 +2613,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               // Apply patch under session.formOrigin — NOT paired. Observer A's
               // metaMap deep observer re-composes YAML+body and propagates
               // to Y.Text under OBSERVER_SYNC_ORIGIN after the transaction settles.
+              //
+              // Note on captureEffect: sibling agent-write handlers
+              // (handleAgentWrite, handleAgentWriteMd, handleAgentPatch) call
+              // captureEffect before their transact to populate the
+              // agent-effects ring buffer. We deliberately do NOT call it here
+              // — captureEffect registers a one-shot Y.Text observer, but FM
+              // writes don't directly mutate Y.Text. Observer A propagates
+              // under OBSERVER_SYNC_ORIGIN in a separate transact, which the
+              // ring buffer correctly attributes to the observer (not the
+              // agent). FM-only edits surface in the Activity Panel via the
+              // agent-flash side-channel below instead.
               const applyTransaction = () => {
                 session.dc.document.transact(() => {
                   const document = session.dc.document;
@@ -2671,7 +2683,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                     } else {
                       try {
                         fenced = withFences(applyPatchToDocument(parsedDoc, validatedPatch));
-                      } catch {
+                      } catch (patchErr) {
+                        // applyPatchToDocument throws on schema mismatch
+                        // between the API boundary and the codec (e.g. yaml@2
+                        // serialization edge case). Silently dropping comments
+                        // would leave operators investigating "why are my
+                        // YAML comments vanishing" with no signal.
+                        console.warn(
+                          `[frontmatter-patch] comment-preserving patch failed for ${docName}; falling back to canonical synthesis (comments dropped):`,
+                          patchErr,
+                        );
                         fenced = withFences(serializeFrontmatterMap(map));
                       }
                     }
@@ -2726,7 +2747,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             buildAgentActor({ clientName, clientVersion, label }),
             storedSummary,
           );
-          incrementAgentWriteCalls();
+          // Form writes use the local principal's identity, not an agent —
+          // counting them inflates the agent-write metric. Same gate as the
+          // agent-flash side-channel above (line 2691). MCP-originated FM
+          // writes still count.
+          if (!isFormWrite) incrementAgentWriteCalls();
           countNormalizedSummary(normalizedSummary);
           recordFrontmatterEditSurface(editSurfaceLabel);
         } finally {
@@ -3649,10 +3674,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           ytext.insert(0, markdown);
         }
 
-        // Update metadata map with restored frontmatter so persistence
-        // serializes the correct frontmatter on next L1 flush.
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
+        // Restored FM must land in BOTH the per-key entries and the legacy
+        // slot. Writing only the legacy slot (the prior bug) leaves stale
+        // per-key state — `composeFrontmatterForStore` then re-synthesizes
+        // from per-key on the next L1 flush, overwriting disk with the
+        // pre-rollback FM despite the legacy slot being correct.
+        const fmOk = writeFrontmatterDualSlot(document, frontmatter);
+        if (!fmOk) {
+          console.warn(
+            `[rollback] Malformed YAML in restored snapshot for ${docName} — per-key entries unchanged; legacy slot mirrored as-supplied`,
+          );
+        }
       }, ROLLBACK_ORIGIN);
 
       // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`

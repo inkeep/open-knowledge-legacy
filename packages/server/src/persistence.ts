@@ -17,9 +17,8 @@ import {
   normalizeBridge,
   type Principal,
   prependFrontmatter,
-  setFrontmatterFromYaml,
   stripFrontmatter,
-  unwrapFrontmatterFences,
+  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import {
   composeCommitSubject,
@@ -719,8 +718,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             // affordance only and goes away once all readers migrate to
             // `getFrontmatter(doc)`.
             document.transact(() => {
-              setFrontmatterFromYaml(document, unwrapFrontmatterFences(frontmatter));
-              document.getMap('metadata').set('frontmatter', frontmatter);
+              const ok = writeFrontmatterDualSlot(document, frontmatter);
+              if (!ok) {
+                log.warn(
+                  { documentName },
+                  '[persistence] Malformed YAML on load — per-key entries unchanged; legacy slot mirrored as-supplied',
+                );
+              }
             });
           }
 
