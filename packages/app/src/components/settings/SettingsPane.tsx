@@ -35,6 +35,7 @@ import {
   isKnownConfigError,
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
@@ -251,6 +252,25 @@ function useConfigDocConnection(
 export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProps) {
   const { collabUrl } = useDocumentContext();
   const connection = useConfigDocConnection(collabUrl, scope);
+
+  // Bridge `appearance.theme` → next-themes (FR-40 / D55 dual-track). The
+  // chrome `<ThemeToggle>` and FOUC script in index.html still own the
+  // localStorage 'ok-theme-v1' key; calling `setTheme()` from next-themes
+  // updates both the in-memory theme AND that localStorage cache, so the
+  // chrome FOUC always has the latest value on next reload.
+  //
+  // Bridge fires only while the Settings pane is mounted — that's the v0
+  // scope. A top-level ConfigProvider that holds the user-binding for the
+  // app session (and thus picks up CC1-broadcast or file-watcher changes
+  // from outside the pane) is a follow-up; v0 acceptable per D55.
+  const { setTheme } = useTheme();
+  useEffect(() => {
+    if (scope !== 'user') return;
+    const themeValue = connection?.config.appearance?.theme;
+    if (themeValue === 'light' || themeValue === 'dark' || themeValue === 'system') {
+      setTheme(themeValue);
+    }
+  }, [scope, connection?.config.appearance?.theme, setTheme]);
 
   // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
   // and triggers a brief red flash on the affected field.
