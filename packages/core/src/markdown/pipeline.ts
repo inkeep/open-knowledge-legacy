@@ -49,6 +49,7 @@ import type { Root as MdastRoot } from 'mdast';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkGithubAlerts from 'remark-github-alerts';
+import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { type Processor, unified } from 'unified';
@@ -60,6 +61,7 @@ import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
 import { detailsAccordionPromoterPlugin } from './details-accordion-promoter.ts';
 import { imagePromoterPlugin } from './image-promoter.ts';
+import { mathPromoterPlugin } from './math-promoter.ts';
 import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -151,6 +153,18 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
+    // SPEC 2026-04-29-math-canonical-and-syntax (FR-M3, Phase 3 revision):
+    // math parsing covers `$$…$$` (block when multi-line, inline when
+    // single-line/mid-paragraph) + ` ```math ` fence + `<Math>` /
+    // `<InlineMath>` MDX JSX. `singleDollarTextMath: false` keeps single
+    // `$x$` out of the math surface — currency (`$5.00`), shell vars
+    // (`$PATH`), and paired-dollar prose ("Pay $5 to $10") all stay as
+    // plain text. Authors who want inline math write `$$x$$`, `<InlineMath
+    // formula="x" />`, or use the `/inline math` slash entry. Fenced
+    // ` ```math ` is NOT claimed by remark-math; it lands as `code` mdast
+    // with `lang: 'math'` and is promoted by the math promoter alongside
+    // block `math` mdast nodes.
+    .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkWikiLink)
     // US-010 / FR-7: GFM-alerts + Obsidian foldable parse path. The upstream
     // plugin tags blockquotes starting with `[!TYPE]` (data.hName+class) and
@@ -176,6 +190,14 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
     // (already shallow-wrapped into the Accordion's children) get
     // promoted in the accordion's subtree too.
     .use(imagePromoterPlugin)
+    // SPEC 2026-04-29-math-canonical-and-syntax (FR-M4 + FR-M5): promote
+    // `math` mdast (`$$…$$` from remark-math) to `<DollarMath>` compat
+    // descriptors and `code` mdast with `lang: 'math'` to `<MathFence>`
+    // compat descriptors. Both render through the canonical `<Math>`
+    // component (rendersAs: 'Math'). Position is copied so Phase B's
+    // position-slice walker attaches `data.sourceRaw` for byte-identical
+    // pristine round-trip.
+    .use(mathPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {
@@ -206,6 +228,15 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
     .use(remarkMdxAgnostic)
+    // remarkMath on the serialize side registers `mathToMarkdown` handlers
+    // so `math` mdast (emitted by DollarMath's dirty-path serialize) is
+    // stringified back to `$$…$$`, and `inlineMath` mdast (emitted by the
+    // `mathInline` PM-to-mdast handler) stringifies to `$$x$$` — single
+    // dollars are intentionally never produced because parse-side has
+    // `singleDollarTextMath: false`. Mirroring the option here keeps the
+    // serializer from emitting a single-dollar form that wouldn't re-parse
+    // as math.
+    .use(remarkMath, { singleDollarTextMath: false })
     // remarkWikiLink registers mdast-util-to-markdown handlers for the
     // `wikiLink` mdast type (see wiki-link-micromark.ts:wikiLinkToMarkdown).
     // Required now that PM→mdast (index.ts) emits first-class wikiLink nodes

@@ -17,7 +17,7 @@ The source editor renders through five superimposed layers. When you see a class
 | ----- | ------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1     | CM6 base                             | `.cm-editor`, `.cm-content`, `.cm-line`, `.cm-gutters`, `.cm-cursor`, `.cm-selectionLayer`           | Editor chrome — gutter, line numbers, cursor, selection                                                                                                            |
 | 2     | CM6 markdown language                | `.ͼ<hash>`                                                                                           | Default syntax highlighting for `#`, `*`, `**`, `~~`, `>`, ` `` `, etc. Token-colored per theme.                                                                   |
-| 3     | `codeLanguages` allowlist            | `.ͼ<hash>` (per-language)                                                                            | Nested syntax highlighting inside fenced code for \~12 languages (js, ts, tsx, json, yaml, css, html, bash, python, rust, go, md). Unknown languages render plain. |
+| 3     | `codeLanguages` allowlist            | `.ͼ<hash>` (per-language)                                                                            | Nested syntax highlighting inside fenced code for \~13 languages (js, ts, tsx, json, yaml, css, html, bash, python, rust, go, md, math/latex/tex). Unknown languages render plain. |
 | 4     | `source-polish/`\*\* (this spec)\*\* | `.cm-del`, `.cm-list-item`, `.cm-fenced-code-line`, `.cm-table-row`, `.cm-table-header`, `.cm-link-ref-broken` | The minimal decorations added by this feature.                                                                                                                     |
 | 5     | Existing plugins                     | `.cm-wiki-link`, `.cm-wiki-link-broken`, `.cm-md-*`, `.cm-agent-flash-source-*`                      | Wiki-link detection + navigation, markdown-link chip, agent-write line flash.                                                                                      |
 
@@ -146,6 +146,12 @@ Bash:
 bun run dev                 # Start dev server
 VITE_PORT=9000 bun run dev  # Custom port (strict)
 bun run check               # Quality gate
+```
+
+Math (LaTeX, via the stex grammar — also resolves the `latex` and `tex` aliases):
+
+```math
+T_f(z) = \sum_{k=0}^\infty \frac{(z - c)^k}{2\pi i} \int_\gamma \frac{f(w)}{(w - c)^{k+1}}\, dw
 ```
 
 Empty-language fence (renders plain, no nested highlighting):

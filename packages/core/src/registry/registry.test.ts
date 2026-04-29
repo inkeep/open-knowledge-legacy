@@ -4,15 +4,16 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 5 canonical + 6 compat descriptors + wildcard', () => {
-    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 6 compats
-    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion, WikiEmbedImage,
-    // WikiEmbedVideo, WikiEmbedAudio) + '*' wildcard. Compats are registered
-    // for parse + render but filtered out of the slash menu; they preserve
-    // source-form fidelity through round-trip edits.
+  test('returns the 6 canonical + 8 compat descriptors + wildcard', () => {
+    // 6 canonicals (Callout, Image, Video, Audio, Accordion, Math) + 8 compats
+    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion, DollarMath,
+    // MathFence, WikiEmbedImage, WikiEmbedVideo, WikiEmbedAudio) + '*'
+    // wildcard. Compats are registered for parse + render but filtered out
+    // of the slash menu; they preserve source-form fidelity through
+    // round-trip edits.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(12);
+    expect(entries.length).toBe(15);
   });
 
   test('get returns registered component by name', () => {
@@ -80,6 +81,7 @@ describe('createRegistry', () => {
     expect(registry.has('video')).toBe(true);
     expect(registry.has('audio')).toBe(true);
     expect(registry.has('Accordion')).toBe(true);
+    expect(registry.has('Math')).toBe(true);
     expect(registry.has('*')).toBe(true);
     // Lowercase media canonicals — capitalized forms now fall through to the
     // wildcard. User content authored before the pivot would render with
@@ -94,12 +96,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 5 canonical + 6 compat entries (5-pack + source-form preservation)', () => {
-    expect(builtInComponents.length).toBe(11);
+  test('contains 6 canonical + 8 compat entries (6-pack + source-form preservation + WikiEmbed)', () => {
+    expect(builtInComponents.length).toBe(14);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
-    expect(canonical.length).toBe(5);
-    expect(compat.length).toBe(6);
+    expect(canonical.length).toBe(6);
+    expect(compat.length).toBe(8);
   });
 
   test('all entries have required fields', () => {
@@ -434,6 +436,51 @@ describe('builtInComponents manifest', () => {
     // the compound tier for grouped-UX demand; standalone stays first.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     expect(accordion?.emptyChildName).toBeUndefined();
+  });
+
+  test('Math exposes the 3-prop FR-M1 surface', () => {
+    // SPEC 2026-04-29-math-canonical-and-syntax FR-M1: block-only descriptor.
+    // formula (required) + id (deep-link anchor) + language (forward-compat
+    // hint, NG-M5). No `display` prop — block-only at ship per D-M5; inline
+    // math is NG-M11.
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math).toBeDefined();
+    if (!math) return;
+    const propNames = math.props.map((p) => p.name).sort();
+    expect(propNames).toEqual(['formula', 'id', 'language'].sort());
+  });
+
+  test('Math has `formula` as a required string with autoFocus', () => {
+    // formula is the only required prop — without it the descriptor renders
+    // an empty placeholder. autoFocus mounts the PropPanel cursor in the
+    // formula textarea on insert (consistent with `src` on img/video/audio).
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const formula = math?.props.find((p) => p.name === 'formula');
+    expect(formula).toBeDefined();
+    expect(formula?.type).toBe('string');
+    expect(formula?.required).toBe(true);
+    if (formula?.type === 'string') {
+      expect(formula.autoFocus).toBe(true);
+    }
+  });
+
+  test('Math is a self-closing leaf (no children slot)', () => {
+    // Math is content-leaf — formula is a string prop, not a content hole.
+    // `hasChildren: false` + `isSelfClosing: true` matches img/video/audio.
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    expect(math?.hasChildren).toBe(false);
+    expect(math?.isSelfClosing).toBe(true);
+  });
+
+  test('Math has no `display` prop (D-M5 — block-only at ship; NG-M11 covers inline)', () => {
+    // D-M5: every existing canonical descriptor is block, and `jsxInline` is
+    // intentionally render-less per NG14, so a live-rendered inline math
+    // variant would set a new precedent. Inline math (`$x$`) is NG-M11. Bare
+    // assertion guards against a drive-by re-introduction of a `display`
+    // boolean before NG-M11 is properly scoped.
+    const math = builtInComponents.find((m) => m.name === 'Math');
+    const display = math?.props.find((p) => p.name === 'display');
+    expect(display).toBeUndefined();
   });
 
   test('each name is unique', () => {

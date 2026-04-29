@@ -62,6 +62,10 @@ const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
     description: 'Embed an audio file with native player controls.',
     props: { controls: true },
   },
+  Math: {
+    description: 'Block math equation rendered with KaTeX from a LaTeX source string.',
+    props: { formula: 'c = \\pm\\sqrt{a^2 + b^2}' },
+  },
 };
 
 /**

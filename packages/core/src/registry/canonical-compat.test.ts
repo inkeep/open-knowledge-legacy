@@ -29,18 +29,18 @@ describe('canonical/compat split — registry shape', () => {
     }
   });
 
-  test('exactly 5 canonical descriptors (5-pack foundation)', () => {
-    expect(canonicalDescriptors.length).toBe(5);
+  test('exactly 6 canonical descriptors (6-pack foundation)', () => {
+    expect(canonicalDescriptors.length).toBe(6);
     // Media canonicals are lowercase HTML-tag names (img/video/audio); non-
     // media stays capitalized because HTML has no primitive rich enough to
-    // converge with (Callout) or only a structural subset (Accordion vs
-    // <details>).
+    // converge with (Callout, Math) or only a structural subset (Accordion
+    // vs <details>).
     expect(canonicalDescriptors.map((m) => m.name).sort()).toEqual(
-      ['Accordion', 'Callout', 'audio', 'img', 'video'].sort(),
+      ['Accordion', 'Callout', 'Math', 'audio', 'img', 'video'].sort(),
     );
   });
 
-  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence', () => {
+  test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence + math fences', () => {
     // v1 set: GFMCallout / CommonMarkImage / HtmlDetailsAccordion (alternative
     // surface forms that already shared canonical's prop spelling — identity
     // translateProps). WikiEmbedImage / WikiEmbedVideo / WikiEmbedAudio carry
@@ -48,12 +48,16 @@ describe('canonical/compat split — registry shape', () => {
     // video/audio since neither HTML5 element accepts an `alt` attribute) —
     // they prove the seam scales beyond identity remaps and converge all four
     // media authoring shapes (slash-menu JSX, ![](src) CommonMark, ![[file]]
-    // wiki-embed, drag-drop) on the same React component.
+    // wiki-embed, drag-drop) on the same React component. DollarMath and
+    // MathFence (added by the math spec) cover `$$…$$` and ` ```math `
+    // parse paths that render through the canonical `<Math>`.
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
       [
         'CommonMarkImage',
+        'DollarMath',
         'GFMCallout',
         'HtmlDetailsAccordion',
+        'MathFence',
         'WikiEmbedAudio',
         'WikiEmbedImage',
         'WikiEmbedVideo',
@@ -120,6 +124,26 @@ describe('compat descriptors — prop-set is a subset of canonical', () => {
     if (!accordion || !html) throw new Error('Missing descriptor');
     const canonicalNames = new Set(accordion.props.map((p) => p.name));
     for (const p of html.props) {
+      expect(canonicalNames.has(p.name)).toBe(true);
+    }
+  });
+
+  test('DollarMath props are a subset of Math props', () => {
+    const math = canonicalDescriptors.find((m) => m.name === 'Math');
+    const dollar = compatDescriptors.find((m) => m.name === 'DollarMath');
+    if (!math || !dollar) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(math.props.map((p) => p.name));
+    for (const p of dollar.props) {
+      expect(canonicalNames.has(p.name)).toBe(true);
+    }
+  });
+
+  test('MathFence props are a subset of Math props', () => {
+    const math = canonicalDescriptors.find((m) => m.name === 'Math');
+    const fence = compatDescriptors.find((m) => m.name === 'MathFence');
+    if (!math || !fence) throw new Error('Missing descriptor');
+    const canonicalNames = new Set(math.props.map((p) => p.name));
+    for (const p of fence.props) {
       expect(canonicalNames.has(p.name)).toBe(true);
     }
   });

@@ -1,0 +1,59 @@
+---
+title: Math showcase
+cluster: showcase
+---
+# Math
+
+The `Math` descriptor + `mathInline` PM atom together cover block + inline math. Block math goes through the canonical `<Math>` descriptor (KaTeX renderer, PropPanel-editable). Inline math goes through the `mathInline` PM atom (KaTeX inline render, slash-menu insertable, edit via source mode). Three markdown source forms all resolve into these two PM shapes.
+
+## Block math — multi-line `$$…$$`
+
+Multi-line `$$` fences parse as block math. γ preserves the source on pristine save; on dirty edit, serialization emits `$$\n…\n$$` again.
+
+$$
+c = \pm\sqrt{a^2 + b^2}
+$$
+
+$$
+T_f(z) = \sum_{k=0}^\infty \frac{(z - c)^k}{2\pi i} \int_\gamma \frac{f(w)}{(w - c)^{k+1}}\, dw
+$$
+
+## Block math — fenced ` ```math `
+
+A fenced `math` info-string also produces block math. Source mode highlights the fence body as LaTeX (stex grammar).
+
+```math
+\int_a^b f(x)\, dx = F(b) - F(a)
+```
+
+```math
+\nabla \times \mathbf{B} = \mu_0 \mathbf{J} + \mu_0 \varepsilon_0 \frac{\partial \mathbf{E}}{\partial t}
+```
+
+## Block math — `<Math>` MDX JSX
+
+Authors can write the canonical descriptor directly. PropPanel auto-focuses the `formula` field on insert.
+
+<Math formula="E = mc^2" />
+
+<Math formula="a^2 + b^2 = c^2" id="pythagoras" />
+
+## Inline math — `$$x$$` mid-paragraph
+
+Inline math always uses double-dollar. Single `$x$` is intentionally NOT a math syntax — that keeps currency, shell vars, and paired-dollar prose unambiguous. The Pythagorean theorem $$c = \pm\sqrt{a^2 + b^2}$$ shows up in the same line as this sentence. So does Euler's identity: $$e^{i\pi} + 1 = 0$$. Wikipedia paste lands here too: $$\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}$$ for the Basel problem.
+
+## Inline math — `<InlineMath>` MDX JSX
+
+The MDX form for inline math. Resolves to the same `mathInline` PM atom as `$$x$$`. Useful when authoring tools generate the JSX form: substitute <InlineMath formula="x \to \infty" /> in your statement.
+
+## Currency / shell-var sanity check
+
+Single-dollar mentions are always prose because `singleDollarTextMath: false` keeps the parser from claiming them. This product costs $5.00 plus tax. Shell vars `$PATH`, `$HOME` render as plain text outside code spans. Paired-dollar prose like "Pay $5 to $10 dollars" stays prose end-to-end. The price for this safety: inline math always needs `$$` (matching Notion / Wikipedia paste behavior); single `$x$` is not a math shorthand here.
+
+## Things to try
+
+- Click any block math → PropPanel opens with `formula` / `id` / `language`. Edit `formula` → KaTeX re-renders.
+- Toggle to source mode → block math appears in its source form (multi-line `$$`, fenced ` ```math `, or `<Math />`); the ` ```math ` body highlights as LaTeX. γ preserves source bytes on pristine save.
+- `/math` in slash menu → block `<Math>` insert.
+- `/inline math` in slash menu → inline `mathInline` insert at cursor; type LaTeX in source mode to populate.
+- Paste a Wikipedia formula → `$$…$$` lands inline.

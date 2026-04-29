@@ -183,5 +183,15 @@
     "componentName": "Accordion-details-id-attr",
     "blockForm": "<details id=\"anchor\" open><summary>Named</summary>Body</details>\n",
     "notes": "US-011: HTML5 <details id+open> → Accordion with id + defaultOpen for deep-linking"
+  },
+  {
+    "componentName": "Math-basic",
+    "blockForm": "<Math formula=\"E = mc^2\" />\n",
+    "notes": "FR-M1 (SPEC 2026-04-29-math-canonical-and-syntax): self-closing block descriptor; formula prop carries LaTeX source"
+  },
+  {
+    "componentName": "Math-with-id",
+    "blockForm": "<Math formula=\"a^2 + b^2 = c^2\" id=\"pythagoras\" />\n",
+    "notes": "FR-M1: id attr for deep-link anchor (e.g. #pythagoras) on a block math node"
   }
 ]

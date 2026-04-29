@@ -88,4 +88,21 @@ export const codeLanguages: LanguageDescription[] = [
       return new LanguageSupport(StreamLanguage.define(go));
     },
   }),
+  LanguageDescription.of({
+    // Source-mode highlight for ` ```math ` fences (SPEC 2026-04-29-math-
+    // canonical-and-syntax FR-M8). The MathFence compat descriptor parses
+    // these to <Math>; while authors edit in source mode, CodeMirror reads
+    // the `math` info-string and dispatches to stex (LaTeX) for syntax
+    // highlight inside the fence.
+    name: 'math',
+    alias: ['latex', 'tex'],
+    extensions: ['tex', 'latex'],
+    load: async () => {
+      const [{ StreamLanguage, LanguageSupport }, { stex }] = await Promise.all([
+        import('@codemirror/language'),
+        import('@codemirror/legacy-modes/mode/stex'),
+      ]);
+      return new LanguageSupport(StreamLanguage.define(stex));
+    },
+  }),
 ];

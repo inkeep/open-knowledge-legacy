@@ -132,6 +132,7 @@ export { JsxInline } from './extensions/jsx-inline.ts';
 export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { LinkRefDefFidelity } from './extensions/link-ref-def-fidelity.ts';
 export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
+export { MathInline } from './extensions/math-inline.ts';
 export { RawMdxFallback } from './extensions/raw-mdx-fallback.ts';
 export { sharedExtensions } from './extensions/shared.ts';
 export { ThematicBreakFidelity } from './extensions/thematic-break-fidelity.ts';

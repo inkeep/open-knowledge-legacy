@@ -30,6 +30,11 @@ import '@fontsource-variable/jetbrains-mono';
 // be imported once globally so the Image component's click-to-zoom works
 // without each consumer re-importing (US-006 / FR-18 / D-MF3).
 import 'react-medium-image-zoom/dist/styles.css';
+// KaTeX CSS imported eagerly here (~20 KB gzipped) — the Math component lazy-
+// imports the JS bundle (~270 KB), but the CSS stays eager so it's available
+// in environments where dynamic CSS imports don't resolve (Bun test runtime,
+// SSR). The big win on the lazy boundary is the JS, not the stylesheet.
+import 'katex/dist/katex.min.css';
 import './globals.css';
 
 // Electron-only: rewrite `/api/*` fetches to target the utility process. The

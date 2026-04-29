@@ -768,8 +768,21 @@ function buildMdastToPmHandlers(
     // Inline JSX → jsxInline thin shape (NG14 / FR-2 / FR-4):
     // Zero attrs. Single text child = raw source. Mdast children discarded.
     // The text content IS the source for serialization. No descriptor dispatch.
+    //
+    // Exception (Phase 3 of math spec): `<InlineMath formula="…" />`
+    // resolves to the `mathInline` PM atom for live KaTeX rendering. The
+    // formula attr is extracted from the mdast attributes; nothing else
+    // about jsxInline's NG14 shape changes.
     if (n.jsxInline) {
       handlers.mdxJsxTextElement = (node: MdxJsxTextElement) => {
+        if (node.name === 'InlineMath' && n.mathInline) {
+          const formulaAttr = node.attributes?.find(
+            (a) => a.type === 'mdxJsxAttribute' && a.name === 'formula',
+          );
+          const formula =
+            formulaAttr && typeof formulaAttr.value === 'string' ? formulaAttr.value : '';
+          return n.mathInline.createAndFill({ formula });
+        }
         const raw = rawFromData(node.data) ?? '';
         return n.jsxInline.createAndFill({}, raw ? [schema.text(raw)] : null);
       };
@@ -968,6 +981,16 @@ function buildMdastToPmHandlers(
           'without violating the STOP rule against emitting PM wikiLinkEmbed server-side',
       );
     };
+  }
+
+  // Inline math (`$$x$$` mid-paragraph or single-line standalone) →
+  // mathInline atom. The mdast `inlineMath` node's `.value` is the LaTeX
+  // formula source (delimiters already stripped by remark-math). Single
+  // `$x$` is intentionally not a math syntax — see `pipeline.ts`
+  // `singleDollarTextMath: false`.
+  if (n.mathInline) {
+    handlers.inlineMath = (node: { type: 'inlineMath'; value?: string }) =>
+      n.mathInline.createAndFill({ formula: node.value ?? '' });
   }
 
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
@@ -1298,6 +1321,20 @@ function buildPmToMdastHandlers(schema: Schema): {
         children: [],
         data: { sourceRaw: String(raw) },
       };
+    };
+  }
+
+  // mathInline → mdast `inlineMath` (Phase 3 lift of NG-M11). remark-math's
+  // `mathToMarkdown` extension stringifies inlineMath as `$value$` — the
+  // exact same syntax users authored. No sourceRaw needed; the formula
+  // attr is the source of truth.
+  if (n.mathInline) {
+    nodeHandlers.mathInline = (pmNode: PmNode) => {
+      const formula = typeof pmNode.attrs.formula === 'string' ? pmNode.attrs.formula : '';
+      return {
+        type: 'inlineMath' as const,
+        value: formula,
+      } as unknown as MdastNodes;
     };
   }
 

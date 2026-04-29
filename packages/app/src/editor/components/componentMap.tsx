@@ -1,32 +1,25 @@
 /**
  * Maps component name → React component for the descriptor registry.
  *
- * Final 5-pack state (US-003/US-005/US-006/US-007/US-008/US-009 shipped):
- * the registry manifest is the complete 5-pack foundation (Callout + Image +
- * Video + Audio + Accordion registered). Callout is a DIY renderer (US-005,
- * 7-prop GFM shape at `./Callout`). Image is a DIY renderer wrapping
- * `react-medium-image-zoom` (US-006, 8-prop shape at `./Image`). Video is a
- * DIY pure HTML5 `<video>` wrapper (US-007, 9-prop shape at `./Video` per
- * D-MF12 — no URL sniffing, no iframe emission). Audio is a DIY pure HTML5
- * `<audio>` wrapper (US-008, 7-prop shape at `./Audio` — extracted from the
- * pre-US-008 inline function; widened per FR-4; `hasChildren: true` for
- * `<source>` / `<track>` passthrough). Accordion is a DIY standalone HTML5
- * `<details>`/`<summary>` wrapper (US-009, 6-prop shape at `./Accordion` per
- * D-MF14/D-MF16 — no `variant`, no `<Accordions>` parent wrapper;
- * cross-browser exclusive grouping via HTML5 `<details name>`).
+ * 6-pack state (Callout + Image + Video + Audio + Accordion + Math). Callout
+ * is a DIY renderer (7-prop GFM shape at `./Callout`). Image wraps
+ * `react-medium-image-zoom` (12-prop HTML-native shape at `./Image`). Video
+ * is a pure HTML5 `<video>` wrapper (11-prop shape at `./Video`). Audio is a
+ * pure HTML5 `<audio>` wrapper (7-prop shape at `./Audio` with `<source>` /
+ * `<track>` passthrough). Accordion is a standalone HTML5 `<details>` /
+ * `<summary>` wrapper (6-prop shape at `./Accordion` with cross-browser
+ * exclusive grouping via HTML5 `<details name>`). Math is a KaTeX block
+ * renderer (LaTeX `formula` source at `./Math`, KaTeX JS lazy-imported on
+ * first mount; CSS eager from main.tsx).
  *
- * Compound-component machinery (Tabs/Tab, Accordions/Accordion) was cut in
- * US-002 along with the Context Bridge Registry (precedent #29 retracted on
- * this branch; preserved on PR #165 at commit e56f33c3 for future
- * compound-tier revival per NG19).
+ * Compound-component machinery (Tabs/Tab, Accordions/Accordion) is preserved
+ * on PR #165 branch for future compound-tier revival per NG19; not in scope
+ * here.
  *
  * Descriptor names no longer in `componentMap` — Banner, Card, Cards, Step,
- * Steps, Tab, Tabs, Accordions (fumadocs compound parent), File, Files,
- * Folder, TypeTable, InlineTOC — fall through to the `'*'` wildcard per
- * `registry/index.ts:getDescriptor`. Per-Precedent #30 the children of those
- * unregistered components stay editable (wildcard `hasChildren: true`).
- *
- * Mermaid was removed from the registry 2026-04-21.
+ * Steps, Tab, Tabs, Accordions, File, Files, Folder, TypeTable, InlineTOC —
+ * fall through to the `'*'` wildcard. Children of unregistered components
+ * stay editable (wildcard `hasChildren: true`).
  *
  * '*' maps to UnregisteredBadgeRender for the wildcard fallback.
  */
@@ -34,6 +27,7 @@ import { Accordion } from './Accordion.tsx';
 import { Audio } from './Audio.tsx';
 import { Callout } from './Callout.tsx';
 import { Image } from './Image.tsx';
+import { MathView } from './Math.tsx';
 import { Video } from './Video.tsx';
 
 function UnregisteredBadgeRender(props: { children?: React.ReactNode }) {
@@ -50,5 +44,6 @@ export const componentMap: Record<string, React.ComponentType<any>> = {
   video: Video,
   audio: Audio,
   Accordion,
+  Math: MathView,
   '*': UnregisteredBadgeRender,
 };

@@ -1,18 +1,18 @@
 /**
  * `getComponentItems()` returns the descriptor-driven slash-menu entries by
- * filtering the registered descriptors to the canonical surface. Post-cb-v2
- * 5-pack the canonical set is exactly: Callout, Image, Video, Audio,
- * Accordion. Compat descriptors (CommonMarkImage, GFMCallout,
+ * filtering the registered descriptors to the canonical surface. The
+ * canonical set is the 6-pack: Callout, Image, Video, Audio, Accordion,
+ * Math. Compat descriptors (CommonMarkImage, GFMCallout,
  * HtmlDetailsAccordion) are read-only and never offered for fresh insertion.
  */
 import { describe, expect, test } from 'bun:test';
 import { createChildNode, getComponentItems } from './component-items';
 
 describe('getComponentItems (descriptor-driven slash menu)', () => {
-  test('returns exactly the 5-pack canonical descriptors', () => {
+  test('returns exactly the 6-pack canonical descriptors', () => {
     const items = getComponentItems();
     const labels = items.map((i) => i.label).sort();
-    expect(labels).toEqual(['Accordion', 'Audio', 'Callout', 'Image', 'Video']);
+    expect(labels).toEqual(['Accordion', 'Audio', 'Callout', 'Image', 'Math', 'Video']);
   });
 
   test('every entry exposes the SlashCommandItem contract', () => {

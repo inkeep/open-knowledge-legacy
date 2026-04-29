@@ -1,10 +1,11 @@
 /**
- * Built-ins manifest — 5-pack foundation (Callout + Image + Video + Audio +
- * Accordion).
+ * Built-ins manifest — 6-pack foundation (Callout + Image + Video + Audio +
+ * Accordion + Math).
  *
- * Scope contract for this file after US-009 (`specs/2026-04-23-cb-v2-md-foundation/`):
- * five registered descriptors (+ wildcard `'*'` injected by the registry
- * factory) — the 5-pack foundation is complete at this count.
+ * Scope contract: six registered canonical descriptors (+ wildcard `'*'`
+ * injected by the registry factory). 5-pack foundation per
+ * `specs/2026-04-23-cb-v2-md-foundation/`; Math added by
+ * `specs/2026-04-29-math-canonical-and-syntax/` (FR-M1, lifts NG22).
  * Cut in US-003: Banner, Card, Cards, Step, Steps, Tab, Tabs, Accordion
  * (fumadocs shape), Accordions, File, Files, Folder, TypeTable, InlineTOC —
  * 14 fumadocs descriptors retired because the 5-pack has no compound-wrapper
@@ -619,6 +620,49 @@ const wikiEmbedAudioProps: PropDef[] = [
   },
 ];
 
+// ── Math ─────────────────────────────────────────────────────────────────────
+//
+// FR-M1 (SPEC 2026-04-29-math-canonical-and-syntax): block-only canonical
+// descriptor for LaTeX math. Three props — `formula` (required), `id`
+// (deep-link anchor), `language` (forward-compat hint, default `'latex'`).
+// `display` is intentionally absent — every existing canonical descriptor
+// is block, and `jsxInline` is render-less per NG14, so a live-rendered
+// inline math variant would set a new precedent rather than follow one.
+// NG-M11 covers the inline promotion path. Compat descriptors `DollarMath`
+// (`$$…$$`) and `MathFence` (` ```math `) ship below — both render through
+// the canonical `<Math>` React component (`rendersAs: 'Math'`).
+
+const mathProps: PropDef[] = [
+  {
+    name: 'formula',
+    type: 'string',
+    required: true,
+    autoFocus: true,
+    description: 'LaTeX math source (rendered with KaTeX in the browser)',
+  },
+  {
+    name: 'id',
+    type: 'string',
+    required: false,
+    description: 'HTML id attribute for deep-linking (e.g. `#eq-pythagoras`)',
+  },
+  {
+    name: 'language',
+    type: 'string',
+    required: false,
+    advanced: true,
+    description:
+      'Forward-compat hint for the math source language (default `latex`). Reserved for future MathJax / Typst / AsciiMath substrates.',
+  },
+];
+
+// `$$…$$` and ` ```math ` source forms encode only the LaTeX formula —
+// `id` / `language` are reachable only via the canonical `<Math>` MDX
+// form. Identity-shared with mathProps[0] (`formula`) so changes to the
+// PropDef metadata propagate to both canonical and compat in lockstep.
+const dollarMathProps: PropDef[] = [mathProps[0]];
+const mathFenceProps: PropDef[] = [mathProps[0]];
+
 // ── Compat serialize helpers ─────────────────────────────────────────────────
 
 /** Minimal HTML attribute-value escape (matches the lossiness of the parser). */
@@ -669,8 +713,10 @@ function serializeWikiEmbed(node: { attrs: { props?: unknown } }): MdastNodes {
 //   for OK-specific affordances around the primitive.
 //
 //   Capitalized when (a) HTML has no primitive that covers the surface
-//   (e.g., Callout) OR (b) the closest HTML primitive is structurally a
-//   subset of the descriptor (e.g., Accordion vs <details>).
+//   (e.g., Callout, Math) OR (b) the closest HTML primitive is structurally
+//   a subset of the descriptor (e.g., Accordion vs <details>). HTML has no
+//   native math primitive (MathML is render-time per D-M2), so Math is
+//   capitalized.
 
 export const builtInComponents: JsxComponentMeta[] = [
   // Content
@@ -749,6 +795,21 @@ export const builtInComponents: JsxComponentMeta[] = [
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
     serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
+  },
+
+  // Content
+  {
+    name: 'Math',
+    surface: 'canonical',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mathProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Math',
+    description: 'Block math equation rendered with KaTeX from a LaTeX source string',
+    searchTerms: ['math', 'latex', 'equation', 'formula', 'katex', 'tex'],
+    serialize: (node, ctx) => emitMdxJsx('Math', node, ctx),
   },
 
   // ── Compat descriptors ─────────────────────────────────────────────────────
@@ -852,7 +913,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     hasChildren: false,
     isSelfClosing: true,
     props: wikiEmbedImageProps,
-    icon: 'ZoomIn',
+    icon: 'Image',
     category: 'media',
     displayName: 'Wiki Embed Image',
     description:
@@ -880,7 +941,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     hasChildren: false,
     isSelfClosing: true,
     props: wikiEmbedVideoProps,
-    icon: 'Film',
+    icon: 'SquarePlay',
     category: 'media',
     displayName: 'Wiki Embed Video',
     description:
@@ -918,6 +979,59 @@ export const builtInComponents: JsxComponentMeta[] = [
       };
     },
     serialize: serializeWikiEmbed,
+  },
+
+  {
+    name: 'DollarMath',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: dollarMathProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Dollar Math',
+    description:
+      'Block math via `$$…$$` syntax — read-only compat. Preserves `$$…$$` form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      // Emit `math` mdast — `mdast-util-math` (registered via `remarkMath`
+      // on the serialize side of pipeline.ts) re-stringifies it as `$$…$$`,
+      // closing the round-trip on the dirty path. Pristine path uses γ
+      // sourceRaw and never reaches this serialize fn.
+      return {
+        type: 'math' as const,
+        value: p?.formula ?? '',
+      };
+    },
+  },
+
+  {
+    name: 'MathFence',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: mathFenceProps,
+    icon: 'Sigma',
+    category: 'content',
+    displayName: 'Math Fence',
+    description:
+      'Block math via ` ```math ` fenced code syntax — read-only compat. Preserves the fence form on round-trip; insert a fresh Math block for the full prop surface (id, language).',
+    rendersAs: 'Math',
+    translateProps: (props) => props,
+    serialize: (node) => {
+      const p = node.attrs.props as { formula?: string } | undefined;
+      // Emit `code` mdast with lang:'math' — remark-stringify's default code
+      // handler emits a fenced ` ```math `…``` ` block, closing the
+      // round-trip on the dirty path. Pristine path uses γ sourceRaw.
+      return {
+        type: 'code' as const,
+        lang: 'math',
+        meta: null,
+        value: p?.formula ?? '',
+      };
+    },
   },
 
   {

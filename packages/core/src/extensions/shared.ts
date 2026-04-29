@@ -18,6 +18,7 @@ import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
 import { LinkRefDefFidelity } from './link-ref-def-fidelity.ts';
 import { List, ListItem } from './list.ts';
+import { MathInline } from './math-inline.ts';
 import { RawMdxFallback } from './raw-mdx-fallback.ts';
 import { SourceLiteralMark } from './source-literal-mark.ts';
 import { ThematicBreakFidelity } from './thematic-break-fidelity.ts';
@@ -31,6 +32,11 @@ export const sharedExtensions = [
   RawMdxFallback,
   // jsxInline at T1 Layer 3 target shape (R3) — inline MDX like <Icon />.
   JsxInline,
+  // mathInline — live-rendered inline math (Phase 3 of math spec; lifts
+  // NG-M11). Atom inline node carrying the LaTeX `formula` attr; KaTeX
+  // renders inline-flow via the app-side NodeView. Sibling of jsxInline,
+  // not a descriptor — keeps the registry "all-block" invariant.
+  MathInline,
   // WikiLink also needs to register before StarterKit.
   WikiLink,
   // WikiLinkEmbed sits next to WikiLink — same priority ordering concern.

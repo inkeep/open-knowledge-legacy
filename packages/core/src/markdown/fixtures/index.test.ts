@@ -7,30 +7,26 @@ import {
 } from './index.ts';
 
 describe('fixture loaders — count + shape contracts', () => {
-  test('loadBuiltInFixtures returns 37 entries (26 5-pack + 11 parse-path per US-012 narrow)', () => {
-    // US-012 narrowed the pre-existing corpus to 5-pack-only: dropped 6
-    // fumadocs-specific fixtures (Card, Cards, Steps, Tabs, Banner,
-    // Card-with-unknown-attrs) and ADDED widened-shape + nested-composition
-    // fixtures for the 5-pack descriptors (~13 new entries including I16
-    // nested-dirty compositions per D-MF18).
-    //
-    // Current breakdown:
+  test('loadBuiltInFixtures returns 39 entries (28 6-pack + 11 parse-path)', () => {
+    // 6-pack-canonical breakdown:
     //   - 6 Callout fixtures (base + self-closing + info-alias + boolean-shorthand
     //     + widened-foldable + color-override)
     //   - 3 Accordion fixtures (title-only + name-grouping + defaultOpen-id)
     //   - 2 img fixtures (basic + with-srcset-loading)
     //   - 2 video fixtures (basic + with-poster-autoplay)
     //   - 2 audio fixtures (basic + widened-preload)
-    //   - 5 nested-composition fixtures (D-MF18 I16: Callout>Accordion,
-    //     Accordion>Callout, Accordion>Accordion, Callout>Callout,
-    //     Callout-collapsible>Accordion)
+    //   - 2 Math fixtures (basic + with-id) — added 2026-04-29 per FR-M1
+    //   - 5 nested-composition fixtures (Callout>Accordion, Accordion>Callout,
+    //     Accordion>Accordion, Callout>Callout, Callout-collapsible>Accordion)
     //   - 3 wildcard/expression fixtures (Unregistered-CustomThing,
     //     Comp-expression-attr, Comp-spread-attr)
     //   - 3 inline thin-shape fixtures (Icon, Badge, Comp-inline-expression)
-    //   - 7 GFM-alert fixtures (US-010: 5 GFM + 2 Obsidian foldable)
-    //   - 4 <details>→Accordion fixtures (US-011)
+    // Parse-path breakdown:
+    //   - 7 GFM-alert fixtures (5 GFM + 2 Obsidian foldable)
+    //   - 4 <details>→Accordion fixtures
+    // Math parse-path fixtures (`$$…$$`, ` ```math `) land in Phase 2.
     const fixtures = loadBuiltInFixtures();
-    expect(fixtures).toHaveLength(37);
+    expect(fixtures).toHaveLength(39);
   });
 
   test('every BuiltInFixture has non-empty componentName + blockForm', () => {

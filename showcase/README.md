@@ -4,7 +4,7 @@ cluster: showcase
 ---
 # Component showcase
 
-Live test surface for every built-in descriptor in the CB-v2 5-pack foundation — plus the two fallback paths. Open any file in the OK editor and start poking: the PropPanel should reflect each descriptor's typed prop surface, the slash menu (`/`) should surface the 5 registered + wildcard, and γ should round-trip bytes on save.
+Live test surface for every built-in descriptor in the 6-pack foundation (CB-v2 5-pack + Math) — plus the two fallback paths and the inline-math atom. Open any file in the OK editor and start poking: the PropPanel should reflect each descriptor's typed prop surface, the slash menu (`/`) should surface the registered canonicals + wildcard, and γ should round-trip bytes on save.
 
 ## Files
 
@@ -14,6 +14,7 @@ Live test surface for every built-in descriptor in the CB-v2 5-pack foundation �
 - [[04-audio]] — HTML5 `<audio>` wrapper + autoPlay/loop/muted/preload + `<source>` children
 - [[05-accordion]] — HTML5 `<details>` substrate + MDX JSX + icon/description/id + exclusive grouping via `name`
 - [[06-unknown-components]] — Wildcard fallback for cut descriptors (`<Tabs>`, `<Card>`, etc.) + `rawMdxFallback` for malformed MDX
+- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (`$x$`, single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
 
 ## Things to try
 
@@ -21,12 +22,12 @@ Live test surface for every built-in descriptor in the CB-v2 5-pack foundation �
 - Toggle between WYSIWYG and source mode (editor header toggle) → γ preservation: pristine blocks round-trip byte-for-byte; dirty blocks canonicalize to MDX JSX.
 - Paste content with cut descriptor names (`<Steps>`, `<Card>`, `<Banner>`, `<Files>`) → should render as a wildcard `<UnregisteredBlock>` chrome with an editable nested CodeMirror source.
 - Type intentionally-malformed MDX (`<Unclosed>` without a closer) → should degrade to `rawMdxFallback` with nested CodeMirror.
-- Use `/` slash menu inside a block to insert a new descriptor → should show exactly 5 built-ins + the wildcard.
+- Use `/` slash menu inside a block to insert a new descriptor → should show the 6 canonicals (Callout, Image, Video, Audio, Accordion, Math) + Inline Math + wildcard.
 - Try keyboard shortcuts from the docs: `Cmd`/`Ctrl`+`Shift`+`↑/↓` moves a top-level block; `Enter` or `Space` on a selected block opens the PropPanel.
 
 # Component showcase
 
-Live test surface for every built-in descriptor in the CB-v2 5-pack foundation — plus the two fallback paths. Open any file in the OK editor and start poking: the PropPanel should reflect each descriptor's typed prop surface, the slash menu (`/`) should surface the 5 registered + wildcard, and γ should round-trip bytes on save.
+Live test surface for every built-in descriptor in the 6-pack foundation (CB-v2 5-pack + Math) — plus the two fallback paths and the inline-math atom. Open any file in the OK editor and start poking: the PropPanel should reflect each descriptor's typed prop surface, the slash menu (`/`) should surface the registered canonicals + wildcard, and γ should round-trip bytes on save.
 
 ## Files
 
@@ -36,6 +37,7 @@ Live test surface for every built-in descriptor in the CB-v2 5-pack foundation �
 - [[04-audio]] — HTML5 `<audio>` wrapper + autoPlay/loop/muted/preload + `<source>` children
 - [[05-accordion]] — HTML5 `<details>` substrate + MDX JSX + icon/description/id + exclusive grouping via `name`
 - [[06-unknown-components]] — Wildcard fallback for cut descriptors (`<Tabs>`, `<Card>`, etc.) + `rawMdxFallback` for malformed MDX
+- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (`$x$`, single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
 
 ## Things to try
 
@@ -43,6 +45,6 @@ Live test surface for every built-in descriptor in the CB-v2 5-pack foundation �
 - Toggle between WYSIWYG and source mode (editor header toggle) → γ preservation: pristine blocks round-trip byte-for-byte; dirty blocks canonicalize to MDX JSX.
 - Paste content with cut descriptor names (`<Steps>`, `<Card>`, `<Banner>`, `<Files>`) → should render as a wildcard `<UnregisteredBlock>` chrome with an editable nested CodeMirror source.
 - Type intentionally-malformed MDX (`<Unclosed>` without a closer) → should degrade to `rawMdxFallback` with nested CodeMirror.
-- Use `/` slash menu inside a block to insert a new descriptor → should show exactly 5 built-ins + the wildcard.
+- Use `/` slash menu inside a block to insert a new descriptor → should show the 6 canonicals (Callout, Image, Video, Audio, Accordion, Math) + Inline Math + wildcard.
 - Try keyboard shortcuts from the docs: `Cmd`/`Ctrl`+`Shift`+`↑/↓` moves a top-level block; `Enter` or `Space` on a selected block opens the PropPanel.
 
