@@ -262,6 +262,9 @@
   [data-slot="sidebar-inset"][data-push-pulse] {
     animation: none;
   }
+  .animate-settings-flash {
+    animation: none;
+  }
 }
 
 /* Base styles */

@@ -5,16 +5,14 @@
  * allowlist gating on read — agents can inspect any field. Read-only,
  * idempotent.
  *
- * Per D62 / FR-6c: tagged `[Operates on disk; no running OK server required]`
- * because it doesn't need Hocuspocus running. Used for mid-session re-reads
- * when state may have changed (file watcher detected an external edit,
- * another agent wrote, etc.).
+ * Tagged `[Operates on disk; no running OK server required]` because it
+ * doesn't need Hocuspocus running. Used for mid-session re-reads when
+ * state may have changed (file watcher detected an external edit, another
+ * agent wrote, etc.).
  *
  * Input: `{ path?: string[], cwd?: string }` — path is the dotted segments
  *        (e.g. `["mcp", "tools"]`). Omit for full config.
  * Output: `structuredContent: { value }` + JSON-stringified `content[]`.
- *
- * Spec: SPEC.md FR-6c + D62.
  */
 
 import { z } from 'zod';

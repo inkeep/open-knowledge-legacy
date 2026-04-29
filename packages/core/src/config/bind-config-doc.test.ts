@@ -80,7 +80,7 @@ describe('bindConfigDoc — current()', () => {
     const binding = bindConfigDoc(provider, 'workspace');
 
     expect(() => binding.current()).not.toThrow();
-    // Defaults — appearance.theme is UNSET per D55, so it's undefined.
+    // Defaults — appearance.theme is UNSET, so it's undefined.
     expect(binding.current().appearance?.theme).toBeUndefined();
     binding.dispose();
   });
@@ -154,7 +154,7 @@ describe('bindConfigDoc — patch()', () => {
     const result = binding.patch({ appearance: { theme: null } });
     expect(result.ok).toBe(true);
 
-    // appearance.theme is now absent → defaults to UNSET per D55.
+    // appearance.theme is now absent → defaults to UNSET.
     const after = doc.getText('source').toString();
     expect(after).not.toContain('theme: dark');
     expect(binding.current().appearance?.theme).toBeUndefined();
@@ -326,8 +326,8 @@ describe('bindConfigDoc — multi-client / cross-process simulation (NR9 LWW)', 
     expect(docA.getText('source').toString()).toBe(docB.getText('source').toString());
 
     // Final state may or may not be parseable depending on character merge.
-    // If parseable, it should reflect one or both patches; if not, L3
-    // (US-006 persistence-hook revert) is the safety net at the server.
+    // If parseable, it should reflect one or both patches; if not, the
+    // persistence-hook revert is the safety net at the server.
     const finalConfig = bindingA.current();
     // At minimum, current() never throws.
     expect(finalConfig).toBeDefined();
@@ -339,7 +339,7 @@ describe('bindConfigDoc — multi-client / cross-process simulation (NR9 LWW)', 
   });
 
   test('external Y.Text replacement (file-watcher path) fires subscribers', () => {
-    // Simulates US-007 applyExternalConfigChange: server-origin Y.Text
+    // Simulates applyExternalConfigChange: server-origin Y.Text
     // replacement caused by an external CLI / hand-edit / MCP-from-other-
     // session write. The binding's Y.Text observer must fire for the
     // resulting update.

@@ -1,14 +1,13 @@
 /**
- * Headless config writer (D5 reshape Part B / FR-9).
+ * Headless config writer.
  *
  * Used by MCP `set_config` / `set_folder_rule`, CLI `ok config validate` /
- * `ok config migrate`, and `seed/apply.ts`. Returns `Result<T, E>` (D35) —
- * never throws across the boundary for expected failures (validation,
- * malformed YAML, write errors).
+ * `ok config migrate`, and `seed/apply.ts`. Returns `Result<T, E>` — never
+ * throws across the boundary for expected failures (validation, malformed
+ * YAML, write errors).
  *
- * Three-layer defense-in-depth (D45): this is L2 (headless writers).
- * Same `ConfigSchema.safeParse` runs at L1 (Modal walker) and L3
- * (persistence-hook).
+ * Three-layer defense-in-depth: this is L2 (headless writers). Same
+ * `ConfigSchema.safeParse` runs at L1 (Modal walker) and L3 (persistence-hook).
  *
  * Comment + structure preservation: the yaml@2 Document layer round-trip
  * (`parseDocument` → `setIn`/`deleteIn` → `doc.toString()`) preserves
@@ -32,15 +31,15 @@ import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 const CONFIG_FILENAME = 'config.yml';
 
 /**
- * Default magic-comment header written on lazy first-write (D51 / FR-17).
+ * Default magic-comment header written on lazy first-write.
  *
  * Version pin is sourced from `package.json` at runtime via `import.meta.url`
  * + relative path traversal — keeps the version always in sync with what
  * the running package reports. Falls back to a non-pinned URL if the
  * lookup fails for any reason (won't crash a write).
  *
- * US-013 (`ok init`) will scaffold its own header for workspace files; this
- * helper covers the user-global lazy-write path.
+ * `ok init` scaffolds its own header for workspace files; this helper covers
+ * the user-global lazy-write path.
  */
 function packageVersionPinnedUrl(): string {
   try {
@@ -82,10 +81,10 @@ export interface WriteConfigPatchOptions {
    */
   homedirOverride?: string;
   /**
-   * Optional header comment for lazy first-write (D51 / FR-17). Used only
-   * when the target file does not yet exist. Defaults to the version-pinned
-   * `$schema` magic comment. Pass `null` to skip the header (e.g., when the
-   * caller writes its own scaffolded content above the patch).
+   * Optional header comment for lazy first-write. Used only when the target
+   * file does not yet exist. Defaults to the version-pinned `$schema` magic
+   * comment. Pass `null` to skip the header (e.g., when the caller writes
+   * its own scaffolded content above the patch).
    */
   firstWriteHeader?: string | null;
 }
@@ -133,7 +132,7 @@ function ok(value: WriteConfigPatchSuccess): Ok<WriteConfigPatchSuccess> {
 }
 
 /**
- * Atomic tmp+rename write. Mode 0o644 (D51 — config is not secret).
+ * Atomic tmp+rename write. Mode 0o644 — config is not secret.
  *
  * Best-effort cleanup of the tmp file on failure: if rename fails, attempt
  * to unlink the tmp file but never throw on cleanup — the caller's error
@@ -160,9 +159,8 @@ async function atomicWrite(absPath: string, content: string): Promise<void> {
  * returns a typed error with no fs side-effect. On success, writes
  * atomically via tmp+rename.
  *
- * Lazy first-write (D51): if the target file is missing, creates the
- * parent dir (`mkdir -p`) and writes a new file with the magic-comment
- * header. Mode 0o644.
+ * Lazy first-write: if the target file is missing, creates the parent dir
+ * (`mkdir -p`) and writes a new file with the magic-comment header. Mode 0o644.
  */
 export async function writeConfigPatch(
   opts: WriteConfigPatchOptions,
@@ -228,7 +226,7 @@ async function writeConfigPatchInner(
 
   // Step 4: serialize to JS for safeParse (validation), and to string for
   // write. The Document layer's `toJSON()` produces a plain JS object
-  // suitable for Zod parsing. L2 of the three-layer defense (D45).
+  // suitable for Zod parsing. L2 of the three-layer defense.
   const merged = doc.toJSON();
   const parseResult = withConfigSpanSync(
     'config.validate',

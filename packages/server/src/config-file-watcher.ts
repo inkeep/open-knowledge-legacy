@@ -1,6 +1,5 @@
 /**
- * Chokidar single-file watcher for `.open-knowledge/config.yml` paths
- * (US-007 / FR-15 / D52).
+ * Chokidar single-file watcher for `.open-knowledge/config.yml` paths.
  *
  * Watches a single absolute path. On `add` or `change`, reads the file and
  * fires `onChange(content)`. The caller wires `onChange` to
@@ -20,8 +19,9 @@
  * @see packages/server/src/config-persistence.ts `applyExternalConfigChange`
  */
 
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { tracedMkdirSync } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 
 /** Cleanup function returned by `startConfigFileWatcher`. Idempotent. */
@@ -64,7 +64,7 @@ export async function startConfigFileWatcher(
   // the user-global `~/.open-knowledge/` directory hasn't been created
   // yet. Cheap, idempotent, mode 0o755 (default).
   try {
-    mkdirSync(watchDir, { recursive: true });
+    tracedMkdirSync(watchDir, { recursive: true });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'EEXIST') {

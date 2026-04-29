@@ -1,5 +1,5 @@
 /**
- * Source-position locator for yaml@2 `Document` ASTs (FR-27 / D36).
+ * Source-position locator for yaml@2 `Document` ASTs.
  *
  * Given a parsed `Document`, the original source string, and a Zod
  * `issue.path` (an array of property keys), find the offending YAML node

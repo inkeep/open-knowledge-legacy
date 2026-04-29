@@ -1,9 +1,8 @@
 /**
  * Helpers for walking the published `ConfigSchema` from
  * `@inkeep/open-knowledge-core` into form metadata. Uses the same
- * `_zod.def.innerType` descent pattern as `getFieldMeta` (US-002 /
- * field-registry.ts) so wrappers (`.default()`, `.optional()`,
- * `.nullable()`) are transparent.
+ * `_zod.def.innerType` descent pattern as `getFieldMeta` so wrappers
+ * (`.default()`, `.optional()`, `.nullable()`) are transparent.
  *
  * Pure functions — no React, no I/O. Settings pane components consume the
  * outputs (`buildPatch`, `getFieldDefault`, `pathHasValue`).
@@ -55,7 +54,7 @@ export function readPath(value: unknown, path: readonly (string | number)[]): un
 
 /**
  * True iff every segment of `path` exists in `value` (allows `null`/empty
- * arrays as "set"). Used by the modified-at-scope indicator (FR-3b).
+ * arrays as "set"). Used by the modified-at-scope indicator.
  */
 export function pathHasValue(value: unknown, path: readonly (string | number)[]): boolean {
   let cur: unknown = value;

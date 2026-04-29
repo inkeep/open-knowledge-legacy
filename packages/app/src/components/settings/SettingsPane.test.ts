@@ -3,8 +3,8 @@
  *
  * Repo convention (see `CommandPalette.test.ts`, `EditorActivityPool.test.ts`):
  * full DOM + interaction coverage lives in Playwright stress tests; unit
- * tests guard the export shape, the regression-critical strings, and the
- * D54 architectural choice to render as a pane (NOT a Dialog overlay).
+ * tests guard the export shape, regression-critical strings, and the
+ * architectural choice to render as a pane (NOT a Dialog overlay).
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -22,28 +22,28 @@ describe('SettingsPane module', () => {
 });
 
 describe('SettingsPane source-level guards', () => {
-  test('binds via core bindConfigDoc (FR-33 / D48)', () => {
+  test('binds via core bindConfigDoc', () => {
     expect(SRC).toContain("from '@inkeep/open-knowledge-core'");
     expect(SRC).toContain('bindConfigDoc(');
   });
 
-  test('admits both well-known config doc names (D39 / D40)', () => {
+  test('admits both well-known config doc names', () => {
     expect(SRC).toContain('CONFIG_DOC_NAME_WORKSPACE');
     expect(SRC).toContain('CONFIG_DOC_NAME_USER');
   });
 
-  test('subscribes to CC1 config-validation-rejected (FR-39 / D56)', () => {
+  test('subscribes to CC1 config-validation-rejected', () => {
     expect(SRC).toContain('subscribeToConfigValidationRejected');
   });
 
-  test('renders as a pane, NOT a Dialog overlay (D54)', () => {
+  test('renders as a pane, NOT a Dialog overlay', () => {
     // The architectural choice — the file should not import Dialog from ui/dialog
     // for its own structural shell. (InstallInClaudeDesktopDialog is rendered
     // inside the Integrations row, but uses its own internal Dialog.)
     expect(SRC).not.toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
   });
 
-  test('has Integrations section with Install in Claude Desktop row (FR-25 / D22)', () => {
+  test('has Integrations section with Install in Claude Desktop row', () => {
     expect(SRC).toContain('IntegrationsSection');
     expect(SRC).toContain('Install in Claude Desktop');
     expect(SRC).toContain('InstallInClaudeDesktopDialog');
@@ -53,12 +53,12 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain('detectClaudeDesktop');
   });
 
-  test('renders both scope sub-tabs (FR-2)', () => {
+  test('renders both scope sub-tabs', () => {
     expect(SRC).toContain('This project');
     expect(SRC).toContain('All projects');
   });
 
-  test('uses sonner for L3 rejection toast (FR-39)', () => {
+  test('uses sonner for L3 rejection toast', () => {
     expect(SRC).toContain("from 'sonner'");
     expect(SRC).toContain('toast.error(');
   });
@@ -69,11 +69,11 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain('commit(null)');
   });
 
-  test('flash animation uses the settings-flash CSS keyframe (D56)', () => {
+  test('flash animation uses the settings-flash CSS keyframe', () => {
     expect(SRC).toContain('animate-settings-flash');
   });
 
-  test('per-D59: does not instantiate IndexeddbPersistence', () => {
+  test('does not instantiate client-side IndexeddbPersistence', () => {
     expect(SRC).not.toContain('IndexeddbPersistence');
     expect(SRC).not.toContain('createClientPersistence');
   });

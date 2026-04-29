@@ -2,10 +2,10 @@
  * `set_folder_rule` MCP tool — fs-direct upsert into `folders[]`.
  *
  * Thin wrapper around `applyFolderRulesUpsert` from
- * `@inkeep/open-knowledge-core`. Always-array shape (even N=1) per D38 reshape:
- * agents pass `{rules: [{...}]}` for one rule and `{rules: [{...}, {...}]}`
- * for multiple. The same primitive backs the future right-click-folder UX
- * for batch + single-rule edits.
+ * `@inkeep/open-knowledge-core`. Always-array shape (even N=1): agents pass
+ * `{rules: [{...}]}` for one rule and `{rules: [{...}, {...}]}` for multiple.
+ * The same primitive backs the future right-click-folder UX for batch +
+ * single-rule edits.
  *
  * Transactional all-or-nothing: validation runs against the merged config;
  * if any rule fails, NO writes happen — `writeConfigPatch`'s atomic
@@ -14,10 +14,8 @@
  * Removal goes through `set_config({patch: {folders: [<filtered>]}})` —
  * read-modify-write is fine for the rare removal case.
  *
- * Per D62: works without a running OK server (resolves cwd via
+ * Works without a running OK server (resolves cwd via
  * `resolveProjectConfigContext`, NOT `resolveProjectServerContext`).
- *
- * Spec: SPEC.md FR-6b + D38 reshape + D62.
  */
 
 import {

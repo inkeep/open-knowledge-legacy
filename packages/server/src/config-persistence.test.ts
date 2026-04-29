@@ -132,8 +132,8 @@ describe('loadConfigDoc — cold start', () => {
 
     loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
 
-    // Y.Text gets the raw bytes (per FR-34 — the load surfaces what's
-    // actually on disk; the L3 hook surfaces the rejection on first store).
+    // Y.Text gets the raw bytes — the load surfaces what's actually on
+    // disk; the L3 hook surfaces the rejection on first store.
     expect(doc.getText('source').toString()).toBe(broken);
     // LKG falls back to defaults so the revert path has a valid floor.
     const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE);
@@ -209,6 +209,38 @@ describe('storeConfigDoc — happy path', () => {
   });
 });
 
+describe('storeConfigDoc — write failures', () => {
+  test('disk write failure surfaces via onConfigRejected with WRITE_ERROR; no leftover tmp files', async () => {
+    const doc = new Y.Doc();
+    doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
+
+    // Pre-create absPath as a directory so the rename in atomic write fails
+    // with EISDIR. Validation passes (content is well-formed); only the
+    // disk write step throws.
+    const absPath = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    mkdirSync(absPath, { recursive: true });
+
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+
+    expect(outcome).toBe('write-failed');
+    expect(fx.rejections).toHaveLength(1);
+    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(fx.rejections[0]?.error.code).toBe('WRITE_ERROR');
+
+    // LKG was NOT updated — next mutation will retry.
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBeUndefined();
+
+    // Y.Text retains the user's edit; content was valid, only the write failed.
+    expect(doc.getText('source').toString()).toBe('mcp:\n  autoStart: false\n');
+
+    // No leftover .tmp.* files in the parent directory — best-effort cleanup
+    // ran when the rename threw.
+    const dir = join(fx.projectDir, '.open-knowledge');
+    const entries = readdirSafe(dir);
+    expect(entries.filter((e) => e.includes('.tmp.'))).toHaveLength(0);
+  });
+});
+
 describe('storeConfigDoc — short-circuits', () => {
   test('entry-gate: lastTransactionOrigin === CONFIG_VALIDATION_REVERT_ORIGIN → no-op', async () => {
     const doc = new Y.Doc();
@@ -227,7 +259,7 @@ describe('storeConfigDoc — short-circuits', () => {
     expect(fx.rejections).toHaveLength(0);
   });
 
-  test('empty Y.Text → no-op (lazy file creation per D51)', async () => {
+  test('empty Y.Text → no-op (lazy file creation)', async () => {
     const doc = new Y.Doc();
     // Y.Text is empty by construction.
     const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
@@ -352,7 +384,7 @@ describe('storeConfigDoc — rejection + revert', () => {
   });
 });
 
-describe('persistence extension dispatch (US-006 integration)', () => {
+describe('persistence extension dispatch — config-doc integration', () => {
   test('config-doc onLoadDocument seeds Y.Text + LKG from disk', async () => {
     // Lazy-imported to avoid pulling persistence.ts deps into the unit tests above.
     const { createPersistenceExtension } = await import('./persistence.ts');
@@ -484,7 +516,7 @@ function readdirSafe(p: string): string[] {
   }
 }
 
-describe('applyExternalConfigChange (US-007)', () => {
+describe('applyExternalConfigChange', () => {
   test('valid external content updates Y.Text under CONFIG_FILE_WATCHER_ORIGIN + LKG', () => {
     const doc = new Y.Doc();
     fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'theme: light\n');

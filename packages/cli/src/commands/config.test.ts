@@ -342,7 +342,7 @@ describe('runMigrate', () => {
 });
 
 describe('DROPPED_FIELD_PATHS', () => {
-  test('contains exactly the D29 dropped paths', () => {
+  test('contains exactly the dropped paths', () => {
     expect(DROPPED_FIELD_PATHS).toEqual([
       ['sync'],
       ['persistence', 'debounceMs'],

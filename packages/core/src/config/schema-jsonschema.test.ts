@@ -31,7 +31,7 @@ interface Fixture {
 // Representative coverage across leaves and section defaults. Both ajv (over
 // the published JSON Schema) and ConfigSchema.safeParse must agree on every
 // fixture — guards against `.transform()` / `.coerce()` slipping into the
-// schema and silently breaking IDE/runtime equivalence (FR-18).
+// schema and silently breaking IDE/runtime equivalence.
 const FIXTURES: Fixture[] = [
   { name: 'empty object — defaults fill in', input: {}, shouldAccept: true },
   {
@@ -98,7 +98,7 @@ const FIXTURES: Fixture[] = [
     shouldAccept: true,
   },
   {
-    name: 'stale dropped fields pass via loose-mode (D34)',
+    name: 'stale dropped fields pass via loose-mode',
     input: {
       sync: { pushIntervalSeconds: 30 },
       persistence: { debounceMs: 2000 },
@@ -108,7 +108,7 @@ const FIXTURES: Fixture[] = [
   },
 ];
 
-describe('JSON Schema ↔ runtime equivalence (FR-18)', () => {
+describe('JSON Schema ↔ runtime equivalence', () => {
   test.each(FIXTURES)('$name → both validators agree', ({ input, shouldAccept }) => {
     const ajvAccept = validate(input);
     const zodAccept = ConfigSchema.safeParse(input).success;
@@ -122,7 +122,7 @@ describe('JSON Schema ↔ runtime equivalence (FR-18)', () => {
   });
 });
 
-describe('loose-mode forgiveness (D34)', () => {
+describe('loose-mode forgiveness', () => {
   test('config with stale dropped fields loads and resolves known values', () => {
     const result = ConfigSchema.safeParse({
       sync: { pushIntervalSeconds: 30, autoCommit: true },
@@ -142,7 +142,7 @@ describe('loose-mode forgiveness (D34)', () => {
     }
   });
 
-  test('appearance.theme defaults to UNSET per D55', () => {
+  test('appearance.theme defaults to UNSET', () => {
     const config = ConfigSchema.parse({});
     expect(config.appearance.theme).toBeUndefined();
     expect(config.appearance.editorModeDefault).toBeUndefined();

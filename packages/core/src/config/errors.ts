@@ -40,7 +40,7 @@ export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
 
 /**
  * Scope tag used by `SCOPE_VIOLATION` and `MIXED_SCOPE` payloads. Mirrors
- * `fieldRegistry` metadata (D43/D47): `'either'` means "valid at user OR
+ * `fieldRegistry` metadata: `'either'` means "valid at user OR
  * workspace"; `'user'` and `'workspace'` are scope-restricted.
  */
 export const FieldScopeSchema = z.enum(['user', 'workspace', 'either']);
@@ -89,15 +89,12 @@ export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [
 
 export type KnownConfigValidationError = z.infer<typeof KnownConfigValidationErrorSchema>;
 
-const KNOWN_CONFIG_ERROR_CODES = new Set<string>([
-  'YAML_PARSE',
-  'SCHEMA_INVALID',
-  'SCOPE_VIOLATION',
-  'NOT_AGENT_SETTABLE',
-  'MIXED_SCOPE',
-  'WRITE_ERROR',
-  'UNKNOWN',
-]);
+// Derived from the discriminated-union options so a new variant in
+// `KnownConfigValidationErrorSchema` flows through to `isKnownConfigError`
+// + `humanFormat` automatically — no risk of code/set drift.
+const KNOWN_CONFIG_ERROR_CODES: ReadonlySet<string> = new Set(
+  KnownConfigValidationErrorSchema.options.map((opt) => opt.shape.code.value),
+);
 
 /**
  * Forward-compat tail variant: a future package version may emit codes the

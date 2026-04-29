@@ -1,6 +1,6 @@
 /**
  * `set_config` MCP tool — fs-direct upsert against the agent-settable
- * allowlist (D26).
+ * allowlist.
  *
  * **Allowlist** (5 paths in `ConfigSchema` tagged `agentSettable: true`):
  *   - `content.include`
@@ -9,8 +9,7 @@
  *   - `mcp.tools.read_document.historyDepth`
  *   - `mcp.tools.search.maxResults`
  *
- * **No `scope` parameter** (D25). The server picks the write target via the
- * D61 ladder:
+ * **No `scope` parameter.** The server picks the write target via the ladder:
  *   `inspectConfig(path).workspace
  *      ?? inspectConfig(path).user
  *      ?? fieldRegistry.get(field).defaultScope
@@ -19,13 +18,12 @@
  * If multiple leaves in a single patch resolve to different scopes, fail with
  * `error.code: 'MIXED_SCOPE'` so the agent retries per-scope.
  *
- * **No `expectedVersion`** (D33 dropped). LWW per D46 — agents that need
- * read-modify-write safety can re-`get_config` after their write to verify.
+ * **No `expectedVersion`.** Last-writer-wins for cross-process writes —
+ * agents that need read-modify-write safety can re-`get_config` after their
+ * write to verify.
  *
- * Per D62: works without a running OK server (resolves cwd via
+ * Works without a running OK server (resolves cwd via
  * `resolveProjectConfigContext`, NOT `resolveProjectServerContext`).
- *
- * Spec: SPEC.md FR-6 + FR-8 + D25 + D26 + D43 + D45 + D61 + D62.
  */
 
 import {
@@ -157,8 +155,8 @@ function annotateLeaves(leaves: ReadonlyArray<readonly (string | number)[]>): Le
 }
 
 /**
- * D61 ladder: pick the scope where the field is already set; fall back to
- * the field's `defaultScope`; final fallback `'user'`.
+ * Scope inference ladder: pick the scope where the field is already set;
+ * fall back to the field's `defaultScope`; final fallback `'user'`.
  */
 function inferScopeForLeaf(
   _path: (string | number)[],
@@ -265,8 +263,8 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
         });
       }
 
-      // Allowlist gating (D26). Reject the FIRST non-allowlisted path so
-      // the agent gets one actionable error to fix.
+      // Allowlist gating: reject the FIRST non-allowlisted path so the agent
+      // gets one actionable error to fix.
       const annotated = annotateLeaves(leaves);
       const blocked = annotated.find((leaf) => leaf.meta?.agentSettable !== true);
       if (blocked) {
@@ -276,8 +274,7 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
         });
       }
 
-      // D61 scope inference. Mixed-scope rejection per D61 / FR-6 →
-      // agent retries per-scope.
+      // Scope inference. Mixed-scope rejection → agent retries per-scope.
       const inference = inferScopes(annotated, cwd, deps.homedirOverride);
       if ('mixed' in inference) {
         return makeErrorResult(inference.mixed);

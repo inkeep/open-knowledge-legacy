@@ -157,10 +157,10 @@ export const ConfigSchema = z.looseObject({
         search: { maxResults: 50 },
       },
     }),
-  // Per D55: `appearance.theme` and `appearance.editorModeDefault` default to
-  // UNSET in config.yml (no `'system'` / `'wysiwyg'` default). The chrome FOUC
-  // scripts read localStorage as the cache; the first explicit Settings-pane
-  // write of `appearance.*` canonicalizes the value into config.yml.
+  // `appearance.theme` and `appearance.editorModeDefault` default to UNSET in
+  // config.yml (no `'system'` / `'wysiwyg'` default). The chrome FOUC scripts
+  // read localStorage as the cache; the first explicit Settings-pane write of
+  // `appearance.*` canonicalizes the value into config.yml.
   appearance: z
     .looseObject({
       theme: z

@@ -1,23 +1,23 @@
 /**
- * Settings pane (D54 / FR-1 / FR-37 / US-009).
+ * Settings pane.
  *
  * Replaces the document view in the main editor area when invoked via Cmd-,,
  * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
  * workspace ("This project") and user-global ("All projects") scopes;
- * each tab acquires its own `HocuspocusProvider` per D48 + binds via
- * `bindConfigDoc` per FR-33.
+ * each tab acquires its own `HocuspocusProvider` and binds via
+ * `bindConfigDoc`.
  *
- * Auto-save (FR-3, D8): per-control commits via `binding.patch`. L1
- * client-side validation gates writes (FR-5 / D45 L1). Per-field reset
- * (FR-4 / FR-21) writes the schema default. Modified-at-scope indicator
- * (FR-3b) shows a colored bar on `'either'` fields whose value differs
- * from the schema default.
+ * Auto-save: per-control commits via `binding.patch`. Client-side L1
+ * validation gates writes; invalid commits never mutate Y.Text. Per-field
+ * reset writes the schema default. Modified-at-scope indicator shows a
+ * colored bar on `'either'` fields whose value differs from the schema
+ * default.
  *
- * L3 rejection (D45 L3) from non-pane writers (CLI, MCP, hand-edit)
- * surfaces as a sonner toast + brief field flash, per FR-39 / D56.
+ * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
+ * sonner toast + brief field flash.
  *
- * The Integrations section hosts an "Install in Claude Desktop" row per
- * FR-25 / D22 — opens `<InstallInClaudeDesktopDialog>`.
+ * The Integrations section hosts an "Install in Claude Desktop" row that
+ * opens `<InstallInClaudeDesktopDialog>`.
  */
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
@@ -188,8 +188,8 @@ const SECTIONS: SectionDef[] = [
 
 /**
  * Lifecycle wrapper for one config doc — owns the HocuspocusProvider +
- * ConfigBinding lifetime. Per D48 each config doc gets its own provider;
- * per D59 no client-side y-indexeddb is instantiated.
+ * ConfigBinding lifetime. Each config doc gets its own provider; no
+ * client-side y-indexeddb is instantiated.
  */
 interface ConfigDocConnection {
   provider: HocuspocusProvider;
@@ -252,8 +252,8 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   const { collabUrl } = useDocumentContext();
   const connection = useConfigDocConnection(collabUrl, scope);
 
-  // Field-flash registry for FR-39 — Settings pane subscribes to L3 broadcasts
-  // and triggers brief red flash on the affected field.
+  // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
+  // and triggers a brief red flash on the affected field.
   const [flashedPath, setFlashedPath] = useState<string | null>(null);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -446,8 +446,8 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
   const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
   const enumOptions = leafSchema ? getEnumOptions(leafSchema) : undefined;
 
-  // Modified indicator: field's resolved value differs from default. v0
-  // approximation of FR-3b's "set at this scope" semantics — full per-scope
+  // Modified indicator: field's resolved value differs from default. This
+  // is an approximation of "set at this scope" semantics — full per-scope
   // detection would require a separate raw-YAML inspection.
   const isModified =
     defaultValue === undefined
@@ -526,9 +526,9 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
         onCommit={commit}
         readonlyReason={
           meta?.scope === 'workspace' && scope !== 'workspace'
-            ? 'Workspace-only field'
+            ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
             : meta?.scope === 'user' && scope !== 'user'
-              ? 'User-only field'
+              ? "This field can only be set globally. Switch to the 'All projects' tab to edit it."
               : null
         }
       />
@@ -570,7 +570,7 @@ function FieldControl({
   if (readonlyReason) {
     return (
       <div className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground">
-        {readonlyReason} — manage this in the other tab.
+        {readonlyReason}
       </div>
     );
   }
@@ -591,6 +591,7 @@ function FieldControl({
         <EnumToggleControl
           fieldId={fieldId}
           errorId={errorId}
+          ariaLabel={field.label}
           options={enumOptions}
           value={typeof currentValue === 'string' ? currentValue : ''}
           onCommit={onCommit}
@@ -772,12 +773,14 @@ function BooleanControl({
 function EnumToggleControl({
   fieldId,
   errorId,
+  ariaLabel,
   options,
   value,
   onCommit,
 }: {
   fieldId: string;
   errorId?: string;
+  ariaLabel: string;
   options: readonly string[];
   value: string;
   onCommit: (value: unknown) => boolean;
@@ -792,6 +795,7 @@ function EnumToggleControl({
         size="sm"
         spacing={1}
         className="bg-muted dark:bg-background p-0.5 rounded-lg"
+        aria-label={ariaLabel}
         onValueChange={(v) => {
           if (!v) return;
           if (onCommit(v)) flashSaved(setSavedTick);

@@ -1,5 +1,5 @@
 /**
- * Browser-safe OTel helpers for config-edit spans (FR-38 / D53).
+ * Browser-safe OTel helpers for config-edit spans.
  *
  * Imports only `@opentelemetry/api` (no SDK deps) so this module is reachable
  * from both the server (Bun + Node, real SDK initialized in
@@ -11,15 +11,15 @@
  * server's `OTEL_SDK_DISABLED=false` gate and the app's
  * `VITE_OTEL_ENABLED=true` gate decide whether real SDKs register.
  *
- * Span set per FR-38:
+ * Span set:
  *   `config.bind`     — every `bindConfigDoc` invocation (binding lifetime)
  *   `config.patch`    — every `ConfigBinding.patch` and `writeConfigPatch`
  *   `config.validate` — each Zod safeParse pass (L1 / L2 / L3)
  *   `config.persist`  — server persistence-hook write
  *   `config.revert`   — L3 revert-to-LKG transaction
  *
- * Bounded enum attributes ONLY — Zod issue paths go in span events (not
- * attributes — cardinality risk per `concerns/observability.md`).
+ * Bounded enum attributes ONLY — Zod issue paths go in span events, never
+ * attributes (cardinality risk on histograms / high-volume span attributes).
  */
 import type { Attributes, Span, SpanOptions } from '@opentelemetry/api';
 import { SpanStatusCode, trace } from '@opentelemetry/api';

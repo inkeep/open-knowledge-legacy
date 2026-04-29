@@ -55,7 +55,7 @@ describe('writeConfigPatch — workspace scope', () => {
     expect(onDisk).toContain('dir: docs');
   });
 
-  test('mode 0o644 on lazy first-write (config is not secret per D51)', async () => {
+  test('mode 0o644 on lazy first-write (config is not secret)', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     await writeConfigPatch({
       cwd: testDir,
@@ -143,7 +143,7 @@ describe('writeConfigPatch — user scope', () => {
 
       const onDisk = readFileSync(filePath, 'utf-8');
       expect(onDisk).toContain('theme: dark');
-      // Magic-comment header present per FR-17
+      // Magic-comment header present
       expect(onDisk).toMatch(/^# yaml-language-server: \$schema=/);
 
       // loadConfig (round-trip) should resolve to a Config with appearance.theme = 'dark'
@@ -212,8 +212,9 @@ describe('writeConfigPatch — validation failures', () => {
 
 describe('writeConfigPatch — defaults preserved on round-trip with stale fields', () => {
   test('config with dropped sync.* field loads via loose-mode and preserves the line on round-trip', async () => {
-    // Per D34 z.looseObject + D29 cleanup, stale fields like sync.pushIntervalSeconds
-    // should round-trip cleanly even though they're no longer in the schema
+    // With z.looseObject + the schema cleanup, stale fields like
+    // sync.pushIntervalSeconds round-trip cleanly even though they're no
+    // longer in the schema.
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     const original = `sync:
   pushIntervalSeconds: 30

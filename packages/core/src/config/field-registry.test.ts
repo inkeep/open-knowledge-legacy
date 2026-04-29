@@ -13,13 +13,13 @@ describe('fieldRegistry singleton', () => {
   test('two callers see the same registry instance', async () => {
     // Re-import the same module spec; ESM caching means the second import
     // resolves to the already-loaded module, but the Symbol-keyed singleton
-    // would also dedupe across genuinely separate copies (D60 contract).
+    // would also dedupe across genuinely separate copies of the module.
     const reimport = await import('./field-registry.ts');
     expect(reimport.fieldRegistry).toBe(fieldRegistry);
   });
 });
 
-describe('getFieldMeta walker (D43/D47 — descends innerType)', () => {
+describe('getFieldMeta walker (descends innerType)', () => {
   test('finds metadata when no wrappers are attached', () => {
     const reg = z.registry<{ scope: string }>();
     const inner = z.string();
@@ -69,8 +69,8 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
   // Walks ConfigSchema's structural shape and asserts that every leaf field
   // (scalar, array-leaf, enum) has a `fieldRegistry` entry. Catches the
   // load-bearing declaration-order rule: `.register()` MUST come BEFORE
-  // `.default()` / `.optional()` / `.nullable()`. Per D60 only ONE
-  // `fieldRegistry` per process, so misregistration here is unrecoverable.
+  // `.default()` / `.optional()` / `.nullable()`. Only ONE `fieldRegistry`
+  // per process, so misregistration here is unrecoverable.
   function isObjectLike(schema: unknown): schema is { _zod: { def: { shape: unknown } } } {
     const def = (schema as { _zod?: { def?: { type?: string } } })._zod?.def;
     return def?.type === 'object' || def?.type === 'looseObject';
@@ -122,7 +122,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     }
   });
 
-  test('agentSettable allowlist is exactly the 5 D26 paths', () => {
+  test('agentSettable allowlist is exactly the 5 expected paths', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const allowlisted = leaves

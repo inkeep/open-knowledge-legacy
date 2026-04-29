@@ -1,22 +1,21 @@
 /**
- * UI-side ConfigBinding (D5 reshape Part A / FR-33 / D48 / D59).
+ * UI-side ConfigBinding.
  *
  * Browser-and-Node-compatible wrapper around a Hocuspocus-bound `Y.Doc` that
  * exposes a typed read/patch/subscribe API over the config doc's `Y.Text`.
  *
- * Three-layer defense-in-depth (D45): this is L1 (client-side walker).
- * Per-field commits go through `patch()`; invalid patches return a typed
- * `Result.err` and never mutate `Y.Text`. L2 (`writeConfigPatch`, headless)
- * and L3 (persistence-hook revert) are the safety nets for non-binding
- * writers.
+ * Three-layer defense-in-depth: this is L1 (client-side walker). Per-field
+ * commits go through `patch()`; invalid patches return a typed `Result.err`
+ * and never mutate `Y.Text`. L2 (`writeConfigPatch`, headless) and L3
+ * (persistence-hook revert) are the safety nets for non-binding writers.
  *
- * Provider lifecycle (D48): the caller owns the `HocuspocusProvider`. Each
- * config doc gets its OWN provider — pool reuse would require gating
+ * Provider lifecycle: the caller owns the `HocuspocusProvider`. Each config
+ * doc gets its OWN provider — pool reuse would require gating
  * `setupObservers` to keep the markdown bridge from running on Y.Text-only
- * docs (D41/FR-30 already gates the bridge server-side; client-side a pooled
+ * docs (the bridge is already gated server-side; client-side a pooled
  * provider would also engage TipTap binding which we explicitly don't want).
  *
- * No client-side persistence (D59): `bindConfigDoc` does NOT call
+ * No client-side persistence: `bindConfigDoc` does NOT call
  * `createClientPersistence` / `IndexeddbPersistence`. Stale IDB cache would
  * race with fresh server LKG on reconnect. Cold-mount cost (~100-300ms) is
  * well under the 200ms first-open target's tolerance.
@@ -151,15 +150,15 @@ function readCurrent(ytext: Y.Text): Config {
 }
 
 /**
- * Bind a Hocuspocus-attached Y.Doc as a typed config source. Per D48 the
- * caller is responsible for creating + destroying the provider; per D59 the
- * binding does NOT instantiate any client-side persistence layer.
+ * Bind a Hocuspocus-attached Y.Doc as a typed config source. The caller is
+ * responsible for creating + destroying the provider; the binding does NOT
+ * instantiate any client-side persistence layer.
  *
  * The `scope` parameter is informational — it does NOT enforce scope-as-
- * constraint (the Settings pane filters fields per `getFieldMeta(field).scope`,
- * D43/D47). Callers should ensure `provider` is connected to a config doc
- * matching `scope` (`__config__/workspace` for `'workspace'`,
- * `__user__/config.yml` for `'user'`).
+ * constraint (the Settings pane filters fields per `getFieldMeta(field).scope`).
+ * Callers should ensure `provider` is connected to a config doc matching
+ * `scope` (`__config__/workspace` for `'workspace'`, `__user__/config.yml`
+ * for `'user'`).
  */
 export function bindConfigDoc(
   provider: ConfigDocProvider,
@@ -201,10 +200,10 @@ function bindConfigDocInner(
   ytext.observe(fireListeners);
   // Provider 'synced' fires after every successful sync. When the post-sync
   // state is identical to the pre-sync state, the Y.Text observer doesn't
-  // fire — but FR-33 AC #7 ("subscribe fires once with the fresh value on
-  // reconnect") wants the listener to fire anyway. Wiring 'synced' to
-  // `fireListeners` covers both cases. The double-fire on a reconnect that
-  // produces a delta is idempotent in React (state-equality bailout).
+  // fire — but subscribers expect at least one notification on reconnect with
+  // the fresh value. Wiring 'synced' to `fireListeners` covers both cases.
+  // The double-fire on a reconnect that produces a delta is idempotent in
+  // React (state-equality bailout).
   provider.on('synced', fireListeners);
 
   function patchInner(patch: ConfigPatch): ConfigBindingPatchResult {
@@ -238,7 +237,7 @@ function bindConfigDocInner(
 
     const appliedPaths = applyPatchToDocument(doc, patch);
     const merged = doc.toJSON() ?? {};
-    // L1 of the three-layer defense (D45). Wrapped in a config.validate span
+    // L1 of the three-layer defense. Wrapped in a config.validate span
     // with `validation.layer: 'L1'` so traces correlate the client-side gate
     // with the L2 (writeConfigPatch) and L3 (persistence-hook) passes.
     const parsed = withConfigSpanSync(

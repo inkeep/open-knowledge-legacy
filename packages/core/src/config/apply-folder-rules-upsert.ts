@@ -1,6 +1,5 @@
 /**
- * Always-array transactional upsert primitive for `folders[]` (D38 reshaped /
- * FR-6b / D62 / D63).
+ * Always-array transactional upsert primitive for `folders[]`.
  *
  * Read current folders[] for the chosen scope → for each input rule,
  * find-or-append-or-rename in a working array → call `writeConfigPatch`
@@ -19,6 +18,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { parseDocument } from 'yaml';
 import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import type { FolderFrontmatter, FolderRule } from './schema.ts';
@@ -39,7 +39,7 @@ export interface FolderRuleUpsert {
 export interface ApplyFolderRulesUpsertOptions {
   cwd: string;
   rules: FolderRuleUpsert[];
-  /** Defaults to 'workspace' per D38 (folders[] are most natural at workspace scope). */
+  /** Defaults to 'workspace' — folders[] are most natural at workspace scope. */
   scope?: 'workspace' | 'user';
   /** Override homedir for tests. */
   homedirOverride?: string;
@@ -59,12 +59,9 @@ export type ApplyFolderRulesUpsertResult = Result<WriteConfigPatchSuccess, Confi
  * NOTE: this performs a minimal targeted read for the upsert-merge logic
  * only. Full validation happens inside `writeConfigPatch`.
  */
-async function readCurrentFolders(absPath: string): Promise<FolderRule[]> {
+function readCurrentFolders(absPath: string): FolderRule[] {
   if (!existsSync(absPath)) return [];
   const raw = readFileSync(absPath, 'utf-8');
-  // Late-import to keep a single dependency surface; same yaml@2 module
-  // writeConfigPatch uses.
-  const { parseDocument } = await import('yaml');
   const doc = parseDocument(raw);
   if (doc.errors.length > 0) {
     // Caller will see the same parse error inside writeConfigPatch's
@@ -119,7 +116,7 @@ export async function applyFolderRulesUpsert(
 
   let current: FolderRule[];
   try {
-    current = await readCurrentFolders(absPath);
+    current = readCurrentFolders(absPath);
   } catch (e) {
     return err({
       code: 'WRITE_ERROR',

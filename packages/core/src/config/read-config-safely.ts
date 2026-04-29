@@ -1,5 +1,5 @@
 /**
- * Cold-start recovery for invalid config files (FR-35 / D57).
+ * Cold-start recovery for invalid config files.
  *
  * Reads a config file, validates it against `ConfigSchema`, and on failure
  * sidelines the broken file (rename to `<path>.invalid-<ISO-timestamp>`) so

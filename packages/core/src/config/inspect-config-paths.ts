@@ -1,10 +1,10 @@
 /**
- * Per-scope config inspection (D61 — most-specific-set scope wins).
+ * Per-scope config inspection — most-specific-set scope wins.
  *
  * Reads workspace + user-global YAML files SEPARATELY (not merged) and
  * reports whether each requested path is set at each scope. Used by the
  * MCP `set_config` tool to infer the write target without exposing
- * `scope` to agents (D25/D61):
+ * `scope` to agents:
  *
  *   inspectConfig(path).workspace
  *     ?? inspectConfig(path).user

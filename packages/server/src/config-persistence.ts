@@ -1,7 +1,7 @@
 /**
- * Persistence-time validation + LKG-backed revert for config docs (US-006).
+ * Persistence-time validation + LKG-backed revert for config docs.
  *
- * Three-layer defense-in-depth (D45): this is L3 (server-side last line of
+ * Three-layer defense-in-depth: this is L3 (server-side last line of
  * defense). L1 (Modal walker) and L2 (`writeConfigPatch` headless writer)
  * already validate before reaching here; L3 catches malicious/buggy clients,
  * schema drift, and external hand-edits that bypass L1/L2.
@@ -15,11 +15,10 @@
  * Per-server-instance LKG cache: a `Map<docName, string>` holding the most
  * recent successfully-validated YAML string. Initialized on doc load by
  * reading the file from disk; falls back to schema-defaults serialized as
- * YAML when disk is missing, empty, or invalid (D57 cold-start recovery).
+ * YAML when disk is missing, empty, or invalid (cold-start recovery).
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   addConfigSpanEvent,
@@ -39,7 +38,7 @@ import {
   CONFIG_FILE_WATCHER_ORIGIN,
   CONFIG_VALIDATION_REVERT_ORIGIN,
 } from './config-edit-origin.ts';
-import { tracedRename, tracedWriteFile } from './fs-traced.ts';
+import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 
 /**
  * Map a documentName to the OTel `config.scope` enum attribute.
@@ -171,18 +170,18 @@ function validateConfigYaml(content: string): ValidConfig | InvalidConfig {
  *
  * The seed transaction uses `CONFIG_VALIDATION_REVERT_ORIGIN`
  * (`skipStoreHooks: true`) so Hocuspocus does NOT fire `onStoreDocument`
- * for the load mutation — lazy file creation per D51 means admitting a
- * doc must never auto-write disk.
+ * for the load mutation — lazy file creation means admitting a doc must
+ * never auto-write disk.
  *
  * LKG behavior:
  * - Disk valid + non-empty   → LKG = disk bytes
  * - Disk missing/empty/invalid → LKG = schema-defaults YAML
  *
  * The disk-invalid case does NOT fire `onConfigRejected` from the load path
- * (that surfacing is FR-35's territory in `readConfigSafely` at boot — by
- * the time we admit the synthetic doc, broken user-global files have
- * already been sidelined). The persistence-hook `storeConfigDoc` will
- * surface a rejection on the first invalid Y.Text mutation.
+ * (`readConfigSafely` already sidelines broken user-global files at boot,
+ * before the synthetic doc is admitted). The persistence-hook
+ * `storeConfigDoc` will surface a rejection on the first invalid Y.Text
+ * mutation.
  */
 export function loadConfigDoc(
   document: Y.Doc,
@@ -197,7 +196,9 @@ export function loadConfigDoc(
   if (existsSync(filePath)) {
     try {
       raw = readFileSync(filePath, 'utf-8');
-    } catch {
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      console.warn(`[config] Could not read ${filePath}: ${detail}. Seeding with empty content.`);
       raw = '';
     }
   }
@@ -216,10 +217,19 @@ export function loadConfigDoc(
 }
 
 async function atomicWriteConfig(absPath: string, content: string): Promise<void> {
-  await mkdir(dirname(absPath), { recursive: true });
+  await tracedMkdir(dirname(absPath), { recursive: true });
   const tmpPath = `${absPath}.tmp.${crypto.randomUUID()}`;
-  await tracedWriteFile(tmpPath, content, 'utf-8');
-  await tracedRename(tmpPath, absPath);
+  try {
+    await tracedWriteFile(tmpPath, content, 'utf-8');
+    await tracedRename(tmpPath, absPath);
+  } catch (e) {
+    try {
+      tracedUnlinkSync(tmpPath);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw e;
+  }
 }
 
 /**
@@ -227,9 +237,13 @@ async function atomicWriteConfig(absPath: string, content: string): Promise<void
  *
  * - `'persisted'`: validated successfully and written to disk; LKG updated.
  * - `'reverted'`: validation failed; Y.Text reverted to LKG; `onConfigRejected` fired.
+ * - `'write-failed'`: validation passed but the disk write threw (disk full,
+ *   permissions, parent dir replaced by file, etc.); `onConfigRejected` fired
+ *   with `WRITE_ERROR`. Y.Text is NOT reverted (content was valid) and LKG is
+ *   NOT updated, so the next mutation re-attempts the write naturally.
  * - `'no-op'`: entry-gate matched (revert origin), Y.Text empty, or content equals LKG.
  */
-type StoreConfigDocOutcome = 'persisted' | 'reverted' | 'no-op';
+type StoreConfigDocOutcome = 'persisted' | 'reverted' | 'write-failed' | 'no-op';
 
 /**
  * Persistence-time validation hook for a config doc (L3).
@@ -259,9 +273,11 @@ export async function storeConfigDoc(
 }
 
 function persistOutcomeAttr(outcome: StoreConfigDocOutcome): 'success' | 'reverted' | 'rejected' {
-  // 'persisted' → success; 'reverted' → reverted; 'no-op' renders as success
-  // (no failure occurred — a no-op is a successful completion of the hook).
+  // 'persisted' → success; 'reverted' → reverted; 'write-failed' → rejected;
+  // 'no-op' renders as success (no failure occurred — a no-op is a
+  // successful completion of the hook).
   if (outcome === 'reverted') return 'reverted';
+  if (outcome === 'write-failed') return 'rejected';
   return 'success';
 }
 
@@ -312,7 +328,16 @@ async function storeConfigDocInner(
   }
 
   const filePath = configDocAbsPath(documentName, ctx);
-  await atomicWriteConfig(filePath, content);
+  try {
+    await atomicWriteConfig(filePath, content);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    ctx.onConfigRejected?.(documentName, {
+      code: 'WRITE_ERROR',
+      detail: `Failed to persist config at ${filePath}: ${detail}`,
+    });
+    return 'write-failed';
+  }
   ctx.lkgCache.set(documentName, content);
   return 'persisted';
 }
@@ -330,7 +355,7 @@ async function storeConfigDocInner(
 type ApplyExternalConfigChangeOutcome = 'applied' | 'rejected' | 'no-op';
 
 /**
- * Apply an externally-detected config file change (US-007 / FR-15).
+ * Apply an externally-detected config file change.
  *
  * Called by the file-watcher orchestration when chokidar fires a change
  * event. Mirrors `storeConfigDoc` but inverted: disk → Y.Text rather than

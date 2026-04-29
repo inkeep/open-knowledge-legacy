@@ -152,7 +152,7 @@ content:
 
 Any LSP-aware editor (VS Code, JetBrains, Helix, Zed, vim with `yaml-language-server`) picks this up and provides autocomplete, hover docs, and inline validation against the published JSON Schema. The URL is pinned to the installed CLI's MAJOR.MINOR version so your autocomplete stays locked to the schema you wrote against; re-run `ok init` after upgrading to bump the pin.
 
-The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. SchemaStore registration ships a `fileMatch` of `**/.open-knowledge/config.{yml,yaml}` so editors that consult SchemaStore (most JetBrains IDEs by default) auto-detect without needing the magic comment.
+The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. A SchemaStore catalog entry (with a `fileMatch` of `**/.open-knowledge/config.{yml,yaml}`) is planned so editors that consult SchemaStore — most JetBrains IDEs by default — will auto-detect without needing the magic comment. Until that lands, the magic comment on line 1 is the primary intellisense mechanism.
 
 For CI / pre-commit hooks, [`ok config validate`](/guides/cli-reference#config-validate) loads the merged config through the same Zod gate and exits non-zero with a `file:line:col` snippet on failure.
 

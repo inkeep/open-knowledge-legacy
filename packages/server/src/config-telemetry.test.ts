@@ -1,5 +1,5 @@
 /**
- * Integration test for config-edit OTel spans (US-014 / FR-38 / D53).
+ * Integration test for config-edit OTel spans.
  *
  * Registers a `BasicTracerProvider` with an `InMemorySpanExporter`, runs
  * the bindConfigDoc → patch → validate → persist → revert chain end-to-end,
@@ -7,7 +7,7 @@
  * parent/child relationships.
  *
  * Bounded enum attributes only — Zod issue paths land in span events, not
- * attributes (per `concerns/observability.md` cardinality discipline).
+ * attributes (cardinality discipline).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -94,7 +94,7 @@ function createMockProvider(doc: Y.Doc): MockProvider {
 
 let testDir: string;
 
-describe('config-edit OTel spans (US-014 / FR-38)', () => {
+describe('config-edit OTel spans', () => {
   beforeEach(() => {
     setupExporter();
     testDir = mkdtempSync(join(tmpdir(), 'config-otel-'));

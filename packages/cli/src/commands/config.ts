@@ -3,13 +3,13 @@
  *
  * Subcommands:
  *   - `validate` — load merged config (defaults → user → workspace) and report
- *     conformance. Exit 0 on success, exit 1 with source-located errors per
- *     FR-27 / D36 on failure. Success message goes to stderr (stdout is reserved
- *     for structured CI output, of which we emit none).
- *   - `migrate` — codemod removing the D29 dropped fields (`sync.*`,
+ *     conformance. Exit 0 on success, exit 1 with source-located errors on
+ *     failure. Success message goes to stderr (stdout is reserved for
+ *     structured CI output, of which we emit none).
+ *   - `migrate` — codemod removing deprecated fields (`sync.*`,
  *     `persistence.{debounceMs,maxDebounceMs}`, `server.port`) idempotently.
  *     Funnels through `writeConfigPatch` so atomic-write + Zod safeParse
- *     invariants from US-003 apply automatically.
+ *     invariants apply automatically.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -24,9 +24,9 @@ import { parseDocument } from 'yaml';
 import { loadConfig } from '../config/loader.ts';
 
 /**
- * Dotted-path tuples the engine no longer reads after D29. `sync` collapses
- * to a single key delete (the entire section is gone, all 7 subfields with
- * it). `persistence.{debounceMs, maxDebounceMs}` and `server.port` are
+ * Dotted-path tuples the engine no longer reads. `sync` collapses to a
+ * single key delete (the entire section is gone, all 7 subfields with it).
+ * `persistence.{debounceMs, maxDebounceMs}` and `server.port` are
  * field-level deletes that leave their parent sections intact.
  */
 export const DROPPED_FIELD_PATHS: ReadonlyArray<readonly string[]> = [
@@ -116,9 +116,9 @@ function isMutableObject(x: unknown): x is Record<string, unknown> {
 
 /**
  * Build the null-clear patch for a list of dropped paths. Cast to `ConfigPatch`
- * because the dropped fields are intentionally out-of-schema (D29). At the
- * runtime layer, `applyPatchToDocument`'s null-walker calls `deleteIn` for
- * each leaf — works regardless of whether the path is in the schema.
+ * because the dropped fields are intentionally out-of-schema. At the runtime
+ * layer, `applyPatchToDocument`'s null-walker calls `deleteIn` for each leaf
+ * — works regardless of whether the path is in the schema.
  */
 /**
  * Test-only re-export. Internal helper; subject to change without notice.
