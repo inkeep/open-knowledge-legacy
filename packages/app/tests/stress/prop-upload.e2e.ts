@@ -225,9 +225,11 @@ for (const kind of ['img', 'video', 'audio'] as const) {
 // and verifies the rendered <img>'s src actually resolves to the file
 // (Content-Type starts with image/, not text/html).
 //
-// Uses the worker fixture's pre-seeded `sidebar-folder/` (which contains
-// `nested-doc.md` at boot) so the content filter's `dirCount[sidebar-
-// folder]` is warm by the time the test runs. Freshly-created subdirs
+// Uses the worker fixture's pre-seeded `sidebar-folder/` (created at
+// `_helpers/fixtures.ts:171` `seedRequiredFixtureFiles`, which writes
+// `sidebar-folder/nested-doc.md` at worker boot) so the content
+// filter's `dirCount[sidebar-folder]` is warm by the time the test
+// runs. Freshly-created subdirs
 // hit a separate filter race (parcel-watcher's async `create` event lags
 // the synchronous `/api/create-page` response by hundreds of ms, leaving
 // dirCount stale during the upload window). That race is fixed in

@@ -282,8 +282,7 @@ export function InternalLinkPropPanel({
 
   // Human-readable display path. Strips markdown-link surface
   // (`./` prefix, `.md` suffix) for doc kinds; preserves the URL form
-  // for external; preserves `#anchor` for in-doc anchor jumps. The raw
-  // `href` is still kept on the title attr for hover-disclosure.
+  // for external; preserves `#anchor` for in-doc anchor jumps.
   const displayHref =
     target?.kind === 'doc'
       ? `${target.docName}${target.anchor ? `#${target.anchor}` : ''}`
