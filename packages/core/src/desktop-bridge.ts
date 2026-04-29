@@ -10,7 +10,7 @@
  */
 
 /** Render mode picked by the main process when creating a BrowserWindow. */
-export type OkDesktopMode = 'editor' | 'navigator';
+type OkDesktopMode = 'editor' | 'navigator';
 
 /**
  * Config values injected at preload-exposure time. A frozen snapshot, not a
@@ -19,7 +19,7 @@ export type OkDesktopMode = 'editor' | 'navigator';
  * because the main process awaits the utility's `ready` message before
  * creating the BrowserWindow.
  */
-export interface OkDesktopConfig {
+interface OkDesktopConfig {
   /** WebSocket URL for the HocuspocusProvider (ws://localhost:<port>/collab). */
   readonly collabUrl: string;
   /** Origin for HTTP /api/* fetches (http://localhost:<port>). */
@@ -38,7 +38,7 @@ export interface OkDesktopConfig {
  * store. Keep this union flat and strongly typed — a single `kind` field
  * discriminates without payload.
  */
-export type OkMenuAction =
+type OkMenuAction =
   | 'new-doc'
   | 'new-folder'
   | 'rename'
@@ -57,7 +57,7 @@ export type OkMenuAction =
  * callers must use this returned closure rather than trying to remove by
  * reference from their own code.
  */
-export type OkUnsubscribe = () => void;
+type OkUnsubscribe = () => void;
 
 /**
  * Recent-projects row surfaced to the Project Navigator via
@@ -65,7 +65,7 @@ export type OkUnsubscribe = () => void;
  * (the folder was absent when the list was assembled) and rendered as a
  * "Missing" badge in the Navigator UI.
  */
-export interface RecentProjectEntry {
+interface RecentProjectEntry {
   path: string;
   name: string;
   lastOpenedAt: string;
@@ -77,7 +77,7 @@ export interface RecentProjectEntry {
  * contract for forward-compat even though `'new-window'` is the only value
  * in v0 (D3 revised — no switch-in-place).
  */
-export interface OkProjectOpenRequest {
+interface OkProjectOpenRequest {
   path: string;
   target: 'new-window';
 }
@@ -88,7 +88,7 @@ export interface OkProjectOpenRequest {
  * install-on-quit (or an imperative `autoUpdater.quitAndInstall()` via
  * Toast A's "Relaunch now" action). M3 D11.
  */
-export interface OkUpdateDownloadedInfo {
+interface OkUpdateDownloadedInfo {
   readonly version: string;
 }
 
@@ -99,7 +99,7 @@ export interface OkUpdateDownloadedInfo {
  * for the new version — renderer opens it via `bridge.shell.openExternal`.
  * M3 D9/D11.
  */
-export interface OkWhatsNewInfo {
+interface OkWhatsNewInfo {
   readonly version: string;
   readonly releaseUrl: string;
 }
@@ -111,7 +111,7 @@ export interface OkWhatsNewInfo {
  * Open Knowledge download CTA); renderer opens it via
  * `bridge.shell.openExternal`. M3 D12.
  */
-export interface OkUpdateStuckHintInfo {
+interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
@@ -121,13 +121,7 @@ export interface OkUpdateStuckHintInfo {
  * across the three bridge-contract copies (desktop, core, app) and caught
  * by the M1 invariant test if any copy diverges.
  */
-export type OkMcpWiringEditorId =
-  | 'claude'
-  | 'claude-desktop'
-  | 'cursor'
-  | 'vscode'
-  | 'windsurf'
-  | 'codex';
+type OkMcpWiringEditorId = 'claude' | 'claude-desktop' | 'cursor' | 'vscode' | 'windsurf' | 'codex';
 
 /**
  * Payload delivered to `mcpWiring.onShow` subscribers on first-launch MCP
@@ -137,7 +131,7 @@ export type OkMcpWiringEditorId =
  * entry that Add would overwrite — surfaced per-row so long-time CLI users
  * aren't surprised to find their pre-existing entry stomped (Pass 1 Major #8).
  */
-export interface OkMcpWiringShowPayload {
+interface OkMcpWiringShowPayload {
   readonly detectedEditors: readonly {
     readonly id: OkMcpWiringEditorId;
     readonly label: string;
@@ -152,7 +146,7 @@ export interface OkMcpWiringShowPayload {
  * and are surfaced to operator logs via structured `mcp-wiring-write-failed`
  * events (per OQ-19 deferred-marker semantics).
  */
-export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
+type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
@@ -163,7 +157,7 @@ export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
  * `packages/desktop/tests/integration/m1-smoke.test.ts`, which walks the
  * interface body of each file and asserts field-name set equality.
  */
-export interface OkKeyringSmokeResult {
+interface OkKeyringSmokeResult {
   ok: boolean;
   backend?: 'keyring' | 'file';
   error?: string;
@@ -178,7 +172,7 @@ export interface OkKeyringSmokeResult {
  * `@inkeep/open-knowledge-server`'s `ScaffoldPlan` / `ApplyResult` /
  * `ApplyError` / `FileEntry` / `SkipEntry` / `ConfigEdit` / `FolderRule`.
  */
-export interface OkFolderRule {
+interface OkFolderRule {
   match: string;
   frontmatter: {
     title?: string;
@@ -186,44 +180,42 @@ export interface OkFolderRule {
     tags?: string[];
   };
 }
-export interface OkScaffoldFileEntry {
+interface OkScaffoldFileEntry {
   path: string;
   kind: 'folder' | 'file';
   contentPreview?: string;
 }
-export interface OkScaffoldSkipEntry {
+interface OkScaffoldSkipEntry {
   path: string;
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
-export interface OkScaffoldConfigEdit {
+interface OkScaffoldConfigEdit {
   configPath: string;
   folderMatch: string;
   entry: OkFolderRule;
 }
-export interface OkScaffoldPlan {
+interface OkScaffoldPlan {
   created: OkScaffoldFileEntry[];
   skipped: OkScaffoldSkipEntry[];
   configEdits: OkScaffoldConfigEdit[];
   warnings: string[];
 }
-export interface OkScaffoldApplyError {
+interface OkScaffoldApplyError {
   path: string;
   error: string;
 }
-export interface OkScaffoldApplyResult {
+interface OkScaffoldApplyResult {
   applied: number;
   errors: OkScaffoldApplyError[];
   durationMs: number;
 }
 
-export interface OkSeedError {
+interface OkSeedError {
   kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }
-export type OkSeedPlanResult =
-  | { ok: true; plan: OkScaffoldPlan }
-  | { ok: false; error: OkSeedError };
-export type OkSeedApplyResult =
+type OkSeedPlanResult = { ok: true; plan: OkScaffoldPlan } | { ok: false; error: OkSeedError };
+type OkSeedApplyResult =
   | { ok: true; result: OkScaffoldApplyResult }
   | { ok: false; error: OkSeedError };
 

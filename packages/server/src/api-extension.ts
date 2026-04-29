@@ -3685,6 +3685,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Loopback + Host-header gate. The principal record discloses operator
+    // PII — `display_name` (real name) and `display_email` — sourced from
+    // local `git config`. Under `--host 0.0.0.0` (demos, shared dev boxes,
+    // Codespaces) this would otherwise be readable by any LAN peer or
+    // cross-origin page that bypasses the Origin allowlist (non-browser
+    // callers send no `Origin` header). Matches the same gate
+    // `handleMetricsAgentPresence` and `handleWorkspace` apply.
+    // Authorization runs BEFORE method dispatch so a bad Host never leaks
+    // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
     if (req.method !== 'GET') {
       res.writeHead(405);
       res.end('Method not allowed');

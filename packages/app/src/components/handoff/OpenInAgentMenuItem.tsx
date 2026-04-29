@@ -35,13 +35,16 @@
  */
 
 import {
+  AGENT_ICON_COLORS,
+  AGENT_ICON_COLORS_DARK,
   buildClaudeAiWebUrl,
   type InstallState,
   type TargetData,
 } from '@inkeep/open-knowledge-core';
-import type { ReactNode, SVGProps } from 'react';
+import { useTheme } from 'next-themes';
+import type { CSSProperties, ReactNode, SVGProps } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
-import { CodexIcon } from '@/components/icons/codex';
+import { CodexBrandIcon } from '@/components/icons/codex';
 import { CursorIcon } from '@/components/icons/cursor';
 import {
   DropdownMenuItem,
@@ -52,6 +55,7 @@ import {
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
 import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external';
+import { cn } from '@/lib/utils';
 
 /**
  * Vendor icon per target. Claude Cowork and Claude Code share `ClaudeIcon`
@@ -61,14 +65,46 @@ import { openExternal as defaultOpenExternal } from '@/lib/handoff/open-external
  *
  * DropdownMenuItem + DropdownMenuSubTrigger both auto-size `<svg>` children
  * to `size-4`, so the icon doesn't need an explicit size prop.
+ *
+ * Brand colors come from the shared `AGENT_ICON_COLORS` palette; dark-mode
+ * overrides (e.g. Cursor's near-black logo lifts to white) match the
+ * timeline + presence-bar treatment.
  */
+const TARGET_ICON_KEY: Record<TargetData['id'], string> = {
+  'claude-cowork': 'claude',
+  'claude-code': 'claude',
+  codex: 'openai',
+  cursor: 'cursor',
+};
+
 export function TargetIcon({
   id,
+  style,
+  className,
   ...props
 }: { id: TargetData['id'] } & SVGProps<SVGSVGElement>): ReactNode {
-  if (id === 'claude-cowork' || id === 'claude-code') return <ClaudeIcon {...props} />;
-  if (id === 'codex') return <CodexIcon {...props} />;
-  if (id === 'cursor') return <CursorIcon {...props} />;
+  const { resolvedTheme } = useTheme();
+  const iconKey = TARGET_ICON_KEY[id];
+  const isDark = resolvedTheme === 'dark';
+  const brandColor = iconKey
+    ? ((isDark ? AGENT_ICON_COLORS_DARK[iconKey] : undefined) ?? AGENT_ICON_COLORS[iconKey])
+    : undefined;
+  // The dropdown item's `focus:**:text-accent-foreground` cascades `color`
+  // to every descendant — including the inner `<path>`, whose
+  // `fill|stroke="currentColor"` then resolves to accent-foreground (black
+  // in light mode). Inline `style.color` on the `<svg>` doesn't reach the
+  // path. Override `color` directly on descendants with `!important` via
+  // the `--ok-brand-color` custom property so the brand color survives
+  // hover/focus.
+  const mergedStyle = brandColor
+    ? ({ ...style, '--ok-brand-color': brandColor } as CSSProperties)
+    : style;
+  const mergedClass = cn(brandColor && '[&_*]:![color:var(--ok-brand-color)]', className);
+  if (id === 'claude-cowork' || id === 'claude-code')
+    return <ClaudeIcon style={mergedStyle} className={mergedClass} {...props} />;
+  if (id === 'codex')
+    return <CodexBrandIcon style={mergedStyle} className={mergedClass} {...props} />;
+  if (id === 'cursor') return <CursorIcon style={mergedStyle} className={mergedClass} {...props} />;
   return null;
 }
 

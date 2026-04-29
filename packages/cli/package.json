@@ -1,6 +1,6 @@
 {
   "name": "@inkeep/open-knowledge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": false,
   "type": "module",
   "exports": {
@@ -42,6 +42,7 @@
     "prepublishOnly": "bash ../../scripts/check-notices-clean.sh && bun run build && bun run test"
   },
   "dependencies": {
+    "@inquirer/checkbox": "^5.0.11",
     "@inquirer/password": "^5.0.11",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@napi-rs/keyring": "^1.2.0",

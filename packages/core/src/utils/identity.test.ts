@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { generateRandomColor, generateRandomName, getIdentity, HUMAN_COLORS } from './identity';
+import {
+  AGENT_COLORS,
+  colorFromSeed,
+  computeInitials,
+  generateRandomColor,
+  generateRandomName,
+  getIdentity,
+  HUMAN_COLORS,
+} from './identity';
 
 // --- Stub browser globals for bun test environment ---
 
@@ -44,6 +52,85 @@ describe('generateRandomColor', () => {
   });
 });
 
+describe('colorFromSeed', () => {
+  test('default palette is AGENT_COLORS (backward compat)', () => {
+    const color = colorFromSeed('some-agent-id');
+    expect((AGENT_COLORS as readonly string[]).includes(color)).toBe(true);
+  });
+
+  test('single-arg call returns same value as explicit AGENT_COLORS call', () => {
+    const seed = 'claude-1';
+    expect(colorFromSeed(seed)).toBe(colorFromSeed(seed, AGENT_COLORS));
+  });
+
+  test('HUMAN_COLORS palette returns one of the 7 human pastels', () => {
+    const color = colorFromSeed('principal-abc', HUMAN_COLORS);
+    expect((HUMAN_COLORS as readonly string[]).includes(color)).toBe(true);
+  });
+
+  test('is deterministic for the same seed + palette', () => {
+    const seed = 'stable-seed';
+    expect(colorFromSeed(seed, HUMAN_COLORS)).toBe(colorFromSeed(seed, HUMAN_COLORS));
+    expect(colorFromSeed(seed, AGENT_COLORS)).toBe(colorFromSeed(seed, AGENT_COLORS));
+  });
+
+  test('HUMAN_COLORS and AGENT_COLORS produce different values for the same seed', () => {
+    // They have disjoint palette contents so this must be true
+    const seed = 'test-seed';
+    const human = colorFromSeed(seed, HUMAN_COLORS);
+    const agent = colorFromSeed(seed, AGENT_COLORS);
+    // HUMAN_COLORS and AGENT_COLORS are disjoint palettes
+    expect((HUMAN_COLORS as readonly string[]).includes(agent)).toBe(false);
+    expect((AGENT_COLORS as readonly string[]).includes(human)).toBe(false);
+  });
+});
+
+describe('computeInitials', () => {
+  test('hyphenated Unix username: miles-kt-inkeep → MK', () => {
+    expect(computeInitials('miles-kt-inkeep')).toBe('MK');
+  });
+
+  test('full name with hyphenated surname: Miles Kaming-Thanassi → MK', () => {
+    expect(computeInitials('Miles Kaming-Thanassi')).toBe('MK');
+  });
+
+  test('single word: Miles → MI', () => {
+    expect(computeInitials('Miles')).toBe('MI');
+  });
+
+  test('camelCase: MilesKT → MK', () => {
+    expect(computeInitials('MilesKT')).toBe('MK');
+  });
+
+  test('empty string returns fallback without throwing', () => {
+    const result = computeInitials('');
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThanOrEqual(0);
+  });
+
+  test('whitespace-only input returns fallback without throwing', () => {
+    const result = computeInitials('   ');
+    expect(typeof result).toBe('string');
+  });
+
+  test('result is always at most 2 characters', () => {
+    for (const name of ['Miles Kaming-Thanassi', 'miles-kt-inkeep', 'MilesKT', 'A B C D E']) {
+      expect(computeInitials(name).length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('result is always uppercase', () => {
+    expect(computeInitials('miles-kt-inkeep')).toBe(
+      computeInitials('miles-kt-inkeep').toUpperCase(),
+    );
+    expect(computeInitials('john bird')).toBe('JB');
+  });
+
+  test('space-separated two-word name: John Bird → JB', () => {
+    expect(computeInitials('John Bird')).toBe('JB');
+  });
+});
+
 describe('getIdentity', () => {
   test('returns expected shape', () => {
     const identity = getIdentity();
@@ -70,24 +157,24 @@ describe('getIdentity', () => {
     expect(a.tabId).not.toBe(b.tabId);
   });
 
-  test('persists name to localStorage', () => {
+  test('persists name to localStorage (v3 key)', () => {
     const identity = getIdentity();
-    expect(localStorage.getItem('ok-user-name-v2')).toBe(identity.name);
+    expect(localStorage.getItem('ok-user-name-v3')).toBe(identity.name);
   });
 
-  test('persists color to localStorage', () => {
+  test('persists color to localStorage (v3 key)', () => {
     const identity = getIdentity();
-    expect(localStorage.getItem('ok-user-color-v2')).toBe(identity.color);
+    expect(localStorage.getItem('ok-user-color-v3')).toBe(identity.color);
   });
 
-  test('reads persisted name from localStorage', () => {
-    localStorage.setItem('ok-user-name-v2', 'Test User');
+  test('reads persisted name from localStorage (v3 key)', () => {
+    localStorage.setItem('ok-user-name-v3', 'Test User');
     const identity = getIdentity();
     expect(identity.name).toBe('Test User');
   });
 
-  test('reads persisted color from localStorage', () => {
-    localStorage.setItem('ok-user-color-v2', '#FF0000');
+  test('reads persisted color from localStorage (v3 key)', () => {
+    localStorage.setItem('ok-user-color-v3', '#FF0000');
     const identity = getIdentity();
     expect(identity.color).toBe('#FF0000');
   });

@@ -17,6 +17,7 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
+  SidebarRail,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProfilerBoundary } from '@/lib/perf';
@@ -116,6 +117,7 @@ function FileSidebarInner() {
         ) : null}
         <UpdateNotices />
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   );
 }

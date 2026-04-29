@@ -22,20 +22,20 @@
 /** Seed scaffolder shapes — structurally duplicated from
  * `@inkeep/open-knowledge-server`'s seed module. See core's desktop-bridge.ts
  * for rationale (avoids pulling server into the app compilation tree). */
-export interface OkFolderRule {
+interface OkFolderRule {
   match: string;
   frontmatter: { title?: string; description?: string; tags?: string[] };
 }
-export interface OkScaffoldFileEntry {
+interface OkScaffoldFileEntry {
   path: string;
   kind: 'folder' | 'file';
   contentPreview?: string;
 }
-export interface OkScaffoldSkipEntry {
+interface OkScaffoldSkipEntry {
   path: string;
   reason: 'already-exists' | 'user-content' | 'glob-collision';
 }
-export interface OkScaffoldConfigEdit {
+interface OkScaffoldConfigEdit {
   configPath: string;
   folderMatch: string;
   entry: OkFolderRule;
@@ -46,16 +46,16 @@ export interface OkScaffoldPlan {
   configEdits: OkScaffoldConfigEdit[];
   warnings: string[];
 }
-export interface OkScaffoldApplyError {
+interface OkScaffoldApplyError {
   path: string;
   error: string;
 }
-export interface OkScaffoldApplyResult {
+interface OkScaffoldApplyResult {
   applied: number;
   errors: OkScaffoldApplyError[];
   durationMs: number;
 }
-export interface OkSeedError {
+interface OkSeedError {
   kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }
@@ -66,7 +66,7 @@ export type OkSeedApplyResult =
   | { ok: true; result: OkScaffoldApplyResult }
   | { ok: false; error: OkSeedError };
 
-export type OkDesktopMode = 'editor' | 'navigator';
+type OkDesktopMode = 'editor' | 'navigator';
 
 export interface OkDesktopConfig {
   readonly collabUrl: string;
@@ -76,7 +76,7 @@ export interface OkDesktopConfig {
   readonly mode: OkDesktopMode;
 }
 
-export type OkMenuAction =
+type OkMenuAction =
   | 'new-doc'
   | 'new-folder'
   | 'rename'
@@ -88,7 +88,7 @@ export type OkMenuAction =
   | 'focus-search'
   | 'focus-command-palette';
 
-export type OkUnsubscribe = () => void;
+type OkUnsubscribe = () => void;
 
 export interface RecentProjectEntry {
   path: string;
@@ -97,16 +97,16 @@ export interface RecentProjectEntry {
   missing?: boolean;
 }
 
-export interface OkUpdateDownloadedInfo {
+interface OkUpdateDownloadedInfo {
   readonly version: string;
 }
 
-export interface OkWhatsNewInfo {
+interface OkWhatsNewInfo {
   readonly version: string;
   readonly releaseUrl: string;
 }
 
-export interface OkUpdateStuckHintInfo {
+interface OkUpdateStuckHintInfo {
   readonly downloadUrl: string;
 }
 
@@ -148,7 +148,7 @@ export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
  * `packages/desktop/tests/integration/m1-smoke.test.ts` (field-set equality
  * across all three files).
  */
-export interface OkKeyringSmokeResult {
+interface OkKeyringSmokeResult {
   ok: boolean;
   backend?: 'keyring' | 'file';
   error?: string;

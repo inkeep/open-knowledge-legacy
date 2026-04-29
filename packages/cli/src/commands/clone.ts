@@ -1,5 +1,5 @@
-import { existsSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import simpleGit, { type SimpleGitOptions } from 'simple-git';
 import { resolveAuth } from '../auth/resolve-auth.ts';
@@ -116,29 +116,71 @@ async function runClone(
 
   if (!opts.json) process.stderr.write('\n');
 
-  // Auto-init: scaffold .open-knowledge/ if missing. The cloned repo
-  // wasn't using OK before, so the local .open-knowledge/ is per-user
-  // editor config — add it to the repo-root .gitignore so it doesn't
-  // get committed back upstream.
-  const okDir = resolve(targetDir, OK_DIR);
-  if (!existsSync(okDir)) {
-    try {
-      const [{ runInit }, { ensureOkGitignoredAtRoot }] = await Promise.all([
-        import('./init.ts'),
-        import('../content/init.ts'),
-      ]);
-      await runInit({ cwd: targetDir, mcp: false });
-      try {
-        ensureOkGitignoredAtRoot(targetDir);
-      } catch {
-        // Non-fatal — scaffold succeeded; gitignore update is best-effort.
-      }
-    } catch {
-      // Non-fatal
+  // Auto-init: scaffold .open-knowledge/ unconditionally. `runInit` is idempotent
+  // via per-file `writeIfMissing`, so it backfills a missing `.gitignore` even
+  // when upstream committed `.open-knowledge/config.yml` without one.
+  try {
+    const { runInit } = await import('./init.ts');
+    const initResult = await runInit({ cwd: targetDir, mcp: false });
+    // Surface the `updated` classification so silent mutation of an
+    // upstream-tracked .open-knowledge/.gitignore doesn't hide behind ✓ Cloned.
+    if (initResult.contentUpdated.length > 0) {
+      const msg = `auto-init: updated ${initResult.contentUpdated.join(', ')}`;
+      if (opts.json) emit(true, { type: 'warning', message: msg });
+      else process.stderr.write(`  ${msg}\n`);
     }
+  } catch (err) {
+    // Non-fatal — surface a warning so silent failures don't hide behind
+    // the ✓ Cloned banner. Same posture as start.ts auto-init.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts.json) emit(true, { type: 'warning', message: `auto-init: ${msg}` });
+    else process.stderr.write(`  auto-init: ${msg}\n`);
+  }
+
+  // Per-clone protection from upstream pollution: append `.open-knowledge/` to
+  // the cloned repo's `.git/info/exclude`. That file is per-clone and never
+  // committed, so OK state can't accidentally land in someone else's tree from
+  // a stray `git add .`. Symmetric with `ok init`'s stance — `init` is the
+  // user's own project (config.yml is meant to be tracked, no exclude needed).
+  try {
+    ensureOkExcludedFromGit(targetDir);
+  } catch (err) {
+    // Non-fatal — best-effort
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts.json) emit(true, { type: 'warning', message: `git-exclude: ${msg}` });
+    else process.stderr.write(`  git-exclude: ${msg}\n`);
   }
 
   return targetDir;
+}
+
+/**
+ * Append `${OK_DIR}/` to `<projectDir>/.git/info/exclude` so the cloned repo's
+ * outer git ignores OK state without mutating any tracked file.
+ *
+ * Idempotent: recognizes the common variants (`.open-knowledge`,
+ * `.open-knowledge/`, leading-slash rooted forms) and only appends when none
+ * are present. Returns `'no-exclude'` when the file is absent (e.g., not a git
+ * repo, or a bare repo with no `info/` dir) — the caller treats that case as
+ * a no-op.
+ */
+export function ensureOkExcludedFromGit(
+  projectDir: string,
+): 'appended' | 'already-present' | 'no-exclude' {
+  const excludePath = join(projectDir, '.git', 'info', 'exclude');
+  if (!existsSync(excludePath)) return 'no-exclude';
+
+  const existing = readFileSync(excludePath, 'utf-8');
+  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
+  const alreadyPresent = existing
+    .split('\n')
+    .map((line) => line.trim())
+    .some((line) => variants.has(line));
+  if (alreadyPresent) return 'already-present';
+
+  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  writeFileSync(excludePath, `${existing}${separator}${OK_DIR}/\n`, 'utf-8');
+  return 'appended';
 }
 
 // ---------------------------------------------------------------------------

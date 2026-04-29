@@ -44,7 +44,7 @@ type WatcherBackend = 'parcel' | 'chokidar';
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 
 // Subset of DiskEvent that classifyEvents emits — markdown-only.
-export type MarkdownDiskEvent =
+type MarkdownDiskEvent =
   | { kind: 'create'; path: string; docName: string; content: string }
   | { kind: 'update'; path: string; docName: string; content: string }
   | { kind: 'delete'; path: string; docName: string }
@@ -65,7 +65,7 @@ export type MarkdownDiskEvent =
 // under add/remove so the end state matches. Rename-via-inode-pairing
 // was scoped out to keep hot-path binary handling simple (would require
 // hashing to correlate delete+create pairs).
-export type AssetDiskEvent =
+type AssetDiskEvent =
   | { kind: 'asset-create'; path: string; relativePath: string }
   | { kind: 'asset-delete'; path: string; relativePath: string };
 

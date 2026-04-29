@@ -1,4 +1,8 @@
-import { type AgentPresenceEntry, deriveIconColor } from '@inkeep/open-knowledge-core';
+import {
+  type AgentPresenceEntry,
+  computeInitials,
+  deriveIconColor,
+} from '@inkeep/open-knowledge-core';
 import {
   Bird,
   Cat,
@@ -48,6 +52,46 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Turtle,
 };
 
+/**
+ * The set of animal-name strings that map to a Lucide icon in the avatar.
+ * Exported so unit tests can enumerate the gating contract without depending
+ * on the icon component identities themselves.
+ */
+export const ANIMAL_ICON_NAMES = Object.freeze([...Object.keys(ANIMAL_ICON_MAP)]);
+
+/**
+ * Decide whether the avatar should render an animal icon or initials.
+ *
+ * Two-step rule:
+ *   1. If `principalId` is a non-empty string, the user has a server-resolved
+ *      git-config principal — render `initials`. The principalId presence is
+ *      the discriminator that prevents a real user named "John Bird" from
+ *      rendering a Bird icon.
+ *   2. Otherwise (synthesized user or pre-resolved boot fallback), look up
+ *      the second word of the random `Adjective Animal` fallback name — if
+ *      it matches an animal-icon key, render that icon; otherwise fall back
+ *      to initials.
+ *
+ * Cross-file contract: step 1 holds only because the awareness publish site
+ * in `TiptapEditor.tsx` omits `principalId` for synthesized users. If that
+ * contract changes, gate on `user.source` instead of `user.principalId`.
+ *
+ * Pure function — exported for unit testing in `PresenceBar.test.ts`.
+ */
+type HumanAvatarKind = { kind: 'initials' } | { kind: 'animal'; animal: string };
+
+export function pickHumanAvatarKind(
+  user: Pick<AwarenessUser, 'name' | 'principalId'>,
+): HumanAvatarKind {
+  const hasPrincipalId = typeof user.principalId === 'string' && user.principalId.length > 0;
+  if (hasPrincipalId) return { kind: 'initials' };
+  const animal = user.name.split(' ')[1];
+  if (animal && Object.hasOwn(ANIMAL_ICON_MAP, animal)) {
+    return { kind: 'animal', animal };
+  }
+  return { kind: 'initials' };
+}
+
 const AGENT_DISPLAY_NAME: Record<string, string> = {
   claude: 'Claude',
   cursor: 'Cursor',
@@ -58,14 +102,26 @@ const AGENT_DISPLAY_NAME: Record<string, string> = {
   bot: 'Agent',
 };
 
-function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipant['mode'] }) {
-  const animal = user.name.split(' ')[1];
-  const AnimalIcon = animal ? ANIMAL_ICON_MAP[animal] : undefined;
-  const initials = user.name
-    .split(' ')
-    .map((w) => w[0])
-    .join('');
+function HumanAvatar({
+  user,
+  mode,
+  tabCount,
+}: {
+  user: AwarenessUser;
+  mode: HumanParticipant['mode'];
+  tabCount: number;
+}) {
+  const avatarKind = pickHumanAvatarKind(user);
+  const AnimalIcon = avatarKind.kind === 'animal' ? ANIMAL_ICON_MAP[avatarKind.animal] : undefined;
+  const initials = computeInitials(user.name);
   const iconColor = deriveIconColor(user.color);
+  const tooltipText = tabCount > 1 ? `${user.name} · ${tabCount} tabs` : user.name;
+  // The Tooltip is wired via Radix's `aria-describedby`, which only fires on
+  // hover/focus — a screen-reader user navigating linearly past the avatar
+  // would otherwise never hear the tab count, missing the central UX signal
+  // of multi-tab dedupe. Promote the count into the avatar's accessible name
+  // so it's announced unconditionally when N > 1.
+  const ariaLabel = tabCount > 1 ? `${user.name}, ${tabCount} concurrent tabs` : user.name;
 
   return (
     <Tooltip>
@@ -74,7 +130,7 @@ function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipa
           data-presence-badge="human"
           data-presence-mode={mode}
           role="img"
-          aria-label={user.name}
+          aria-label={ariaLabel}
           className="inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-full ring-2 ring-background"
           style={{ backgroundColor: user.color }}
         >
@@ -90,7 +146,7 @@ function HumanAvatar({ user, mode }: { user: AwarenessUser; mode: HumanParticipa
           )}
         </div>
       </TooltipTrigger>
-      <TooltipContent>{user.name}</TooltipContent>
+      <TooltipContent>{tooltipText}</TooltipContent>
     </Tooltip>
   );
 }
@@ -280,7 +336,9 @@ function OverflowChip({
         <div className="flex flex-wrap items-center gap-1.5">
           {remainder.map((p) => {
             if (p.kind === 'human') {
-              return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
+              return (
+                <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} tabCount={p.tabCount} />
+              );
             }
             return (
               <AgentAvatar
@@ -305,7 +363,7 @@ function renderParticipant(
   scopedAgentId: string | null,
 ) {
   if (p.kind === 'human') {
-    return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} />;
+    return <HumanAvatar key={p.clientId} user={p.user} mode={p.mode} tabCount={p.tabCount} />;
   }
   return (
     <AgentAvatar

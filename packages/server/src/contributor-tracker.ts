@@ -17,7 +17,7 @@
  * body per FR-8 / §8.7 so the full actor tuple is recoverable from git history
  * without a session-registry lookup.
  */
-export interface ActorMetadata {
+interface ActorMetadata {
   /** `principal-<UUID>` from the browser/server PrincipalRegistry. */
   principalId?: string;
   /** Agent family — 'claude' | 'cursor' | 'codex' | 'cline' | 'bot' | ... */

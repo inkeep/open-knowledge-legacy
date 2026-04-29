@@ -122,53 +122,70 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
-type GitignoreEntryAction = 'created' | 'appended' | 'already-present';
-
 /**
- * Ensure the repo-root `.gitignore` excludes `.open-knowledge/`.
+ * Append missing scaffold entries to an existing `.gitignore`, or create the
+ * file from scratch when absent. User customizations are preserved — only
+ * entries that aren't already present (via trim-equality) get appended.
  *
- * Used by the `clone` auto-init path: when we scaffold OK into a repo that
- * wasn't already using it, the local `.open-knowledge/` is per-user editor
- * config and shouldn't be committed back upstream. This is deliberately NOT
- * called by `ok init` — there the user is opting into OK for their own
- * project and config.yml is meant to be tracked.
- *
- * Idempotent: recognizes the common variants (`.open-knowledge`,
- * `.open-knowledge/`, leading-slash rooted forms) and only appends when
- * none are present. Creates the file if missing.
+ * Required entries are derived from `scaffoldContent`'s non-comment, non-empty
+ * lines. This is the upgrade path: workspaces that ran `ok init` before this
+ * scaffold gained `principal.json` / `last-spawn-error.log` would otherwise
+ * never see the new entries because `writeIfMissing` short-circuits.
  */
-export function ensureOkGitignoredAtRoot(projectDir: string): GitignoreEntryAction {
-  const gitignorePath = join(projectDir, '.gitignore');
-  const block = `# Open Knowledge — local editor config (not tracked upstream)\n${OK_DIR}/\n`;
-
-  if (!existsSync(gitignorePath)) {
-    writeFileSync(gitignorePath, block, 'utf-8');
+function ensureGitignoreEntries(
+  filePath: string,
+  scaffoldContent: string,
+): 'created' | 'updated' | 'unchanged' {
+  if (!existsSync(filePath)) {
+    writeFileSync(filePath, scaffoldContent, 'utf-8');
     return 'created';
   }
-
-  const existing = readFileSync(gitignorePath, 'utf-8');
-  const variants = new Set([OK_DIR, `${OK_DIR}/`, `/${OK_DIR}`, `/${OK_DIR}/`]);
-  const alreadyPresent = existing
+  const required = scaffoldContent
     .split('\n')
-    .map((line) => line.trim())
-    .some((line) => variants.has(line));
-  if (alreadyPresent) return 'already-present';
-
-  const separator = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
-  const leadingBlank = existing.length > 0 && !existing.endsWith('\n\n') ? '\n' : '';
-  writeFileSync(gitignorePath, `${existing}${separator}${leadingBlank}${block}`, 'utf-8');
-  return 'appended';
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('#'));
+  const existing = readFileSync(filePath, 'utf-8');
+  const present = new Set(existing.split('\n').map((l) => l.trim()));
+  const missing = required.filter((l) => !present.has(l));
+  if (missing.length === 0) return 'unchanged';
+  const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+  writeFileSync(filePath, `${existing}${sep}${missing.join('\n')}\n`, 'utf-8');
+  return 'updated';
 }
 
-/** Static files scaffolded into the open-knowledge directory. */
-const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
-  { name: '.gitignore', content: `${CACHE_DIR}/\nserver.lock\nui.lock\nsync-state.json\n` },
-  { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
-];
+/**
+ * Single source of truth for `.open-knowledge/.gitignore`.
+ *
+ * Every per-machine OK runtime path lives here so the project root
+ * `.gitignore` stays free of OK-internal entries. No `ok` command writes
+ * to the project root `.gitignore`.
+ */
+const OK_GITIGNORE_CONTENT = `# Per-machine runtime state — never commit. All Open Knowledge ignore rules
+# live here so the project root .gitignore stays free of OK-internal paths.
 
-export function initContent(projectDir: string): { created: string[]; skipped: string[] } {
+# Derived caches
+${CACHE_DIR}/
+
+# Per-process locks
+server.lock
+ui.lock
+
+# Sync watermarks + per-machine principal identity
+sync-state.json
+principal.json
+
+# MCP spawn diagnostics
+last-spawn-error.log
+`;
+
+export function initContent(projectDir: string): {
+  created: string[];
+  updated: string[];
+  skipped: string[];
+} {
   const okDir = resolve(projectDir, OK_DIR);
   const created: string[] = [];
+  const updated: string[] = [];
   const skipped: string[] = [];
 
   // Create .open-knowledge/ itself + the cache/ subdir. No scaffold content dirs —
@@ -176,14 +193,25 @@ export function initContent(projectDir: string): { created: string[]; skipped: s
   mkdirSync(okDir, { recursive: true });
   mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
 
-  // Write scaffold files (skip if already exist)
-  for (const file of SCAFFOLD_FILES) {
-    if (writeIfMissing(join(okDir, file.name), file.content)) {
-      created.push(file.name);
-    } else {
-      skipped.push(file.name);
-    }
+  // .gitignore: merge-on-upgrade — append missing scaffold entries to an
+  // existing file rather than skipping outright. Keeps the SSoT contract for
+  // workspaces created before new entries (`principal.json`,
+  // `last-spawn-error.log`) joined the scaffold.
+  const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
+  if (gitignoreAction === 'created') {
+    created.push('.gitignore');
+  } else if (gitignoreAction === 'updated') {
+    updated.push('.gitignore');
+  } else {
+    skipped.push('.gitignore');
   }
 
-  return { created, skipped };
+  // config.yml: writeIfMissing — user customizations win.
+  if (writeIfMissing(join(okDir, CONFIG_FILENAME), CONFIG_YML_CONTENT)) {
+    created.push(CONFIG_FILENAME);
+  } else {
+    skipped.push(CONFIG_FILENAME);
+  }
+
+  return { created, updated, skipped };
 }

@@ -24,7 +24,7 @@ export const UNIQUE_SCHEMES: ReadonlyArray<string> = [
 
 /** Per-scheme probe result. `lastChecked` is applied downstream on the target
  *  state, not stored per-scheme — the probe boundary is a pure snapshot. */
-export interface SchemeProbeResult {
+interface SchemeProbeResult {
   readonly installed: boolean;
   readonly displayName?: string;
 }

@@ -23,7 +23,9 @@ import {
   detectInstalledEditors,
   type EditorMcpResult,
   formatInitResult,
+  initCommand,
   readExistingMcpEntry,
+  resolveMcpScope,
   runInit,
   type UserMcpConfigsOptions,
   writeEditorMcpConfig,
@@ -68,6 +70,9 @@ describe('runInit', () => {
       cwd: testDir,
       home: fakeHome,
       installUserSkill: defaultInstallUserSkill,
+      // Default to user scope so existing tests remain focused on user-scope
+      // behavior. New scope tests set scope explicitly.
+      scope: 'user',
       ...options,
     });
 
@@ -696,7 +701,7 @@ describe('runInit', () => {
       );
 
       const output = formatInitResult(result, testDir);
-      expect(output).toContain('Legacy project MCP configs detected:');
+      expect(output).toContain('Project MCP configs found:');
       expect(output).toContain('.mcp.json');
       expect(output).toContain('.cursor/mcp.json');
     });
@@ -715,7 +720,7 @@ describe('runInit', () => {
 
       const claudeIndex = output.indexOf('Claude Code');
       const launchJsonIndex = output.indexOf('launch.json');
-      const legacyIndex = output.indexOf('Legacy project MCP configs detected:');
+      const legacyIndex = output.indexOf('Project MCP configs found:');
 
       expect(output).toContain('app preview server');
       expect(claudeIndex).toBeGreaterThanOrEqual(0);
@@ -1181,6 +1186,183 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, OK_DIR))).toBe(false);
       expect(existsSync(join(testDir, '.git'))).toBe(false);
     });
+  });
+
+  // -----------------------------------------------------------------------
+  // MCP scope selection (mcp-scope-flag feature)
+  // -----------------------------------------------------------------------
+
+  describe('mcp scope selection', () => {
+    it('scope=user writes only user-level config (default runInitForTest behavior)', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'user' });
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('claude');
+      expect(result.editors[0].action).toBe('written');
+      expect(result.editors[0].configScope).toBeUndefined();
+      expect(existsSync(claudeConfigPath())).toBe(true);
+      expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
+    });
+
+    it('scope=project writes only project-level config for Claude Code', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
+      // Only the project-scope result
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].editorId).toBe('claude');
+      expect(result.editors[0].action).toBe('written');
+      expect(result.editors[0].configScope).toBe('project');
+      expect(result.editors[0].configPath).toBe(join(testDir, '.mcp.json'));
+      // User-level config should NOT be written
+      expect(existsSync(claudeConfigPath())).toBe(false);
+      // Project-level config IS written
+      expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+    });
+
+    it('scope=project writes project-level configs for claude, cursor, vscode, codex', async () => {
+      const result = await runInitForTest({
+        editors: ['claude', 'cursor', 'vscode', 'codex'],
+        scope: 'project',
+      });
+      expect(result.editors).toHaveLength(4);
+      for (const r of result.editors) {
+        expect(r.configScope).toBe('project');
+        expect(r.action).toBe('written');
+      }
+      expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(true);
+      expect(existsSync(join(testDir, '.codex', 'config.toml'))).toBe(true);
+    });
+
+    it('scope=project silently skips editors without projectConfigPath (windsurf, claude-desktop)', async () => {
+      mkdirSync(dirname(windsurfConfigPath()), { recursive: true });
+      const result = await runInitForTest({
+        editors: ['windsurf', 'claude-desktop'],
+        scope: 'project',
+      });
+      // No entries since neither has projectConfigPath
+      expect(result.editors).toHaveLength(0);
+    });
+
+    it('scope=both writes user-level AND project-level for claude', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
+      expect(result.editors).toHaveLength(2);
+      const userResult = result.editors.find((r) => r.configScope !== 'project');
+      const projResult = result.editors.find((r) => r.configScope === 'project');
+      expect(userResult).toBeDefined();
+      expect(projResult).toBeDefined();
+      expect(userResult?.action).toBe('written');
+      expect(projResult?.action).toBe('written');
+      expect(existsSync(claudeConfigPath())).toBe(true);
+      expect(existsSync(join(testDir, '.mcp.json'))).toBe(true);
+    });
+
+    it('scope=both suppresses project-config notice for paths just written', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
+      // Even though .mcp.json now exists, it was written by us so should NOT appear in legacyProjectConfigs
+      expect(result.legacyProjectConfigs).toHaveLength(0);
+      const output = formatInitResult(result, testDir);
+      expect(output).not.toContain('Project MCP configs found:');
+    });
+
+    it('scope=project shows "(project)" label in output', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'project' });
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Claude Code (project)');
+    });
+
+    it('--no-mcp skips all MCP writes regardless of scope', async () => {
+      const result = await runInitForTest({ editors: ['claude'], mcp: false, scope: 'both' });
+      expect(result.editors).toHaveLength(1);
+      expect(result.editors[0].action).toBe('skipped-flag');
+      expect(existsSync(claudeConfigPath())).toBe(false);
+      expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
+    });
+
+    it('scope=both "Next steps" deduplicates editor labels (no double-count)', async () => {
+      const result = await runInitForTest({ editors: ['claude'], scope: 'both' });
+      const output = formatInitResult(result, testDir);
+      // "Claude Code" should appear exactly once in the "Open your editor" line,
+      // even though result.editors has two entries (user-scope + project-scope).
+      const nextStepsLine = output.split('\n').find((l) => l.includes('Open your editor'));
+      expect(nextStepsLine).toBeDefined();
+      const matches = nextStepsLine?.match(/Claude Code/g);
+      expect(matches).toHaveLength(1);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveMcpScope — TTY / non-TTY branch coverage
+// ---------------------------------------------------------------------------
+
+describe('resolveMcpScope', () => {
+  it('returns "user" when --scope user is passed, without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      throw new Error('promptFn should not be called');
+    };
+    const result = await resolveMcpScope({ scope: 'user', promptFn });
+    expect(result).toBe('user');
+  });
+
+  it('returns "project" when --scope project is passed, without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      throw new Error('promptFn should not be called');
+    };
+    const result = await resolveMcpScope({ scope: 'project', promptFn });
+    expect(result).toBe('project');
+  });
+
+  it('returns "both" when --scope both is passed, without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      throw new Error('promptFn should not be called');
+    };
+    const result = await resolveMcpScope({ scope: 'both', promptFn });
+    expect(result).toBe('both');
+  });
+
+  it('returns "both" in non-TTY mode (isTTY=false), without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      throw new Error('promptFn should not be called');
+    };
+    const result = await resolveMcpScope({ isTTY: false, promptFn });
+    expect(result).toBe('both');
+  });
+
+  it('calls promptFn and returns its result in TTY mode (isTTY=true)', async () => {
+    let called = false;
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      called = true;
+      return 'project';
+    };
+    const result = await resolveMcpScope({ isTTY: true, promptFn });
+    expect(called).toBe(true);
+    expect(result).toBe('project');
+  });
+
+  it('returns null when --no-mcp (mcp=false), without calling promptFn', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => {
+      throw new Error('promptFn should not be called');
+    };
+    const result = await resolveMcpScope({ mcp: false, isTTY: true, promptFn });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when promptFn returns null (user cleared both checkboxes — equivalent to --no-mcp)', async () => {
+    const promptFn = async (): Promise<'user' | 'project' | 'both' | null> => null;
+    const result = await resolveMcpScope({ isTTY: true, promptFn });
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initCommand -- Commander option validation
+// ---------------------------------------------------------------------------
+
+describe('initCommand', () => {
+  it('rejects --scope with an invalid value (non-zero exit)', () => {
+    const cmd = initCommand();
+    cmd.exitOverride();
+    expect(() => cmd.parse(['--scope', 'bogus'], { from: 'user' })).toThrow();
   });
 });
 

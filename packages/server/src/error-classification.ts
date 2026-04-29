@@ -11,26 +11,20 @@
 // ---------------------------------------------------------------------------
 
 /** Subclass strings, narrowed per class. */
-export type NetworkSubclass =
-  | 'dns'
-  | 'timeout'
-  | '5xx'
-  | '429'
-  | 'connection-refused'
-  | 'unknown-network';
-export type AuthSubclass = '401' | '403' | 'expired-token' | 'scope-mismatch' | 'unknown-auth';
-export type SemanticSubclass =
+type NetworkSubclass = 'dns' | 'timeout' | '5xx' | '429' | 'connection-refused' | 'unknown-network';
+type AuthSubclass = '401' | '403' | 'expired-token' | 'scope-mismatch' | 'unknown-auth';
+type SemanticSubclass =
   | 'non-fast-forward'
   | 'protected-branch'
   | 'merge-conflict'
   | 'unknown-semantic';
-export type StructuralSubclass =
+type StructuralSubclass =
   | 'lfs-quota'
   | 'large-file'
   | 'pre-receive-hook'
   | 'secret-detected'
   | 'unknown-structural';
-export type LocalSubclass = 'index-lock' | 'dirty-tree' | 'disk-full' | 'unknown-local';
+type LocalSubclass = 'index-lock' | 'dirty-tree' | 'disk-full' | 'unknown-local';
 
 /** Tagged result from classifyGitError(). */
 export type ClassifiedError =

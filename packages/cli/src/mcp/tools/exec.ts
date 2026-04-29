@@ -95,7 +95,7 @@ interface ExecDeps {
   config: ConfigOrResolver;
 }
 
-export type ExecEnrichedEntry = EnrichedEntry & {
+type ExecEnrichedEntry = EnrichedEntry & {
   previewUrl: string | null;
   previewUrlSource?: PreviewUrlSource;
 };
