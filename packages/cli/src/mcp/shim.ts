@@ -1,3 +1,25 @@
+/**
+ * `ok mcp` stdio → HTTP MCP shim — byte/JSON-RPC proxy strategy.
+ *
+ * The shim is deliberately a transport-only bridge: bytes/JSON-RPC frames
+ * arrive on stdin via `StdioServerTransport`, get forwarded as-is to the
+ * server-owned Streamable HTTP MCP endpoint via `StreamableHTTPClientTransport`,
+ * and responses flow back the other direction. There is no `McpServer` or
+ * `McpClient` instantiation in this process — tool registry, capability
+ * negotiation, and request handling all live in the running `ok start`
+ * process at `/mcp`.
+ *
+ * Protocol awareness in the shim is limited to one read: when the HTTP side
+ * delivers an `initialize` response, `maybeProtocolVersion` extracts
+ * `result.protocolVersion` (string, e.g. "2025-06-18") so we can call
+ * `http.setProtocolVersion(...)` and keep both transport halves in sync with
+ * whatever the server negotiated. No framing decisions, no method routing,
+ * no schema validation — the shim is otherwise version-agnostic.
+ *
+ * `resolveMcpHttpUrl` returning a URL string keeps the localhost-HTTP
+ * transport socket-swappable: a future Future Work iteration (NG2) could
+ * substitute a different URL/transport without touching the bridge code.
+ */
 import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

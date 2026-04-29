@@ -121,6 +121,10 @@ export {
   rewriteMarkdownLinksForDocumentRename,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
+export type { AgentIdentity } from './mcp/agent-identity.ts';
+export { getCurrentMcpLogger, McpLogger, runWithMcpLogger } from './mcp/logger.ts';
+export { buildExecResult, type ExecStructuredResult } from './mcp/tools/exec.ts';
+export { buildReadResult } from './mcp/tools/read-document.ts';
 export {
   createMcpHttpHandler,
   type McpHttpHandler,

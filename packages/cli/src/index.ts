@@ -22,4 +22,3 @@ export {
   writeUserMcpConfigs,
 } from './commands/init.ts';
 export { type LoadConfigResult, loadConfig } from './config/loader.ts';
-export type { AgentIdentity } from './mcp/agent-identity.ts';

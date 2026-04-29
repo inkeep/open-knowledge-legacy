@@ -51,10 +51,7 @@
     "@octokit/rest": "^22.0.1",
     "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
-    "just-bash": "^2.14.1",
     "picocolors": "^1.1.1",
-    "picomatch": "^4.0.4",
-    "shell-quote": "^1.8.3",
     "simple-git": "^3.36.0",
     "sirv": "^3.0.1",
     "smol-toml": "^1.6.1",
@@ -69,8 +66,6 @@
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
     "@types/node": "^24.7.0",
-    "@types/picomatch": "^4.0.3",
-    "@types/shell-quote": "^1.7.5",
     "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }

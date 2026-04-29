@@ -3,10 +3,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { relative } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { AgentIdentity } from '../../cli/src/mcp/agent-identity.ts';
-import { registerAllTools } from '../../cli/src/mcp/tools/index.ts';
 import type { Config } from './config/schema.ts';
 import { MCP_SERVER_NAME } from './constants.ts';
+import type { AgentIdentity } from './mcp/agent-identity.ts';
+import { registerAllTools } from './mcp/tools/index.ts';
 import { RUNTIME_VERSION } from './version-constants.ts';
 
 const DEFAULT_INCLUDE = ['**/*.md', '**/*.mdx'];

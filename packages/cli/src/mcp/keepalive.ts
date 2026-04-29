@@ -66,7 +66,7 @@ interface KeepaliveOptions {
    * Structured logger. When provided, lifecycle events emit JSON with
    * url, backoff, and error context. Falls back to `log` callback.
    */
-  logger?: import('./logger.ts').McpLogger;
+  logger?: import('@inkeep/open-knowledge-server').McpLogger;
   /**
    * Legacy log callback. Used when `logger` is not provided.
    */
