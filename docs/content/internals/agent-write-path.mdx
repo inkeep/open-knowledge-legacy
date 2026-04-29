@@ -82,13 +82,13 @@ The `summaries` field is flat (per-contributor, not per-doc) and omitted entirel
 
 1. Body has `agentId` → `agent-<id>` contributor (same as `extractAgentIdentity`); `actor.principalId` is also populated from `getPrincipal()` when a principal is loaded so the agent-on-behalf-of-principal audit trail mirrors `buildAgentActor` for non-rename writes.
 2. No `agentId`, server has a loaded principal → `principal-<uuid>` contributor with the principal's display name. UI drag-rename in FileTree and the in-editor Restore button hit this branch — both post with no identity, both attribute to the loaded principal.
-3. No `agentId`, no principal → no contributor entry (anonymous, preserves the D22 invariant for the bootstrap-failure case).
+3. No `agentId`, no principal → no contributor entry (anonymous). When principal load fails at server start, rename and rollback rows stay anonymous rather than inventing identity.
 
 **Trust boundary.** `extractActorIdentity` does NOT read `body.principalId` — the HTTP body is unauthenticated and a body-supplied principal could be spoofed. The server's `getPrincipal()` (loaded from `<contentDir>/.open-knowledge/principal.json` at boot) is the only source of principal identity for HTTP handlers.
 
 **Side-effect carve-out.** When a rename rewrites inbound wiki-links and markdown links across N linking docs, those linking docs do NOT receive an actor contributor entry — they flow through the existing `defaultWriter` (anonymous) path. The renamed doc itself records the actor via `recordContributor`; the cascading rewrites stay mechanical. Applies symmetrically to agent-driven and principal-driven renames.
 
-**Default summaries.** When no summary is provided, MCP-driven `rename_document` and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. `write_document`, `edit_document`, and `rename_folder` have no default — an absent summary means an absent bullet. (`rename_folder` deliberately omits a default because one folder-level summary would be applied to every affected-doc contributor entry; users are better served by a single explicit summary or none than by a synthesized "Renamed folder X → Y" copy on every doc.)
+**Default summaries.** When no summary is provided, MCP-driven `rename_document`, `rename_folder`, and `rollback_to_version` substitute a server-generated default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) through the same `normalizeSummary` path. The folder rename's default applies to every affected-doc contributor entry — users who want per-doc nuance should supply their own summary. `write_document` and `edit_document` have no default — an absent summary means an absent bullet.
 
 **Parser tolerance.** `parseContributors` in `packages/core/src/shadow-repo-layout.ts` accepts both legacy (no `summaries` field) and new commits. A malformed `summaries` value drops just that field while preserving the contributor entry — a deliberate divergence from the whole-entry-skip policy applied to other optional fields, because decorative loss beats attribution loss.
 

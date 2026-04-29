@@ -1,11 +1,10 @@
 /**
- * US-004 — D22 agentId-guarded attribution for rename + rollback.
- *
- * Rename and rollback handlers differ from the three agent-write endpoints
- * because their primary callers include UI-driven paths (EditorPane.tsx's
- * Restore button) that MUST stay anonymous. The D22 LOCKED 1-way door is
- * that these handlers only call `recordContributor` when the body carries
- * an explicit `agentId`. These tests lock that invariant in.
+ * Rename and rollback attribution: agentId-guarded routing for the
+ * `handleRenamePath` and `handleRollback` handlers. Their primary callers
+ * include UI-driven paths (FileTree drag-rename, EditorPane Restore button)
+ * that previously stayed anonymous when no agent identity was supplied —
+ * these tests pin that invariant alongside the post-consolidation behavior
+ * where an absent `agentId` falls back to the server-loaded principal.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -85,9 +84,9 @@ function buildBacklinkIndex(contentDir: string): BacklinkIndex {
 }
 
 /** Captures calls to the `flushGitCommit` hook so the leak-fix regression
- *  test can assert that handleRename / handleRollback drain pending
+ *  test can assert that handleRenamePath / handleRollback drain pending
  *  contributors into their own L2 commit instead of leaking into the next
- *  unrelated write's commit (BUG-1 from /qa Phase 7, fixed on feat/agent-write-summaries). */
+ *  unrelated write's commit. */
 type FlushGitCommitSpy = {
   readonly calls: ReadonlyArray<number>;
   fn: () => Promise<void>;
@@ -159,7 +158,7 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('handleRename — D22 agentId-guarded attribution', () => {
+describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => {
   test('no agentId (UI-shape body) → rename succeeds with ZERO contributor entries', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
 
@@ -293,14 +292,13 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(getMetrics().summariesProvided).toBe(1);
   });
 
-  test('no agentId + wrong-type summary → 400 (validation runs unconditionally; D22 attribution still skipped)', async () => {
+  test('no agentId + wrong-type summary → 400 (validation runs unconditionally; attribution still skipped)', async () => {
     // Defensive validation: even though the rename has no UI call site today,
     // we want any future MCP-client identity-passthrough regression to surface
-    // as a loud 400 rather than a silent attribution drop. The D22 contract
-    // (no agentId → no attribution) is unchanged — this test asserts that
-    // type-checking the summary happens before that branch even runs, so a
-    // malformed summary body never accidentally lands as a 200 with the
-    // summary silently ignored.
+    // as a loud 400 rather than a silent attribution drop. Type-checking the
+    // summary happens before the actor branch even runs, so a malformed
+    // summary body never accidentally lands as a 200 with the summary
+    // silently ignored.
     writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
 
     const response = await callApi(tmpDir, '/api/rename-path', {
@@ -314,27 +312,30 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
     // File must NOT have been renamed — validation runs before the rename.
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
-    // D22: no attribution side-effects either (no agentId means no contributor
-    // entry would have been recorded even on the success path).
+    // No attribution side-effects either (no agentId AND no principal in
+    // this harness means no contributor entry would have been recorded
+    // even on the success path).
     expect(formatContributors()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
   });
 });
 
-describe('handleRollback — D22 agentId-guarded attribution (regression gate)', () => {
+describe('handleRollback — agentId-guarded attribution (regression gate)', () => {
   // handleRollback's full path requires a shadow-repo + open Y.Doc which is
   // out of reach in this fast unit-test harness. The critical invariant is
-  // the D22 guard: no-agentId request MUST produce zero contributor entries
-  // and zero counter increments. That guard fires at the body-parse stage
-  // before any shadow or Y.Doc touch, so we can exercise it by asserting
-  // the handler's early-return shape AND by posting a body that WOULD
-  // otherwise flow through to the shadow-repo error path.
+  // the agentId guard: a request without identity AND without a loaded
+  // principal MUST produce zero contributor entries and zero counter
+  // increments. That guard fires at the body-parse stage before any shadow
+  // or Y.Doc touch, so we can exercise it by asserting the handler's
+  // early-return shape AND by posting a body that WOULD otherwise flow
+  // through to the shadow-repo error path.
 
   test('no agentId → body parses and short-circuits the attribution branch', async () => {
     // This hits the shadow-repo "not configured" 400 path, but critically
     // DOES NOT fire any contributor recording or counter work along the way.
-    // If D22 regressed (e.g. `extractAgentIdentity` ran unconditionally),
-    // the `claude-1/Claude` defaults would be recorded here.
+    // If the attribution guard regressed (e.g. `extractAgentIdentity` ran
+    // unconditionally), the `claude-1/Claude` defaults would be recorded
+    // here.
     const response = await callApi(tmpDir, '/api/rollback', {
       docName: 'test-doc',
       commitSha: 'a'.repeat(40),
@@ -369,17 +370,17 @@ describe('handleRollback — D22 agentId-guarded attribution (regression gate)',
   });
 });
 
-describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
+describe('leak-fix regression', () => {
   // Prior to the fix: handleRollback called `setReconciledBase(docName, markdown)`
   // BEFORE `onStoreDocument` fired, which tripped persistence's
   // "skip write when serialized === currentBase" guard and dropped the L1 disk
   // write (and thus its `scheduleGitCommit()` call). The pending contributor
   // entry from `recordContributor(...)` then stayed in `pendingContributors`
   // until the next UNRELATED write's onStoreDocument fired — polluting that
-  // commit's `ok-contributors:` line with stale "Restored to <sha>" bullets
-  // and stale docs. handleRename had a parallel leak because
-  // `_performManagedRename` does sync fs writes that bypass Hocuspocus's
-  // onStoreDocument entirely, and the handler did not explicitly flush L2.
+  // commit's `ok-contributors:` line with stale "Restored to <sha>" bullets.
+  // handleRenamePath has a parallel exposure because
+  // `_performManagedRenameForDocs` does sync fs writes that bypass
+  // Hocuspocus's onStoreDocument entirely.
   //
   // Fix: both handlers now call `flushDocToGit(<docName>, <label>)` after
   // `recordContributor`. That helper forces the per-doc L1 debouncer
