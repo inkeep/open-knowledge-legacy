@@ -13,6 +13,7 @@ import {
   Table2,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { setPendingAutoOpen } from './component-items';
 
 /**
  * A slash command menu item.
@@ -255,14 +256,28 @@ export const slashCommandItems: SlashCommandItem[] = [
     // Inline math goes in the static list (not the descriptor-driven
     // `getComponentItems`) because `mathInline` is a PM atom node, not a
     // registered descriptor — it bypasses the registry to avoid lifting
-    // NG14 on jsxInline. Insert with empty formula; author edits in
-    // source mode (`$$x$$`) since the WYSIWYG inline atom has no
-    // PropPanel-style chrome today.
+    // NG14 on jsxInline.
+    //
+    // Insert + auto-select + auto-open the inline-math editor popover
+    // (the same shape as block descriptors get from focusInsertedComponent
+    // in component-items.ts): `setPendingAutoOpen` flags the inserted
+    // position; on the next animation frame we set NodeSelection on the
+    // atom, which triggers MathInlineView's selected→popover effect and
+    // drains the auto-open flag. PopoverContent's `onOpenAutoFocus` then
+    // hands focus to the autoFocus-marked `formula` input inside
+    // PropPanel.
     name: 'inline-math',
     label: 'Inline Math',
     icon: Sigma,
     category: 'insert',
-    command: (editor) => editor.chain().focus().insertMathInline('').run(),
+    command: (editor) => {
+      const insertPos = editor.state.selection.from;
+      editor.chain().focus().insertMathInline('').run();
+      setPendingAutoOpen(insertPos);
+      requestAnimationFrame(() => {
+        editor.commands.setNodeSelection(insertPos);
+      });
+    },
     aliases: ['math', 'latex', 'equation', 'formula', 'katex', 'inlinemath'],
   },
 ];

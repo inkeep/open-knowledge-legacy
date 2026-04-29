@@ -289,25 +289,31 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
 
-  // needsConfig = at least one STRING prop is an explicit empty `''`. Used as
-  // a passive visual hint: the chrome bar surfaces the gear without hover
-  // (via `data-needs-config` CSS rule in globals.css). Clears as soon as
-  // every string prop has a non-empty value.
+  // needsConfig = at least one REQUIRED string prop is still empty `''`.
+  // Used as a passive visual hint: the chrome bar surfaces the gear without
+  // hover (via `data-needs-config` CSS rule in globals.css). Clears as soon
+  // as every required string prop has a non-empty value.
   //
   // Scoping rationale:
   //   - boolean / number / enum props have sensible defaults from
   //     `getDefaultProps` (false / 0 / first enum value) — defaulting is
   //     intentional, not "unconfigured."
-  //   - `undefined` string values come from authored markdown that simply
-  //     doesn't write that attr (e.g. `<Callout type="info">` omits title).
-  //     Hinting there would nag on every well-formed, render-complete
-  //     callout. So we only flag explicit `''`, which is what
-  //     `getDefaultProps` stamps on fresh slash-inserts.
+  //   - OPTIONAL string props (Callout `title`/`icon`/`color`, Math `id`,
+  //     etc.) are blank by design when the author hasn't set them; flagging
+  //     them as "needs config" would keep the gear permanently lit on
+  //     well-formed components — exactly the bug Math hit (`id` is optional
+  //     with no default, so `''` was sticky). Restrict to REQUIRED string
+  //     props (`src` on img/video/audio, `formula` on Math, `chart` on
+  //     Mermaid, `title` on Accordion) — those are the fields that
+  //     genuinely need a value before the descriptor renders meaningfully.
+  //   - `undefined` string values (vs `''`) come from authored markdown
+  //     that simply doesn't write that attr; never flagged.
   const currentProps = (node.attrs.props as Record<string, unknown>) ?? {};
   const needsConfig =
     hasEditableProps &&
     descriptor.props.some((p) => {
       if (p.type !== 'string') return false;
+      if (!p.required) return false;
       if ('hidden' in p && p.hidden) return false;
       return currentProps[p.name] === '';
     });
