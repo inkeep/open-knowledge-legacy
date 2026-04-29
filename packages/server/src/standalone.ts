@@ -897,7 +897,15 @@ export function createServer(options: ServerOptions): ServerInstance {
     // afterUnloadDocument can resolve.
     for (const doc of hocuspocus.documents.values()) {
       if (doc.getConnectionsCount() === 0) {
-        void hocuspocus.unloadDocument(doc);
+        void hocuspocus.unloadDocument(doc).catch((err: unknown) => {
+          console.warn(
+            JSON.stringify({
+              event: 'ok-shutdown-unload-document-failed',
+              docName: doc.name,
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        });
       }
     }
 

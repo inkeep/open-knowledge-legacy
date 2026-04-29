@@ -24,6 +24,7 @@ import {
   computeActivityMountList,
   computeEditorMountGate,
   EditorActivityPool,
+  getServerRestartRecoveryView,
   LARGE_DOC_CHAR_THRESHOLD,
 } from './EditorActivityPool';
 
@@ -58,6 +59,54 @@ describe('ACTIVITY_MOUNT_LIMIT', () => {
 describe('EditorActivityPool module contract', () => {
   test('default export is a function (React component)', () => {
     expect(typeof EditorActivityPool).toBe('function');
+  });
+});
+
+describe('getServerRestartRecoveryView', () => {
+  test('idle state does not replace the editor', () => {
+    expect(getServerRestartRecoveryView('Untitled', { kind: 'idle' })).toBeNull();
+  });
+
+  test('recovering active doc uses server-restart copy instead of generic load copy', () => {
+    const view = getServerRestartRecoveryView('Untitled', {
+      kind: 'recovering',
+      phase: 'clearing-local-cache',
+      docNames: ['Untitled'],
+      failedDocNames: [],
+      startedAt: 1,
+    });
+
+    expect(view?.kind).toBe('recovering');
+    expect(view?.title).toBe('Reconnecting after server restart');
+    expect(view?.summary).toContain('Untitled');
+    expect(view?.summary).not.toMatch(/connection|took too long/i);
+  });
+
+  test('failed active doc gets a targeted reload recovery surface', () => {
+    const view = getServerRestartRecoveryView('Untitled', {
+      kind: 'failed',
+      reason: 'clear-data-timeout',
+      docNames: ['Untitled'],
+      failedDocNames: ['Untitled'],
+      startedAt: 1,
+    });
+
+    expect(view?.kind).toBe('failed');
+    expect(view?.title).toBe("Couldn't reconnect after server restart");
+    expect(view?.summary).toMatch(/cleared in time/i);
+    expect(view && 'actionLabel' in view ? view.actionLabel : null).toBe('Reload');
+  });
+
+  test('recovery state for another doc leaves this doc alone', () => {
+    expect(
+      getServerRestartRecoveryView('Healthy', {
+        kind: 'recovering',
+        phase: 'reconnecting',
+        docNames: ['Untitled'],
+        failedDocNames: [],
+        startedAt: 1,
+      }),
+    ).toBeNull();
   });
 });
 

@@ -1223,6 +1223,92 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     const postSecond = pool.entries.get('doc1');
     expect(postSecond?.provider).toBe(postFirstProvider);
   });
+
+  test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
+    __resetSyncPromiseCache();
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    let resolveClear: () => void = () => {};
+    entry.persistence.clearData = mock(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClear = resolve;
+        }),
+    );
+
+    syncPromise('doc1', entry.provider).catch(() => {});
+    expect(__syncPromiseCacheSize()).toBe(1);
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+
+    expect(__syncPromiseCacheSize()).toBe(0);
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'clearing-local-cache',
+      docNames: ['doc1'],
+    });
+
+    resolveClear();
+    await wait(50);
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames: ['doc1'],
+    });
+
+    const replacement = pool.getActive();
+    if (!replacement) throw new Error('expected replacement');
+    replacement.observerCleanup = () => {};
+    replacement.provider.emit('synced', { state: true });
+
+    expect(pool.getServerRestartRecoveryState()).toEqual({ kind: 'idle' });
+    __resetSyncPromiseCache();
+  });
+
+  test('active doc clearData failure exposes targeted recovery failure state', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+    const originalProvider = entry.provider;
+    entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(50);
+
+    expect(pool.getActive()?.provider).toBe(originalProvider);
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-failed',
+      docNames: ['doc1'],
+      failedDocNames: ['doc1'],
+    });
+  });
+
+  test('active doc clearData timeout exposes targeted timeout state', async () => {
+    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
+    pool.setExpectedServerInstanceId('server-old');
+    const entry = pool.open('doc1');
+    if (!entry?.persistence) throw new Error('expected entry');
+    pool.setActive('doc1');
+    entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
+
+    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+    await wait(30);
+
+    expect(pool.getServerRestartRecoveryState()).toMatchObject({
+      kind: 'failed',
+      reason: 'clear-data-timeout',
+      docNames: ['doc1'],
+      failedDocNames: ['doc1'],
+    });
+  });
 });
 
 describe('ProviderPool syncPromise lifecycle integration (F15)', () => {

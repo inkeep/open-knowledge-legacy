@@ -29,6 +29,24 @@ import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sy
 export const TAB_REPLAY_ORIGIN = Object.freeze({ kind: 'tab-replay' } as const);
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
+export type ServerRestartRecoveryState =
+  | { kind: 'idle' }
+  | {
+      kind: 'recovering';
+      phase: 'clearing-local-cache' | 'reconnecting';
+      docNames: readonly string[];
+      failedDocNames: readonly string[];
+      startedAt: number;
+    }
+  | {
+      kind: 'failed';
+      reason: 'clear-data-failed' | 'clear-data-timeout';
+      docNames: readonly string[];
+      failedDocNames: readonly string[];
+      startedAt: number;
+    };
+
+const IDLE_SERVER_RESTART_RECOVERY: ServerRestartRecoveryState = Object.freeze({ kind: 'idle' });
 
 /**
  * Pool entries follow a two-state lifecycle modeled as a discriminated
@@ -140,6 +158,17 @@ const editorSchema = getSchema(sharedExtensions);
  * Validated by the Liveblocks `lostConnectionTimeout` pattern (default 5s).
  */
 const RECYCLE_DEBOUNCE_MS = 4_000;
+const CLEAR_DATA_TIMEOUT_MS = 10_000;
+
+class ClientPersistenceClearTimeoutError extends Error {
+  constructor(
+    readonly docName: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`client persistence clearData timed out for ${docName} after ${timeoutMs}ms`);
+    this.name = 'ClientPersistenceClearTimeoutError';
+  }
+}
 
 /**
  * localStorage key for the persisted last-observed git branch. Used by
@@ -289,8 +318,10 @@ export class ProviderPool {
   private readonly maxSize: number;
   private readonly wsUrl: string;
   private readonly recycleDebounceMs: number;
+  private readonly clearDataTimeoutMs: number;
   private onChange: PoolChangeCallback | null = null;
   private tabIdentity: { principalId: string; tabSessionId: string } | null = null;
+  private serverRestartRecoveryState: ServerRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
   /**
    * Last server instance ID observed from `/api/server-info` or CC1
    * `server-info`. This is the live-server fallback claim for empty-IDB /
@@ -333,6 +364,7 @@ export class ProviderPool {
     wsUrl: string,
     options?: {
       recycleDebounceMs?: number;
+      clearDataTimeoutMs?: number;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
     },
   ) {
@@ -342,6 +374,7 @@ export class ProviderPool {
     // before the pool is instantiated. Callers must not pass an empty string.
     this.wsUrl = wsUrl;
     this.recycleDebounceMs = options?.recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
+    this.clearDataTimeoutMs = options?.clearDataTimeoutMs ?? CLEAR_DATA_TIMEOUT_MS;
     if (options?.storage !== undefined) {
       this.storage = options.storage;
     } else {
@@ -371,6 +404,10 @@ export class ProviderPool {
    */
   setExpectedServerInstanceId(id: string | null): void {
     this.cachedServerInstanceId = id;
+  }
+
+  getServerRestartRecoveryState(): ServerRestartRecoveryState {
+    return this.serverRestartRecoveryState;
   }
 
   /**
@@ -539,6 +576,94 @@ export class ProviderPool {
 
   private getServerInstanceIdForAuth(): string | null {
     return this.getOrInitIdbSyncedServerInstanceId() ?? this.cachedServerInstanceId;
+  }
+
+  private withClearDataTimeout(docName: string, promise: Promise<void>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new ClientPersistenceClearTimeoutError(docName, this.clearDataTimeoutMs));
+      }, this.clearDataTimeoutMs);
+      promise.then(
+        () => {
+          clearTimeout(timeout);
+          resolve();
+        },
+        (err: unknown) => {
+          clearTimeout(timeout);
+          reject(err);
+        },
+      );
+    });
+  }
+
+  private beginServerRestartRecovery(docNames: readonly string[], startedAt: number): void {
+    this.serverRestartRecoveryState = {
+      kind: 'recovering',
+      phase: 'clearing-local-cache',
+      docNames,
+      failedDocNames: [],
+      startedAt,
+    };
+    for (const docName of docNames) {
+      invalidateSyncPromise(docName);
+    }
+    this.notify();
+  }
+
+  private enterServerRestartReconnect(
+    docNames: readonly string[],
+    failedDocNames: readonly string[],
+    startedAt: number,
+    failureReason: 'clear-data-failed' | 'clear-data-timeout',
+  ): void {
+    if (docNames.length === 0) {
+      this.serverRestartRecoveryState =
+        failedDocNames.length === 0
+          ? IDLE_SERVER_RESTART_RECOVERY
+          : {
+              kind: 'failed',
+              reason: failureReason,
+              docNames: failedDocNames,
+              failedDocNames,
+              startedAt,
+            };
+      this.notify();
+      return;
+    }
+
+    this.serverRestartRecoveryState = {
+      kind: 'recovering',
+      phase: 'reconnecting',
+      docNames,
+      failedDocNames,
+      startedAt,
+    };
+    this.notify();
+  }
+
+  private markServerRestartRecoverySynced(docName: string): void {
+    const state = this.serverRestartRecoveryState;
+    if (state.kind !== 'recovering' || state.phase !== 'reconnecting') return;
+    if (!state.docNames.includes(docName)) return;
+
+    const remaining = state.docNames.filter((candidate) => candidate !== docName);
+    if (remaining.length > 0) {
+      this.serverRestartRecoveryState = { ...state, docNames: remaining };
+      return;
+    }
+
+    if (state.failedDocNames.length > 0) {
+      this.serverRestartRecoveryState = {
+        kind: 'failed',
+        reason: 'clear-data-failed',
+        docNames: state.failedDocNames,
+        failedDocNames: state.failedDocNames,
+        startedAt: state.startedAt,
+      };
+      return;
+    }
+
+    this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
   }
 
   /**
@@ -763,6 +888,9 @@ export class ProviderPool {
       // `server-instance-mismatch` recycle buffers before calling clearData.
       entry.lastServerSyncedSV = captureStateVector(provider.document);
       if (this.cachedServerInstanceId !== null) {
+        // Only persist after observing a concrete server instance ID. If the
+        // boot/server-info path is unavailable, keep the legacy no-claim path
+        // rather than pinning an unknown IDB association.
         this.persistIdbSyncedServerInstanceId(this.cachedServerInstanceId);
       }
       // Cancel pending recycle — provider reconnected successfully
@@ -770,6 +898,7 @@ export class ProviderPool {
         clearTimeout(entry.pendingRecycleTimer);
         entry.pendingRecycleTimer = null;
       }
+      this.markServerRestartRecoverySynced(docName);
       this.notify();
 
       // Set up bidirectional observers once after first sync. A throw here
@@ -983,6 +1112,21 @@ export class ProviderPool {
     // Snapshot entries BEFORE any async work — subsequent recycle mutates
     // the map via destroyEntry → delete → re-open.
     const snapshot = Array.from(this.entries.entries());
+    const startedAt = Date.now();
+    const activeRecoveryDocNames =
+      this.activeDocName !== null &&
+      snapshot.some(
+        ([docName, poolEntry]) => docName === this.activeDocName && poolEntry.kind === 'active',
+      )
+        ? [this.activeDocName]
+        : [];
+
+    this.beginServerRestartRecovery(activeRecoveryDocNames, startedAt);
+    for (const [docName, poolEntry] of snapshot) {
+      if (poolEntry.kind === 'active' && !activeRecoveryDocNames.includes(docName)) {
+        invalidateSyncPromise(docName);
+      }
+    }
 
     for (const [docName, poolEntry] of snapshot) {
       if (poolEntry.kind !== 'active') continue;
@@ -1030,16 +1174,23 @@ export class ProviderPool {
       // null. BridgeFailed entries (Active with bridgeSetupFailed=true)
       // still have persistence attached and SHOULD be cleared.
       if (poolEntry.kind !== 'active') continue;
-      clears.push({ docName, promise: poolEntry.persistence.clearData() });
+      clears.push({
+        docName,
+        promise: this.withClearDataTimeout(docName, poolEntry.persistence.clearData()),
+      });
     }
 
     void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
       const failed: string[] = [];
       const cleared: string[] = [];
+      let failureReason: 'clear-data-failed' | 'clear-data-timeout' = 'clear-data-failed';
       results.forEach((result, i) => {
         const docName = clears[i]?.docName ?? '<unknown>';
         if (result.status === 'rejected') {
           failed.push(docName);
+          if (result.reason instanceof ClientPersistenceClearTimeoutError) {
+            failureReason = 'clear-data-timeout';
+          }
           console.warn(
             JSON.stringify({
               event: 'ok-client-persistence-clear-failed',
@@ -1052,6 +1203,7 @@ export class ProviderPool {
           cleared.push(docName);
         }
       });
+      const reconnectDocNames = cleared.filter((docName) => docName === this.activeDocName);
       if (failed.length > 0) {
         // Per-doc recycle. An all-or-none gate would re-open the
         // duplication class for the cleared docs: their providers would
@@ -1071,11 +1223,13 @@ export class ProviderPool {
             clearedDocs: cleared,
           }),
         );
+        this.enterServerRestartReconnect(reconnectDocNames, failed, startedAt, failureReason);
         for (const docName of cleared) {
           this.recycleDisconnectedEntry(docName);
         }
         return;
       }
+      this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, failureReason);
       this.recycleAllEntries();
     });
   }
@@ -1261,6 +1415,7 @@ export class ProviderPool {
     this.onBranchMismatch = null;
     this.branchMismatchInFlight = null;
     this.evictListeners.clear();
+    this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
     this.cachedServerInstanceId = null;
     this.idbSyncedServerInstanceId = null;
     this.idbSyncedServerInstanceIdInitialized = false;
