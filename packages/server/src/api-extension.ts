@@ -3693,7 +3693,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const fmResult = writeFrontmatterDualSlot(document, frontmatter);
         if (!fmResult.ok) {
           console.warn(
-            `[rollback] Malformed YAML in restored snapshot for ${docName} (${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
+            `[rollback] Malformed YAML in restored snapshot for ${docName} (${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
           );
         }
       }, ROLLBACK_ORIGIN);

@@ -100,11 +100,14 @@ export function getFrontmatter(doc: Y.Doc): string {
 }
 
 /**
- * Outcome of a per-key write attempt. `ok === false` carries `parseError` from
- * `parseFrontmatterYaml` so callers can include the cause in their log line
- * (yaml@2 `doc.errors[0].message` already contains line/column).
+ * Outcome of a per-key write attempt. The failure-branch `error` field carries
+ * the cause from `parseFrontmatterYaml` (yaml@2 `doc.errors[0].message`
+ * already contains line/column for parse failures; schema-mismatch and
+ * top-level-shape failures get their own descriptive strings). Field name
+ * matches the dominant `{ ok: false; error: string }` convention used by
+ * other discriminated unions in this codebase (e.g. `resolveProjectServerContext`).
  */
-export type WriteFrontmatterResult = { ok: true } | { ok: false; parseError: string };
+export type WriteFrontmatterResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Replace the per-key entries in `Y.Map('metadata')` from a YAML string. Used
@@ -118,7 +121,7 @@ export type WriteFrontmatterResult = { ok: true } | { ok: false; parseError: str
  *     keys are inserted; values that differ are set. Per-key (not bulk
  *     `clear()+setAll()`) preserves UndoManager attribution per property,
  *     so undoing one property reverts only that property.
- *   - Malformed YAML: no-op + returns `{ ok: false, parseError }` so the
+ *   - Malformed YAML: no-op + returns `{ ok: false, error }` so the
  *     caller can keep last valid per-key state and surface the cause.
  *
  * Removes the legacy `'frontmatter'` slot on success (the per-key entries
@@ -127,7 +130,7 @@ export type WriteFrontmatterResult = { ok: true } | { ok: false; parseError: str
 export function setFrontmatterFromYaml(doc: Y.Doc, yaml: string): WriteFrontmatterResult {
   const { map, parseError } = parseFrontmatterYaml(yaml);
   if (map === null) {
-    return { ok: false, parseError: parseError ?? 'unknown parse failure' };
+    return { ok: false, error: parseError ?? 'unknown parse failure' };
   }
   const metaMap = doc.getMap('metadata');
   const desired = new Set(Object.keys(map));

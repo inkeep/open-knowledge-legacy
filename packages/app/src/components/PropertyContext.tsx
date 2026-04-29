@@ -59,15 +59,22 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // React Compiler hoists this object so consumers re-render only when
-  // `addPropertySignal` actually changes (CLAUDE.md: no useMemo).
+  // Context value object recreated each render (CLAUDE.md bans useMemo —
+  // rely on React Compiler). Note that React Context does NOT support
+  // selector-based subscriptions: every consumer re-enters its render
+  // function on any value-identity change, even when only an unrelated
+  // doc's counter bumped. React Compiler memoizes downstream JSX, so the
+  // tree below each consumer bails out cheaply when its own inputs are
+  // unchanged. Impact is bounded by ACTIVITY_MOUNT_LIMIT (3 panels max).
+  // If more signals are added here later, consider the dispatch/state
+  // context split pattern to keep dispatchers cheap-to-consume.
   const value: PropertyContextValue = {
     addPropertySignal,
     requestAddProperty,
     clearAddProperty,
   };
 
-  return <PropertyContext.Provider value={value}>{children}</PropertyContext.Provider>;
+  return <PropertyContext value={value}>{children}</PropertyContext>;
 }
 
 export function useProperties(): PropertyContextValue {

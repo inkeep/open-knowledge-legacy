@@ -180,7 +180,7 @@ function applyAgentMarkdownWriteInner(
       const fmResult = writeFrontmatterDualSlot(document, finalFm);
       if (!fmResult.ok) {
         log.warn(
-          { docName: document.name, parseError: fmResult.parseError },
+          { docName: document.name, parseError: fmResult.error },
           '[agent-session] Malformed YAML in agent-write — per-key entries unchanged; legacy slot mirrored as-supplied',
         );
       }
@@ -286,7 +286,7 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
       const fmResult = writeFrontmatterDualSlot(document, finalFm);
       if (!fmResult.ok) {
         log.warn(
-          { docName: document.name, parseError: fmResult.parseError },
+          { docName: document.name, parseError: fmResult.error },
           '[agent-session] Malformed YAML in agent-undo — per-key entries unchanged; legacy slot mirrored as-supplied',
         );
       }

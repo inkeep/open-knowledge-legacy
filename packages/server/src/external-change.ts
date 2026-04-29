@@ -94,7 +94,7 @@ export function applyExternalChange(
     const fmResult = writeFrontmatterDualSlot(document, frontmatter);
     if (!fmResult.ok) {
       console.warn(
-        `[file-watcher] Malformed YAML frontmatter on disk for ${docName} (${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
+        `[file-watcher] Malformed YAML frontmatter on disk for ${docName} (${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
       );
     }
 

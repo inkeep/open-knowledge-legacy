@@ -575,7 +575,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
             const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
             if (!fmResult.ok) {
               console.warn(
-                `[Server Observer B] Malformed YAML in source-mode FM (early-exit branch, ${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
+                `[Server Observer B] Malformed YAML in source-mode FM (early-exit branch, ${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
               );
             }
           }, OBSERVER_SYNC_ORIGIN);
@@ -616,7 +616,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
         if (!fmResult.ok) {
           console.warn(
-            `[Server Observer B] Malformed YAML in source-mode FM (parse branch, ${fmResult.parseError}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
+            `[Server Observer B] Malformed YAML in source-mode FM (parse branch, ${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
           );
         }
       }, OBSERVER_SYNC_ORIGIN);

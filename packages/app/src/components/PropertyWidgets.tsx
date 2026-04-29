@@ -160,6 +160,11 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
   const [month, setMonth] = useState<Date | undefined>(date);
   const [open, setOpen] = useState(false);
   const focusedRef = useRef(false);
+  // Same async/sync mismatch as TextWidget / NumberWidget — Escape calls
+  // setInputValue(reverted) (async) then blur() (sync). Without this guard,
+  // onBlur reads the stale typed inputValue from closure and commitInput()
+  // would parse + commit the typed-but-cancelled value.
+  const revertingRef = useRef(false);
 
   // Re-sync input display from external value when not focused (remote edits / commits).
   useEffect(() => {
@@ -210,6 +215,10 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
         }}
         onBlur={() => {
           focusedRef.current = false;
+          if (revertingRef.current) {
+            revertingRef.current = false;
+            return;
+          }
           commitInput();
         }}
         onKeyDown={(e) => {
@@ -219,6 +228,7 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
             (e.currentTarget as HTMLInputElement).blur();
           } else if (e.key === 'Escape') {
             e.preventDefault();
+            revertingRef.current = true;
             setInputValue(formatDateForInput(date));
             (e.currentTarget as HTMLInputElement).blur();
           } else if (e.key === 'ArrowDown') {

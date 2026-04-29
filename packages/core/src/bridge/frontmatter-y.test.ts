@@ -197,15 +197,15 @@ describe('setFrontmatterFromYaml', () => {
     expect(changeCount).toBe(0);
   });
 
-  test('returns { ok: false, parseError } on malformed YAML and leaves state unchanged', () => {
+  test('returns { ok: false, error } on malformed YAML and leaves state unchanged', () => {
     const doc = makeDoc();
     setFrontmatterFromYaml(doc, 'title: Hello\n');
     const before = getFrontmatterMap(doc);
     const result = setFrontmatterFromYaml(doc, 'title: [unterminated');
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(typeof result.parseError).toBe('string');
-      expect(result.parseError.length).toBeGreaterThan(0);
+      expect(typeof result.error).toBe('string');
+      expect(result.error.length).toBeGreaterThan(0);
     }
     expect(getFrontmatterMap(doc)).toEqual(before);
   });
@@ -295,7 +295,7 @@ describe('writeFrontmatterDualSlot', () => {
     expect(doc.getMap('metadata').get('frontmatter')).toBe(fenced);
   });
 
-  test('malformed fenced YAML: per-key unchanged, legacy slot mirrored, parseError surfaced', () => {
+  test('malformed fenced YAML: per-key unchanged, legacy slot mirrored, error surfaced', () => {
     const doc = makeDoc();
     // Seed valid per-key state.
     writeFrontmatterDualSlot(doc, '---\ntitle: Stable\n---\n');
@@ -304,8 +304,8 @@ describe('writeFrontmatterDualSlot', () => {
     const result = writeFrontmatterDualSlot(doc, malformed);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(typeof result.parseError).toBe('string');
-      expect(result.parseError.length).toBeGreaterThan(0);
+      expect(typeof result.error).toBe('string');
+      expect(result.error.length).toBeGreaterThan(0);
     }
     // Per-key entries kept their last valid state — this is what prevents
     // composeFrontmatterForStore from silently overwriting disk with stale

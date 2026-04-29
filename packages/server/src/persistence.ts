@@ -721,7 +721,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               const fmResult = writeFrontmatterDualSlot(document, frontmatter);
               if (!fmResult.ok) {
                 log.warn(
-                  { documentName, parseError: fmResult.parseError },
+                  { documentName, parseError: fmResult.error },
                   '[persistence] Malformed YAML on load — per-key entries unchanged; legacy slot mirrored as-supplied',
                 );
               }
