@@ -4,8 +4,8 @@ export interface OmnibarRecentEntry {
   lastOpenedAt: string;
 }
 
-export const OMNIBAR_RECENTS_STORAGE_KEY = 'ok-omnibar-recents-v1';
-export const OMNIBAR_RECENTS_LIMIT = 10;
+const OMNIBAR_RECENTS_STORAGE_KEY = 'ok-omnibar-recents-v1';
+const OMNIBAR_RECENTS_LIMIT = 10;
 
 function isRecentEntry(value: unknown): value is OmnibarRecentEntry {
   return (

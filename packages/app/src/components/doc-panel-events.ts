@@ -1,4 +1,4 @@
-export type DocPanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
+type DocPanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
 
 const DOC_PANEL_TAB_EVENT = 'open-knowledge:doc-panel-tab';
 let pendingRequestedTab: DocPanelTab | null = null;

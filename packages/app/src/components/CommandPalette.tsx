@@ -112,13 +112,13 @@ export function CommandPalette({ bridge = null }: CommandPaletteProps) {
   const [recentNavigation, setRecentNavigation] = useState<OmnibarRecentEntry[]>([]);
   const [createDialogKind, setCreateDialogKind] = useState<'file' | 'folder' | null>(null);
   const { activeDocName, activeTarget } = useDocumentContext();
-  const { pages, folderPaths } = usePageList();
+  const { pages, pageTitles, pageMeta, folderPaths } = usePageList();
   const workspace = useWorkspace();
   const { states: installStates, refresh: refreshInstallStates } = useInstalledAgents();
   const { dispatch: dispatchHandoff } = useHandoffDispatch();
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
-  const workspaceEntries = buildWorkspaceEntries(pages, folderPaths);
+  const workspaceEntries = buildWorkspaceEntries(pages, folderPaths, pageTitles, pageMeta);
   const navigationResults = searchWorkspaceEntries(workspaceEntries, deferredQuery);
   const validRecentKeys = new Set(
     workspaceEntries.map((entry) => makeOmnibarRecentKey(entry.kind, entry.path)),

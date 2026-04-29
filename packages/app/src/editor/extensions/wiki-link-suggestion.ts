@@ -1,10 +1,13 @@
 import type { HeadingEntry } from '@inkeep/open-knowledge-core';
+import {
+  createWorkspaceSearchDocument,
+  searchWorkspaceDocuments,
+} from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import type { ResolvedPos } from '@tiptap/pm/model';
 import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
-import fuzzysort from 'fuzzysort';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
 import {
   createSuggestionPopup,
@@ -50,14 +53,38 @@ export function parseQuery(query: string): ParsedQuery {
 
 export function filterPages(pages: PageItem[], query: string): PageItem[] {
   if (!query) return pages.slice(0, MAX_ITEMS);
-  const results = fuzzysort.go(query, pages, { keys: ['title', 'docName'], threshold: -10000 });
-  return results.map((r) => r.obj).slice(0, MAX_ITEMS);
+  const byPath = new Map(pages.map((page) => [page.docName, page]));
+  return searchWorkspaceDocuments(
+    pages.map((page) =>
+      createWorkspaceSearchDocument({
+        kind: 'page',
+        path: page.docName,
+        title: page.title,
+      }),
+    ),
+    query,
+    { intent: 'autocomplete', limit: MAX_ITEMS },
+  )
+    .map((result) => byPath.get(result.document.path))
+    .filter((page) => !!page);
 }
 
 export function filterHeadings(headings: HeadingEntry[], anchorQuery: string): HeadingEntry[] {
   if (!anchorQuery) return headings.slice(0, MAX_ITEMS);
-  const results = fuzzysort.go(anchorQuery, headings, { key: 'text', threshold: -10000 });
-  return results.map((r) => r.obj).slice(0, MAX_ITEMS);
+  const bySlug = new Map(headings.map((heading) => [heading.slug, heading]));
+  return searchWorkspaceDocuments(
+    headings.map((heading) =>
+      createWorkspaceSearchDocument({
+        kind: 'page',
+        path: heading.slug,
+        title: heading.text,
+      }),
+    ),
+    anchorQuery,
+    { intent: 'autocomplete', limit: MAX_ITEMS },
+  )
+    .map((result) => bySlug.get(result.document.path))
+    .filter((heading) => !!heading);
 }
 
 export function buildSuggestionItems(pages: PageItem[], query: string): WikiLinkSuggestionItem[] {
