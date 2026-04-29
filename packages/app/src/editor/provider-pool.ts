@@ -352,6 +352,23 @@ export class ProviderPool {
   private idbSyncedServerInstanceId: string | null = null;
   private idbSyncedServerInstanceIdInitialized = false;
   /**
+   * One-shot promise handle for callers waiting on a known server epoch.
+   * Allocated lazily by `whenServerInstanceKnown()` and resolved (then
+   * cleared) the next time `setExpectedServerInstanceId` is called with a
+   * non-null id. Once resolved, future `whenServerInstanceKnown()` calls
+   * allocate a fresh handle bound to the next epoch transition.
+   *
+   * `null` arg to `setExpectedServerInstanceId` does NOT reject — the
+   * pending handle stays alive until a real epoch lands. This matches the
+   * mismatch-recycle path: the handler clears `cachedServerInstanceId` to
+   * null mid-recovery, then the boot/refresh fetch races the new id back
+   * into place.
+   */
+  private pendingServerInstanceKnown: {
+    promise: Promise<string>;
+    resolve: (id: string) => void;
+  } | null = null;
+  /**
    * Unsynced-edit buffer captured per-doc during a `server-instance-mismatch`
    * recycle. Populated right before `clearData()` wipes IDB; drained at the
    * fresh provider's FIRST post-recycle `synced` event when the replay
@@ -413,9 +430,79 @@ export class ProviderPool {
    * `server-info`. Does NOT overwrite the storage-backed IDB-associated ID:
    * a fast boot fetch after server restart must not mask stale IDB contents
    * before the first document provider opens.
+   *
+   * On a non-null id this also (a) resolves any pending
+   * `whenServerInstanceKnown()` handle and (b) retroactively attaches
+   * persistence to entries opened during the cold-boot window before the
+   * epoch was known. Persistence is `IndexeddbPersistence`-backed and the
+   * DB-name shape `ok-ydoc:${branch}:${serverInstanceId}:${docName}`
+   * carries the epoch as a structural correctness signal; opening a
+   * provider before the live epoch is known means the DB cannot be
+   * attached at admission time without picking the wrong epoch.
    */
   setExpectedServerInstanceId(id: string | null): void {
     this.cachedServerInstanceId = id;
+    if (id === null || id.length === 0) return;
+    if (this.pendingServerInstanceKnown !== null) {
+      const pending = this.pendingServerInstanceKnown;
+      this.pendingServerInstanceKnown = null;
+      pending.resolve(id);
+    }
+    this.attachDeferredPersistence(id);
+  }
+
+  /**
+   * Resolve once a non-null server instance ID is known to the pool.
+   *
+   * - Resolves immediately when `cachedServerInstanceId` is already set.
+   * - Otherwise returns a single shared pending promise; subsequent calls
+   *   during the same wait window share the same handle.
+   * - Resolved promises are stable: a later `setExpectedServerInstanceId`
+   *   with a different id does NOT re-resolve a previously-returned
+   *   handle. The next fresh call observes the new id.
+   * - `setExpectedServerInstanceId(null)` does NOT reject pending
+   *   handles — null is a transient state during mismatch recovery, and
+   *   the boot/refresh fetch is expected to land the next epoch shortly
+   *   after.
+   */
+  whenServerInstanceKnown(): Promise<string> {
+    if (this.cachedServerInstanceId !== null && this.cachedServerInstanceId.length > 0) {
+      return Promise.resolve(this.cachedServerInstanceId);
+    }
+    if (this.pendingServerInstanceKnown !== null) {
+      return this.pendingServerInstanceKnown.promise;
+    }
+    let resolve!: (id: string) => void;
+    const promise = new Promise<string>((res) => {
+      resolve = res;
+    });
+    this.pendingServerInstanceKnown = { promise, resolve };
+    return promise;
+  }
+
+  private buildPersistence(
+    serverInstanceId: string,
+    docName: string,
+    doc: Y.Doc,
+  ): ClientPersistenceProvider {
+    return createClientPersistence({
+      branch: this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL,
+      serverInstanceId,
+      docName,
+      doc,
+    });
+  }
+
+  private attachDeferredPersistence(serverInstanceId: string): void {
+    for (const entry of this._entries.values()) {
+      if (entry.kind !== 'active') continue;
+      if (entry.persistence !== null) continue;
+      entry.persistence = this.buildPersistence(
+        serverInstanceId,
+        entry.docName,
+        entry.provider.document,
+      );
+    }
   }
 
   getServerRestartRecoveryState(): ServerRestartRecoveryState {
@@ -870,17 +957,14 @@ export class ProviderPool {
     // known, persistence stays null — the persistent IDB cache must not
     // attach to an unknown-epoch DB name that could later be re-used
     // across server restarts. The provider is still constructed so the
-    // WebSocket handshake can begin in parallel.
-    const branch = this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL;
+    // WebSocket handshake can begin in parallel; once
+    // `setExpectedServerInstanceId` lands a non-null id,
+    // `attachDeferredPersistence` retroactively builds the IDB cache
+    // for every entry whose `persistence` is still null.
     const persistenceServerInstanceId = this.cachedServerInstanceId;
     const persistence: ClientPersistenceProvider | null =
       persistenceServerInstanceId !== null && persistenceServerInstanceId.length > 0
-        ? createClientPersistence({
-            branch,
-            serverInstanceId: persistenceServerInstanceId,
-            docName,
-            doc: provider.document,
-          })
+        ? this.buildPersistence(persistenceServerInstanceId, docName, provider.document)
         : null;
 
     const entry: ActivePoolEntry = {
@@ -1463,6 +1547,13 @@ export class ProviderPool {
     this.cachedServerInstanceId = null;
     this.idbSyncedServerInstanceId = null;
     this.idbSyncedServerInstanceIdInitialized = false;
+    // Drop any pending whenServerInstanceKnown handle. Awaiters of a
+    // disposed pool stay pending — disposal happens during HMR / test
+    // teardown when the entire pool reference is replaced, so leaving
+    // the promise un-resolved is the correct behavior. Resolving with
+    // a placeholder id would mislead callers into reading from a torn
+    // pool.
+    this.pendingServerInstanceKnown = null;
     this.tabIdentity = null;
   }
 

@@ -2269,3 +2269,150 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Provider-open gating: persistent IndexedDB attachment is deferred until
+// `setExpectedServerInstanceId` lands a non-null id. Until then,
+// `entry.persistence` is null and no DB handle is opened — preventing an
+// "unknown-epoch" DB from being created against a name the next session
+// could re-attach to. Once the id arrives, `attachDeferredPersistence`
+// retroactively wires up persistence on every active entry that was opened
+// during the cold-boot window.
+// ---------------------------------------------------------------------------
+describe('ProviderPool provider-open gating', () => {
+  test('whenServerInstanceKnown resolves immediately when id is already cached', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+    expect(await pool.whenServerInstanceKnown()).toBe(TEST_SERVER_INSTANCE_ID);
+  });
+
+  test('whenServerInstanceKnown returns the same pending promise for concurrent callers', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const p1 = pool.whenServerInstanceKnown();
+    const p2 = pool.whenServerInstanceKnown();
+    expect(p1).toBe(p2);
+  });
+
+  test('whenServerInstanceKnown resolves once setExpectedServerInstanceId lands a non-null id', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.setExpectedServerInstanceId('server-cold-boot');
+    expect(await pending).toBe('server-cold-boot');
+  });
+
+  test('setExpectedServerInstanceId(null) does not reject pending whenServerInstanceKnown', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.setExpectedServerInstanceId(null);
+    pool.setExpectedServerInstanceId('server-after-null');
+    expect(await pending).toBe('server-after-null');
+  });
+
+  test('a previously-resolved whenServerInstanceKnown promise is not re-resolved on a later id change', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-first');
+    const resolved = await pool.whenServerInstanceKnown();
+    expect(resolved).toBe('server-first');
+    pool.setExpectedServerInstanceId('server-second');
+    // Fresh call observes the new id; the previously-resolved value is stable.
+    expect(await pool.whenServerInstanceKnown()).toBe('server-second');
+    expect(resolved).toBe('server-first');
+  });
+
+  test('open() before serverInstanceId is known does not construct a stale-shape IDB database', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    const docName = uniqueDocName('pp-cold-boot');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    expect(entry.persistence).toBeNull();
+    expect(entry.kind).toBe('active');
+
+    if (typeof indexedDB !== 'undefined') {
+      const dbs = await indexedDB.databases();
+      const staleShapeName = `ok-ydoc:main:${docName}`;
+      const newShapeUnknownEpoch = `ok-ydoc:main::${docName}`;
+      expect(dbs.find((d) => d.name === staleShapeName)).toBeUndefined();
+      expect(dbs.find((d) => d.name === newShapeUnknownEpoch)).toBeUndefined();
+    }
+  });
+
+  test('setExpectedServerInstanceId retroactively attaches persistence with the new-shape DB name', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    const docA = uniqueDocName('pp-retro');
+    const docB = uniqueDocName('pp-retro');
+    const entryA = pool.open(docA);
+    const entryB = pool.open(docB);
+    if (!entryA || !entryB) throw new Error('expected entries');
+    expect(entryA.persistence).toBeNull();
+    expect(entryB.persistence).toBeNull();
+
+    pool.setExpectedServerInstanceId('server-retro-attach');
+
+    if (entryA.kind !== 'active' || entryB.kind !== 'active') {
+      throw new Error('expected entries to remain active');
+    }
+    expect(entryA.persistence).not.toBeNull();
+    expect(entryB.persistence).not.toBeNull();
+    expect(typeof entryA.persistence?.destroy).toBe('function');
+    expect(typeof entryA.persistence?.clearData).toBe('function');
+
+    if (typeof indexedDB !== 'undefined') {
+      await entryA.persistence?.whenSynced;
+      await entryB.persistence?.whenSynced;
+      const dbs = await indexedDB.databases();
+      const names = new Set(dbs.map((d) => d.name).filter((n): n is string => n !== undefined));
+      expect(names.has(`ok-ydoc:main:server-retro-attach:${docA}`)).toBe(true);
+      expect(names.has(`ok-ydoc:main:server-retro-attach:${docB}`)).toBe(true);
+      // Stale-shape (no epoch slot) and unknown-epoch (empty epoch slot)
+      // databases must NOT be created during the cold-boot window.
+      expect(names.has(`ok-ydoc:main:${docA}`)).toBe(false);
+      expect(names.has(`ok-ydoc:main::${docA}`)).toBe(false);
+    }
+  });
+
+  test('setExpectedServerInstanceId is a no-op for entries that already have persistence attached', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-warm');
+    const docName = uniqueDocName('pp-warm');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    const persistenceBefore = entry.persistence;
+    expect(persistenceBefore).not.toBeNull();
+
+    pool.setExpectedServerInstanceId('server-warm-update');
+    if (entry.kind !== 'active') throw new Error('expected entry to remain active');
+    expect(entry.persistence).toBe(persistenceBefore);
+  });
+
+  test('setExpectedServerInstanceId(null) does not detach already-attached persistence', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-warm');
+    const docName = uniqueDocName('pp-no-detach');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    const persistenceBefore = entry.persistence;
+    expect(persistenceBefore).not.toBeNull();
+
+    pool.setExpectedServerInstanceId(null);
+    if (entry.kind !== 'active') throw new Error('expected entry to remain active');
+    expect(entry.persistence).toBe(persistenceBefore);
+  });
+
+  test('dispose() drops the pending whenServerInstanceKnown handle', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.dispose();
+
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await wait(10);
+    expect(settled).toBe(false);
+
+    // Re-create the pool so the afterEach dispose() targets a real instance.
+    pool = new ProviderPool(3, DUMMY_WS);
+  });
+});
