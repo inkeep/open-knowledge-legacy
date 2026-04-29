@@ -60,13 +60,6 @@ export default {
     'packages/core': {
       entry: ['src/**/*.test.ts', 'tests/**/*.ts', 'src/markdown/fixtures/perf/generate.ts'],
       project: 'src/**',
-      ignoreDependencies: [
-        // Declared up-front for US-003's `writeConfigPatch` (yaml@2 Document
-        // round-trip + atomic tmp+rename) per US-001 acceptance. Will be
-        // imported in `packages/core/src/config/write-config-patch.ts` once
-        // that story lands.
-        'yaml',
-      ],
     },
     docs: {
       ignoreDependencies: [

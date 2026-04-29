@@ -1,0 +1,326 @@
+/**
+ * Headless config writer (D5 reshape Part B / FR-9).
+ *
+ * Used by MCP `set_config` / `set_folder_rule`, CLI `ok config validate` /
+ * `ok config migrate`, and `seed/apply.ts`. Returns `Result<T, E>` (D35) —
+ * never throws across the boundary for expected failures (validation,
+ * malformed YAML, write errors).
+ *
+ * Three-layer defense-in-depth (D45): this is L2 (headless writers).
+ * Same `ConfigSchema.safeParse` runs at L1 (Modal walker) and L3
+ * (persistence-hook).
+ *
+ * Comment + structure preservation: the yaml@2 Document layer round-trip
+ * (`parseDocument` → `setIn`/`deleteIn` → `doc.toString()`) preserves
+ * comments, blank lines, and anchors — load-bearing for the edit-in-place
+ * UX where users hand-edit YAML alongside tool-driven writes.
+ */
+
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { type Document, isMap, isSeq, type ParsedNode, parseDocument } from 'yaml';
+import { OK_DIR } from '../constants/ok-dir.ts';
+import type { ConfigIssue, ConfigValidationError } from './errors.ts';
+import type { Err, Ok, Result } from './result.ts';
+import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
+
+/** Filename of the workspace + user config under `.open-knowledge/`. */
+const CONFIG_FILENAME = 'config.yml';
+
+/**
+ * Default magic-comment header written on lazy first-write (D51 / FR-17).
+ *
+ * Version pin is sourced from `package.json` at runtime via `import.meta.url`
+ * + relative path traversal — keeps the version always in sync with what
+ * the running package reports. Falls back to a non-pinned URL if the
+ * lookup fails for any reason (won't crash a write).
+ *
+ * US-013 (`ok init`) will scaffold its own header for workspace files; this
+ * helper covers the user-global lazy-write path.
+ */
+function packageVersionPinnedUrl(): string {
+  try {
+    // From `<core>/src/config/write-config-patch.ts` (dev) or
+    // `<core>/dist/index.mjs` (built), `<core>/package.json` is reliably
+    // 1-2 dirs up. Try both depths.
+    const here = new URL(import.meta.url);
+    for (const rel of ['../../package.json', '../package.json']) {
+      try {
+        const url = new URL(rel, here);
+        const raw = readFileSync(url, 'utf-8');
+        const parsed = JSON.parse(raw) as { version?: string };
+        const version = parsed.version;
+        if (typeof version === 'string') {
+          const [major = '0', minor = '0'] = version.split('.');
+          return `https://unpkg.com/@inkeep/open-knowledge@${major}.${minor}/dist/config-schema.json`;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return 'https://unpkg.com/@inkeep/open-knowledge/dist/config-schema.json';
+}
+
+const DEFAULT_FIRST_WRITE_HEADER = `# yaml-language-server: $schema=${packageVersionPinnedUrl()}\n`;
+
+export interface WriteConfigPatchOptions {
+  /** Project root (workspace scope) or any path (user scope ignores this). */
+  cwd: string;
+  /** Which file to write. */
+  scope: 'workspace' | 'user';
+  /** Deep-partial patch. Null at any path means "clear that field". */
+  patch: ConfigPatch;
+  /**
+   * Override homedir for tests. Defaults to `os.homedir()`.
+   */
+  homedirOverride?: string;
+  /**
+   * Optional header comment for lazy first-write (D51 / FR-17). Used only
+   * when the target file does not yet exist. Defaults to the version-pinned
+   * `$schema` magic comment. Pass `null` to skip the header (e.g., when the
+   * caller writes its own scaffolded content above the patch).
+   */
+  firstWriteHeader?: string | null;
+}
+
+export interface WriteConfigPatchSuccess {
+  /** The full merged config after applying the patch + Zod defaults. */
+  effective: Config;
+  /** Dotted paths of leaves the patch touched (for telemetry / logs). */
+  appliedPaths: string[];
+  /** Absolute path of the config file that was written. */
+  path: string;
+  /** Whether the file was created on this call (lazy first-write). */
+  created: boolean;
+}
+
+export type WriteConfigPatchResult = Result<WriteConfigPatchSuccess, ConfigValidationError>;
+
+/**
+ * Resolve the absolute config file path for a given scope.
+ *
+ * Workspace: `<cwd>/.open-knowledge/config.yml` (relative paths resolved
+ * against process.cwd() if `cwd` is relative).
+ *
+ * User: `<homedir>/.open-knowledge/config.yml`.
+ */
+export function resolveConfigPath(
+  scope: 'workspace' | 'user',
+  cwd: string,
+  homedirOverride?: string,
+): string {
+  if (scope === 'user') {
+    const home = homedirOverride ?? homedir();
+    return resolve(home, OK_DIR, CONFIG_FILENAME);
+  }
+  const absCwd = isAbsolute(cwd) ? cwd : resolve(cwd);
+  return resolve(absCwd, OK_DIR, CONFIG_FILENAME);
+}
+
+/**
+ * Walk a deep-partial patch tree and apply each leaf to the YAML Document.
+ *
+ * Null values clear the field via `deleteIn`. Undefined keys are skipped
+ * (deep-partial semantics — absence means "leave alone"). Returns the
+ * dotted paths of every leaf that was touched.
+ */
+function applyPatchToDocument(doc: Document.Parsed<ParsedNode>, patch: ConfigPatch): string[] {
+  const applied: string[] = [];
+
+  function walk(value: unknown, path: (string | number)[]): void {
+    if (value === undefined) return;
+    if (value === null) {
+      // RFC 7396 spirit: null = delete
+      doc.deleteIn(path);
+      applied.push(path.join('.'));
+      return;
+    }
+    if (Array.isArray(value)) {
+      // Arrays replace wholesale (RFC 7396 §1) — folder rules etc. carry
+      // their own identity (`match` field) but cross-scope merging is a
+      // loader-side concern, not a write-time concern.
+      doc.setIn(path, value);
+      applied.push(path.join('.'));
+      return;
+    }
+    if (typeof value === 'object') {
+      // Recursive merge for plain objects.
+      for (const [key, subValue] of Object.entries(value)) {
+        walk(subValue, [...path, key]);
+      }
+      return;
+    }
+    // Scalar leaf: set the value directly.
+    doc.setIn(path, value);
+    applied.push(path.join('.'));
+  }
+
+  for (const [key, value] of Object.entries(patch)) {
+    walk(value, [key]);
+  }
+
+  return applied;
+}
+
+/**
+ * Convert a Zod issue to a wire-safe `ConfigIssue`. Symbols in
+ * `issue.path` (`PropertyKey[]`) are stringified — they don't survive JSON
+ * serialization and break consumer rendering otherwise.
+ *
+ * Loosely typed `issue` because Zod v4's `$ZodIssue` is a discriminated
+ * union with per-variant fields; we only need the three load-bearing
+ * properties (`path`, `message`, `code`).
+ */
+function toConfigIssue(issue: { path: PropertyKey[]; message: string; code: string }): ConfigIssue {
+  const path = issue.path.map((seg) =>
+    typeof seg === 'symbol' ? String(seg) : (seg as string | number),
+  );
+  return {
+    path,
+    message: issue.message,
+    issueCode: issue.code,
+  };
+}
+
+function err(error: ConfigValidationError): Err<ConfigValidationError> {
+  return { ok: false, error };
+}
+
+function ok(value: WriteConfigPatchSuccess): Ok<WriteConfigPatchSuccess> {
+  return { ok: true, ...value };
+}
+
+/**
+ * Atomic tmp+rename write. Mode 0o644 (D51 — config is not secret).
+ *
+ * Best-effort cleanup of the tmp file on failure: if rename fails, attempt
+ * to unlink the tmp file but never throw on cleanup — the caller's error
+ * is what matters.
+ */
+async function atomicWrite(absPath: string, content: string): Promise<void> {
+  const tmpPath = `${absPath}.tmp.${crypto.randomUUID()}`;
+  try {
+    await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o644 });
+    await rename(tmpPath, absPath);
+  } catch (e) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw e;
+  }
+}
+
+/**
+ * Write a partial patch to the config file at `cwd`/`scope`. Validates
+ * via `ConfigSchema.safeParse` against the merged document; on failure
+ * returns a typed error with no fs side-effect. On success, writes
+ * atomically via tmp+rename.
+ *
+ * Lazy first-write (D51): if the target file is missing, creates the
+ * parent dir (`mkdir -p`) and writes a new file with the magic-comment
+ * header. Mode 0o644.
+ */
+export async function writeConfigPatch(
+  opts: WriteConfigPatchOptions,
+): Promise<WriteConfigPatchResult> {
+  const { cwd, scope, patch, homedirOverride, firstWriteHeader } = opts;
+  const absPath = resolveConfigPath(scope, cwd, homedirOverride);
+
+  // Step 1: read current file content (or empty for lazy first-write).
+  let existingContent = '';
+  let fileExists = false;
+  if (existsSync(absPath)) {
+    fileExists = true;
+    try {
+      existingContent = readFileSync(absPath, 'utf-8');
+    } catch (e) {
+      return err({
+        code: 'WRITE_ERROR',
+        detail: `Could not read existing config: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  // Step 2: parse the existing YAML (or empty document for first-write).
+  // yaml@2 `parseDocument` accepts empty strings — produces an empty doc
+  // with no contents node. Errors are surfaced via `doc.errors`.
+  const doc = parseDocument(existingContent);
+  if (doc.errors.length > 0) {
+    return err({
+      code: 'YAML_PARSE',
+      detail: doc.errors.map((e) => e.message).join('; '),
+    });
+  }
+
+  // Ensure the doc has a top-level map; an empty document parses with
+  // `contents = null`. Replace with an empty map so setIn can create
+  // nested paths.
+  if (doc.contents === null) {
+    doc.contents = doc.createNode({}) as ParsedNode;
+  } else if (!isMap(doc.contents) && !isSeq(doc.contents)) {
+    return err({
+      code: 'YAML_PARSE',
+      detail: 'Top-level YAML value must be a mapping (object), got scalar',
+    });
+  }
+
+  // Step 3: apply the patch to the Document.
+  const appliedPaths = applyPatchToDocument(doc, patch);
+
+  // Step 4: serialize to JS for safeParse (validation), and to string for
+  // write. The Document layer's `toJSON()` produces a plain JS object
+  // suitable for Zod parsing.
+  const merged = doc.toJSON();
+  const parsed = ConfigSchema.safeParse(merged);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map(toConfigIssue);
+    return err({ code: 'SCHEMA_INVALID', issues });
+  }
+
+  // Step 5: serialize the doc to YAML. For lazy first-write, prepend the
+  // magic-comment header so IDE intellisense fires immediately. The
+  // doc.toString() output has its own trailing newline if non-empty.
+  let serialized = doc.toString();
+  if (!fileExists) {
+    const header =
+      firstWriteHeader === undefined ? DEFAULT_FIRST_WRITE_HEADER : (firstWriteHeader ?? '');
+    if (header.length > 0) {
+      // Ensure exactly one newline between header and body.
+      const headerNormalized = header.endsWith('\n') ? header : `${header}\n`;
+      serialized = `${headerNormalized}${serialized}`;
+    }
+  }
+
+  // Step 6: ensure parent directory exists, then atomic write.
+  try {
+    await mkdir(dirname(absPath), { recursive: true });
+  } catch (e) {
+    return err({
+      code: 'WRITE_ERROR',
+      detail: `Could not create parent directory for ${absPath}: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  try {
+    await atomicWrite(absPath, serialized);
+  } catch (e) {
+    return err({
+      code: 'WRITE_ERROR',
+      detail: `Could not write ${absPath}: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  return ok({
+    effective: parsed.data,
+    appliedPaths,
+    path: absPath,
+    created: !fileExists,
+  });
+}

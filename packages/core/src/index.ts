@@ -11,6 +11,14 @@ export {
 // Re-export VFileMessage for Observer B's error classification (instanceof check
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
+// Headless config writers (US-003 — D5 reshape Part B / D38 reshaped / D63).
+// Node-only: import yaml@2 and node:fs. NOT browser-safe.
+export {
+  type ApplyFolderRulesUpsertOptions,
+  type ApplyFolderRulesUpsertResult,
+  applyFolderRulesUpsert,
+  type FolderRuleUpsert,
+} from './config/apply-folder-rules-upsert.ts';
 export {
   type ConfigIssue,
   ConfigIssueSchema,
@@ -44,6 +52,13 @@ export {
   type FolderRule,
   FolderRuleSchema,
 } from './config/schema.ts';
+export {
+  resolveConfigPath,
+  type WriteConfigPatchOptions,
+  type WriteConfigPatchResult,
+  type WriteConfigPatchSuccess,
+  writeConfigPatch,
+} from './config/write-config-patch.ts';
 
 // Constants
 export {
