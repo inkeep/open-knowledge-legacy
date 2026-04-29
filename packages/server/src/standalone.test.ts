@@ -696,6 +696,166 @@ describe('createServer() — config-doc admission (US-005)', () => {
   });
 });
 
+// ─── US-007: config file watcher ───────────────────────────────────────────
+//
+// Spec: FR-15 / D52 — chokidar single-file watch with awaitWriteFinish for
+// atomic-rename detection, server-origin Y.Text update on external change,
+// LKG-equality short-circuit prevents persistence-hook self-write feedback.
+
+async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return predicate();
+}
+
+describe('createServer() — config file watcher (US-007)', () => {
+  let testProjectDir: string;
+  let testHomedir: string;
+
+  beforeEach(() => {
+    testProjectDir = mkdtempSync(resolve(tmpdir(), 'ok-cfg-watcher-test-'));
+    testHomedir = mkdtempSync(resolve(tmpdir(), 'ok-cfg-watcher-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(testProjectDir, { recursive: true, force: true });
+    rmSync(testHomedir, { recursive: true, force: true });
+  });
+
+  test('external write to workspace config.yml propagates to Y.Text within 4s', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+
+    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    expect(configDoc).toBeDefined();
+    if (!configDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = configDoc.getText('source');
+
+    // Y.Text starts empty (no prior config.yml on disk).
+    expect(ytext.toString()).toBe('');
+
+    // Simulate a CLI / IDE / hand-edit creating the workspace config.
+    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
+    mkdirSync(join(testProjectDir, '.open-knowledge'), { recursive: true });
+    const newContent = 'mcp:\n  autoStart: false\n';
+    writeFileSync(configPath, newContent, 'utf-8');
+
+    const fired = await waitFor(() => ytext.toString() === newContent);
+    expect(fired).toBe(true);
+
+    await srv.destroy();
+  });
+
+  test('external broken-YAML write keeps Y.Text at LKG and does not crash the server', async () => {
+    // Pre-seed a valid workspace config so the watcher's first read populates
+    // LKG with valid content; then write broken YAML and assert Y.Text stays.
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
+    mkdirSync(join(testProjectDir, '.open-knowledge'), { recursive: true });
+    const validContent = 'mcp:\n  autoStart: false\n';
+    writeFileSync(configPath, validContent, 'utf-8');
+
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+
+    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    expect(configDoc).toBeDefined();
+    if (!configDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = configDoc.getText('source');
+
+    // Initial seed put validContent into Y.Text.
+    expect(ytext.toString()).toBe(validContent);
+
+    // Externally write broken YAML. Watcher fires, validation rejects;
+    // Y.Text MUST stay at LKG.
+    writeFileSync(configPath, 'mcp:\n  autoStart: !!!!!!!\n', 'utf-8');
+    // Give the watcher a generous window to fire + reject.
+    await new Promise((r) => setTimeout(r, 1_500));
+
+    expect(ytext.toString()).toBe(validContent);
+
+    await srv.destroy();
+  });
+
+  test('persistence-hook write does not produce a feedback-loop mutation (LKG-equality short-circuit)', async () => {
+    const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
+    const srv = createServer({
+      contentDir,
+      projectDir: testProjectDir,
+      quiet: true,
+      configHomedirOverride: testHomedir,
+    });
+    await srv.ready;
+
+    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    expect(configDoc).toBeDefined();
+    if (!configDoc) {
+      await srv.destroy();
+      return;
+    }
+    const ytext = configDoc.getText('source');
+
+    // Mutate Y.Text under a normal origin so the persistence-hook fires
+    // (no skipStoreHooks) and writes disk + updates LKG.
+    const newContent = 'mcp:\n  autoStart: false\n';
+    configDoc.transact(() => {
+      ytext.insert(0, newContent);
+    });
+
+    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
+    const fileLanded = await waitFor(
+      () => existsSync(configPath) && readFileSync(configPath, 'utf-8') === newContent,
+    );
+    expect(fileLanded).toBe(true);
+
+    // Track all subsequent transactions for ~1s. The watcher will fire
+    // because the disk file changed; applyExternalConfigChange must
+    // short-circuit (LKG === content) and NOT mutate Y.Text again.
+    const observedOrigins: unknown[] = [];
+    configDoc.on('afterTransaction', (tx: { origin: unknown }) => {
+      observedOrigins.push(tx.origin);
+    });
+    await new Promise((r) => setTimeout(r, 1_500));
+
+    // Y.Text content must not have changed.
+    expect(ytext.toString()).toBe(newContent);
+
+    // No transactions fired with the file-watcher origin (which is what we
+    // would see on a feedback loop).
+    const filewatcherOrigins = observedOrigins.filter(
+      (o) =>
+        o !== null &&
+        typeof o === 'object' &&
+        'context' in o &&
+        typeof (o as { context: unknown }).context === 'object' &&
+        (o as { context: { origin?: unknown } }).context.origin === 'config-file-watcher',
+    );
+    expect(filewatcherOrigins).toEqual([]);
+
+    await srv.destroy();
+  });
+});
+
 describe('createServer() managed rename recovery', () => {
   let tmpDir: string;
 

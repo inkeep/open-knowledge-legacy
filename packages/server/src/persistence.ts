@@ -297,6 +297,14 @@ export interface PersistenceHandle {
   extension: Extension;
   flushPendingGitCommit: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
+  /**
+   * Config-doc persistence context (US-007). Exposed so the file-watcher
+   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
+   * Treat as read-only — direct mutation breaks the L3 invariant that the
+   * cache only updates after a successful persist.
+   */
+  readonly configPersistenceCtx: ConfigPersistenceCtx;
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
@@ -1002,5 +1010,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
-  return { extension, flushPendingGitCommit, waitForPendingCommits };
+  return {
+    extension,
+    flushPendingGitCommit,
+    waitForPendingCommits,
+    configPersistenceCtx,
+  };
 }

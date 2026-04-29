@@ -3,7 +3,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
-import { CONFIG_DOC_NAMES, type Principal, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAMES,
+  type Principal,
+  prependFrontmatter,
+  resolveConfigPath,
+} from '@inkeep/open-knowledge-core';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -14,6 +21,11 @@ import { createApiExtension } from './api-extension.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isConfigDoc, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import {
+  type ConfigFileWatcherUnsubscribe,
+  startConfigFileWatcher,
+} from './config-file-watcher.ts';
+import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
@@ -144,6 +156,13 @@ export interface ServerOptions {
    * (Resolves SPEC Q3 under D14.)
    */
   skipStateManifestCheck?: boolean;
+  /**
+   * Override `os.homedir()` for config-doc persistence + file watching
+   * (US-006 / US-007). Tests scope user-global writes (`__user__/config.yml`)
+   * to a tempdir; if unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   * Production callers leave this undefined.
+   */
+  configHomedirOverride?: string;
 }
 
 export interface ServerInstance {
@@ -213,6 +232,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     gitEnabled = true,
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
+    configHomedirOverride,
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
@@ -320,6 +340,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       contentRoot,
       backlinkIndex,
+      configHomedirOverride,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       getPrincipal: () => loadedPrincipal,
       // Emit CC1 ch:'session-activity' after any agent writer commits so
@@ -574,6 +595,15 @@ export function createServer(options: ServerOptions): ServerInstance {
     string,
     Awaited<ReturnType<Hocuspocus['openDirectConnection']>>
   >();
+
+  // Config file-watcher unsubscribes (US-007 / FR-15 / D52). One per admitted
+  // config doc whose on-disk file exists at startup (or appears via lazy
+  // first-write per D51). Drained at server shutdown phase-1 alongside the
+  // content-watcher cleanup; failures during startup degrade but never block.
+  const configFileWatcherCleanups: Array<{
+    docName: string;
+    cleanup: ConfigFileWatcherUnsubscribe;
+  }> = [];
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
@@ -1066,6 +1096,20 @@ export function createServer(options: ServerOptions): ServerInstance {
               await watcher.unsubscribe();
               watcher = null;
             }
+            // Config file watchers (US-007). Independent of the content
+            // watcher; teardown failures per-doc shouldn't block other
+            // cleanups, so each cleanup is wrapped in its own try/catch.
+            for (const { docName, cleanup } of configFileWatcherCleanups) {
+              try {
+                await cleanup();
+              } catch (cfgErr) {
+                log.warn(
+                  { err: cfgErr, docName },
+                  `[server] failed to stop config-file-watcher for ${docName}`,
+                );
+              }
+            }
+            configFileWatcherCleanups.length = 0;
           } catch (err) {
             phaseErrors.push({
               phase: 'watcher-unsubscribe',
@@ -1412,6 +1456,46 @@ export function createServer(options: ServerOptions): ServerInstance {
           `[server] failed to open ${configDocName} direct connection — config bind degraded`,
         );
         degraded.push(`config-doc:${configDocName}`);
+      }
+    }
+
+    // Config file watchers (US-007 / FR-15 / D52). Watch both well-known
+    // config paths so external edits (CLI, IDE hand-edit, MCP from another
+    // instance) propagate to any open Settings pane via Y.Text observer.
+    // Workspace path is created lazily via `applyConfigPatch`; user-global
+    // path is created lazily via `writeConfigPatch` (D51). chokidar's
+    // single-file watch handles non-existent paths by waiting for them, so
+    // we start watchers unconditionally — `add` events fire when a lazy
+    // first-write lands.
+    //
+    // Self-write feedback loop is broken by `applyExternalConfigChange`'s
+    // LKG-equality short-circuit: when persistence writes content `C` to
+    // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
+    // it match LKG, and returns 'no-op' before mutating Y.Text.
+    const configPathByDoc = new Map<string, string>([
+      [CONFIG_DOC_NAME_WORKSPACE, resolveConfigPath('workspace', projectDir)],
+      [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
+    ]);
+    for (const configDocName of CONFIG_DOC_NAMES) {
+      const absPath = configPathByDoc.get(configDocName);
+      if (!absPath) continue;
+      try {
+        const cleanup = await startConfigFileWatcher(absPath, (content) => {
+          const document = hocuspocus.documents.get(configDocName);
+          applyExternalConfigChange(
+            document ?? null,
+            configDocName,
+            content,
+            persistence.configPersistenceCtx,
+          );
+        });
+        configFileWatcherCleanups.push({ docName: configDocName, cleanup });
+      } catch (err) {
+        log.warn(
+          { err, docName: configDocName, path: absPath },
+          `[config-file-watcher] failed to start for ${configDocName}`,
+        );
+        degraded.push(`config-file-watcher:${configDocName}`);
       }
     }
 

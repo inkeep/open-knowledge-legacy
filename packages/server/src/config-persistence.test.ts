@@ -17,8 +17,12 @@ import {
   isKnownConfigError,
 } from '@inkeep/open-knowledge-core';
 import * as Y from 'yjs';
-import { CONFIG_VALIDATION_REVERT_ORIGIN } from './config-edit-origin.ts';
 import {
+  CONFIG_FILE_WATCHER_ORIGIN,
+  CONFIG_VALIDATION_REVERT_ORIGIN,
+} from './config-edit-origin.ts';
+import {
+  applyExternalConfigChange,
   type ConfigPersistenceCtx,
   configDocAbsPath,
   loadConfigDoc,
@@ -479,3 +483,137 @@ function readdirSafe(p: string): string[] {
     return [];
   }
 }
+
+describe('applyExternalConfigChange (US-007)', () => {
+  test('valid external content updates Y.Text under CONFIG_FILE_WATCHER_ORIGIN + LKG', () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'theme: light\n');
+    doc.getText('source').insert(0, 'theme: light\n');
+
+    let observedOrigin: unknown = null;
+    doc.on('afterTransaction', (tx) => {
+      // Capture the LAST mutating origin so we observe the one from
+      // applyExternalConfigChange, not the prior insert.
+      observedOrigin = tx.origin;
+    });
+
+    const newContent = 'theme: dark\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, newContent, fx.ctx);
+
+    expect(outcome).toBe('applied');
+    expect(doc.getText('source').toString()).toBe(newContent);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe(newContent);
+    expect(observedOrigin).toBe(CONFIG_FILE_WATCHER_ORIGIN);
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('content equal to LKG short-circuits: no mutation, no rejection', () => {
+    const doc = new Y.Doc();
+    const yaml = 'mcp:\n  autoStart: false\n';
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, yaml);
+    doc.getText('source').insert(0, yaml);
+
+    let mutationCount = 0;
+    doc.on('afterTransaction', (tx) => {
+      // Filter out the seed insert we just did (origin === null).
+      if (tx.origin === CONFIG_FILE_WATCHER_ORIGIN) mutationCount++;
+    });
+
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, yaml, fx.ctx);
+
+    expect(outcome).toBe('no-op');
+    expect(mutationCount).toBe(0);
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('null document → no-op (document not loaded yet)', () => {
+    const outcome = applyExternalConfigChange(
+      null,
+      CONFIG_DOC_NAME_WORKSPACE,
+      'theme: dark\n',
+      fx.ctx,
+    );
+    expect(outcome).toBe('no-op');
+    expect(fx.rejections).toHaveLength(0);
+  });
+
+  test('YAML parse error → rejected; Y.Text NOT mutated; onConfigRejected fired', () => {
+    const doc = new Y.Doc();
+    const valid = 'theme: light\n';
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, valid);
+    doc.getText('source').insert(0, valid);
+
+    const broken = 'theme: !!!!!\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, broken, fx.ctx);
+
+    expect(outcome).toBe('rejected');
+    expect(doc.getText('source').toString()).toBe(valid);
+    expect(fx.rejections).toHaveLength(1);
+    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    const error = fx.rejections[0]?.error;
+    expect(error).toBeDefined();
+    if (error && isKnownConfigError(error)) {
+      expect(error.code).toBe('YAML_PARSE');
+    }
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe(valid);
+  });
+
+  test('schema-invalid external content → rejected with structured issues', () => {
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: true\n');
+
+    const invalid = 'mcp:\n  tools:\n    search:\n      maxResults: "fast"\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, invalid, fx.ctx);
+
+    expect(outcome).toBe('rejected');
+    expect(fx.rejections).toHaveLength(1);
+    const error = fx.rejections[0]?.error;
+    expect(error).toBeDefined();
+    if (error && isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
+      expect(error.issues.length).toBeGreaterThan(0);
+      expect(error.issues[0]?.path).toEqual(['mcp', 'tools', 'search', 'maxResults']);
+    } else {
+      throw new Error('expected SCHEMA_INVALID error');
+    }
+  });
+
+  test('LKG-undefined + valid external content → applied; LKG seeded', () => {
+    const doc = new Y.Doc();
+    // No LKG entry yet — simulates first watcher fire after lazy first-write
+    // before any L1/L2/L3 update.
+    expect(fx.ctx.lkgCache.has(CONFIG_DOC_NAME_USER)).toBe(false);
+
+    const yaml = 'theme: dark\n';
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_USER, yaml, fx.ctx);
+
+    expect(outcome).toBe('applied');
+    expect(doc.getText('source').toString()).toBe(yaml);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_USER)).toBe(yaml);
+  });
+
+  test('Y.Text mutation under CONFIG_FILE_WATCHER_ORIGIN does NOT trigger storeConfigDoc', async () => {
+    // The skipStoreHooks flag on the origin is what prevents the
+    // persistence-hook from re-writing disk. Storing a doc whose last
+    // transaction origin is CONFIG_FILE_WATCHER_ORIGIN must be a no-op.
+    const doc = new Y.Doc();
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'theme: light\n');
+    doc.getText('source').insert(0, 'theme: light\n');
+
+    applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, 'theme: dark\n', fx.ctx);
+
+    // Now invoke storeConfigDoc with the file-watcher origin — it must not
+    // entry-gate (we reserved that for REVERT origin), but the LKG-equality
+    // short-circuit should fire because applyExternalConfigChange just
+    // updated LKG to match Y.Text content.
+    const outcome = await storeConfigDoc(
+      doc,
+      CONFIG_DOC_NAME_WORKSPACE,
+      CONFIG_FILE_WATCHER_ORIGIN,
+      fx.ctx,
+    );
+    expect(outcome).toBe('no-op');
+    // No file written for the watcher-driven path.
+    const path = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    expect(existsSync(path)).toBe(false);
+  });
+});

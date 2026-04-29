@@ -30,7 +30,10 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { parseDocument, stringify } from 'yaml';
 import type * as Y from 'yjs';
-import { CONFIG_VALIDATION_REVERT_ORIGIN } from './config-edit-origin.ts';
+import {
+  CONFIG_FILE_WATCHER_ORIGIN,
+  CONFIG_VALIDATION_REVERT_ORIGIN,
+} from './config-edit-origin.ts';
 import { tracedRename, tracedWriteFile } from './fs-traced.ts';
 
 export interface ConfigPersistenceCtx {
@@ -236,4 +239,66 @@ export async function storeConfigDoc(
   await atomicWriteConfig(filePath, content);
   ctx.lkgCache.set(documentName, content);
   return 'persisted';
+}
+
+/**
+ * Outcome surfaced by `applyExternalConfigChange` for tests + telemetry.
+ *
+ * - `'applied'`: external content was valid; Y.Text replaced under
+ *   `CONFIG_FILE_WATCHER_ORIGIN`; LKG updated.
+ * - `'rejected'`: external content failed validation; Y.Text NOT mutated;
+ *   `onConfigRejected` fired so the caller can broadcast CC1.
+ * - `'no-op'`: content equals LKG (self-write reflection or unchanged
+ *   external read), OR the document was not loaded.
+ */
+type ApplyExternalConfigChangeOutcome = 'applied' | 'rejected' | 'no-op';
+
+/**
+ * Apply an externally-detected config file change (US-007 / FR-15).
+ *
+ * Called by the file-watcher orchestration when chokidar fires a change
+ * event. Mirrors `storeConfigDoc` but inverted: disk → Y.Text rather than
+ * Y.Text → disk.
+ *
+ * Self-write detection uses the LKG cache: when persistence writes content
+ * `C` to disk, it sets `lkgCache[doc] = C`. When the watcher reads `C` back
+ * (chokidar fires for OUR own write), this comparison short-circuits before
+ * any Y.Text mutation. The residual race (rename completes before LKG
+ * updates) is benign — Y.Text would be replaced with content it already
+ * holds, which Yjs handles as an idempotent no-op delta.
+ *
+ * The Y.Text mutation runs under `CONFIG_FILE_WATCHER_ORIGIN`
+ * (`skipStoreHooks: true`) so the persistence-hook does NOT re-write the
+ * file we just read. Without this, every external edit would generate a
+ * redundant disk write before the LKG-equality check fires next time.
+ *
+ * On invalid YAML or schema fail: Y.Text is NOT mutated (stays at LKG);
+ * `onConfigRejected` fires so the caller can emit a CC1 broadcast for any
+ * open Settings pane to surface the rejection toast.
+ */
+export function applyExternalConfigChange(
+  document: Y.Doc | null,
+  documentName: string,
+  content: string,
+  ctx: ConfigPersistenceCtx,
+): ApplyExternalConfigChangeOutcome {
+  if (!document) return 'no-op';
+
+  const lkg = ctx.lkgCache.get(documentName);
+  if (lkg !== undefined && lkg === content) return 'no-op';
+
+  const validation = validateConfigYaml(content);
+  if (!validation.ok) {
+    ctx.onConfigRejected?.(documentName, validation.error);
+    return 'rejected';
+  }
+
+  const ytext = document.getText('source');
+  document.transact(() => {
+    if (ytext.length > 0) ytext.delete(0, ytext.length);
+    ytext.insert(0, content);
+  }, CONFIG_FILE_WATCHER_ORIGIN);
+
+  ctx.lkgCache.set(documentName, content);
+  return 'applied';
 }
