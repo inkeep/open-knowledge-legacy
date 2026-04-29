@@ -1480,16 +1480,30 @@ export function createServer(options: ServerOptions): ServerInstance {
       const absPath = configPathByDoc.get(configDocName);
       if (!absPath) continue;
       try {
+        log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] starting');
         const cleanup = await startConfigFileWatcher(absPath, (content) => {
           const document = hocuspocus.documents.get(configDocName);
-          applyExternalConfigChange(
+          log.info(
+            {
+              docName: configDocName,
+              hasDocument: document !== undefined,
+              contentLength: content.length,
+            },
+            '[config-file-watcher] file changed',
+          );
+          const outcome = applyExternalConfigChange(
             document ?? null,
             configDocName,
             content,
             persistence.configPersistenceCtx,
           );
+          log.info(
+            { docName: configDocName, outcome },
+            '[config-file-watcher] applyExternalConfigChange outcome',
+          );
         });
         configFileWatcherCleanups.push({ docName: configDocName, cleanup });
+        log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] started');
       } catch (err) {
         log.warn(
           { err, docName: configDocName, path: absPath },

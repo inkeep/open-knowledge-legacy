@@ -259,18 +259,23 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   // updates both the in-memory theme AND that localStorage cache, so the
   // chrome FOUC always has the latest value on next reload.
   //
+  // Fires for both scopes — workspace overrides at the merged-config level
+  // take precedence over user-global, but at the binding level we only see
+  // the current scope's YAML. Bridging on any non-empty value matches
+  // user expectation: clicking on a tab that has the value set updates
+  // the page.
+  //
   // Bridge fires only while the Settings pane is mounted — that's the v0
   // scope. A top-level ConfigProvider that holds the user-binding for the
-  // app session (and thus picks up CC1-broadcast or file-watcher changes
-  // from outside the pane) is a follow-up; v0 acceptable per D55.
+  // app session (and picks up CC1-broadcast or file-watcher changes from
+  // outside the pane) is a follow-up; v0 acceptable per D55.
   const { setTheme } = useTheme();
+  const themeValue = connection?.config.appearance?.theme;
   useEffect(() => {
-    if (scope !== 'user') return;
-    const themeValue = connection?.config.appearance?.theme;
     if (themeValue === 'light' || themeValue === 'dark' || themeValue === 'system') {
       setTheme(themeValue);
     }
-  }, [scope, connection?.config.appearance?.theme, setTheme]);
+  }, [themeValue, setTheme]);
 
   // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
   // and triggers a brief red flash on the affected field.
