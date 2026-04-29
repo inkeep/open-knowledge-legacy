@@ -22,3 +22,7 @@ The MCP `rename_document` tool's outward API is unchanged (parameters, response 
 The recovery journal schema is bumped from v1 (single source/destination) to v2 (multi-doc `affectedDocs[]`). The v1 parser is preserved alongside v2 — legacy v1 journals on disk at startup still recover correctly.
 
 Side-effect docs (backlink-rewrite cascades) remain anonymous for both agent-driven and principal-driven renames — only the renamed doc itself is attributed to the actor.
+
+**Other behavior changes worth noting:**
+- `POST /api/rollback` 500 responses no longer echo the underlying error message; clients now see a generic `Failed to roll back document` string. Eliminates a path / internal-state leak channel for an unauthenticated body endpoint.
+- `ok init` adds `state.json` to the bootstrapped `.open-knowledge/.gitignore` alongside `sync-state.json` and `principal.json` — covers newly-added local-runtime state at `<contentDir>/.open-knowledge/state.json` (also emitted as a separate `init-gitignore-consolidation` changeset for the broader scaffold rework, but the `state.json` line specifically lands here).

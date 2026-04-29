@@ -472,6 +472,8 @@ recover(journal):
 
 ## 16) Phased delivery (un-bundle, per challenger H3)
 
+> _[Corrected 2026-04-29 post-ship: implementation re-bundled Phase 1 + Phase 2 into a single PR per user directive (no deferred tech debt). The Phase 1 helper (`extractActorIdentity`) still landed first in branch history (commits `eb1954b9 / 50630592 / 0e043842`), so Phase 2's spine consumed it cleanly without retrofit. Authoritative scope reflected in `.changeset/rename-consolidation.md`.]_
+
 The original bundle thesis assumed all three improvements share a load-bearing spine. The challenger demonstrated that principal attribution (D-A1, D-A8, D-A10, D-A11, FR5–FR7b) is empirically independent of the spine consolidation — D-A10 already extends the amendment to `handleRollback` without touching the spine. Bundling the cheap user-visible win (G3) behind the architecturally riskier consolidation slows G3 needlessly.
 
 **Phasing (two PRs):**
