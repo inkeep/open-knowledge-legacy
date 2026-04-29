@@ -19,12 +19,11 @@
  * (`rendersAs: 'Math'`). Slash menu remains canonical-only — these compats
  * are read-only-in-slash-menu, parse-only entry points.
  *
- * Inline math (`$x$`, `$$x$$` mid-paragraph) is NOT touched here — Phase 3
- * lifted NG-M11 by adding the `mathInline` PM atom with a KaTeX NodeView,
- * and `inlineMath` mdast nodes have a direct mdast→PM handler in
- * `markdown/index.ts`. Earlier Phase 2 added an inline-passthrough +
- * paragraph-promotion pair here; both are unnecessary now that inline math
- * has a real PM target and renders inline-flow.
+ * Inline math (single-line `$$x$$`, mid-paragraph or standalone) is NOT
+ * touched here — the `mathInline` PM atom + KaTeX NodeView pick it up
+ * directly via the mdast→PM handler in `markdown/index.ts`. Single
+ * `$x$` is intentionally not a math syntax (`singleDollarTextMath:
+ * false` in `pipeline.ts`).
  *
  * ## Position semantics
  *
@@ -43,12 +42,14 @@
  * bodies that would change shape (and any nesting works because the visit
  * walker descends into all `mdxJsxFlowElement` children).
  *
- * ## Why a single promoter, not two
+ * ## Why a single promoter for two shapes
  *
- * One `unist-util-visit` walk that branches on node type is cheaper than
- * two passes and the dispatch logic is trivial — the two source shapes
- * each map to their own descriptor name, but the attribute construction
- * (`formula` from `node.value`) is identical.
+ * Two source shapes (`math` block + `code{lang:'math'}` fence) live in
+ * one promoter file because their attribute construction is identical
+ * (`formula` from `node.value`). Implementation runs two
+ * `unist-util-visit` calls — one per node type — for clarity over a
+ * fused single-walk dispatch; the cost difference is negligible at
+ * realistic doc sizes.
  */
 
 import type { Code, Root } from 'mdast';
@@ -93,8 +94,8 @@ function buildMathElement(
  *     claimed by remark-math; the standard markdown code-block parser
  *     emits this).
  *
- * `inlineMath` mdast (single-dollar `$x$` and single-line `$$x$$`) flows
- * straight through to the markdown→PM handler that maps it to the
+ * `inlineMath` mdast (single-line `$$x$$`, mid-paragraph or standalone)
+ * flows straight through to the markdown→PM handler that maps it to the
  * `mathInline` PM atom — see `markdown/index.ts`.
  */
 export function mathPromoterPlugin() {

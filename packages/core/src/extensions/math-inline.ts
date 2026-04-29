@@ -18,9 +18,13 @@ declare module '@tiptap/core' {
  * registered via `addNodeView`).
  *
  * Authoring forms that resolve to this PM node:
- *   - `$x$` markdown (inline math via remark-math, `singleDollarTextMath: true`)
- *   - `$$x$$` mid-paragraph (remark-math classifies single-line as inline math)
+ *   - `$$x$$` mid-paragraph or single-line standalone (remark-math
+ *     classifies single-line `$$…$$` as inline math under
+ *     `singleDollarTextMath: false`)
  *   - `<InlineMath formula="x" />` MDX JSX (mdxJsxTextElement → mathInline)
+ *
+ * Single `$x$` is intentionally NOT a math syntax — kept as prose to
+ * keep currency / shell vars / paired-dollar prose unambiguous.
  *
  * Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) lands on `jsxComponent`
  * via the `<Math>` canonical descriptor — see `Math` in

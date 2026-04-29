@@ -6,8 +6,8 @@
  * mount). Atom node, so PM treats the rendered output as a single
  * indivisible cursor unit — selection lands on the math, Backspace
  * deletes the whole node. Editing the formula isn't supported in the
- * WYSIWYG today; authors switch to source mode and edit `$x$` directly,
- * or delete-and-reinsert via the slash menu.
+ * WYSIWYG today; authors switch to source mode and edit `$$x$$`
+ * directly, or delete-and-reinsert via the slash menu.
  *
  * Block math (`<MathView>` in `editor/components/Math.tsx`) and inline
  * math share the same KaTeX dependency — KaTeX JS is lazy and singleton-

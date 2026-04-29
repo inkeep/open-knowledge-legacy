@@ -1324,10 +1324,11 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
-  // mathInline → mdast `inlineMath` (Phase 3 lift of NG-M11). remark-math's
-  // `mathToMarkdown` extension stringifies inlineMath as `$value$` — the
-  // exact same syntax users authored. No sourceRaw needed; the formula
-  // attr is the source of truth.
+  // mathInline → mdast `inlineMath`. With `singleDollarTextMath: false`
+  // configured on both pipeline edges, remark-math's `mathToMarkdown`
+  // extension picks a double-dollar fence — `inlineMath` stringifies as
+  // `$$value$$`, matching the only supported authoring syntax. No
+  // sourceRaw needed; the formula attr is the source of truth.
   if (n.mathInline) {
     nodeHandlers.mathInline = (pmNode: PmNode) => {
       const formula = typeof pmNode.attrs.formula === 'string' ? pmNode.attrs.formula : '';

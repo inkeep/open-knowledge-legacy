@@ -14,7 +14,7 @@ Live test surface for every built-in descriptor in the 6-pack foundation (CB-v2 
 - [[04-audio]] — HTML5 `<audio>` wrapper + autoPlay/loop/muted/preload + `<source>` children
 - [[05-accordion]] — HTML5 `<details>` substrate + MDX JSX + icon/description/id + exclusive grouping via `name`
 - [[06-unknown-components]] — Wildcard fallback for cut descriptors (`<Tabs>`, `<Card>`, etc.) + `rawMdxFallback` for malformed MDX
-- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (`$x$`, single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
+- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
 
 ## Things to try
 
@@ -37,7 +37,7 @@ Live test surface for every built-in descriptor in the 6-pack foundation (CB-v2 
 - [[04-audio]] — HTML5 `<audio>` wrapper + autoPlay/loop/muted/preload + `<source>` children
 - [[05-accordion]] — HTML5 `<details>` substrate + MDX JSX + icon/description/id + exclusive grouping via `name`
 - [[06-unknown-components]] — Wildcard fallback for cut descriptors (`<Tabs>`, `<Card>`, etc.) + `rawMdxFallback` for malformed MDX
-- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (`$x$`, single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
+- [[07-math]] — Block math (`$$\n…\n$$`, ` ```math `, `<Math>`) + inline math (single-line `$$x$$`, `<InlineMath>`) — KaTeX render, slash-menu insertable, source-mode LaTeX highlight
 
 ## Things to try
 

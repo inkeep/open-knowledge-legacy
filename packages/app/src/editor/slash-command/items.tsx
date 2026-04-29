@@ -256,7 +256,7 @@ export const slashCommandItems: SlashCommandItem[] = [
     // `getComponentItems`) because `mathInline` is a PM atom node, not a
     // registered descriptor — it bypasses the registry to avoid lifting
     // NG14 on jsxInline. Insert with empty formula; author edits in
-    // source mode (`$x$`) since the WYSIWYG inline atom has no
+    // source mode (`$$x$$`) since the WYSIWYG inline atom has no
     // PropPanel-style chrome today.
     name: 'inline-math',
     label: 'Inline Math',
