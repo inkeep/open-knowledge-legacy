@@ -42,6 +42,11 @@ interface CommonWidgetProps<T extends FrontmatterValue> {
 export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<string>) {
   const [draft, setDraft] = useState(value);
   const focusedRef = useRef(false);
+  // Set in onKeyDown(Escape) before blur(); read synchronously in onBlur to
+  // skip the commit. setDraft(value) is async — without this flag, the blur
+  // handler reads the stale typed draft from the current render closure and
+  // commits it before React re-renders with the reverted draft.
+  const revertingRef = useRef(false);
   // Re-sync local draft to incoming `value` when the input is not focused.
   // Without this, a remote concurrent edit (other peer / MCP / file-watcher)
   // is invisible to the widget; on next blur the stale draft would overwrite
@@ -63,6 +68,10 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       }}
       onBlur={() => {
         focusedRef.current = false;
+        if (revertingRef.current) {
+          revertingRef.current = false;
+          return;
+        }
         if (draft !== value) onCommit(draft);
       }}
       onKeyDown={(e) => {
@@ -72,6 +81,7 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
           (e.currentTarget as HTMLInputElement).blur();
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          revertingRef.current = true;
           setDraft(value);
           (e.currentTarget as HTMLInputElement).blur();
         }
@@ -84,6 +94,8 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
 export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<number>) {
   const [draft, setDraft] = useState<string>(String(value));
   const focusedRef = useRef(false);
+  // See TextWidget — synchronous flag to skip commit on Escape-driven blur.
+  const revertingRef = useRef(false);
   useEffect(() => {
     if (!focusedRef.current) setDraft(String(value));
   }, [value]);
@@ -99,6 +111,11 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
       }}
       onBlur={() => {
         focusedRef.current = false;
+        if (revertingRef.current) {
+          revertingRef.current = false;
+          setDraft(String(value));
+          return;
+        }
         const parsed = Number.parseFloat(draft);
         const next = Number.isFinite(parsed) ? parsed : 0;
         if (next !== value) onCommit(next);
@@ -110,6 +127,7 @@ export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<num
           (e.currentTarget as HTMLInputElement).blur();
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          revertingRef.current = true;
           setDraft(String(value));
           (e.currentTarget as HTMLInputElement).blur();
         }
