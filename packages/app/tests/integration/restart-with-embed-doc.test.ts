@@ -105,17 +105,22 @@ describe('restart-with-embed-doc: server restart preserves single PM image with 
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
     await pollUntil(() => pool.getActive()?.provider.unsyncedChanges === 0, 10_000, 50);
 
-    // Pre-restart: server's Y.XmlFragment carries one resolved-src PM image.
+    // Pre-restart: server's Y.XmlFragment carries one resolved-src
+    // jsxComponent(WikiEmbedImage) PM node (block-context wiki-embed → compat
+    // descriptor; renders through the canonical Image.tsx React component).
     const preState = getServerState(server, 'test-doc');
     if (!preState) throw new Error('server has no test-doc loaded pre-restart');
     const preJson = yXmlFragmentToProseMirrorRootNode(
       preState.fragment,
       schema,
     ).toJSON() as PmJsonNode;
-    const preImages = collectNodes(preJson, 'image');
-    expect(preImages.length).toBe(1);
-    expect(preImages[0]?.attrs?.src).toBe('/photo.png');
-    expect(preImages[0]?.attrs?.sourceForm).toBe('wikiembed');
+    const preEmbeds = collectNodes(preJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(preEmbeds.length).toBe(1);
+    const prePropsRecord = preEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    expect(prePropsRecord?.src).toBe('/photo.png');
+    expect(prePropsRecord?.target).toBe('photo.png');
 
     await wait(500);
 
@@ -128,7 +133,8 @@ describe('restart-with-embed-doc: server restart preserves single PM image with 
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 15_000, 50);
     await pollUntil(() => pool.getActive()?.provider.unsyncedChanges === 0, 15_000, 50);
 
-    // Post-restart, client side: exactly ONE PM image with the resolved src.
+    // Post-restart, client side: exactly ONE jsxComponent(WikiEmbedImage)
+    // with the resolved src.
     const entry = pool.getActive();
     if (!entry) throw new Error('pool has no active entry after recycle');
     const clientFragment = entry.provider.document.getXmlFragment('default');
@@ -136,9 +142,12 @@ describe('restart-with-embed-doc: server restart preserves single PM image with 
       clientFragment,
       schema,
     ).toJSON() as PmJsonNode;
-    const clientImages = collectNodes(clientJson, 'image');
-    expect(clientImages.length).toBe(1);
-    expect(clientImages[0]?.attrs?.src).toBe('/photo.png');
+    const clientEmbeds = collectNodes(clientJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(clientEmbeds.length).toBe(1);
+    const clientPropsRecord = clientEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    expect(clientPropsRecord?.src).toBe('/photo.png');
 
     // Markdown source surface (Y.Text 'source') should still emit the literal
     // `![[photo.png]]` exactly once — the storage shape is unchanged through
@@ -155,8 +164,11 @@ describe('restart-with-embed-doc: server restart preserves single PM image with 
       postState.fragment,
       schema,
     ).toJSON() as PmJsonNode;
-    const postImages = collectNodes(postJson, 'image');
-    expect(postImages.length).toBe(1);
-    expect(postImages[0]?.attrs?.src).toBe('/photo.png');
+    const postEmbeds = collectNodes(postJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(postEmbeds.length).toBe(1);
+    const postPropsRecord = postEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    expect(postPropsRecord?.src).toBe('/photo.png');
   }, 30_000);
 });

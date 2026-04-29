@@ -155,16 +155,20 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
     await pollUntil(() => pool.getActive()?.provider.unsyncedChanges === 0, 10_000, 50);
 
-    // Pre-switch sanity: server-side PM image carries main-branch resolved src.
+    // Pre-switch sanity: server-side jsxComponent(WikiEmbedImage) carries
+    // main-branch resolved src on its props bag.
     const preState = getServerState(server, 'test-doc');
     if (!preState) throw new Error('server has no test-doc loaded pre-switch');
     const preJson = yXmlFragmentToProseMirrorRootNode(
       preState.fragment,
       schema,
     ).toJSON() as PmJsonNode;
-    const preImages = collectNodes(preJson, 'image');
-    expect(preImages.length).toBe(1);
-    expect(preImages[0]?.attrs?.src).toBe('/photo.png');
+    const preEmbeds = collectNodes(preJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(preEmbeds.length).toBe(1);
+    const prePropsRecord = preEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    expect(prePropsRecord?.src).toBe('/photo.png');
 
     await wait(300);
 
@@ -186,12 +190,14 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
           state.fragment,
           schema,
         ).toJSON() as PmJsonNode;
-        const images = collectNodes(json, 'image');
-        // First settlement gate: doc-reset has run (PM image is present
-        // post-switch). Whether the src is correct is the actual assertion
-        // below; polling on src-correctness would loop until timeout in the
-        // RED case, masking the bug.
-        return images.length === 1;
+        const embeds = collectNodes(json, 'jsxComponent').filter(
+          (n) => n.attrs?.componentName === 'WikiEmbedImage',
+        );
+        // First settlement gate: doc-reset has run (the wiki-embed component
+        // is present post-switch). Whether the src is correct is the actual
+        // assertion below; polling on src-correctness would loop until
+        // timeout in the RED case, masking the bug.
+        return embeds.length === 1;
       },
       15_000,
       100,
@@ -204,21 +210,25 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     // parcel-watcher's typical event-delivery window.
     await wait(800);
 
-    // Post-switch assertion (the regression gate): PM image src reflects the
-    // FEATURE branch's resolved path. Under the bug, the doc-reset at
-    // standalone.ts:1559 runs BEFORE the basenameIndex reseed at line 1645,
-    // so resolveEmbed returns 'photo.png' (stale main-branch path) and the
-    // PM image src is '/photo.png' instead of '/assets/photo.png'.
+    // Post-switch assertion (the regression gate): the wiki-embed
+    // component's props.src reflects the FEATURE branch's resolved path.
+    // Under the bug, the doc-reset at standalone.ts:1559 runs BEFORE the
+    // basenameIndex reseed at line 1645, so resolveEmbed returns
+    // 'photo.png' (stale main-branch path) and props.src is '/photo.png'
+    // instead of '/assets/photo.png'.
     const postState = getServerState(server, 'test-doc');
     if (!postState) throw new Error('server has no test-doc loaded post-switch');
     const postJson = yXmlFragmentToProseMirrorRootNode(
       postState.fragment,
       schema,
     ).toJSON() as PmJsonNode;
-    const postImages = collectNodes(postJson, 'image');
-    expect(postImages.length).toBe(1);
-    expect(postImages[0]?.attrs?.src).toBe('/assets/photo.png');
-    expect(postImages[0]?.attrs?.sourceForm).toBe('wikiembed');
+    const postEmbeds = collectNodes(postJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(postEmbeds.length).toBe(1);
+    const postPropsRecord = postEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    expect(postPropsRecord?.src).toBe('/assets/photo.png');
+    expect(postPropsRecord?.target).toBe('photo.png');
 
     // Disk markdown round-trips identically — the storage layer sees no
     // change. Only the rendered preview's src changes.

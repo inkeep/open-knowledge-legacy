@@ -104,18 +104,21 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     expect(normalize(mdRoundTrip('![[archive.zip|Download]]'))).toBe('[Download](archive.zip)');
   });
 
-  test('US-013 — image-extension embed dispatches to PM image with sourceForm=wikiembed', () => {
-    // Image extensions materialize as PM `image` nodes so the native
-    // TipTap renderer shows them inline. Target/anchor are preserved on
-    // attrs so the PM→mdast reverse path round-trips byte-identical.
+  test('block-context image-extension embed dispatches to jsxComponent(WikiEmbedImage)', () => {
+    // Standalone `![[photo.png]]` (single-child paragraph) promotes to a
+    // block-level jsxComponent carrying the WikiEmbedImage compat
+    // descriptor — renders through Image.tsx, exposes only `alias` in
+    // PropPanel, and round-trips back to wikiLinkEmbed mdast via the
+    // descriptor's `serialize`.
     const json = mdManager.parse('![[photo.png]]');
-    const para = json.content?.[0];
-    expect(para?.type).toBe('paragraph');
-    const node = para?.content?.[0];
-    expect(node?.type).toBe('image');
-    expect(node?.attrs?.sourceForm).toBe('wikiembed');
-    expect(node?.attrs?.target).toBe('photo.png');
-    expect(node?.attrs?.src).toBe('photo.png'); // resolver omitted → literal fallback
+    const node = json.content?.[0];
+    expect(node?.type).toBe('jsxComponent');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedImage');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('photo.png');
+    expect(props?.src).toBe('photo.png'); // resolver omitted → literal fallback
+    expect(props?.anchor).toBeNull();
+    expect(props?.alias).toBeNull();
   });
 
   test('US-013 — non-image wikiembed dispatches to PM link-marked text with sourceForm=wikiembed', () => {
@@ -167,10 +170,12 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
       resolveEmbed: (target) => (target === 'photo.png' ? 'attachments/photo.png' : null),
       sourcePath: 'docs/meeting.md',
     });
-    const image = resolved.content?.[0]?.content?.[0];
-    expect(image?.type).toBe('image');
-    expect(image?.attrs?.src).toBe('/attachments/photo.png');
-    expect(image?.attrs?.target).toBe('photo.png');
+    const node = resolved.content?.[0];
+    expect(node?.type).toBe('jsxComponent');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedImage');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/attachments/photo.png');
+    expect(props?.target).toBe('photo.png');
 
     // Non-image case: href is the server-absolute resolved path, target
     // keeps the literal.
@@ -192,9 +197,11 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
       resolveEmbed: () => null,
       sourcePath: 'docs/meeting.md',
     });
-    const image = json.content?.[0]?.content?.[0];
-    expect(image?.type).toBe('image');
-    expect(image?.attrs?.src).toBe('unknown.png');
+    const node = json.content?.[0];
+    expect(node?.type).toBe('jsxComponent');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedImage');
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('unknown.png');
   });
 
   test('I7 — hand-authored parse and drop-emitted serialize→parse produce equivalent PM', () => {

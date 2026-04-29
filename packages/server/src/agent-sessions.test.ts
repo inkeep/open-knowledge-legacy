@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Document } from '@hocuspocus/server';
+import { sharedExtensions } from '@inkeep/open-knowledge-core';
+import { getSchema } from '@tiptap/core';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import {
   type AgentDirectConnection,
@@ -389,16 +392,19 @@ describe('applyAgentUndo — scope drain semantics (V0-14)', () => {
     const undone = applyAgentUndo(session, 'last', embedResolver);
     expect(undone).toBe(true);
 
-    // The server-side mdast→PM dispatch emits a PM `image` (NOT a
-    // `wikiLinkEmbed` node) for image-extension embeds — handler dispatch
-    // covers this in packages/core/src/markdown/index.ts. Y.XmlFragment's
-    // `toJSON()` returns the XML serialization, so we assert the resolved
-    // src landed on the image element's `src` attribute. Without the
-    // resolver fix the post-undo XmlFragment would carry `src="photo.png"`
-    // (literal target), diverging from a fresh-load shape.
-    const xmlString = xmlFragment.toJSON();
-    expect(xmlString).toContain('<image');
-    expect(xmlString).toContain('src="/attachments/photo.png"');
-    expect(xmlString).not.toContain('src="photo.png"');
+    // Block-context wiki-embed images materialize as a `jsxComponent` PM
+    // node (componentName='WikiEmbedImage'); the resolved disk path lives
+    // on `attrs.props.src`. Without the resolver fix the post-undo
+    // XmlFragment would carry `props.src='photo.png'` (literal target),
+    // diverging from a fresh-load shape.
+    const schema = getSchema(sharedExtensions);
+    const pmJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
+    const node = pmJson.content?.[0] as
+      | { type?: string; attrs?: { componentName?: string; props?: Record<string, unknown> } }
+      | undefined;
+    expect(node?.type).toBe('jsxComponent');
+    expect(node?.attrs?.componentName).toBe('WikiEmbedImage');
+    expect(node?.attrs?.props?.src).toBe('/attachments/photo.png');
+    expect(node?.attrs?.props?.target).toBe('photo.png');
   });
 });

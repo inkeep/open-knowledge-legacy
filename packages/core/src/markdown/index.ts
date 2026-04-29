@@ -849,7 +849,7 @@ function buildMdastToPmHandlers(
   // `pickInsertShape` at drop time). US-014 wires the TipTap NodeView
   // that renders it pre-round-trip.
   if (n.wikiLinkEmbed) {
-    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast) => {
+    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast, parent?: MdastParent) => {
       const target = node.data?.target ?? '';
       const alias = node.data?.alias ?? null;
       const anchor = node.data?.anchor ?? null;
@@ -871,6 +871,36 @@ function buildMdastToPmHandlers(
       // markdown-on-disk stays `![[name.ext]]` regardless of render shape.
       const srcOrTarget = resolved ? `/${resolved}` : target;
 
+      // Block-context image-extension embed → jsxComponent(WikiEmbedImage).
+      // Mirrors imagePromoterPlugin's "single-image-paragraph → flow JSX"
+      // policy: only standalone embeds promote to a block-level component
+      // so mid-prose `... ![[diagram.png]] ...` keeps its inline shape and
+      // doesn't fragment the paragraph when the paragraph handler lifts
+      // block children.
+      const isBlockContext =
+        parent?.type === 'paragraph' &&
+        Array.isArray(parent.children) &&
+        parent.children.length === 1;
+
+      if (
+        isBlockContext &&
+        WIKI_EMBED_IMAGE_EXTS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedImage')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedImage',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, alt: alias ?? target, target, anchor, alias },
+        });
+      }
+      // Inline-position image-extension embed (or a host without the
+      // WikiEmbedImage descriptor) keeps the legacy PM `image` shape so
+      // mixed-content paragraphs survive round-trip. nodeHandlers.image
+      // dispatches `sourceForm='wikiembed'` back to wikiLinkEmbed mdast.
       if (WIKI_EMBED_IMAGE_EXTS.has(ext) && n.image) {
         return n.image.createAndFill({
           src: srcOrTarget,
@@ -1098,11 +1128,13 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
   if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
 
-  // Image — US-013 dispatches `sourceForm='wikiembed'` tagged images back
-  // to `wikiLinkEmbed` mdast so the wiki-embed round-trip is byte-identical
-  // (handlers.wikiLinkEmbed on the forward side emits PM image with this
-  // tag when target is an image extension). Plain markdown images (no
-  // `sourceForm`) keep their existing passthrough shape.
+  // Image — block-context wiki-embed images flow through
+  // `jsxComponent('WikiEmbedImage')` (descriptor.serialize handles the
+  // dirty-path emit). Inline-position wiki-embeds keep the legacy PM
+  // `image` shape with `sourceForm='wikiembed'` so mid-prose embeds
+  // survive round-trip; the branch below routes them back to
+  // `wikiLinkEmbed` mdast. Plain markdown images (no `sourceForm`) are
+  // passthrough.
   if (n.image) {
     nodeHandlers.image = (pmNode: PmNode) => {
       if (pmNode.attrs.sourceForm === 'wikiembed') {

@@ -39,6 +39,16 @@ function findMarkInJson(json: JSONContent, markType: string): PmMarkJson | null 
   return null;
 }
 
+// Helper: find first jsxComponent PM node with the given componentName.
+function findJsxComponentInJson(json: JSONContent, componentName: string): JSONContent | null {
+  if (json.type === 'jsxComponent' && json.attrs?.componentName === componentName) return json;
+  for (const child of json.content ?? []) {
+    const found = findJsxComponentInJson(child, componentName);
+    if (found) return found;
+  }
+  return null;
+}
+
 describe('Tier B fidelity: emphasis delimiter', () => {
   test('underscore emphasis carries sourceDelimiter = "_"', () => {
     const json = mdManager.parse('_word_\n');
@@ -317,12 +327,13 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
       },
       sourcePath: 'stories/wiki-links-next/README.md',
     });
-    const image = findInJson(json, 'image');
-    expect(image).not.toBeNull();
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
     // Server-absolute: the src must start with `/` so the browser resolves
     // it against location.origin regardless of the editor's hash path.
-    expect(image?.attrs?.src).toMatch(/^\//);
-    expect(image?.attrs?.src).toBe('/stories/wiki-links-next/IMG.PNG');
+    expect(props?.src).toMatch(/^\//);
+    expect(props?.src).toBe('/stories/wiki-links-next/IMG.PNG');
   });
 
   test('non-image wiki-embed (PDF) emits server-absolute href on the link mark', () => {
@@ -361,22 +372,108 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
       resolveEmbed: () => null,
       sourcePath: 'notes.md',
     });
-    const image = findInJson(json, 'image');
-    expect(image).not.toBeNull();
-    expect(image?.attrs?.src).toBe('missing.png');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('missing.png');
   });
 
-  test('image dispatch preserves sourceForm="wikiembed" marker alongside absolute src', () => {
-    // sourceForm=wikiembed is load-bearing for round-trip: without it the
-    // PM → mdast path would serialize as `![alt](src)` not `![[file]]`.
-    // Must be preserved when the src shape changes to absolute.
+  test('image dispatch lands on WikiEmbedImage compat descriptor with absolute src', () => {
+    // The compat descriptor's componentName itself encodes the source-form
+    // identity (no separate sourceForm marker needed) — the dirty-path
+    // serializer dispatches via `descriptor.serialize` keyed off the name.
     const json = mdManager.parse('![[photo.png]]\n', {
       resolveEmbed: () => 'assets/photo.png',
       sourcePath: 'notes.md',
     });
-    const image = findInJson(json, 'image');
-    expect(image).not.toBeNull();
-    expect(image?.attrs?.sourceForm).toBe('wikiembed');
-    expect(image?.attrs?.src).toBe('/assets/photo.png');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/assets/photo.png');
+    expect(props?.target).toBe('photo.png');
+    expect(props?.anchor).toBeNull();
+    expect(props?.alias).toBeNull();
+    // jsxComponent attrs that gate the dirty-path emit
+    expect(node?.attrs?.kind).toBe('element');
+    expect(node?.attrs?.sourceDirty).toBe(false);
+  });
+});
+
+// US-002 — handlers.wikiLinkEmbed for image extensions emits jsxComponent
+// dispatched to the WikiEmbedImage compat descriptor (instead of the legacy
+// PM `image` node tagged sourceForm='wikiembed'). The compat descriptor owns
+// its own serialize that returns `wikiLinkEmbed` mdast, so the round-trip
+// stays byte-identical.
+describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
+  test('![[photo.png]] → jsxComponent(WikiEmbedImage) with target/alias/anchor on props', () => {
+    const json = mdManager.parse('![[photo.png]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('photo.png');
+    expect(props?.alias).toBeNull();
+    expect(props?.anchor).toBeNull();
+    // No image PM node anymore — the parser routes image-ext wiki-embeds
+    // exclusively through the descriptor.
+    expect(findInJson(json, 'image')).toBeNull();
+  });
+
+  test('![[photo.png|caption]] → props.alias === "caption"', () => {
+    const json = mdManager.parse('![[photo.png|caption]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('photo.png');
+    expect(props?.alias).toBe('caption');
+    expect(props?.anchor).toBeNull();
+  });
+
+  test('![[photo.png#frag]] → props.anchor === "frag"', () => {
+    const json = mdManager.parse('![[photo.png#frag]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('photo.png');
+    expect(props?.anchor).toBe('frag');
+    expect(props?.alias).toBeNull();
+  });
+
+  test('![[photo.png#frag|caption]] preserves both anchor and alias', () => {
+    const json = mdManager.parse('![[photo.png#frag|caption]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedImage');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.alias).toBe('caption');
+    expect(props?.anchor).toBe('frag');
+  });
+
+  test('non-image extension (![[doc.pdf]]) keeps text+link-mark fallback (regression guard)', () => {
+    // PDF + opaque embeds stay on the wiki-link / link-mark path — no
+    // descriptor exists for them, so the parser MUST NOT emit jsxComponent.
+    const json = mdManager.parse('![[doc.pdf]]\n');
+    expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
+    const linkMark = findMarkInJson(json, 'link');
+    expect(linkMark).not.toBeNull();
+    expect(linkMark?.attrs?.sourceForm).toBe('wikiembed');
+  });
+
+  test('round-trip: ![[photo.png]] is byte-identical', () => {
+    const md = '![[photo.png]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[photo.png|caption]] preserves alias byte-identical', () => {
+    const md = '![[photo.png|caption]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[photo.png#frag]] preserves anchor byte-identical', () => {
+    const md = '![[photo.png#frag]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[photo.png#frag|caption]] preserves anchor + alias byte-identical', () => {
+    const md = '![[photo.png#frag|caption]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
   });
 });

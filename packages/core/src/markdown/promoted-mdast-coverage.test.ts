@@ -60,12 +60,14 @@ function toHastHasHandler(type: PromotedMdastType): boolean {
 // either crash the pipeline or leave the node as a text passthrough.
 const parseFixtures: Record<PromotedMdastType, { md: string; expectedPmType: string }> = {
   wikiLink: { md: '[[TargetPage]]', expectedPmType: 'wikiLink' },
-  // wikiLinkEmbed mdast → PM dispatches by target extension (US-013). An
-  // image extension produces a PM `image` node with `sourceForm='wikiembed'`.
+  // wikiLinkEmbed mdast → PM dispatches by target extension. An image
+  // extension produces a `jsxComponent` PM node carrying the
+  // `WikiEmbedImage` compat descriptor (renders through the canonical
+  // `<img>` React component; serializes back to `wikiLinkEmbed` mdast).
   // Server-side mdast→PM never emits the `wikiLinkEmbed` PM node — that
   // node type is client-insert-only (transient, produced by `pickInsertShape`
-  // at drop time, rendered via US-014 NodeView until next round-trip).
-  wikiLinkEmbed: { md: '![[photo.png]]', expectedPmType: 'image' },
+  // at drop time).
+  wikiLinkEmbed: { md: '![[photo.png]]', expectedPmType: 'jsxComponent' },
   mdxJsxFlowElement: { md: '<MyComponent/>', expectedPmType: 'jsxComponent' },
   mdxJsxTextElement: { md: 'hello <Inline/> world', expectedPmType: 'jsxInline' },
   // rawMdxFallback is produced by parseWithFallback on crash-class MDX; a
