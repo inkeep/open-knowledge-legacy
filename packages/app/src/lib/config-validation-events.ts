@@ -2,7 +2,7 @@
  * Module-scoped pub/sub for L3 (`onStoreDocument`) config-validation
  * rejections, dispatched by `SystemDocSubscriber` upon CC1
  * `'config-validation-rejected'` broadcasts and consumed by the Settings
- * pane (FR-39 / D56).
+ * pane.
  *
  * Mirrors the `documents-events.ts` shape (subscribe/emit pair, no React
  * dependency). Settings pane subscribes for the lifetime of its mount;

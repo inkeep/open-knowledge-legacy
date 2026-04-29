@@ -231,7 +231,7 @@
   --animate-sidebar-push-pulse: sidebar-push-pulse 700ms ease-out;
 
   /* Settings field flash — red briefly to signal a non-pane writer
-     (CLI/MCP/hand-edit) caused L3 validation rejection (FR-39 / D56).
+     (CLI/MCP/hand-edit) caused L3 validation rejection.
      Outline-only so the field input itself is untouched. */
   @keyframes settings-flash {
     0% {

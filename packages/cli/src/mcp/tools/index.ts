@@ -275,7 +275,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('get_dead_links'),
   });
 
-  // Config tools — fs-direct (no Hocuspocus required) per D62.
+  // Config tools — fs-direct (no Hocuspocus required).
   registerGetConfig(registrationServer, {
     config: opts.config,
     resolveCwd: named('get_config'),

@@ -1,5 +1,5 @@
 /**
- * Hash-based routing for the Settings pane (D54 / FR-1 / US-009).
+ * Hash-based routing for the Settings pane.
  *
  * Recognized hash forms:
  *   `#settings`             → workspace tab (canonical synonym for `#settings/workspace`)

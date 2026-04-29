@@ -172,7 +172,7 @@ describe('set_config — happy paths', () => {
     expect(success.scope).toBe('workspace');
   });
 
-  test('routes to workspace when path is already set in workspace YAML (D61 ladder)', async () => {
+  test('routes to workspace when path is already set in workspace YAML (scope-inference ladder)', async () => {
     const project = newProjectWithHome();
     // Pre-seed mcp.tools.search.maxResults in workspace YAML so the inspect
     // ladder sees `workspace: true` even though the field's defaultScope=user.
