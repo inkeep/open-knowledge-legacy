@@ -34,7 +34,7 @@ export const DESCRIPTION = [
   '- Understanding who changed a file recently and whether it was an agent or human',
   '- Seeing how this page links out and what links back to it',
   '',
-  'Prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4.',
+  '**When the project has `.open-knowledge/`**, strongly prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4. In projects without `.open-knowledge/`, use native `Read` as usual.',
   '',
   '**Parameters:**',
   '- `path` — Project-root-relative path to the file, including extension (e.g. `articles/auth/sso.md`). To pass this document to `edit_document` / `write_document` / `get_backlinks`, strip the extension (they take extension-less `docName`).',
