@@ -59,6 +59,7 @@ export {
   FolderRuleSchema,
 } from './config/schema.ts';
 export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
+export { CONFIG_SCHEMA_MAJOR, CONFIG_SCHEMA_MAJOR_PATH } from './config/schema-version.ts';
 export { type LocateOptions, locateIssue } from './config/source-locator.ts';
 // OTel helpers for config-edit spans (US-014 / FR-38 / D53). Browser+node
 // compatible — imports only `@opentelemetry/api`. Spans are inert no-ops

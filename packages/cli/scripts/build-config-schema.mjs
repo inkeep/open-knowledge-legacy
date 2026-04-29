@@ -2,21 +2,33 @@
 /**
  * Emit per-scope JSON Schemas from `ConfigSchema` for IDE intellisense.
  *
- * Runs as part of `bun run build` (via `build:assets`). Three files emitted:
- *   - `dist/config-schema.json`           — every field (back-compat alias;
- *                                            kept for any pre-existing magic
- *                                            comments still pointing here)
- *   - `dist/config.workspace.schema.json` — fields valid in workspace YAML
- *                                            (scope: 'workspace' or 'either')
- *   - `dist/config.user.schema.json`      — fields valid in user YAML
- *                                            (scope: 'user' or 'either')
+ * Schema versioning is **independent** of the npm package version. The
+ * artifact directory is `dist/schemas/v<CONFIG_SCHEMA_MAJOR>/…`; the magic
+ * comment URL pins to `@latest` of the package + the schema-major path. As
+ * a result, additive changes (new optional fields, new enum values) reach
+ * existing users automatically — their YAML's `$schema=…/v0/…` URL stays
+ * valid, and unpkg's `@latest` redirect surfaces the newest schema. A
+ * schema-major bump (v0 → v1) is reserved for breaking changes and emits
+ * to a new directory; the old directory keeps shipping for legacy YAMLs.
+ *
+ * Files emitted (per major):
+ *   - `dist/schemas/v<N>/config.workspace.schema.json` — workspace-valid
+ *     fields (scope: 'workspace' or 'either')
+ *   - `dist/schemas/v<N>/config.user.schema.json`      — user-valid fields
+ *     (scope: 'user' or 'either')
+ *
+ * Also emitted at the dist root (back-compat aliases for pre-versioning
+ * magic comments still in the wild):
+ *   - `dist/config-schema.json`           — full schema, every field
+ *   - `dist/config.workspace.schema.json` — same as v<current>/workspace
+ *   - `dist/config.user.schema.json`      — same as v<current>/user
  *
  * `ok init`'s scaffolded workspace `config.yml` magic-comment points at the
- * workspace schema; `writeConfigPatch`'s lazy first-write of
- * `~/.open-knowledge/config.yml` points at the user schema. Each file's
- * autocomplete then surfaces only the fields that are valid AT that scope —
- * an `appearance.theme` typed in workspace YAML squiggles, a `content.dir`
- * typed in user YAML squiggles.
+ * versioned workspace schema; `writeConfigPatch`'s lazy first-write of
+ * `~/.open-knowledge/config.yml` points at the versioned user schema.
+ * Each file's autocomplete then surfaces only the fields that are valid
+ * AT that scope — an `appearance.theme` typed in workspace YAML squiggles,
+ * a `content.dir` typed in user YAML squiggles.
  *
  * `io: 'input'` (not `'output'`) is load-bearing: the IDE must show the user
  * what they TYPE (every defaulted field optional), not what the runtime
@@ -31,11 +43,16 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ConfigSchema, fieldRegistry } from '@inkeep/open-knowledge-core';
+import {
+  CONFIG_SCHEMA_MAJOR_PATH,
+  ConfigSchema,
+  fieldRegistry,
+} from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(here, '..', 'dist');
+const versionedDir = resolve(distDir, 'schemas', CONFIG_SCHEMA_MAJOR_PATH);
 
 const fullSchema = z.toJSONSchema(ConfigSchema, {
   io: 'input',
@@ -44,6 +61,7 @@ const fullSchema = z.toJSONSchema(ConfigSchema, {
 });
 
 mkdirSync(distDir, { recursive: true });
+mkdirSync(versionedDir, { recursive: true });
 
 /**
  * Recursively prune properties that don't apply at `targetScope`.
@@ -94,12 +112,23 @@ function pruneByScope(node, targetScope) {
   return out;
 }
 
-const writeSchema = (filename, schema) => {
-  const path = resolve(distDir, filename);
+const writeSchema = (path, schema) => {
   writeFileSync(path, `${JSON.stringify(schema, null, 2)}\n`, 'utf-8');
   console.log(`[build:schema] wrote ${path} (${JSON.stringify(schema).length} bytes)`);
 };
 
-writeSchema('config-schema.json', fullSchema);
-writeSchema('config.workspace.schema.json', pruneByScope(fullSchema, 'workspace'));
-writeSchema('config.user.schema.json', pruneByScope(fullSchema, 'user'));
+const workspaceSchema = pruneByScope(fullSchema, 'workspace');
+const userSchema = pruneByScope(fullSchema, 'user');
+
+// Versioned (canonical) — the URLs `ok init` and `writeConfigPatch`
+// scaffold point here. Bump CONFIG_SCHEMA_MAJOR + emit to a new dir
+// for breaking changes; keep emitting old majors forever.
+writeSchema(resolve(versionedDir, 'config.workspace.schema.json'), workspaceSchema);
+writeSchema(resolve(versionedDir, 'config.user.schema.json'), userSchema);
+
+// Back-compat aliases at dist root — pre-versioning magic comments
+// point here. Removing these would break existing `~/.open-knowledge/
+// config.yml` files that never re-pinned to a versioned URL.
+writeSchema(resolve(distDir, 'config-schema.json'), fullSchema);
+writeSchema(resolve(distDir, 'config.workspace.schema.json'), workspaceSchema);
+writeSchema(resolve(distDir, 'config.user.schema.json'), userSchema);

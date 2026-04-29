@@ -24,6 +24,7 @@ import { OK_DIR } from '../constants/ok-dir.ts';
 import type { ConfigValidationError } from './errors.ts';
 import type { Err, Ok, Result } from './result.ts';
 import { type Config, type ConfigPatch, ConfigSchema } from './schema.ts';
+import { CONFIG_SCHEMA_MAJOR_PATH } from './schema-version.ts';
 import { addConfigSpanEvent, withConfigSpan, withConfigSpanSync } from './telemetry.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
@@ -41,43 +42,25 @@ const CONFIG_FILENAME = 'config.yml';
  * `ok init` scaffolds its own header for workspace files; this helper covers
  * the user-global lazy-write path.
  *
- * `scope` selects between the per-scope schemas built by
- * `packages/cli/scripts/build-config-schema.mjs`. The user schema only
- * lists user-scope fields; the workspace schema only lists workspace-scope
- * fields. This way the IDE's autocomplete + validation in either file
- * surfaces only the fields valid AT that scope, instead of showing every
- * field everywhere and silently letting users put `appearance.theme` in
- * workspace YAML.
+ * URL shape: `unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/v<N>/config.<scope>.schema.json`.
+ *   - `@latest` is the npm dist-tag — additive schema changes (new optional
+ *     fields, new enum values) reach existing users automatically as soon
+ *     as unpkg's `@latest` cache refreshes (typically <1h).
+ *   - `v<N>` is the schema MAJOR version (independent of the package version).
+ *     Breaking changes bump v<N> → v<N+1> and emit to a new directory; the
+ *     old directory keeps shipping forever, so legacy YAMLs never lose
+ *     autocomplete.
+ *   - `<scope>` is `workspace` or `user`. Each scoped schema lists only
+ *     fields valid at that scope, so autocomplete in either file surfaces
+ *     only the fields that belong there.
  */
-function packageVersionPinnedUrl(scope: 'workspace' | 'user'): string {
+function schemaUrl(scope: 'workspace' | 'user'): string {
   const filename = scope === 'user' ? 'config.user.schema.json' : 'config.workspace.schema.json';
-  try {
-    // From `<core>/src/config/write-config-patch.ts` (dev) or
-    // `<core>/dist/index.mjs` (built), `<core>/package.json` is reliably
-    // 1-2 dirs up. Try both depths.
-    const here = new URL(import.meta.url);
-    for (const rel of ['../../package.json', '../package.json']) {
-      try {
-        const url = new URL(rel, here);
-        const raw = readFileSync(url, 'utf-8');
-        const parsed = JSON.parse(raw) as { version?: string };
-        const version = parsed.version;
-        if (typeof version === 'string') {
-          const [major = '0', minor = '0'] = version.split('.');
-          return `https://unpkg.com/@inkeep/open-knowledge@${major}.${minor}/dist/${filename}`;
-        }
-      } catch {
-        // try next candidate
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return `https://unpkg.com/@inkeep/open-knowledge/dist/${filename}`;
+  return `https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/${filename}`;
 }
 
 function defaultFirstWriteHeader(scope: 'workspace' | 'user'): string {
-  return `# yaml-language-server: $schema=${packageVersionPinnedUrl(scope)}\n`;
+  return `# yaml-language-server: $schema=${schemaUrl(scope)}\n`;
 }
 
 export interface WriteConfigPatchOptions {

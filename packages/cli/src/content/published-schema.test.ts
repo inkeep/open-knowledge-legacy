@@ -27,24 +27,38 @@ import addFormats from 'ajv-formats';
 const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(here, '..', '..', 'dist');
 const PUBLISHED_SCHEMA_PATH = resolve(DIST, 'config-schema.json');
-const WORKSPACE_SCHEMA_PATH = resolve(DIST, 'config.workspace.schema.json');
-const USER_SCHEMA_PATH = resolve(DIST, 'config.user.schema.json');
+const VERSIONED_DIR = resolve(DIST, 'schemas', 'v0');
+const VERSIONED_WORKSPACE_PATH = resolve(VERSIONED_DIR, 'config.workspace.schema.json');
+const VERSIONED_USER_PATH = resolve(VERSIONED_DIR, 'config.user.schema.json');
+const ALIAS_WORKSPACE_PATH = resolve(DIST, 'config.workspace.schema.json');
+const ALIAS_USER_PATH = resolve(DIST, 'config.user.schema.json');
 
 describe('published dist/config-schema.json', () => {
   test('artifact exists at the path npm ships via files:["dist"]', () => {
     expect(existsSync(PUBLISHED_SCHEMA_PATH)).toBe(true);
   });
 
-  test('per-scope artifacts exist (used by ok init + writeConfigPatch lazy first-write)', () => {
-    expect(existsSync(WORKSPACE_SCHEMA_PATH)).toBe(true);
-    expect(existsSync(USER_SCHEMA_PATH)).toBe(true);
+  test('versioned per-scope artifacts exist at dist/schemas/v0/ (canonical URLs)', () => {
+    // `ok init` and writeConfigPatch's lazy first-write point YAML magic
+    // comments at these paths. Bumping CONFIG_SCHEMA_MAJOR adds a new v<N>
+    // dir; old majors stay published forever.
+    expect(existsSync(VERSIONED_WORKSPACE_PATH)).toBe(true);
+    expect(existsSync(VERSIONED_USER_PATH)).toBe(true);
+  });
+
+  test('back-compat per-scope aliases exist at dist root (pre-versioning magic comments)', () => {
+    // Earlier scaffolds wrote URLs to dist root rather than the versioned
+    // dir. We keep the root files forever so those YAMLs never lose
+    // autocomplete.
+    expect(existsSync(ALIAS_WORKSPACE_PATH)).toBe(true);
+    expect(existsSync(ALIAS_USER_PATH)).toBe(true);
   });
 
   test('per-scope artifacts disjointly cover scope-specific fields', () => {
-    const workspace = JSON.parse(readFileSync(WORKSPACE_SCHEMA_PATH, 'utf-8')) as {
+    const workspace = JSON.parse(readFileSync(VERSIONED_WORKSPACE_PATH, 'utf-8')) as {
       properties?: Record<string, unknown>;
     };
-    const user = JSON.parse(readFileSync(USER_SCHEMA_PATH, 'utf-8')) as {
+    const user = JSON.parse(readFileSync(VERSIONED_USER_PATH, 'utf-8')) as {
       properties?: Record<string, unknown>;
     };
     // workspace-only top-level sections

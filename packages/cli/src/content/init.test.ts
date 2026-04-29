@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
+import { OK_DIR } from '../constants.ts';
 import { buildConfigYmlContent, initContent, packageVersionMajorMinor } from './init.ts';
 
 describe('initContent', () => {
@@ -93,20 +93,18 @@ describe('initContent', () => {
     expect(activeLines).toEqual([]);
   });
 
-  it('config.yml first line is the version-pinned $schema magic comment (FR-17)', () => {
+  it('config.yml first line is the schema-version-pinned $schema magic comment (FR-17)', () => {
     initContent(testDir);
     const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
     const firstLine = configYml.split('\n')[0];
-    // AC #6: line 1 matches the FR-17 contract verbatim — version pinned to
-    // running CLI's MAJOR.MINOR; URL is unpkg-hosted; ends in the workspace
-    // per-scope schema (so workspace YAML autocomplete only suggests
-    // workspace-valid fields).
+    // AC #6: line 1 matches the FR-17 contract — `@latest` of the npm
+    // package + the schema-major path + the workspace per-scope file.
+    // Schema versioning is independent of package version: additive
+    // schema changes reach existing users automatically; breaking changes
+    // bump the `v<N>` directory.
     expect(firstLine).toMatch(
-      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@\d+\.\d+\/dist\/config\.workspace\.schema\.json$/,
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.workspace\.schema\.json$/,
     );
-    // Embedded MAJOR.MINOR matches the running PACKAGE_VERSION's first two segments.
-    const expectedMajorMinor = packageVersionMajorMinor(PACKAGE_VERSION);
-    expect(firstLine).toContain(`@inkeep/open-knowledge@${expectedMajorMinor}/`);
     // Existing # Open Knowledge — workspace configuration header is preserved
     // immediately below the magic comment.
     expect(configYml.split('\n')[1]).toBe('# Open Knowledge — workspace configuration');
@@ -260,10 +258,12 @@ describe('packageVersionMajorMinor', () => {
 });
 
 describe('buildConfigYmlContent', () => {
-  it('templates the magic comment with the supplied version', () => {
+  it('templates the magic comment with @latest + schema-major path', () => {
+    // Schema versioning is independent of the package version — the URL
+    // pins to `@latest` of the npm package + the schema-major directory.
     const out = buildConfigYmlContent('3.5.0');
-    expect(out.split('\n')[0]).toBe(
-      '# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@3.5/dist/config.workspace.schema.json',
+    expect(out.split('\n')[0]).toMatch(
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.workspace\.schema\.json$/,
     );
   });
 
