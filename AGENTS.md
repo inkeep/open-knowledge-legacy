@@ -86,7 +86,7 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ## Architectural precedents
 
-37 numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands here; code cites them as `precedent #N` across ~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
+38 numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands here; code cites them as `precedent #N` across ~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
 
 ## Packages
 

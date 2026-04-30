@@ -37,19 +37,37 @@ Content-Type: application/json
 { "src": "attachments/photo.png", "deduped": true, "sha": "abc123", "byteLength": 1024 }
 ```
 
-Client narrowing uses HTTP status:
+Client narrowing uses HTTP status. The two-step parse keeps non-contract responses (reverse-proxy 502 with HTML body, network error returning a different shape, malformed bytes) distinguishable from real `ProblemDetails` emits:
 
 ```ts
+import { ProblemDetailsSchema, UploadAssetSuccessSchema } from '@inkeep/open-knowledge-core';
+import { HttpResponseParseError } from '@/editor/http-client';
+
+const res = await fetch(url, { method: 'POST', body });
+const body = await res.json().catch(() => null);
 if (!res.ok) {
-  const result = ProblemDetailsSchema.safeParse(body);
-  if (!result.success) throw new HttpResponseParseError(...);
-  // result.data.title for display, result.data.type for typed routing
+  const problem = ProblemDetailsSchema.safeParse(body);
+  if (!problem.success) {
+    throw new HttpResponseParseError('Server returned non-RFC9457 error', {
+      cause: problem.error,
+      status: res.status,
+    });
+  }
+  // problem.data.title for display, problem.data.type for typed routing,
+  // problem.data.instance for grep correlation against the server log line.
 } else {
-  const result = UploadAssetSuccessSchema.safeParse(body);
-  if (!result.success) throw new HttpResponseParseError(...);
-  // result.data.src ...
+  const success = UploadAssetSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Server returned malformed success body', {
+      cause: success.error,
+      status: res.status,
+    });
+  }
+  // success.data.src ...
 }
 ```
+
+`HttpResponseParseError` lives in `packages/app/src/editor/http-client.ts`. Throwing the typed class lets callers route the non-contract path through their own retry / surface-to-user handling without confusing it with a real `ProblemDetails`.
 
 ## `errorResponse(...)` is the only sanctioned error emitter
 
@@ -150,6 +168,10 @@ CLI-emitted error events on subprocess streams should be intercepted and wrapped
 
 See `handleLocalOpClone` for the canonical streaming-endpoint pattern: pre-stream gates → `errorResponse(...)`; subprocess spawn + CLI event interception + mid-stream errors → `streamingProblemEvent(...)`.
 
+## Closed-enum exhaustiveness
+
+`ProblemType` is the canonical closed enum for problem-type URNs; client and server `switch`-narrow over it. Every such switch ends in `default: assertNeverProblemType(type)` (alongside `assertNeverLinkTarget(target)` for `LinkTarget` and any peer enum). A single meta-test at `packages/app/tests/integration/exhaustiveness-coverage.test.ts` AST-scans the workspace, auto-discovers every switch over a closed-DU type, and fails CI if the `default:` arm is missing or non-exhaustive — no per-callsite ratchet, no allowlist. Adding a new enum member fans out to a localized type error at every consumer until each one extends its switch or dispatches the new case.
+
 ## Telemetry
 
 `ok.api.error.count{type, handler}` counter (D37) — pure `ok.<area>` namespace per CLAUDE.md observability guidance. Cardinality bounded: `type` ∈ closed `ProblemTypeSchema` (≈ 10–80 literals); `handler` ∈ ~57 route names. Total ≈ 285 unique combinations — within Prometheus / Tempo budget.
@@ -163,6 +185,13 @@ Every migrated handler ships a co-located narrow-integration test at `packages/a
 
 Real helper, real schema, real handler — only the `IncomingMessage` / `ServerResponse` pair is mocked. ~20 LoC per handler.
 
-## The `{ ok }` convention (D4)
+## The `{ ok }` convention
 
-Across HTTP / IPC / registry-lookup envelopes, `ok` is the canonical discriminator field name. The codebase converges on 50+ sites. The single `{ found }` outlier on `AssetViewerLookupResult` is renamed to `{ ok }` (US-002) so the convention is uniform.
+Across HTTP / IPC / registry-lookup envelopes, `ok` is the canonical discriminator field name. The codebase converges on 50+ sites; the AssetViewerRegistry lookup shape is `{ ok: true, viewer } | { ok: false }`, mirroring every other typed result envelope in the workspace. The HTTP success body itself drops the wrapper entirely (status code is the discriminator) — `{ ok }` only appears on result envelopes that don't have an HTTP-status channel.
+
+## See also
+
+- [`PRECEDENTS.md`](../../../../PRECEDENTS.md) precedent #38 — HTTP API surfaces emit RFC 9457 problem details + typed validation.
+- [`AGENTS.md`](../../../../AGENTS.md) §STOP rules — the FR16 cluster (HTTP API discipline, agent-undo single-path, `recordContributor` summary normalization).
+- `packages/core/src/schemas/api.ts` — every `XyzRequestSchema` / `XyzSuccessSchema` and the `ProblemDetailsSchema` / `ProblemTypeSchema` / `StreamingProblemEventSchema` triple.
+- `packages/app/src/editor/http-client.ts` — `HttpResponseParseError` for client-side non-contract response routing.
