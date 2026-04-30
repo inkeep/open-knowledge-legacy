@@ -116,10 +116,21 @@ const EXEMPT_HANDLERS = new Set([
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
-  const decl = `async function ${handlerName}(`;
-  const start = source.indexOf(decl);
+  // Legacy shape: `async function handle...(`. Migrated shape:
+  // `const handle... = withValidation(...)`. Both must be supported as the
+  // cluster migrations land. Pick whichever appears first in the file.
+  const fnDecl = `async function ${handlerName}(`;
+  const constDecl = `const ${handlerName} = withValidation(`;
+  const fnIdx = source.indexOf(fnDecl);
+  const constIdx = source.indexOf(constDecl);
+  let start = -1;
+  if (fnIdx !== -1) start = fnIdx;
+  else if (constIdx !== -1) start = constIdx;
   if (start === -1) return null;
-  const next = source.indexOf('\n  async function handle', start + 1);
+  const nextFn = source.indexOf('\n  async function handle', start + 1);
+  const nextConst = source.indexOf('\n  const handle', start + 1);
+  const candidates = [nextFn, nextConst].filter((i) => i !== -1);
+  const next = candidates.length === 0 ? -1 : Math.min(...candidates);
   return source.slice(start, next === -1 ? source.length : next);
 }
 

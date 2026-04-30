@@ -36,10 +36,6 @@ const source = readFileSync(API_EXT_PATH, 'utf8');
 const UNMIGRATED_HANDLERS = new Set([
   'handleAgentActivity',
   'handleAgentBurstDiff',
-  'handleAgentPatch',
-  'handleAgentUndo',
-  'handleAgentWrite',
-  'handleAgentWriteMd',
   'handleBacklinkCounts',
   'handleBacklinks',
   'handleCreatePage',
@@ -92,16 +88,34 @@ const UNMIGRATED_HANDLERS = new Set([
 ]);
 
 function listAllHandlers(): string[] {
+  // Handlers in `api-extension.ts` come in two shapes after the cluster
+  // migrations: legacy `async function handleX(...)` (unmigrated; reads
+  // body manually + emits inline `{ ok: false }` envelopes) and
+  // `const handleX = withValidation(Schema, ...)` (migrated; the
+  // `withValidation` wrapper enforces request-body validation + RFC 9457
+  // emits structurally). Both patterns are valid handler shapes.
   return Array.from(
-    new Set([...source.matchAll(/async function (handle\w+)\(/g)].map((m) => m[1])),
+    new Set([
+      ...[...source.matchAll(/async function (handle\w+)\(/g)].map((m) => m[1]),
+      ...[...source.matchAll(/const (handle\w+) = withValidation\(/g)].map((m) => m[1]),
+    ]),
   );
 }
 
 function extractHandlerBody(name: string): string | null {
-  const decl = `async function ${name}(`;
-  const start = source.indexOf(decl);
+  const fnDecl = `async function ${name}(`;
+  const constDecl = `const ${name} = withValidation(`;
+  const fnIdx = source.indexOf(fnDecl);
+  const constIdx = source.indexOf(constDecl);
+  let start = -1;
+  if (fnIdx !== -1) start = fnIdx;
+  else if (constIdx !== -1) start = constIdx;
   if (start === -1) return null;
-  const next = source.indexOf('\n  async function handle', start + 1);
+  // Find the next handler declaration of either shape.
+  const nextFn = source.indexOf('\n  async function handle', start + 1);
+  const nextConst = source.indexOf('\n  const handle', start + 1);
+  const candidates = [nextFn, nextConst].filter((i) => i !== -1);
+  const next = candidates.length === 0 ? -1 : Math.min(...candidates);
   return source.slice(start, next === -1 ? source.length : next);
 }
 

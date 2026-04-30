@@ -63,6 +63,13 @@ export interface WithValidationOptions {
    * directly with the parsed metadata.
    */
   skipBodyParse?: boolean;
+  /**
+   * Allowed HTTP method. When set, the wrapper rejects mismatched methods
+   * with a 405 + `Allow: <method>` BEFORE reading the body — proper REST
+   * semantics (a GET on a POST-only endpoint should not consume the body).
+   * Omitting accepts any method.
+   */
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 }
 
 /**
@@ -114,6 +121,14 @@ export function withValidation<T>(
   options: WithValidationOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
+    if (options.method !== undefined && req.method !== options.method) {
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: options.handler,
+        extraHeaders: { Allow: options.method },
+      });
+      return;
+    }
+
     let raw: Buffer;
     try {
       raw = await readRequestBody(req);

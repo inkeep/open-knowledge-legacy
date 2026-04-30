@@ -154,6 +154,16 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:clone-failed',
   'urn:ok:error:clone-timeout',
   'urn:ok:error:server-start-failed',
+  // Cluster A: agent-write / -write-md / -patch / -undo.
+  // `reserved-docname` rejects writes to system / config doc names (post-
+  // identity, attributed). `target-not-found` / `stale-target` /
+  // `frontmatter-edit-not-supported` are handleAgentPatch-specific.
+  // `no-active-session` is handleAgentUndo-specific.
+  'urn:ok:error:reserved-docname',
+  'urn:ok:error:target-not-found',
+  'urn:ok:error:stale-target',
+  'urn:ok:error:frontmatter-edit-not-supported',
+  'urn:ok:error:no-active-session',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -296,3 +306,232 @@ export type StreamingProblemEvent = z.infer<typeof StreamingProblemEventSchema>;
 const _StreamingProblemEventSchemaIsStandard: StandardSchemaV1<unknown, StreamingProblemEvent> =
   StreamingProblemEventSchema;
 void _StreamingProblemEventSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster A: agent-write / -write-md / -patch / -undo (US-006)
+// ---------------------------------------------------------------------------
+//
+// Mutating handlers that write to Y.Docs through the agent attribution path
+// (precedent #24). `withValidation()` enforces these schemas at the wire
+// boundary; the handler receives an already-typed body. Body-shape failures
+// (schema rejection) emit `urn:ok:error:invalid-request` PRE-identity —
+// semantically OK because no Y.Doc mutation is attempted. Semantic failures
+// (reserved docname, target-not-found, stale-target, no-active-session) emit
+// POST-identity. The `attribution-sweep-coverage.test.ts` ordering check
+// enforces this distinction.
+
+/**
+ * `docName` shape shared by every mutating handler. The refinement matches
+ * `isSafeDocName` in `api-extension.ts`: rejects path traversal and null
+ * bytes. Empty strings pass schema (the handler falls back to the legacy
+ * `'test-doc'` development default).
+ */
+const safeDocNameField = z
+  .string()
+  .refine(
+    (s) => !s.includes('..') && !s.startsWith('/') && !s.includes('\x00') && !s.includes('\\'),
+    { message: 'docName contains unsafe path characters' },
+  )
+  .optional();
+
+/**
+ * Identity fields shared by every mutating handler. All optional —
+ * `extractAgentIdentity` in `api-extension.ts` carries the default-agent
+ * fallback for missing fields. The schema only validates the wire-level
+ * type (string when present); semantic validation (e.g. agent-id regex)
+ * stays inside `extractAgentIdentity`.
+ */
+const agentIdentityFields = {
+  agentId: z.string().optional(),
+  agentName: z.string().optional(),
+  colorSeed: z.string().optional(),
+  clientName: z.string().optional(),
+  clientVersion: z.string().optional(),
+  label: z.string().optional(),
+};
+
+/**
+ * Optional summary field shared by write / write-md / patch handlers.
+ * Schema-rejected for non-string values (number, boolean, null, array,
+ * object) — `urn:ok:error:invalid-request` pre-identity. Empty / whitespace
+ * strings reach the handler and `normalizeSummary` classifies them as
+ * `kind: 'absent'` (no adoption count).
+ */
+const summaryField = z.string().optional();
+
+/**
+ * Request body for `POST /api/agent-write`. Free-text content append (the
+ * server appends a deterministic test string when `content` is omitted).
+ */
+export const AgentWriteRequestSchema = z
+  .object({
+    docName: safeDocNameField,
+    summary: summaryField,
+    content: z.string().optional(),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type AgentWriteRequest = z.infer<typeof AgentWriteRequestSchema>;
+const _AgentWriteRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteRequest> =
+  AgentWriteRequestSchema;
+void _AgentWriteRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/agent-write-md`. The canonical agent-write
+ * surface. `markdown` is REQUIRED (non-empty) so the schema rejects empty
+ * payloads structurally. `position` is the enum the handler routes on;
+ * stricter than the historical "any non-prepend/replace silently maps to
+ * append" behavior.
+ */
+export const AgentWriteMdRequestSchema = z
+  .object({
+    docName: safeDocNameField,
+    summary: summaryField,
+    markdown: z.string().min(1),
+    position: z.enum(['append', 'prepend', 'replace']).optional(),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type AgentWriteMdRequest = z.infer<typeof AgentWriteMdRequestSchema>;
+const _AgentWriteMdRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteMdRequest> =
+  AgentWriteMdRequestSchema;
+void _AgentWriteMdRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/agent-patch`. `find` REQUIRED non-empty (the
+ * search target). `replace` REQUIRED string (may be empty — that deletes
+ * the matched segment). `offset`, when provided, must be a non-negative
+ * integer; the handler treats it as the exact starting index for the
+ * find/replace and emits `urn:ok:error:stale-target` if the substring at
+ * that offset no longer matches.
+ */
+export const AgentPatchRequestSchema = z
+  .object({
+    docName: safeDocNameField,
+    summary: summaryField,
+    find: z.string().min(1),
+    replace: z.string(),
+    offset: z.number().int().nonnegative().optional(),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type AgentPatchRequest = z.infer<typeof AgentPatchRequestSchema>;
+const _AgentPatchRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentPatchRequest> =
+  AgentPatchRequestSchema;
+void _AgentPatchRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/agent-undo`. `connectionId` REQUIRED — names
+ * the per-session UndoManager whose stack to drain. `scope` defaults to
+ * `'last'`; `'file'` is a legacy alias for `'session'` (drains the entire
+ * stack in one call) — the handler collapses `'file'` to `'session'` in
+ * the response.
+ */
+export const AgentUndoRequestSchema = z
+  .object({
+    docName: safeDocNameField,
+    connectionId: z.string().min(1),
+    scope: z.enum(['last', 'session', 'file']).optional(),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type AgentUndoRequest = z.infer<typeof AgentUndoRequestSchema>;
+const _AgentUndoRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentUndoRequest> =
+  AgentUndoRequestSchema;
+void _AgentUndoRequestSchemaIsStandard;
+
+/**
+ * Sub-schema for the optional `summary` field on every mutating-handler
+ * success response. `truncatedFrom` and `hint` only appear when the
+ * server applied the 80-char cap — `summaryResponseFields` derives the
+ * shape from `NormalizedSummary`.
+ */
+export const SummaryResponseFieldSchema = z
+  .object({
+    value: z.string(),
+    truncatedFrom: z.number().int().nonnegative().optional(),
+    hint: z.string().optional(),
+  })
+  .loose();
+export type SummaryResponseField = z.infer<typeof SummaryResponseFieldSchema>;
+const _SummaryResponseFieldSchemaIsStandard: StandardSchemaV1<unknown, SummaryResponseField> =
+  SummaryResponseFieldSchema;
+void _SummaryResponseFieldSchemaIsStandard;
+
+/**
+ * Orphan-hint emitted by `handleAgentWriteMd` when the just-written doc has
+ * no backlinks and at least one plausible hub candidate exists in its
+ * folder tree. Soft signal — the agent is free to ignore.
+ */
+export const OrphanHintSchema = z
+  .object({
+    type: z.literal('orphan'),
+    parentCandidates: z.array(z.string()),
+    message: z.string(),
+  })
+  .loose();
+export type OrphanHint = z.infer<typeof OrphanHintSchema>;
+const _OrphanHintSchemaIsStandard: StandardSchemaV1<unknown, OrphanHint> = OrphanHintSchema;
+void _OrphanHintSchemaIsStandard;
+
+/** Success body for `POST /api/agent-write`. Flat shape per D22 (no `ok: true`). */
+export const AgentWriteSuccessSchema = z
+  .object({
+    timestamp: z.string().min(1),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose();
+export type AgentWriteSuccess = z.infer<typeof AgentWriteSuccessSchema>;
+const _AgentWriteSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteSuccess> =
+  AgentWriteSuccessSchema;
+void _AgentWriteSuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/agent-write-md`. `subscriberCount` and
+ * `systemSubscriberCount` drive the once-per-session preview-attach hint
+ * contract; `hints` carries the orphan nudge.
+ */
+export const AgentWriteMdSuccessSchema = z
+  .object({
+    timestamp: z.string().min(1),
+    subscriberCount: z.number().int().nonnegative(),
+    systemSubscriberCount: z.number().int().nonnegative(),
+    hints: z.array(OrphanHintSchema).optional(),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose();
+export type AgentWriteMdSuccess = z.infer<typeof AgentWriteMdSuccessSchema>;
+const _AgentWriteMdSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteMdSuccess> =
+  AgentWriteMdSuccessSchema;
+void _AgentWriteMdSuccessSchemaIsStandard;
+
+/** Success body for `POST /api/agent-patch`. */
+export const AgentPatchSuccessSchema = z
+  .object({
+    timestamp: z.string().min(1),
+    subscriberCount: z.number().int().nonnegative(),
+    systemSubscriberCount: z.number().int().nonnegative(),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose();
+export type AgentPatchSuccess = z.infer<typeof AgentPatchSuccessSchema>;
+const _AgentPatchSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentPatchSuccess> =
+  AgentPatchSuccessSchema;
+void _AgentPatchSuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/agent-undo`. `scope` reflects the resolved
+ * scope after collapsing `'file'` → `'session'`. `undone` is `false` when
+ * the UM stack was empty (a no-op undo).
+ */
+export const AgentUndoSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+    scope: z.enum(['last', 'session']),
+    undone: z.boolean(),
+  })
+  .loose();
+export type AgentUndoSuccess = z.infer<typeof AgentUndoSuccessSchema>;
+const _AgentUndoSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentUndoSuccess> =
+  AgentUndoSuccessSchema;
+void _AgentUndoSuccessSchemaIsStandard;

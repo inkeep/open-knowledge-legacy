@@ -32,6 +32,10 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
+  AgentPatchRequestSchema,
+  AgentUndoRequestSchema,
+  AgentWriteMdRequestSchema,
+  AgentWriteRequestSchema,
   ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
@@ -141,7 +145,7 @@ import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
 import { errorResponse, streamingProblemEvent } from './http/error-response.ts';
-import { validateBody } from './http/request-validation.ts';
+import { validateBody, withValidation } from './http/request-validation.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -1980,284 +1984,253 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (normalized.truncatedFrom !== undefined && !fromDefault) incrementSummariesTruncated();
   }
 
-  async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleAgentWrite = withValidation(
+    AgentWriteRequestSchema,
+    async (_req, res, body) => {
+      try {
+        // `withValidation` already enforces docName safety + body shape.
+        // Empty / missing docName falls back to the `'test-doc'` default
+        // matching pre-migration behavior.
+        const rawDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(rawDocName);
 
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: Record<string, unknown>;
-      try {
-        body =
-          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      const rawDocName =
-        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body);
-      const normalizedSummary = normalizeSummary(body.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const session = await sessionManager.getSession(docName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-      const content =
-        typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
-      const { response: summaryResponse, stored: storedSummary } =
-        summaryResponseFields(normalizedSummary);
+        // Identity extraction precedes every SEMANTIC error emission below
+        // (precedent #24). Body-shape errors emitted by `withValidation` are
+        // anonymous because no Y.Doc mutation is attempted.
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: docName,
-          mode: 'writing',
-          ts: Date.now(),
-        });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            `${content}\n`,
-            'append',
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-              : undefined,
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-write' },
           );
+          return;
+        }
 
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Added (${agentName}): ${content.slice(0, 50)}`,
-          });
-        }, session.origin);
-        recordContributor(
-          docName,
-          agentId,
-          agentName,
-          colorSeed,
-          undefined,
-          buildAgentActor({ clientName, clientVersion, label }),
-          storedSummary,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(normalizedSummary);
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
-
-      flushDocToGit(docName, 'agent-write');
-      onAgentWrite?.();
-
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-write] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentWriteMd(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const { markdown, position: pos } = body as Record<string, unknown>;
-      if (!markdown || typeof markdown !== 'string') {
-        json(res, 400, { ok: false, error: 'markdown field required' });
-        return;
-      }
-
-      const position = pos === 'prepend' ? 'prepend' : pos === 'replace' ? 'replace' : 'append';
-      const rawDocName = (body as Record<string, unknown>).docName;
-      const effectiveDocName =
-        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
-      if (!isSafeDocName(effectiveDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const resolvedDocName = resolveAlias(effectiveDocName);
-      if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
-        json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body as Record<string, unknown>);
-      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { response: summaryResponse, stored: storedSummary } =
-        summaryResponseFields(normalizedSummary);
-      const session = await sessionManager.getSession(resolvedDocName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
+        const normalizedSummary = normalizeSummary(body.summary);
+        const session = await sessionManager.getSession(docName, agentId, {
           displayName: agentName,
-          icon,
-          color,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+        const content =
+          typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
+        const { response: summaryResponse, stored: storedSummary } =
+          summaryResponseFields(normalizedSummary);
+
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              `${content}\n`,
+              'append',
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+                : undefined,
+            );
+
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Added (${agentName}): ${content.slice(0, 50)}`,
+            });
+          }, session.origin);
+          recordContributor(
+            docName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        flushDocToGit(docName, 'agent-write');
+        onAgentWrite?.();
+
+        // D22: success body is flat — no `{ ok: true }` wrapper. Clients
+        // discriminate via HTTP status (`if (!res.ok)`), then safeParse
+        // against `AgentWriteSuccessSchema`.
+        json(res, 200, {
+          timestamp,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        log.error({ err: e }, '[agent-write] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-write',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'agent-write', method: 'POST' },
+  );
+
+  const handleAgentWriteMd = withValidation(
+    AgentWriteMdRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const position = body.position ?? 'append';
+        const effectiveDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const resolvedDocName = resolveAlias(effectiveDocName);
+
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
+
+        if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${resolvedDocName}' is a reserved document name.`,
+            { handler: 'agent-write-md' },
+          );
+          return;
+        }
+
+        const normalizedSummary = normalizeSummary(body.summary);
+        const { response: summaryResponse, stored: storedSummary } =
+          summaryResponseFields(normalizedSummary);
+        const session = await sessionManager.getSession(resolvedDocName, agentId, {
+          displayName: agentName,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: resolvedDocName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              body.markdown,
+              position,
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+                : undefined,
+            );
+
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Added (${agentName}): ${body.markdown.trim().slice(0, 50)}`,
+            });
+          }, session.origin);
+          recordContributor(
+            resolvedDocName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        flushDocToGit(resolvedDocName, 'agent-write-md');
+
+        // Focus (attribution) on __system__ awareness. Focus drives browser
+        // push-navigation to the doc the agent just wrote (writeKind); presence
+        // is separately maintained via setPresence/touchMode pairs above.
+        agentFocusBroadcaster?.setFocus(agentId, {
+          agentName,
           currentDoc: resolvedDocName,
-          mode: 'writing',
+          writeKind: 'write',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            markdown,
-            position,
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
-              : undefined,
-          );
+        onAgentWrite?.();
 
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
+        // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+        // backlinks and a plausible hub exists in its folder tree, suggest the
+        // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+        const hints = computeOrphanHints(resolvedDocName);
+
+        const subscriberCount = getSubscriberCount(resolvedDocName);
+        const systemSubscriberCount = getSystemSubscriberCount();
+
+        // Once-per-session attach hint counter: fires when no editor is attached
+        // to `__system__` (transport-presence = false). Labels are bounded-
+        // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
+        // is always `agent` at this call site (`handleAgentWriteMd`), and
+        // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
+        if (systemSubscriberCount === 0) {
+          hintEmittedCounter().add(1, {
+            'shadow.writer': 'agent',
+            'agent.type': resolveAgentType(clientName),
           });
-        }, session.origin);
-        recordContributor(
-          resolvedDocName,
-          agentId,
-          agentName,
-          colorSeed,
-          undefined,
-          buildAgentActor({ clientName, clientVersion, label }),
-          storedSummary,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(normalizedSummary);
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
+        }
 
-      flushDocToGit(resolvedDocName, 'agent-write-md');
-
-      // Focus (attribution) on __system__ awareness. Focus drives browser
-      // push-navigation to the doc the agent just wrote (writeKind); presence
-      // is separately maintained via setPresence/touchMode pairs above.
-      agentFocusBroadcaster?.setFocus(agentId, {
-        agentName,
-        currentDoc: resolvedDocName,
-        writeKind: 'write',
-        ts: Date.now(),
-      });
-      onAgentWrite?.();
-
-      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
-      // backlinks and a plausible hub exists in its folder tree, suggest the
-      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
-      const hints = computeOrphanHints(resolvedDocName);
-
-      const subscriberCount = getSubscriberCount(resolvedDocName);
-      const systemSubscriberCount = getSystemSubscriberCount();
-
-      // Once-per-session attach hint counter: fires when no editor is attached
-      // to `__system__` (transport-presence = false). Labels are bounded-
-      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
-      // is always `agent` at this call site (`handleAgentWriteMd`), and
-      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
-      if (systemSubscriberCount === 0) {
-        hintEmittedCounter().add(1, {
-          'shadow.writer': 'agent',
-          'agent.type': resolveAgentType(clientName),
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, {
+          timestamp,
+          subscriberCount,
+          systemSubscriberCount,
+          ...(hints ? { hints } : {}),
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        log.error({ err: e }, '[agent-write-md] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-write-md',
+          cause: e,
         });
       }
-
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        subscriberCount,
-        systemSubscriberCount,
-        ...(hints ? { hints } : {}),
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-write-md] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-write-md', method: 'POST' },
+  );
 
   async function handleDocumentRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
@@ -2676,260 +2649,235 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleAgentPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawBody: Buffer;
+  const handleAgentPatch = withValidation(
+    AgentPatchRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-      const {
-        find,
-        replace,
-        docName: bodyDocName,
-        offset: rawOffset,
-      } = body as Record<string, unknown>;
-      if (typeof find !== 'string' || find.length === 0) {
-        json(res, 400, { ok: false, error: 'find field required' });
-        return;
-      }
-      if (typeof replace !== 'string') {
-        json(res, 400, { ok: false, error: 'replace field required' });
-        return;
-      }
-      if (findLooksLikeFrontmatter(find)) {
-        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
-        json(res, 400, {
-          ok: false,
-          error:
-            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
-        });
-        return;
-      }
-      const hasOffset = Object.hasOwn(body, 'offset');
-      let offset: number | undefined;
-      if (hasOffset) {
-        if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0) {
-          json(res, 400, { ok: false, error: 'offset must be a non-negative integer' });
+        const { find, replace, offset } = body;
+        const effectivePatchDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(effectivePatchDocName);
+
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
+
+        // Heuristic precheck: reject `find` strings that look like a YAML
+        // frontmatter block before doing any Y.Doc work. The position-based
+        // postcheck below catches non-yaml strings whose first match falls
+        // inside the FM region. Frontmatter edits must go through
+        // write_document with position:"replace", not edit_document.
+        if (findLooksLikeFrontmatter(find)) {
+          agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:frontmatter-edit-not-supported',
+            'Frontmatter edits are not supported via edit_document. Use write_document with position:"replace" to rewrite the document including its YAML block.',
+            { handler: 'agent-patch' },
+          );
           return;
         }
-        offset = rawOffset;
-      }
-      const effectivePatchDocName =
-        typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc';
-      if (!isSafeDocName(effectivePatchDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(effectivePatchDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body as Record<string, unknown>);
-      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const session = await sessionManager.getSession(docName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
 
-      let notFound = false;
-      let staleTarget = false;
-      let fmIntersect = false;
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+
+        const normalizedSummary = normalizeSummary(body.summary);
+        const session = await sessionManager.getSession(docName, agentId, {
           displayName: agentName,
-          icon,
-          color,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+
+        let notFound = false;
+        let staleTarget = false;
+        let fmIntersect = false;
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            // Read current authoritative state. Search the FULL markdown
+            // (frontmatter + body) so agents can patch frontmatter fields
+            // (e.g. `title:`, `cluster:`) the same way they patch body text.
+            // XmlFragment is the authoritative body per precedent #12; the
+            // frontmatter lives in the YAML region of `Y.Text('source')`
+            // (D8) and must be composed in for the search surface to
+            // reflect the document as the agent sees it on disk.
+            const xmlFragment = session.dc.document.getXmlFragment('default');
+            const ytext = session.dc.document.getText('source');
+            const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
+            const currentBody = mdManager.serialize(
+              yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+            );
+            const currentFull = prependFrontmatter(currentFm, currentBody);
+
+            const pos =
+              offset == null
+                ? currentFull.indexOf(find)
+                : currentFull.slice(offset, offset + find.length) === find
+                  ? offset
+                  : -1;
+            if (pos === -1) {
+              if (offset == null) {
+                notFound = true;
+              } else {
+                staleTarget = true;
+              }
+              return;
+            }
+
+            // Position-based FM-intersection check. The string-shape
+            // heuristic above handles yaml-style find strings; this catches
+            // the residual class where a non-yaml find (e.g. a single word
+            // like `draft`) happens to first-match in the FM region.
+            // `pos < currentFm.length` is the necessary-and-sufficient
+            // signal — FM is contiguous at doc start, so any match starting
+            // before the FM-end byte overlaps the FM region.
+            if (pos < currentFm.length) {
+              fmIntersect = true;
+              return;
+            }
+
+            // Splice at the character level. Only body-region patches
+            // reach here, so this branch never modifies the FM.
+            // applyAgentMarkdownWrite reads the current FM from the YAML
+            // region of Y.Text and writes the canonical full document
+            // back, so a body-only payload here keeps the existing FM
+            // intact.
+            const newFull =
+              currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+            const { body: newBody } = stripFrontmatter(newFull);
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              newBody,
+              'replace',
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+                : undefined,
+            );
+
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Patched (${agentName}): ${find.slice(0, 50)}`,
+            });
+          }, session.origin);
+          if (!notFound && !staleTarget && !fmIntersect) {
+            // Only count + record when the patch actually applied. The M1
+            // denominator excludes 404/409 + FM-intersect 400 so adoption
+            // rate reflects successful writes, not total attempts.
+            const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
+            recordContributor(
+              docName,
+              agentId,
+              agentName,
+              colorSeed,
+              undefined,
+              buildAgentActor({ clientName, clientVersion, label }),
+              storedSummary,
+            );
+            incrementAgentWriteCalls();
+            countNormalizedSummary(normalizedSummary);
+          }
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        if (staleTarget) {
+          errorResponse(
+            res,
+            409,
+            'urn:ok:error:stale-target',
+            'Target text no longer matches at the requested offset.',
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+        if (notFound) {
+          errorResponse(res, 404, 'urn:ok:error:target-not-found', 'Text not found in document.', {
+            handler: 'agent-patch',
+          });
+          return;
+        }
+        if (fmIntersect) {
+          agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:frontmatter-edit-not-supported',
+            'Frontmatter edits are not supported via edit_document. Use write_document with position:"replace" to rewrite the document including its YAML block.',
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+
+        flushDocToGit(docName, 'agent-patch');
+
+        // Focus (attribution) on __system__ awareness. Presence is separately
+        // maintained via setPresence/touchMode pairs above.
+        agentFocusBroadcaster?.setFocus(agentId, {
+          agentName,
           currentDoc: docName,
-          mode: 'writing',
+          writeKind: 'edit',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          // Read current authoritative state. Search the FULL markdown
-          // (frontmatter + body) so agents can patch frontmatter fields
-          // (e.g. `title:`, `cluster:`) the same way they patch body text.
-          // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in the YAML region of `Y.Text('source')`
-          // (D8) and must be composed in for the search surface to
-          // reflect the document as the agent sees it on disk.
-          const xmlFragment = session.dc.document.getXmlFragment('default');
-          const ytext = session.dc.document.getText('source');
-          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
-          const currentBody = mdManager.serialize(
-            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-          );
-          const currentFull = prependFrontmatter(currentFm, currentBody);
+        onAgentWrite?.();
 
-          const pos =
-            offset == null
-              ? currentFull.indexOf(find)
-              : currentFull.slice(offset, offset + find.length) === find
-                ? offset
-                : -1;
-          if (pos === -1) {
-            if (offset == null) {
-              notFound = true;
-            } else {
-              staleTarget = true;
-            }
-            return;
-          }
+        const subscriberCount = getSubscriberCount(docName);
+        const systemSubscriberCount = getSystemSubscriberCount();
 
-          // Position-based FM-intersection check. The string-shape
-          // heuristic above handles yaml-style find strings; this catches
-          // the residual class where a non-yaml find (e.g. a single word
-          // like `draft`) happens to first-match in the FM region.
-          // `pos < currentFm.length` is the necessary-and-sufficient
-          // signal — FM is contiguous at doc start, so any match starting
-          // before the FM-end byte overlaps the FM region.
-          if (pos < currentFm.length) {
-            fmIntersect = true;
-            return;
-          }
-
-          // Splice at the character level. Only body-region patches
-          // reach here, so this branch never modifies the FM.
-          // `applyAgentMarkdownWrite` reads the current FM from the
-          // YAML region of Y.Text and writes the canonical full
-          // document back, so a body-only payload here keeps the
-          // existing FM intact.
-          const newFull =
-            currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          // FM lives in the YAML region of Y.Text directly (D8); body-only
-          // payloads to applyAgentMarkdownWrite preserve the existing FM
-          // because the helper reads `existingFm` from Y.Text.
-          const { body: newBody } = stripFrontmatter(newFull);
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            newBody,
-            'replace',
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-              : undefined,
-          );
-
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Patched (${agentName}): ${find.slice(0, 50)}`,
+        // Once-per-session attach hint counter (matches handleAgentWriteMd).
+        if (systemSubscriberCount === 0) {
+          hintEmittedCounter().add(1, {
+            'shadow.writer': 'agent',
+            'agent.type': resolveAgentType(clientName),
           });
-        }, session.origin);
-        if (!notFound && !staleTarget && !fmIntersect) {
-          // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 + FM-intersect 400 so adoption
-          // rate reflects successful writes, not total attempts.
-          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
-          recordContributor(
-            docName,
-            agentId,
-            agentName,
-            colorSeed,
-            undefined,
-            buildAgentActor({ clientName, clientVersion, label }),
-            storedSummary,
-          );
-          incrementAgentWriteCalls();
-          countNormalizedSummary(normalizedSummary);
         }
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
 
-      if (staleTarget) {
-        json(res, 409, {
-          ok: false,
-          error: 'Target text no longer matches at the requested offset',
+        const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, {
+          timestamp,
+          subscriberCount,
+          systemSubscriberCount,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
         });
-        return;
-      }
-      if (notFound) {
-        json(res, 404, { ok: false, error: 'Text not found in document' });
-        return;
-      }
-      if (fmIntersect) {
-        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
-        json(res, 400, {
-          ok: false,
-          error:
-            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
-        });
-        return;
-      }
-
-      flushDocToGit(docName, 'agent-patch');
-
-      // Focus (attribution) on __system__ awareness. Presence is separately
-      // maintained via setPresence/touchMode pairs above.
-      agentFocusBroadcaster?.setFocus(agentId, {
-        agentName,
-        currentDoc: docName,
-        writeKind: 'edit',
-        ts: Date.now(),
-      });
-      onAgentWrite?.();
-
-      const subscriberCount = getSubscriberCount(docName);
-      const systemSubscriberCount = getSystemSubscriberCount();
-
-      // Once-per-session attach hint counter (matches handleAgentWriteMd).
-      if (systemSubscriberCount === 0) {
-        hintEmittedCounter().add(1, {
-          'shadow.writer': 'agent',
-          'agent.type': resolveAgentType(clientName),
+      } catch (e) {
+        log.error({ err: e }, '[agent-patch] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-patch',
+          cause: e,
         });
       }
-
-      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
-
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        subscriberCount,
-        systemSubscriberCount,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-patch] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-patch', method: 'POST' },
+  );
 
   /**
    * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
@@ -2941,136 +2889,122 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
    * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
    */
-  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawBody: Buffer;
+  const handleAgentUndo = withValidation(
+    AgentUndoRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: Record<string, unknown>;
-      try {
-        body =
-          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
+        // FR-5, D42: extract identity from body so shadow-repo attribution
+        // threads through the undo write the same way it does through
+        // agent-write / agent-write-md / agent-patch. `agentId` is the
+        // broadcaster-map key (prefixed via `toBroadcasterKey`) — use it
+        // for setPresence/touchMode so cleanup via the keepalive WS close
+        // handler finds the entry.
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
 
-      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
-      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
-      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
-      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body);
+        const rawDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(rawDocName);
 
-      const rawDocName =
-        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-undo' },
+          );
+          return;
+        }
 
-      const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined;
-      if (!connectionId) {
-        json(res, 400, { ok: false, error: 'connectionId required' });
-        return;
-      }
+        const { connectionId } = body;
 
-      const rawScope = body.scope;
-      // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
-      const scope: 'last' | 'session' =
-        rawScope === 'session' || rawScope === 'file' ? 'session' : 'last';
+        // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
+        const scope: 'last' | 'session' =
+          body.scope === 'session' || body.scope === 'file' ? 'session' : 'last';
 
-      if (!sessionManager.hasSession(docName, connectionId)) {
-        json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
-        return;
-      }
+        if (!sessionManager.hasSession(docName, connectionId)) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:no-active-session',
+            'No active session for this connectionId and docName.',
+            { handler: 'agent-undo' },
+          );
+          return;
+        }
 
-      const session = await sessionManager.getSession(docName, connectionId);
+        const session = await sessionManager.getSession(docName, connectionId);
 
-      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
-      // instead of the per-doc awareness — the per-doc awareness has ONE
-      // shared clientID across N concurrent agents and would stomp. The
-      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
-      // so the keepalive-WS close handler's cleanup path finds the entry.
-      //
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and the undo
-      // transact flips the badge back to idle rather than wedging it on 'writing'.
-      let undone = false;
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
+        // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+        // instead of the per-doc awareness — the per-doc awareness has ONE
+        // shared clientID across N concurrent agents and would stomp.
+        //
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and the undo
+        // transact flips the badge back to idle rather than wedging it on 'writing'.
+        let undone = false;
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
+          // applyAgentUndo wraps um.undo() + composition in one transact under
+          // session.undoOrigin (paired: true) so Observer A/B short-circuit.
+          undone = applyAgentUndo(
+            session,
+            scope,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
+          // FR-5 / D42: record attribution for the undo write so the shadow-repo
+          // L2 drain fans it out under this session's writer-id. Skip when the
+          // UM stack was empty — a no-op undo has no mutation to attribute.
+          if (undone) {
+            recordContributor(
+              docName,
+              connectionId,
+              agentName,
+              colorSeed,
+              undefined,
+              buildAgentActor({ clientName, clientVersion, label }),
+            );
+          }
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        if (undone) {
+          flushDocToGit(docName, 'agent-undo');
+        }
+
+        agentFocusBroadcaster?.setFocus(connectionId, {
+          agentName: connectionId,
           currentDoc: docName,
-          mode: 'writing',
+          writeKind: 'undo',
           ts: Date.now(),
         });
-        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
-        // applyAgentUndo wraps um.undo() + composition in one transact under
-        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        // Pass embedResolver so the post-undo body re-parse maps
-        // `![[photo.png]]` → resolved src on PM image nodes — matching
-        // applyAgentMarkdownWrite's composition contract so the XmlFragment
-        // shape stays equivalent to a fresh load of the same body.
-        undone = applyAgentUndo(
-          session,
-          scope,
-          options.resolveEmbed
-            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-            : undefined,
-        );
-        // FR-5 / D42: record attribution for the undo write so the shadow-repo
-        // L2 drain fans it out under this session's writer-id. Skip when the
-        // UM stack was empty — a no-op undo has no mutation to attribute.
-        if (undone) {
-          recordContributor(
-            docName,
-            connectionId,
-            agentName,
-            colorSeed,
-            undefined,
-            buildAgentActor({ clientName, clientVersion, label }),
-          );
-        }
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, { docName, scope, undone });
+      } catch (e) {
+        log.error({ err: e }, '[agent-undo] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-undo',
+          cause: e,
+        });
       }
-
-      if (undone) {
-        flushDocToGit(docName, 'agent-undo');
-      }
-
-      agentFocusBroadcaster?.setFocus(connectionId, {
-        agentName: connectionId,
-        currentDoc: docName,
-        writeKind: 'undo',
-        ts: Date.now(),
-      });
-
-      json(res, 200, { ok: true, docName, scope, undone });
-    } catch (e) {
-      log.error({ err: e }, '[agent-undo] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-undo', method: 'POST' },
+  );
 
   /**
    * GET /api/agent-activity?agentId=<connId>
@@ -6416,7 +6350,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Response: the `BuildAndOpenSkillResult` shape verbatim.
    */
   async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'install-skill' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;

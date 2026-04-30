@@ -673,7 +673,14 @@ export async function agentWriteMd(
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
-/** POST to agent-patch endpoint (find-and-replace) */
+/** POST to agent-patch endpoint (find-and-replace).
+ *
+ * Post-D22 the wire shape is RFC 9457 Problem Details on errors — read
+ * `body.title` for the human-readable string. The helper preserves the
+ * `error` field name on its return shape so existing callers stay
+ * source-stable; the value is sourced from `body.title` (RFC 9457) with
+ * a legacy `body.error` fallback for any not-yet-migrated handler.
+ */
 export async function agentPatch(
   port: number,
   find: string,
@@ -686,8 +693,8 @@ export async function agentPatch(
     body: JSON.stringify({ find, replace, docName }),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, status: res.status, error: body.error ?? 'unknown' };
+    const body = (await res.json().catch(() => ({}))) as { title?: string; error?: string };
+    return { ok: false, status: res.status, error: body.title ?? body.error ?? 'unknown' };
   }
   return { ok: true };
 }
