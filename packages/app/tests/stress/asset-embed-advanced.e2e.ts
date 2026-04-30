@@ -51,10 +51,11 @@ test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / 
     await page.waitForSelector('.ProseMirror');
 
     // Invoke the managed-rename endpoint directly — no UI dependency.
-    const renameRes = await page.request.post('/api/rename', {
+    const renameRes = await page.request.post('/api/rename-path', {
       data: {
-        docName: `docs/${origDoc}`,
-        newDocName: `archive/2026/${origDoc}`,
+        kind: 'file',
+        fromPath: `docs/${origDoc}.md`,
+        toPath: `archive/2026/${origDoc}.md`,
       },
     });
     expect(renameRes.ok()).toBe(true);
@@ -93,10 +94,11 @@ test.describe('asset-embed — rename stability (SPEC §6 FR-7 / P5.1 / P5.1a / 
     await waitForProvider(page);
     await page.waitForSelector('.ProseMirror');
 
-    const renameRes = await page.request.post('/api/rename', {
+    const renameRes = await page.request.post('/api/rename-path', {
       data: {
-        docName: `docs/${origDoc}`,
-        newDocName: `archive/2026/${origDoc}`,
+        kind: 'file',
+        fromPath: `docs/${origDoc}.md`,
+        toPath: `archive/2026/${origDoc}.md`,
       },
     });
     expect(renameRes.ok()).toBe(true);

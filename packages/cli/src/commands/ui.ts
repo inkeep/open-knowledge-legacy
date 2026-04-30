@@ -604,7 +604,7 @@ export function uiCommand(getConfig: () => Config): Command {
           // mid-shutdown throw still removes the lockfile. Inverting this
           // (lock first, socket close second) re-introduces the stale-lock
           // + EADDRINUSE race the zero-ceremony design set out to eliminate.
-          // Matches the shutdown pattern in `packages/server/src/standalone.ts`.
+          // Matches the shutdown pattern in `packages/server/src/server-factory.ts`.
           handle.detachSafetyNet();
           const finish = () => {
             try {

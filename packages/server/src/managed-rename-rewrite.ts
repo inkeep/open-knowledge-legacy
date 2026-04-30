@@ -441,3 +441,145 @@ export function rewriteMarkdownLinksForDocumentRename(
 
   return { markdown: rewrittenMarkdown, rewrites };
 }
+
+function rewriteOutboundMarkdownLinksInLine(
+  line: string,
+  oldSourceDocName: string,
+  newSourceDocName: string,
+): RenameRewriteResult {
+  let rewritten = '';
+  let rewrites = 0;
+  let idx = 0;
+  const prefixLength = leadingMarkdownPrefixLength(line);
+
+  if (prefixLength > 0) {
+    rewritten += line.slice(0, prefixLength);
+    idx = prefixLength;
+  }
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      rewritten += line.slice(idx, idx + 2);
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        rewritten += line.slice(idx, inlineCode.nextIndex);
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    // Wiki links resolve via the basename index, not relative paths — leave
+    // them alone here. Self-rename of `[[oldDocName]]` → `[[newDocName]]` is
+    // handled by `rewriteWikiLinksForDocumentRename` in the self-rename pass.
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        rewritten += line.slice(idx, wikiLink.nextIndex);
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    // Image refs are recomputed by `rewriteMarkdownLinksInLine`'s
+    // `isContainingDocMove` branch in the self-rename pass — skip here so
+    // we don't double-recompute (which would treat an already-rewritten
+    // href as if it were still anchored to the old source dir).
+    if (line[idx] === '!' && line[idx + 1] === '[') {
+      const imageRef = readImageRef(line, idx);
+      if (imageRef) {
+        rewritten += line.slice(idx, imageRef.nextIndex);
+        idx = imageRef.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[') {
+      const markdownLink = readMarkdownLink(line, idx);
+      if (markdownLink) {
+        const resolved = resolveInternalHref(markdownLink.href, oldSourceDocName);
+        if (resolved !== null) {
+          const nextHref = recomputeRelativeMarkdownHref(
+            markdownLink.href,
+            newSourceDocName,
+            resolved.docName,
+          );
+          if (nextHref !== markdownLink.href) {
+            const hrefRaw =
+              markdownLink.hrefRaw.startsWith('<') && markdownLink.hrefRaw.endsWith('>')
+                ? `<${nextHref}>`
+                : nextHref;
+            rewritten += `[${markdownLink.text}](${hrefRaw}${markdownLink.titleSuffix})`;
+            rewrites++;
+          } else {
+            rewritten += line.slice(idx, markdownLink.nextIndex);
+          }
+        } else {
+          rewritten += line.slice(idx, markdownLink.nextIndex);
+        }
+        idx = markdownLink.nextIndex;
+        continue;
+      }
+    }
+
+    rewritten += line[idx];
+    idx++;
+  }
+
+  return { markdown: rewritten, rewrites };
+}
+
+/**
+ * Recompute relative outbound markdown-link hrefs in a document whose own
+ * location moved from `oldSourceDocName` to `newSourceDocName`. Image refs
+ * and self-targeting wiki/markdown links are NOT handled here — they're
+ * covered by `rewriteMarkdownLinksForDocumentRename` /
+ * `rewriteWikiLinksForDocumentRename` invoked with the same (old, new) pair
+ * (the self-rename pass in `applyRenameMap`).
+ *
+ * No-op when the dirname doesn't change — relative paths to non-renamed
+ * targets stay correct on a same-folder rename.
+ */
+export function rewriteOutboundMarkdownLinksForSourceMove(
+  markdown: string,
+  oldSourceDocName: string,
+  newSourceDocName: string,
+): RenameRewriteResult {
+  if (posix.dirname(oldSourceDocName) === posix.dirname(newSourceDocName)) {
+    return { markdown, rewrites: 0 };
+  }
+
+  let fence: FenceState | null = null;
+  let rewrites = 0;
+
+  const rewrittenMarkdown = splitLines(markdown)
+    .map(({ line, ending }) => {
+      if (fence) {
+        if (isFenceClose(line, fence)) {
+          fence = null;
+        }
+        return `${line}${ending}`;
+      }
+
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+        return `${line}${ending}`;
+      }
+
+      const rewrittenLine = rewriteOutboundMarkdownLinksInLine(
+        line,
+        oldSourceDocName,
+        newSourceDocName,
+      );
+      rewrites += rewrittenLine.rewrites;
+      return `${rewrittenLine.markdown}${ending}`;
+    })
+    .join('');
+
+  return { markdown: rewrittenMarkdown, rewrites };
+}

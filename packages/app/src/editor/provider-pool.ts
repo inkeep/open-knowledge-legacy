@@ -1462,6 +1462,64 @@ export class ProviderPool {
   }
 
   /**
+   * Delete the IndexedDB for `docName` and close any open pool entry.
+   * Used by rename flows so a future open at this name (e.g., the user
+   * moves a doc back to a previously-occupied folder) starts from a clean
+   * persistence — without this, the IDB rows from the prior session at
+   * the same name would hydrate the new Y.Doc with foreign-clientID items
+   * before sync runs, and merging those items with the server's freshly-
+   * loaded Y.Doc (no shared ancestor) appends rather than reconciles,
+   * producing visible content duplication.
+   *
+   * Three cases:
+   *   1. In pool with attached persistence — `clearData()` via the live
+   *      instance (which also closes the IDB connection), then close the
+   *      entry.
+   *   2. In pool without persistence (deferred attach hasn't fired) —
+   *      close only; there is no IDB yet.
+   *   3. Not in pool — construct the canonical IDB name from the cached
+   *      branch + serverInstanceId and `deleteDatabase` directly. No-op
+   *      when either is unknown (no IDB could exist for that scope).
+   *
+   * Best-effort: failures warn but do not throw. Awaiting the returned
+   * promise guarantees the IDB is gone before the caller proceeds.
+   */
+  async closeAndClearPersistence(docName: string): Promise<void> {
+    const entry = this.entries.get(docName);
+    if (entry?.kind === 'active' && entry.persistence !== null) {
+      try {
+        await entry.persistence.clearData();
+      } catch (err) {
+        console.warn(`[ProviderPool] clearData on rename failed for ${docName}:`, err);
+      }
+      this.close(docName);
+      return;
+    }
+    if (entry) {
+      this.close(docName);
+    }
+
+    const branch = this.getOrInitObservedBranch();
+    const serverInstanceId = this.cachedServerInstanceId;
+    if (branch === null || serverInstanceId === null) return;
+
+    const dbName = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.deleteDatabase(dbName);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+        req.onblocked = () => {
+          console.warn(`[ProviderPool] IDB delete blocked for ${dbName}`);
+          reject(new Error(`idb-clear-blocked: ${dbName}`));
+        };
+      });
+    } catch (err) {
+      console.warn(`[ProviderPool] IDB delete on rename failed for ${dbName}:`, err);
+    }
+  }
+
+  /**
    * Drop every entry's pending replay buffer. Called by the
    * `branch-switched` invalidation flow (`branch-invalidation.ts`) so that
    * cross-branch policy ("edits authored against branch A are NOT valid

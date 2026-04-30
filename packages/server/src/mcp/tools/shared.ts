@@ -300,3 +300,26 @@ export async function httpPost(
     return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
   }
 }
+
+/**
+ * Structured collision pair returned by `POST /api/rename-path` when two
+ * affected docs would resolve to the same destination. Both rename tools
+ * surface this in their error response so callers can render the offending
+ * pairs without re-parsing the human-readable error message.
+ */
+export interface RenameCollisionPair {
+  existing: string;
+  incoming: string;
+  to: string;
+}
+
+export function parseRenameCollidingPairs(value: unknown): RenameCollisionPair[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const { existing, incoming, to } = entry as Record<string, unknown>;
+    return typeof existing === 'string' && typeof incoming === 'string' && typeof to === 'string'
+      ? [{ existing, incoming, to }]
+      : [];
+  });
+}

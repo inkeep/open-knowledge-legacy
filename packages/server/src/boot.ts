@@ -27,7 +27,7 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { createMcpHttpHandler } from './mcp-http.ts';
 import { mountMcpAndApi } from './mcp-mount.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
-import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** 30 minutes — default idle threshold. */

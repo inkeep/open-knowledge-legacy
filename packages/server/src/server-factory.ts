@@ -1557,13 +1557,22 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       const recovery = recoverPendingManagedRename(contentDir);
       if (recovery.recovered && recovery.journal) {
+        const fromPath =
+          recovery.journal.version === 2
+            ? recovery.journal.fromPath
+            : recovery.journal.sourceDocName;
+        const toPath =
+          recovery.journal.version === 2
+            ? recovery.journal.toPath
+            : recovery.journal.destinationDocName;
         log.warn(
           {
-            sourceDocName: recovery.journal.sourceDocName,
-            destinationDocName: recovery.journal.destinationDocName,
+            journalVersion: recovery.journal.version,
+            fromPath,
+            toPath,
             restoredDocNames: recovery.restoredDocNames,
           },
-          `[managed-rename] recovered pending rename ${recovery.journal.sourceDocName} -> ${recovery.journal.destinationDocName}`,
+          `[managed-rename] recovered pending rename ${fromPath} -> ${toPath}`,
         );
       }
     } catch (err) {

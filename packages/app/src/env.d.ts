@@ -59,9 +59,4 @@ declare namespace globalThis {
    * post-sync reconnect paths (F8 acceptance criterion).
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
-  /**
-   * Test-only hook: set the pinned doc via the DocumentContext API without
-   * reaching into `localStorage` internals. Pass `null` to unpin.
-   */
-  var __test_setPin: ((docName: string | null) => void) | undefined;
 }

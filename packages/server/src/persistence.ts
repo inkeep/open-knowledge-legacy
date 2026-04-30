@@ -179,8 +179,8 @@ export interface PersistenceOptions {
    * any updates received after capture but before the rename completes
    * are excluded by construction, matching the actual durable state.
    *
-   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
-   * boot. Omitted in plugin mode where no CC1Broadcaster is available
+   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in boot.
+   * Omitted in plugin mode where no CC1Broadcaster is available
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
@@ -193,7 +193,7 @@ export interface PersistenceOptions {
   configHomedirOverride?: string;
   /**
    * Fired after the L3 persistence-hook reverts an invalid Y.Text
-   * mutation on a config doc. Wired in standalone boot to
+   * mutation on a config doc. Wired in boot to
    * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
    * so any open Settings pane sees the rejection toast. Omitted in
    * plugin mode where no CC1Broadcaster is available.
@@ -310,7 +310,7 @@ export interface PersistenceHandle {
   waitForPendingCommits: () => Promise<void>;
   /**
    * Config-doc persistence context (US-007). Exposed so the file-watcher
-   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * orchestration in `server-factory.ts` can call `applyExternalConfigChange`
    * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
    * Treat as read-only — direct mutation breaks the L3 invariant that the
    * cache only updates after a successful persist.
@@ -358,7 +358,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
-  // so that standalone.ts and persistence stay in sync.
+  // so that server-factory.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -703,6 +703,32 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       'persistence.onStoreDocument',
       { attributes: { 'doc.name': documentName } },
       async () => {
+        // Lifecycle guard: when the file watcher saw an external delete or
+        // rename, the disk-event handler in standalone.ts sets the doc's
+        // lifecycle status to mark the Y.Doc as no-longer-tracking-disk.
+        // But `unloadDocument` does NOT cancel debounced stores already
+        // queued from prior transactions — and any in-flight rewrite that
+        // mutated the Y.Doc just before the rm/mv leaves a pending store.
+        // Without this short-circuit, that store fires, serializes the
+        // in-memory state, and writes it via `tracedWriteFileSync` —
+        // recreating the file at the OLD path. The CRDT-ghost behavior
+        // the agent sees ("rm couldn't kill them, the CRDT kept
+        // resurrecting them on disk") is exactly this race.
+        //
+        // Statuses guarded:
+        //   - 'deleted-upstream': file removed externally; Y.Doc must
+        //     not write to the now-empty path.
+        //   - 'renamed': file moved externally; the old docName must
+        //     not get rewritten — the new docName has its own Y.Doc.
+        const lifecycleStatus = document.getMap('lifecycle').get('status');
+        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+          log.info(
+            { documentName, lifecycleStatus },
+            `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
+          );
+          return;
+        }
+
         // Atomic pre-write snapshot — `sv` and `json` MUST be captured
         // at the same synchronous instant. See
         // `captureDocSnapshotForPersistence` for the timing contract;

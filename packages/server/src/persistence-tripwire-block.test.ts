@@ -16,7 +16,7 @@ import { updateYFragment } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import type * as Y from 'yjs';
 import { mdManager, schema } from './md-manager.ts';
-import { createServer } from './standalone.ts';
+import { createServer } from './server-factory.ts';
 
 const FIXTURE_DIR = resolve(import.meta.dirname, 'persistence-tripwire.fixtures');
 

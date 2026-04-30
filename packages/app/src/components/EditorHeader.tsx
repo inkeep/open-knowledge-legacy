@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
+import { FolderOpen, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -72,7 +72,6 @@ interface EditorHeaderProps {
   onSignIn?: () => void;
   onSetIdentity?: () => void;
   onOpenConflictResolver?: () => void;
-  onOpenClone?: () => void;
 }
 
 export function EditorHeader({
@@ -83,9 +82,8 @@ export function EditorHeader({
   onSignIn,
   onSetIdentity,
   onOpenConflictResolver,
-  onOpenClone,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
+  const { activeDocName, activeProvider, activeTarget, closeAndClearForRename } =
     useDocumentContext();
   const { pageMeta } = usePageList();
   const { state: sidebarState } = useSidebar();
@@ -117,13 +115,7 @@ export function EditorHeader({
   const pathPrefix =
     activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
   const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
-  const isPinned = pinnedDoc !== null;
 
-  function togglePin() {
-    if (!activeDocName) return;
-    if (isPinned) unpin();
-    else pin(activeDocName);
-  }
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -234,10 +226,10 @@ export function EditorHeader({
     setRenameError(null);
 
     try {
-      const res = await fetch('/api/rename', {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: docName, newDocName }),
+        body: JSON.stringify({ kind: 'file', fromPath: docName, toPath: newDocName }),
       });
 
       // Post-await cancel check: if the user navigated while the fetch was in
@@ -292,7 +284,19 @@ export function EditorHeader({
       const renamed = raw.renamed;
       const nextActiveDocName = remapActiveDocName(docName, renamed);
 
-      for (const entry of renamed) closeDocument(entry.fromDocName);
+      // Wipe IDB for both ends of every rename pair before navigation. The
+      // `to` clear catches the move-back-to-previous-name case where the
+      // destination already had IDB rows from an earlier session — opening
+      // into that stale IDB would hydrate the new Y.Doc with foreign-
+      // clientID content and union-merge with the server's freshly-loaded
+      // body, appending the stale content. See provider-pool's
+      // `closeAndClearPersistence` for the bug-class detail.
+      await Promise.all(
+        renamed.flatMap((entry) => [
+          closeAndClearForRename(entry.fromDocName),
+          closeAndClearForRename(entry.toDocName),
+        ]),
+      );
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
       setIsRenaming(false);
@@ -399,36 +403,6 @@ export function EditorHeader({
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
-        {activeDocName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground"
-                onClick={togglePin}
-                aria-label={
-                  isPinned
-                    ? 'Unpin — resume following agent'
-                    : 'Pin this doc — stop following agent'
-                }
-                aria-pressed={isPinned}
-                data-pinned={isPinned ? 'true' : 'false'}
-              >
-                {isPinned ? (
-                  <Pin className="size-4 text-foreground" fill="currentColor" />
-                ) : (
-                  <PinOff className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isPinned
-                ? 'Pinned — click to resume following agent navigation'
-                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
-            </TooltipContent>
-          </Tooltip>
-        )}
         {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
@@ -488,22 +462,6 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {onOpenClone && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Clone from GitHub"
-                onClick={onOpenClone}
-                className="text-muted-foreground"
-              >
-                <GitFork className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Clone from GitHub…</TooltipContent>
-          </Tooltip>
-        )}
         {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
