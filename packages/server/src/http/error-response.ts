@@ -12,9 +12,13 @@
  * log.
  *
  * Inline `json(res, NNN, { ok: false, error: '...' })` calls are not
- * permitted in `api-extension.ts` — `error-envelope-coverage.test.ts`
- * (FR17) gates the migration via an allowlist that shrinks per cluster
- * PR until empty.
+ * permitted in `api-extension.ts`, and inline `json(res, NNN, { ok: true, ... })`
+ * success wrappers are not permitted either (D22 drops the `ok: true`
+ * wrapper from success bodies). `error-envelope-coverage.test.ts` runs in
+ * fail-on-any-occurrence mode: it AST-scans `api-extension.ts` for both
+ * inline patterns and fails the build with file:line + handler name on any
+ * match. New handlers go through `withValidation(...) + errorResponse(...)`
+ * from day one.
  */
 
 import { randomUUID } from 'node:crypto';

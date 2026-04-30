@@ -274,7 +274,7 @@ Rule of thumb: if the "why" is the task ticket, a review suggestion, or a spec p
 ## See also
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — full system design (CRDT bridge, observers, markdown pipeline)
-- [`PRECEDENTS.md`](./PRECEDENTS.md) — 36 numbered architectural precedents + rationale
+- [`PRECEDENTS.md`](./PRECEDENTS.md) — numbered architectural precedents + rationale
 - Per-package docs — [`packages/server/README.md`](packages/server/README.md), [`packages/desktop/README.md`](packages/desktop/README.md), [`packages/core/src/bridge/README.md`](packages/core/src/bridge/README.md), `packages/core/tests/{health,perf}/README.md`, `packages/app/tests/perf/README.md`
 - [`reports/CATALOGUE.md`](reports/CATALOGUE.md) — \~130 prior-art research reports
 - `specs/` — per-feature specs (datestamped subdirs)

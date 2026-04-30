@@ -119,6 +119,8 @@ Every handler in `src/api-extension.ts` shares one shape: errors emit RFC 9457 p
 
 The canonical pattern guide lives at [`src/http/README.md`](src/http/README.md). The two helpers — `errorResponse` (`src/http/error-response.ts`) and `withValidation` (`src/http/request-validation.ts`) — are the only sanctioned sites; an inline `json(res, NNN, { ok: false, ... })` fails CI under `error-envelope-coverage.test.ts`. Closed-enum URN tokens (`urn:ok:error:<kebab>` from `ProblemTypeSchema`) and per-handler `XyzRequestSchema` / `XyzSuccessSchema` triples live in `@inkeep/open-knowledge-core` (`packages/core/src/schemas/api.ts`). Switch exhaustiveness over `ProblemType` (and any peer closed enum) is structurally enforced by `packages/app/tests/integration/exhaustiveness-coverage.test.ts` via `assertNeverProblemType` / `assertNeverLinkTarget` defaults. Telemetry: `ok.api.error.count{type, handler}`. Pattern is canonical per AGENTS.md precedent #38.
 
+---
+
 ## Agent-write HTTP surface (identity-foundation)
 
 Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this is the canonical identity boundary (precedent #24, D42). The request body carries `{agentId, agentName, colorSeed, clientName}`; `AgentSessionManager.getSession(docName, agentId, identity)` returns the `SessionRecord` whose `origin` is a frozen per-session `LocalTransactionOrigin` (precedent #1, D2). All Y.Doc mutations from that session pass through `session.dc.document.transact(fn, session.origin)` — never `session.dc.transact(fn)` (STOP rule in AGENTS.md §Known Pitfalls).
