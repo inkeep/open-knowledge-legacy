@@ -152,7 +152,7 @@ describe('set_folder_rule tool', () => {
       scope: string;
     };
     expect(success.ok).toBe(true);
-    expect(success.scope).toBe('workspace');
+    expect(success.scope).toBe('project');
     expect(success.applied).toEqual(['folders']);
   });
 

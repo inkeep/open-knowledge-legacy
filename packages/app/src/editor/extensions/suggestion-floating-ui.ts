@@ -1,4 +1,4 @@
-import { autoUpdate, computePosition, flip, offset, size } from '@floating-ui/dom';
+import { autoUpdate, computePosition, flip, offset, shift, size } from '@floating-ui/dom';
 import type { SuggestionProps } from '@tiptap/suggestion';
 
 export interface SuggestionPositionState {
@@ -75,6 +75,11 @@ export function createSuggestionPopup(
       middleware: [
         offset(4),
         flip(),
+        // Keep the popup inside the viewport when its width pushes past the
+        // right edge — required since the slash-menu preview panel widened the
+        // popup to ~490px, where right-half cursor positions or narrow viewports
+        // would otherwise clip the preview.
+        shift({ padding: 8 }),
         size({
           apply({ availableHeight }) {
             if (popup.isConnected) {

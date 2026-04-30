@@ -197,7 +197,7 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   return {
     isExcluded(relativePath: string): boolean {
       // (0) Reserved system + config doc names are always excluded
-      // (e.g. __system__.md / __config__/workspace.md / __user__/config.yml.md)
+      // (e.g. __system__.md / __config__/project.md / __user__/config.yml.md)
       const docName = stripDocExtension(relativePath);
       if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
 

@@ -168,6 +168,19 @@ describe('startUiServer', () => {
     expect([200, 404]).toContain(status);
   });
 
+  test('GET / serves the SPA shell (rewrites to /index.html)', async () => {
+    // Regression: sirv's `single: true` SPA fallback was silently disabled by
+    // `extensions: []` (set so `/foo` doesn't transparently serve `/foo.html`).
+    // The request handler now rewrites `/` and `''` to `/index.html` before
+    // any middleware so the entry path always loads the SPA shell.
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const root = await get(handle.port, '/');
+    const indexHtml = await get(handle.port, '/index.html');
+    // Either both succeed (worktree has dist/) or both 404 (no dist), but
+    // they MUST agree — `/` must not 404 while `/index.html` succeeds.
+    expect(root.status).toBe(indexHtml.status);
+  });
+
   test('release() removes the ui.lock', async () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const lockPath = resolve(lockDir, 'ui.lock');

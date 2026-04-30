@@ -23,7 +23,7 @@ afterEach(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });
 
-function workspaceConfigPath(): string {
+function projectConfigPath(): string {
   return join(testDir, '.open-knowledge', 'config.yml');
 }
 
@@ -31,13 +31,13 @@ function userConfigPath(homeOverride: string): string {
   return join(homeOverride, '.open-knowledge', 'config.yml');
 }
 
-describe('writeConfigPatch — workspace scope', () => {
-  test('writes a fresh workspace config when none exists (lazy first-write)', async () => {
+describe('writeConfigPatch — project scope', () => {
+  test('writes a fresh project config when none exists (lazy first-write)', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
 
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { content: { dir: 'docs' } },
     });
 
@@ -45,13 +45,13 @@ describe('writeConfigPatch — workspace scope', () => {
     if (!result.ok) throw new Error('expected success');
     expect(result.created).toBe(true);
     expect(result.appliedPaths).toContain('content.dir');
-    expect(existsSync(workspaceConfigPath())).toBe(true);
-    const onDisk = readFileSync(workspaceConfigPath(), 'utf-8');
+    expect(existsSync(projectConfigPath())).toBe(true);
+    const onDisk = readFileSync(projectConfigPath(), 'utf-8');
     // Lazy first-write writes the magic-comment header pointing at the
-    // workspace per-scope schema under the schema-major path (autocomplete
-    // only suggests workspace fields here).
+    // project per-scope schema under the schema-major path (autocomplete
+    // only suggests project fields here).
     expect(onDisk).toMatch(
-      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.workspace\.schema\.json/,
+      /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.project\.schema\.json/,
     );
     expect(onDisk).toContain('content:');
     expect(onDisk).toContain('dir: docs');
@@ -61,16 +61,16 @@ describe('writeConfigPatch — workspace scope', () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { content: { dir: '.' } },
     });
-    const stats = statSync(workspaceConfigPath());
+    const stats = statSync(projectConfigPath());
     // mode bits include the file-type bits; mask to permission-only
     const mode = stats.mode & 0o777;
     expect(mode).toBe(0o644);
   });
 
-  test('updates an existing workspace config and preserves comments', async () => {
+  test('updates an existing project config and preserves comments', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     const original = `# user-written comment at top
 content:
@@ -81,18 +81,18 @@ content:
 mcp:
   autoStart: true
 `;
-    writeFileSync(workspaceConfigPath(), original, 'utf-8');
+    writeFileSync(projectConfigPath(), original, 'utf-8');
 
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { mcp: { autoStart: false } },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected success');
     expect(result.created).toBe(false);
 
-    const onDisk = readFileSync(workspaceConfigPath(), 'utf-8');
+    const onDisk = readFileSync(projectConfigPath(), 'utf-8');
     expect(onDisk).toContain('# user-written comment at top');
     expect(onDisk).toContain('# inline comment about dir');
     expect(onDisk).toContain('autoStart: false');
@@ -102,20 +102,20 @@ mcp:
   test('null in patch deletes the field (RFC 7396 spirit)', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     writeFileSync(
-      workspaceConfigPath(),
+      projectConfigPath(),
       `mcp:\n  autoStart: false\n  tools:\n    search:\n      maxResults: 100\n`,
       'utf-8',
     );
 
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       // biome-ignore lint/suspicious/noExplicitAny: testing null-as-clear semantics
       patch: { mcp: { autoStart: null as any } },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected success');
-    const onDisk = readFileSync(workspaceConfigPath(), 'utf-8');
+    const onDisk = readFileSync(projectConfigPath(), 'utf-8');
     expect(onDisk).not.toContain('autoStart:');
     // search.maxResults still there — patch only touched mcp.autoStart
     expect(onDisk).toContain('maxResults: 100');
@@ -161,7 +161,7 @@ describe('writeConfigPatch — validation failures', () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { theme: 42 as any } },
     });
@@ -173,14 +173,14 @@ describe('writeConfigPatch — validation failures', () => {
     if (result.error.code !== 'SCHEMA_INVALID') throw new Error('expected SCHEMA_INVALID');
     expect(result.error.issues.length).toBeGreaterThan(0);
     expect(result.error.issues[0].path).toContain('appearance');
-    expect(existsSync(workspaceConfigPath())).toBe(false);
+    expect(existsSync(projectConfigPath())).toBe(false);
   });
 
   test('invalid enum value → SCHEMA_INVALID; no fs write', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { editorModeDefault: 'vim' as any } },
     });
@@ -188,21 +188,21 @@ describe('writeConfigPatch — validation failures', () => {
     if (result.ok) throw new Error('expected failure');
     if (!isKnownConfigError(result.error)) throw new Error('expected known error');
     expect(result.error.code).toBe('SCHEMA_INVALID');
-    expect(existsSync(workspaceConfigPath())).toBe(false);
+    expect(existsSync(projectConfigPath())).toBe(false);
   });
 
   test('YAML with malformed syntax → YAML_PARSE; no fs write', async () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     // Tab character at start of a key value triggers a YAML parse error
     writeFileSync(
-      workspaceConfigPath(),
+      projectConfigPath(),
       '\tnot: valid\n: : :\n  - broken\n - "unterminated',
       'utf-8',
     );
 
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { content: { dir: '.' } },
     });
     expect(result.ok).toBe(false);
@@ -226,15 +226,15 @@ content:
 mcp:
   autoStart: true
 `;
-    writeFileSync(workspaceConfigPath(), original, 'utf-8');
+    writeFileSync(projectConfigPath(), original, 'utf-8');
 
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { mcp: { autoStart: false } },
     });
     expect(result.ok).toBe(true);
-    const onDisk = readFileSync(workspaceConfigPath(), 'utf-8');
+    const onDisk = readFileSync(projectConfigPath(), 'utf-8');
     expect(onDisk).toContain('pushIntervalSeconds: 30');
     expect(onDisk).toContain('enabled: true');
     expect(onDisk).toContain('autoStart: false');
@@ -246,13 +246,13 @@ describe('writeConfigPatch — Result type narrowing', () => {
     mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
     const result = await writeConfigPatch({
       cwd: testDir,
-      scope: 'workspace',
+      scope: 'project',
       patch: { content: { dir: '.' } },
     });
     if (result.ok) {
       // appliedPaths is on the success branch
       expect(Array.isArray(result.appliedPaths)).toBe(true);
-      expect(result.path).toBe(workspaceConfigPath());
+      expect(result.path).toBe(projectConfigPath());
     } else {
       // error is on the failure branch
       expect(result.error).toBeDefined();
@@ -261,10 +261,8 @@ describe('writeConfigPatch — Result type narrowing', () => {
 });
 
 describe('resolveConfigPath', () => {
-  test('workspace scope resolves to <cwd>/.open-knowledge/config.yml', () => {
-    expect(resolveConfigPath('workspace', '/abs/proj')).toBe(
-      '/abs/proj/.open-knowledge/config.yml',
-    );
+  test('project scope resolves to <cwd>/.open-knowledge/config.yml', () => {
+    expect(resolveConfigPath('project', '/abs/proj')).toBe('/abs/proj/.open-knowledge/config.yml');
   });
 
   test('user scope ignores cwd, uses homedirOverride', () => {

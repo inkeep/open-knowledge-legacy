@@ -8,7 +8,7 @@ const SAMPLE_PAYLOAD = {
   v: 1 as const,
   ch: 'config-validation-rejected' as const,
   seq: 1,
-  docName: '__config__/workspace' as const,
+  docName: '__config__/project' as const,
   error: { code: 'YAML_PARSE' as const, detail: 'unexpected token' },
 };
 

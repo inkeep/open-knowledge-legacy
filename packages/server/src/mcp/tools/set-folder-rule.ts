@@ -33,7 +33,7 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Upsert one or more folder rules in the workspace `folders[]` array.',
+  '[Operates on disk; no running OK server required] Upsert one or more folder rules in the project `folders[]` array.',
   '',
   'Folder rules apply default frontmatter (title / description / tags) to every doc whose path matches `match` (a glob like `specs/**` or `reports/*/**`). Use this tool to add a new rule, replace an existing one keyed by `match`, or rename via `new_match`.',
   '',
@@ -54,7 +54,7 @@ interface SetFolderRuleDeps {
   config: ConfigOrResolver;
   /**
    * Test-only: overrides `os.homedir()` for any user-scope write target.
-   * Production callers omit this. (set_folder_rule writes workspace by
+   * Production callers omit this. (set_folder_rule writes project by
    * default, but the deps surface stays consistent across the three
    * config tools.)
    */
@@ -89,7 +89,7 @@ const InputSchema = {
 const SuccessOutputSchema = z.object({
   ok: z.literal(true),
   applied: z.array(z.string()),
-  scope: z.literal('workspace'),
+  scope: z.literal('project'),
   path: z.string(),
   current: z.record(z.string(), z.unknown()),
 });
@@ -136,7 +136,7 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
           frontmatter: r.frontmatter,
           ...(r.new_match !== undefined ? { new_match: r.new_match } : {}),
         })),
-        scope: 'workspace',
+        scope: 'project',
         ...(deps.homedirOverride !== undefined ? { homedirOverride: deps.homedirOverride } : {}),
       });
 
@@ -158,7 +158,7 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
         result: {
           ok: true as const,
           applied: result.appliedPaths,
-          scope: 'workspace' as const,
+          scope: 'project' as const,
           path: result.path,
           // Mirror set_config's shape: agents inspect the merged effective
           // config (here, the post-upsert `folders[]` array among other

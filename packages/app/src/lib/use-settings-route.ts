@@ -2,8 +2,8 @@
  * Hash-based routing for the Settings pane.
  *
  * Recognized hash forms:
- *   `#settings`             → workspace tab (canonical synonym for `#settings/workspace`)
- *   `#settings/workspace`   → workspace tab
+ *   `#settings`             → project tab (canonical synonym for `#settings/project`)
+ *   `#settings/project`     → project tab
  *   `#settings/user`        → user tab
  *
  * Closing the pane navigates back via `history.back()` so the prior doc hash
@@ -18,11 +18,11 @@
 
 import { useEffect, useState } from 'react';
 
-export type SettingsScope = 'workspace' | 'user';
+export type SettingsScope = 'project' | 'user';
 
 /**
  * Canonical hash literal for opening Settings via an entry point. Sets to the
- * workspace tab via the bare-`#settings` synonym handled by `parseSettingsHash`.
+ * project tab via the bare-`#settings` synonym handled by `parseSettingsHash`.
  * Mirrors the `INSTALL_DIALOG_HASH = '#install-claude-desktop'` precedent in
  * App.tsx — entry points (HelpPopover, CommandPalette, Cmd-,, Electron menu)
  * all funnel through this single literal.
@@ -70,7 +70,7 @@ export function isSettingsShortcut(e: ShortcutEventLike): boolean {
 
 export function parseSettingsHash(hash: string): SettingsScope | null {
   const cleaned = hash.replace(/^#/, '');
-  if (cleaned === 'settings' || cleaned === 'settings/workspace') return 'workspace';
+  if (cleaned === 'settings' || cleaned === 'settings/project') return 'project';
   if (cleaned === 'settings/user') return 'user';
   return null;
 }

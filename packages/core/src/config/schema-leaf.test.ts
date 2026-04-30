@@ -44,14 +44,14 @@ describe('getLeafFieldMeta', () => {
     expect(meta).toEqual({
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     });
   });
 
-  test('returns metadata for the workspace-strict preview.baseUrl leaf', () => {
+  test('returns metadata for the project-strict preview.baseUrl leaf', () => {
     const meta = getLeafFieldMeta(ConfigSchema, ['preview', 'baseUrl']);
     expect(meta).toEqual({
-      scope: 'workspace',
+      scope: 'project',
       agentSettable: false,
     });
   });

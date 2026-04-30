@@ -6,7 +6,7 @@
  *
  * ENV and CLI flag overrides are applied in cli.ts after loading.
  *
- * Deep merge: workspace leaf values override user leaf values.
+ * Deep merge: project leaf values override user leaf values.
  * Arrays are replaced, not concatenated.
  *
  * Errors are emitted with source positions via yaml@2's `parseDocument`
@@ -15,7 +15,7 @@
  * The user-global file (`~/.open-knowledge/config.yml`) is read via
  * `readConfigSafely` (FR-35 / D57) — invalid files are sidelined to
  * `<path>.invalid-<ISO-timestamp>` and replaced with schema defaults so
- * OK can still boot. The workspace file errors loud (throws) — workspace
+ * OK can still boot. The project file errors loud (throws) — project
  * errors are user-fixable in-place and failing fast helps the user notice.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -84,7 +84,7 @@ interface LoadedYamlFile {
  * locate Zod issues back to file:line:col.
  *
  * On YAML syntax errors, logs a warning and returns `value: null` (existing
- * graceful-degradation semantic — broken workspace YAML doesn't block boot;
+ * graceful-degradation semantic — broken project YAML doesn't block boot;
  * the user fixes the file and reloads).
  */
 function loadYamlFile(filePath: string): LoadedYamlFile {
@@ -116,7 +116,7 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
 }
 
 /**
- * Map Zod issues to source-located `ConfigIssue`s using the workspace
+ * Map Zod issues to source-located `ConfigIssue`s using the project
  * Document AST when the path resolves there. User-global paths don't get
  * source-located here (the user-global file went through readConfigSafely
  * upstream and any user-global issues already triggered sideline + defaults
@@ -124,7 +124,7 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
  */
 function annotateIssuesWithSource(
   zodIssues: ReadonlyArray<{ path: PropertyKey[]; message: string; code: string }>,
-  workspaceFile: LoadedYamlFile,
+  projectFile: LoadedYamlFile,
 ): ConfigIssue[] {
   return zodIssues.map((issue) => {
     const path = issue.path.map((seg) =>
@@ -135,11 +135,11 @@ function annotateIssuesWithSource(
       message: issue.message,
       issueCode: issue.code,
     };
-    if (workspaceFile.doc !== null && workspaceFile.source !== null) {
+    if (projectFile.doc !== null && projectFile.source !== null) {
       const located = locateIssue({
-        file: workspaceFile.path,
-        source: workspaceFile.source,
-        doc: workspaceFile.doc,
+        file: projectFile.path,
+        source: projectFile.source,
+        doc: projectFile.doc,
         path,
       });
       if (located !== undefined) {
@@ -168,12 +168,12 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     // contributed nothing" and proceed with defaults at this layer.
   }
 
-  // Layer 2: workspace config — fail loud on schema-fail so the user notices.
-  const workspaceConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
-  const workspaceFile = loadYamlFile(workspaceConfigPath);
-  if (workspaceFile.value !== null) {
-    merged = deepMerge(merged, workspaceFile.value);
-    sources.push(workspaceConfigPath);
+  // Layer 2: project config — fail loud on schema-fail so the user notices.
+  const projectConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
+  const projectFile = loadYamlFile(projectConfigPath);
+  if (projectFile.value !== null) {
+    merged = deepMerge(merged, projectFile.value);
+    sources.push(projectConfigPath);
   }
 
   // Deprecation WARN — `upload.maxBytes` was removed when uploads switched
@@ -191,7 +191,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   // Validate the merged result with Zod.
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
-    const issues = annotateIssuesWithSource(result.error.issues, workspaceFile);
+    const issues = annotateIssuesWithSource(result.error.issues, projectFile);
     const error: ConfigValidationError = { code: 'SCHEMA_INVALID', issues };
     throw new Error(humanFormat(error));
   }

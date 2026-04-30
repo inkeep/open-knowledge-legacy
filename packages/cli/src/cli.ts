@@ -19,7 +19,7 @@ import type { Config } from '@inkeep/open-knowledge-server';
  * CLI entry point for @inkeep/open-knowledge.
  *
  * Commander.js v14 with `start` as the default command.
- * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
+ * Config loaded via preAction hook: CLI > ENV > project > user > Zod defaults.
  */
 import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
