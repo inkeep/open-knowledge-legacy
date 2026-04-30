@@ -325,8 +325,10 @@ export const DEFAULT_DEDUP_UI: DedupUIMode = 'toast';
 /**
  * Extensions that drop into the editor as `![[file.ext]]` wiki-embed refs.
  * Post-roundtrip, mdast→PM dispatches via `handlers.wikiLinkEmbed`:
- * image-ext → PM `image`; non-image wikiembed-ext → PM text+link mark with
- * `sourceForm: 'wikiembed'`; opaque ext → plain text+link.
+ * block-context image/video/audio → `jsxComponent('WikiEmbed*')`;
+ * everything else (inline embeds, allowlisted-but-no-descriptor cases) →
+ * PM text+link mark with `sourceForm: 'wikiembed'`; opaque ext → plain
+ * text+link.
  *
  * Kept as a ReadonlySet for O(1) membership check in the client emit path.
  * Identical contents (order-preserved as an array) are consumed by the

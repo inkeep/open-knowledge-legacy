@@ -178,6 +178,48 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     regressionTestRef:
       'packages/core/src/extensions/jsx-component.test.ts + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts',
   },
+  // 2026-04-29 — kill the inline-image PM-image-with-sourceForm half-measure.
+  // The three rendered:false attrs (`sourceForm`/`target`/`anchor`) on the
+  // PM `image` node existed solely to round-trip inline-position
+  // `text ![[file.png]] more text` through a PM `image` shape. Per the
+  // editor-survey research (~/.claude/reports/inline-media-editor-survey/REPORT.md):
+  // mid-paragraph inline image is supported only in word-processor-lineage
+  // editors (Word, Confluence, Google Docs); markdown-outliner editors
+  // (Obsidian/Logseq/Roam) treat it as partial-at-best, and inline mid-
+  // paragraph video/audio is unanimously unsupported across 15 surveyed
+  // editors. Decision: collapse to one consistent path — block-context
+  // promotes to `jsxComponent('WikiEmbed*')`, inline-position falls through
+  // to the link-mark chip (same treatment as inline `![[clip.mp4]]`).
+  // After the cut, no parser/serializer emits or reads these three attrs;
+  // they are dead storage on the PM image node. Greenfield directive +
+  // pre-production state: no user content carries them. Y-tiptap silently
+  // drops unknown attrs on deserialization, so any in-flight IDB-cached
+  // PM `image` carrying them loses them on next load (chip shape rehydrates
+  // on next disk-ack roundtrip — the markdown bytes preserve identity).
+  {
+    nodeType: 'image',
+    kind: 'attr-removed',
+    attrName: 'sourceForm',
+    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    regressionTestRef:
+      'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
+  },
+  {
+    nodeType: 'image',
+    kind: 'attr-removed',
+    attrName: 'target',
+    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    regressionTestRef:
+      'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
+  },
+  {
+    nodeType: 'image',
+    kind: 'attr-removed',
+    attrName: 'anchor',
+    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    regressionTestRef:
+      'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
+  },
 ];
 
 function isAllowedNarrowing(

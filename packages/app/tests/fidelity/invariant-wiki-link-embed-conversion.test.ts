@@ -13,9 +13,10 @@
  *                           (user types `![[photo.png]]`, mdManager parses)
  *                           produce equivalent mdast + PM.
  *
- * US-013: mdast→PM dispatches by extension — image extensions materialize
- * as PM `image` nodes with `sourceForm='wikiembed'`; non-image extensions
- * materialize as PM link-marked text with `sourceForm='wikiembed'`;
+ * mdast→PM dispatches by extension and position. Block-context image /
+ * video / audio embeds materialize as `jsxComponent('WikiEmbed*')`;
+ * inline-position embeds (and allowlisted extensions without a registered
+ * descriptor) materialize as PM link-marked text with `sourceForm='wikiembed'`;
  * opaque extensions materialize as plain link-marked text.
  *
  * Tier-2 1K samples; tier-3 10K via `STRESS_FIDELITY=1`.
@@ -60,9 +61,10 @@ describe('wiki-embed conversion invariants — mdManager path (US-010)', () => {
     'I1 — parse → serialize is byte-identical for renderable extensions (image + non-image wikiembed)',
     () => {
       // Scope: extensions in the `wikiEmbedExtensions` allowlist (images +
-      // pdf/video/audio). US-013 dispatches these to PM image / link-marked
-      // text with `sourceForm='wikiembed'`, which round-trips byte-identical
-      // through nodeHandlers.image / markHandlers.link.
+      // pdf/video/audio). PBT samples drive standalone-paragraph embeds, so
+      // image/video/audio promote to `jsxComponent('WikiEmbed*')` and pdf
+      // lands on the link-mark chip path; both serialize back through the
+      // descriptor `serialize` / `markHandlers.link` path byte-identically.
       //
       // Opaque extensions (zip, docx, …) are NOT covered here — per SPEC §6
       // emit-dispatch matrix they normalize to `[name.ext](name.ext)` on

@@ -405,11 +405,13 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
   });
 });
 
-// US-002 — handlers.wikiLinkEmbed for image extensions emits jsxComponent
-// dispatched to the WikiEmbedImage compat descriptor (instead of the legacy
-// PM `image` node tagged sourceForm='wikiembed'). The compat descriptor owns
-// its own serialize that returns `wikiLinkEmbed` mdast, so the round-trip
-// stays byte-identical.
+// handlers.wikiLinkEmbed for image extensions emits jsxComponent dispatched
+// to the WikiEmbedImage compat descriptor in block context. The compat
+// descriptor owns its own serialize that returns `wikiLinkEmbed` mdast, so
+// the round-trip stays byte-identical. Inline-position image embeds fall
+// through to the link-mark chip path — there is no PM `image` node carrying
+// wiki-embed metadata; image / video / audio share the same chip treatment
+// when not in block context.
 describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
   test('![[photo.png]] → jsxComponent(WikiEmbedImage) with target/alias/anchor on props', () => {
     const json = mdManager.parse('![[photo.png]]\n');
@@ -480,6 +482,26 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
 
   test('round-trip: ![[photo.png#frag|caption]] preserves anchor + alias byte-identical', () => {
     const md = '![[photo.png#frag|caption]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('inline-position ![[photo.png]] (mid-prose) → text+link-mark chip, no PM image node', () => {
+    // `text ![[photo.png]] more text` is NOT block context (the wiki-embed
+    // is one of three children in its paragraph), so it must NOT promote to
+    // jsxComponent and must NOT emit a PM `image` node either. The only
+    // surviving path for inline allowlisted-extension embeds is the link-mark
+    // chip — same treatment as inline `![[clip.mp4]]` / `![[song.mp3]]`.
+    const json = mdManager.parse('text ![[photo.png]] more text\n');
+    expect(findJsxComponentInJson(json, 'WikiEmbedImage')).toBeNull();
+    expect(findInJson(json, 'image')).toBeNull();
+    const linkMark = findMarkInJson(json, 'link');
+    expect(linkMark).not.toBeNull();
+    expect(linkMark?.attrs?.sourceForm).toBe('wikiembed');
+    expect(linkMark?.attrs?.target).toBe('photo.png');
+  });
+
+  test('round-trip: inline mid-prose ![[photo.png]] is byte-identical', () => {
+    const md = 'text ![[photo.png]] more text\n';
     expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
   });
 });

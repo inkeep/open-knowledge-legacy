@@ -3,6 +3,7 @@
  * Single source of truth — drift between these causes silent data corruption.
  */
 import Highlight from '@tiptap/extension-highlight';
+import Image from '@tiptap/extension-image';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
@@ -12,7 +13,6 @@ import { EscapeMark } from './escape-mark.ts';
 import { HardBreakFidelity } from './hard-break-fidelity.ts';
 import { HeadingFidelity } from './heading-fidelity.ts';
 import { HtmlBlockFidelity } from './html-block-fidelity.ts';
-import { ImageFidelity } from './image-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
 import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
@@ -82,6 +82,6 @@ export const sharedExtensions = [
   TableRow,
   TableHeader,
   TableCell,
-  ImageFidelity.configure({ inline: true }),
+  Image.configure({ inline: true }),
   Highlight,
 ];

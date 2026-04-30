@@ -431,9 +431,6 @@ import {
 } from '../constants/upload.ts';
 
 const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
-const WIKI_EMBED_NON_IMAGE_EXTS: ReadonlySet<string> = new Set(
-  [...WIKI_EMBED_EXTENSIONS].filter((e) => !IMAGE_EXTENSIONS.has(e)),
-);
 
 import { extensionOf } from '../utils/extension.ts';
 
@@ -831,28 +828,27 @@ function buildMdastToPmHandlers(
       });
   }
 
-  // SPEC §6 FR-3c: wiki-embed mdast → PM with extension-based dispatch
-  // (US-013). Three branches, in priority order:
+  // SPEC §6 FR-3c: wiki-embed mdast → PM with extension-based dispatch.
+  // Two branches, in priority order:
   //
-  //   (a) image extension (png/jpg/jpeg/gif/webp/avif/svg) → PM `image`
-  //       node tagged `sourceForm='wikiembed'` with resolved `src`. Native
-  //       TipTap image renderer shows it inline.
+  //   (a) Block-context allowlisted extension (image/video/audio) with the
+  //       matching WikiEmbed* descriptor registered → `jsxComponent('WikiEmbed*')`.
+  //       Renders through Image.tsx / Video.tsx / Audio.tsx via the compat
+  //       descriptor's `translateProps`; PropPanel narrows to the alias slot.
+  //       Mirrors `imagePromoterPlugin`'s standalone-paragraph promotion: only
+  //       embeds that are the sole child of their paragraph promote, so mid-
+  //       prose `... ![[diagram.png]] ...` doesn't fragment the paragraph.
   //
-  //   (b) non-image extension in the wiki-embed allowlist (pdf/mp4/…)    →
-  //       PM text with a link mark tagged `sourceForm='wikiembed'`.
-  //       Preserves target/anchor/alias on the mark so round-trip is
-  //       byte-identical; Phase 2 typed-component-nodes swaps in
-  //       Video/Audio/PDFViewer at render time (D-F read-time promotion).
-  //
-  //   (c) opaque extension (not in either set) → PM text with a plain
-  //       link mark (no `sourceForm`). `![[archive.zip]]` round-trips to
-  //       `[archive.zip](archive.zip)` — intentional normalization per
-  //       §6 emit-dispatch matrix.
+  //   (b) Everything else (inline-position embeds, allowlisted-but-no-
+  //       descriptor cases, opaque extensions) → PM text with a `link` mark.
+  //       Allowlisted extensions get `sourceForm='wikiembed'` + target/
+  //       anchor/alias on the mark so round-trip stays byte-identical; opaque
+  //       extensions land on a plain link mark (`![[archive.zip]]` →
+  //       `[archive.zip](archive.zip)`, intentional normalization).
   //
   // The server-side mdast→PM path never emits the `wikiLinkEmbed` PM
   // node — that node type is client-insert-only (transient, produced by
-  // `pickInsertShape` at drop time). US-014 wires the TipTap NodeView
-  // that renders it pre-round-trip.
+  // `pickInsertShape` at drop time).
   if (n.wikiLinkEmbed) {
     handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast, parent?: MdastParent) => {
       const target = node.data?.target ?? '';
@@ -876,12 +872,15 @@ function buildMdastToPmHandlers(
       // markdown-on-disk stays `![[name.ext]]` regardless of render shape.
       const srcOrTarget = resolved ? `/${resolved}` : target;
 
-      // Block-context image-extension embed → jsxComponent(WikiEmbedImage).
-      // Mirrors imagePromoterPlugin's "single-image-paragraph → flow JSX"
+      // Block-context allowlisted extension → jsxComponent(WikiEmbed*).
+      // Mirrors imagePromoterPlugin's "single-embed paragraph → flow JSX"
       // policy: only standalone embeds promote to a block-level component
       // so mid-prose `... ![[diagram.png]] ...` keeps its inline shape and
       // doesn't fragment the paragraph when the paragraph handler lifts
-      // block children.
+      // block children. Inline-position allowlisted embeds fall through
+      // to the link-mark chip below — there is no inline-image PM-image
+      // path; image / video / audio all share the same chip treatment
+      // when not in block context.
       const isBlockContext =
         parent?.type === 'paragraph' &&
         Array.isArray(parent.children) &&
@@ -902,10 +901,8 @@ function buildMdastToPmHandlers(
           props: { src: srcOrTarget, alt: alias ?? target, target, anchor, alias },
         });
       }
-      // Block-context video-extension embed → jsxComponent(WikiEmbedVideo).
-      // Mirror of the WikiEmbedImage dispatch above. The descriptor maps
-      // alias to `title` (Video.tsx accepts `title` but not `alt`); inline
-      // mid-prose video embeds keep the link-mark fallback below.
+      // Video.tsx / Audio.tsx accept `title` but not `alt`, so the
+      // descriptor maps alias → title for both.
       if (
         isBlockContext &&
         VIDEO_EXTENSIONS.has(ext) &&
@@ -936,23 +933,9 @@ function buildMdastToPmHandlers(
           props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
         });
       }
-      // Inline-position image-extension embed (or a host without the
-      // WikiEmbedImage descriptor) keeps the legacy PM `image` shape so
-      // mixed-content paragraphs survive round-trip. nodeHandlers.image
-      // dispatches `sourceForm='wikiembed'` back to wikiLinkEmbed mdast.
-      if (WIKI_EMBED_IMAGE_EXTS.has(ext) && n.image) {
-        return n.image.createAndFill({
-          src: srcOrTarget,
-          alt: alias ?? target,
-          title: null,
-          sourceForm: 'wikiembed',
-          target,
-          anchor,
-        });
-      }
 
       const label = alias || (anchor ? `${target}#${anchor}` : target);
-      if (WIKI_EMBED_NON_IMAGE_EXTS.has(ext) && m.link) {
+      if (WIKI_EMBED_EXTENSIONS.has(ext) && m.link) {
         const linkMark = m.link.create({
           href: srcOrTarget,
           title: null,
@@ -981,8 +964,8 @@ function buildMdastToPmHandlers(
       // mdast→PM must never produce that node (y-prosemirror would
       // tombstone user-content Items on the next round-trip).
       throw new Error(
-        '[wikiLinkEmbed handler] schema lacks both `image` node and `link` mark — ' +
-          'cannot dispatch without violating the STOP rule against emitting PM wikiLinkEmbed server-side',
+        '[wikiLinkEmbed handler] schema lacks `link` mark — cannot dispatch ' +
+          'without violating the STOP rule against emitting PM wikiLinkEmbed server-side',
       );
     };
   }
@@ -1167,45 +1150,17 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
   if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
 
-  // Image — block-context wiki-embed images flow through
-  // `jsxComponent('WikiEmbedImage')` (descriptor.serialize handles the
-  // dirty-path emit). Inline-position wiki-embeds keep the legacy PM
-  // `image` shape with `sourceForm='wikiembed'` so mid-prose embeds
-  // survive round-trip; the branch below routes them back to
-  // `wikiLinkEmbed` mdast. Plain markdown images (no `sourceForm`) are
-  // passthrough.
+  // Image — plain markdown images (`![alt](src)`). Block-context wiki-
+  // embed images flow through `jsxComponent('WikiEmbedImage')` (descriptor
+  // serialize). Inline-position wiki-embeds land on the link-mark chip,
+  // not a PM `image` node, so this handler only ever sees plain images.
   if (n.image) {
-    nodeHandlers.image = (pmNode: PmNode) => {
-      if (pmNode.attrs.sourceForm === 'wikiembed') {
-        const target =
-          typeof pmNode.attrs.target === 'string' && pmNode.attrs.target.length > 0
-            ? pmNode.attrs.target
-            : (pmNode.attrs.src ?? '');
-        const alias: string | null =
-          typeof pmNode.attrs.alt === 'string' && pmNode.attrs.alt.length > 0
-            ? pmNode.attrs.alt === target
-              ? null
-              : pmNode.attrs.alt
-            : null;
-        const anchor: string | null =
-          typeof pmNode.attrs.anchor === 'string' && pmNode.attrs.anchor.length > 0
-            ? pmNode.attrs.anchor
-            : null;
-        const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
-        return {
-          type: 'wikiLinkEmbed' as const,
-          value: label,
-          data: { target, anchor, alias },
-          children: [{ type: 'text' as const, value: label }],
-        } as unknown as MdastNodes;
-      }
-      return {
-        type: 'image' as const,
-        url: pmNode.attrs.src,
-        alt: pmNode.attrs.alt,
-        title: pmNode.attrs.title,
-      };
-    };
+    nodeHandlers.image = (pmNode: PmNode) => ({
+      type: 'image' as const,
+      url: pmNode.attrs.src,
+      alt: pmNode.attrs.alt,
+      title: pmNode.attrs.title,
+    });
   }
 
   // HTML block — content attr (HtmlBlockFidelity extension)
