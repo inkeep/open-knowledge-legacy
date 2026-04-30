@@ -33,10 +33,17 @@
  * Schema unchanged (precedent #9 add-only). All identity + resolution state
  * lives in PluginState / decoration attrs.
  */
-import { classifyMarkdownHref, LinkFidelity } from '@inkeep/open-knowledge-core';
+import {
+  classifyMarkdownHref,
+  extractAssetExtension,
+  LinkFidelity,
+  resolveAssetProjectPath,
+} from '@inkeep/open-knowledge-core';
 import { mergeAttributes } from '@tiptap/core';
 import { createElement } from 'react';
+import { dispatchAssetClick } from '../asset-dispatch';
 import { openHashHrefInNewTab, openInternalHashHrefInNewTab } from '../internal-link-helpers';
+import { createAssetContextMenuPlugin } from '../plugins/asset-context-menu';
 import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { InternalLinkPropPanel } from './InternalLinkPropPanel';
 import { makeLinkResolutionAttrsComputer } from './link-resolution';
@@ -108,13 +115,58 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
             onClose: deactivate,
           }),
         handlePrimary: ({ editor, nodeId, newTab }) => {
-          // Only handle Cmd/Ctrl/middle-click (newTab=true). Bare click
-          // opens the PropPanel (fall through by returning false).
-          if (!newTab) return false;
           const info = getCurrentMarkInfo(editor.state, nodeId);
           const href = info?.attrs?.href;
           if (typeof href !== 'string' || !href) return false;
+
+          // Asset dispatch branch. Fires on BOTH bare click AND
+          // Cmd/Ctrl+click — asset hrefs never open the PropPanel.
+          // Cmd+click forces OS delegation as an escape hatch.
+          //
+          // Two paths enter this branch:
+          //   1. `classifyMarkdownHref` returned `kind: 'asset'` — the
+          //      href is a plain relative path with a non-md/mdx
+          //      extension.
+          //   2. `sourceForm === 'wikiembed'` + the href shape looks
+          //      asset-like (has an extension). This captures post-
+          //      roundtrip `![[file.ext]]` refs that emit as server-
+          //      absolute paths (`/file.ext`) — classifier returns
+          //      `external` for leading-slash paths, but the
+          //      `sourceForm` tag tells us unambiguously that this
+          //      came from a wiki-embed. Without this branch, post-
+          //      reload clicks on server-absolute asset hrefs open
+          //      the PropPanel instead of the file.
+          //      `resolveAssetProjectPath` handles the leading slash.
+          const sourceForm = info?.attrs?.sourceForm;
           const target = classifyMarkdownHref(href, docName);
+          const hrefExt = extractAssetExtension(href);
+          const isAssetShape =
+            target?.kind === 'asset' || (sourceForm === 'wikiembed' && hrefExt !== null);
+          if (isAssetShape) {
+            const url = target?.kind === 'asset' ? target.url : href;
+            const ext = target?.kind === 'asset' ? target.ext : (hrefExt ?? '');
+            const projectRelPath = resolveAssetProjectPath(url, docName);
+            if (!projectRelPath) {
+              // Path-escape detected at the renderer boundary — fall
+              // through to PropPanel so the author sees the suspicious
+              // href. Main-process `openAssetSafely` is the defense-in-
+              // depth if the renderer ever calls with an escape.
+              return false;
+            }
+            void dispatchAssetClick({
+              url,
+              projectRelPath,
+              ext,
+              title: projectRelPath.split('/').pop() ?? url,
+              forceOsDelegation: newTab,
+            });
+            return true;
+          }
+
+          // Non-asset paths — only handle Cmd/Ctrl/middle-click
+          // (newTab=true). Bare click opens the PropPanel (fall through
+          // by returning false).
+          if (!newTab) return false;
           if (!target) return false;
           if (target.kind === 'doc') {
             openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
@@ -144,6 +196,12 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
         markTypes: ['link'],
         computeAttrs: makeLinkResolutionAttrsComputer(docName),
       }),
+      // 4. Right-click context menu for on-disk references. Attaches
+      //    a `contextmenu` DOM listener on `editor.view.dom` and
+      //    routes matched targets
+      //    (wiki-embed chips, asset link marks, images) through the
+      //    showAssetMenu IPC. No-op in web (browser default).
+      createAssetContextMenuPlugin({ sourceDocName: docName }),
     ];
   },
 });

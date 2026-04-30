@@ -65,6 +65,7 @@ import type { Position } from 'unist';
  */
 export const PROMOTED_MDAST_TYPES = [
   'wikiLink',
+  'wikiLinkEmbed',
   'mdxJsxFlowElement',
   'mdxJsxTextElement',
   'rawMdxFallback',
@@ -85,6 +86,28 @@ export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];
 // `data`-derived label text, so producers never synthesise it by hand.
 export interface WikiLinkMdast {
   type: 'wikiLink';
+  value: string;
+  data: {
+    target: string;
+    alias: string | null;
+    anchor: string | null;
+    [key: string]: unknown;
+  };
+  children: Array<{ type: 'text'; value: string }>;
+  position?: Position;
+}
+
+// WikiLinkEmbedMdast — asset-embed `![[file.ext]]` node. Distinct from
+// `wikiLink` per SPEC §6 FR-3a: the `!` prefix is a separate construct so
+// the embed carries its own mdast type, its own from-markdown handler, and
+// its own serialization path. `data.target/anchor/alias` drive serialization
+// back to `![[target#anchor|alias]]`; `children` seed a text label for the
+// mdast-to-hast edge (wired in US-010).
+//
+// Not yet added to PROMOTED_MDAST_TYPES — that happens in US-010 alongside
+// the PM handlers + hast handler that close the three-edge parity.
+export interface WikiLinkEmbedMdast {
+  type: 'wikiLinkEmbed';
   value: string;
   data: {
     target: string;
@@ -160,6 +183,7 @@ declare module 'mdast' {
   interface RootContentMap {
     wikiLink: WikiLinkMdast;
     rawMdxFallback: RawMdxFallbackMdast;
+    wikiLinkEmbed: WikiLinkEmbedMdast;
   }
 }
 

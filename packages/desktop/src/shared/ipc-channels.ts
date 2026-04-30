@@ -176,6 +176,49 @@ export interface RequestChannels {
    * navigation stays within one namespace (`ok:shell:*`).
    */
   'ok:shell:record-handoff': { args: [line: HandoffStatsLine]; result: undefined };
+  /**
+   * Open an asset file via the OS default handler (2026-04-23 asset-embed
+   * amendment FR-A6). Renderer sends a project-relative path; main-process
+   * `openAssetSafely` handler (Commit 3) resolves against
+   * `ProjectContext.projectPath + realpath + isPathWithinProject`, enforces
+   * the `EXECUTABLE_BLOCKLIST_EXTENSIONS` gate (D-A5), and dispatches to
+   * `shell.openPath(canonical)`. Reason union matches the bridge-contract
+   * `openAsset` return type.
+   */
+  'ok:shell:open-asset': {
+    args: [relPath: string];
+    result:
+      | { ok: true }
+      | { ok: false; reason: 'extension-blocked' | 'path-escape' | 'not-found' | 'resolve-error' };
+  };
+  /**
+   * Reveal an asset in the native file manager (macOS Finder / Windows
+   * Explorer / Linux default) via `shell.showItemInFolder`. Parent-only,
+   * does NOT invoke OS content handler — so the executable blocklist does
+   * NOT apply. Same containment checks as `open-asset`. FR-A6.
+   */
+  'ok:shell:reveal-asset': {
+    args: [relPath: string];
+    result: { ok: true } | { ok: false; reason: 'path-escape' | 'not-found' | 'resolve-error' };
+  };
+  /**
+   * Pop the native right-click context menu for an on-disk reference
+   * (`asset`, `wiki-link`, or `image`). Main builds the menu via
+   * `Menu.buildFromTemplate` and calls `.popup(window)`. Gesture-attested
+   * (D11 of electron-os-integration-patterns research — main observes the
+   * click directly, no IPC gesture forwarding needed). Resolves after the
+   * menu closes regardless of which entry was selected. FR-A8.
+   */
+  'ok:shell:show-asset-menu': {
+    args: [
+      params: {
+        readonly relPath: string;
+        readonly title: string;
+        readonly kind: 'asset' | 'wiki-link' | 'image';
+      },
+    ];
+    result: undefined;
+  };
   /** Clipboard text write (IPC-relay — renderer is sandboxed). */
   'ok:clipboard:write-text': { args: [text: string]; result: undefined };
   /** Read the current window's config (projectPath, collabUrl, etc.). */

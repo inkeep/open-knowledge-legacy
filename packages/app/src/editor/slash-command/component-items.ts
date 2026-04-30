@@ -1,11 +1,19 @@
 /**
- * Slash-command items for registered built-in components (FR-14, FR-14a, §9.9).
+ * Slash-command items for registered built-in components.
  *
  * Lists all registered (block) components from the descriptor registry
  * with category grouping and searchTerms fuzzy matching.
  *
- * Inserted components arrive with default props populated via the FR-14a
- * fallback ladder: descriptor.defaultValue → first enum value → false/0/''.
+ * Inserted components arrive with the props that declare an explicit
+ * `defaultValue` populated from the descriptor; everything else stays
+ * unset. Synthetic-default fallbacks (first enum value, `0`, `''`,
+ * `false`) are NOT applied — they leak into PropPanel as misleading
+ * preset values (`width=0`, `crossorigin="anonymous"`, `srcset=""`)
+ * that emit to disk on the next dirty serialize. Renderer-side
+ * defaults (e.g., `<img>` with no width renders at intrinsic size,
+ * `<video controls={true}>` per descriptor's `defaultValue: true`)
+ * already cover the "see a Callout / see a Video player" UX without
+ * pre-writing the prop bag.
  */
 
 import type { Editor } from '@tiptap/react';
@@ -15,9 +23,21 @@ import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
 
 /**
- * FR-14a: compute default props for slash-inserted components.
- * Users expect "insert Callout → see a Callout" — without defaults,
- * newly-inserted components render empty or broken.
+ * Compute default props for slash-inserted components.
+ *
+ * Only props that DECLARE an explicit `defaultValue` get pre-populated.
+ * Undeclared props stay unset so PropPanel renders them as empty inputs
+ * (string), empty number fields, false-checked switches, and "(unset)"-
+ * equivalent enum dropdowns — and they don't emit to disk on the next
+ * serialize. The synthetic-default fallback ladder (first enum value,
+ * `0`, `''`, `false`) was leaking misleading preset values:
+ *   - `width=0` / `height=0` collapsed inserted images to invisible.
+ *   - `crossorigin="anonymous"` enabled CORS the user didn't request.
+ *   - `srcset=""` / `sizes=""` cluttered the on-disk MDX after first save.
+ * Renderer-side defaults (declared `defaultValue` like
+ * `<video controls={true}>` or HTML platform defaults like `<img>` at
+ * intrinsic size) already cover the "see a Callout / Video / Image" UX
+ * without pre-writing the prop bag.
  */
 function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
@@ -25,14 +45,6 @@ function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unk
     if (prop.type === 'reactnode') continue;
     if ('defaultValue' in prop && prop.defaultValue !== undefined) {
       defaults[prop.name] = prop.defaultValue;
-    } else if (prop.type === 'enum' && prop.enumValues.length > 0) {
-      defaults[prop.name] = prop.enumValues[0];
-    } else if (prop.type === 'boolean') {
-      defaults[prop.name] = false;
-    } else if (prop.type === 'number') {
-      defaults[prop.name] = 0;
-    } else {
-      defaults[prop.name] = '';
     }
   }
   return defaults;

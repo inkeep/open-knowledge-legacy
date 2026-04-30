@@ -16,7 +16,7 @@
  */
 
 import type { WriteFileOptions } from 'node:fs';
-import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
@@ -142,4 +142,18 @@ export function tracedUnlinkSync(path: string): void {
   withSpanSync('fs.unlinkSync', { attributes: buildAttrs('unlinkSync', path) }, () => {
     unlinkSync(path);
   });
+}
+
+export function tracedLinkSync(existingPath: string, newPath: string): void {
+  withSpanSync(
+    'fs.linkSync',
+    {
+      attributes: buildAttrs('linkSync', newPath, {
+        'fs.source_path': normalizeFsPath(existingPath),
+      }),
+    },
+    () => {
+      linkSync(existingPath, newPath);
+    },
+  );
 }

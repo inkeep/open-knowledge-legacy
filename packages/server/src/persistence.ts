@@ -150,6 +150,13 @@ export interface PersistenceOptions {
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
   /**
+   * US-013 FR-3b: resolves `![[photo.png]]` embed targets to disk-relative
+   * paths before PM dispatch. Consumed by `onLoadDocument`'s
+   * `mdManager.parseWithFallback` call so image-extension embeds materialize
+   * as PM `image` nodes with the resolved `src` (not the literal target).
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Accessor for the server's principal record. When a browser connection's
    * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
    * emits WriterIdentity with the real display_name / display_email instead
@@ -727,8 +734,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           // rawMdxFallback preserving surrounding structure. On position-less
           // error, splits at blank-line boundaries per-block. Only falls
           // through to whole-doc raw text when every block fails — strictly
-          // better than parse() throwing on broken MDX.
-          const json = mdManager.parseWithFallback(body);
+          // better than parse() throwing on broken MDX. The optional
+          // `resolveEmbed` threads the basename-index resolver so post-load
+          // PM image/link nodes carry resolved src/href for `![[file.ext]]`.
+          const parseOpts = options?.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+            : undefined;
+          const json = mdManager.parseWithFallback(body, parseOpts);
 
           if (xmlFragment.length === 0) {
             const pmNode = schema.nodeFromJSON(json);
