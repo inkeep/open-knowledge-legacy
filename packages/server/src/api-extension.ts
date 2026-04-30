@@ -4176,14 +4176,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const {
-        agentId: createPageAgentId,
-        agentName: createPageAgentName,
-        colorSeed: createPageColorSeed,
-        clientName: createPageClientName,
-        clientVersion: createPageClientVersion,
-        label: createPageLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      // Identity boundary (D22 LOCKED): only attribute when the caller
+      // explicitly supplies agentId. UI-driven creates fall through to the
+      // loaded principal (if any) or anonymous — never to a synthetic
+      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
+      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -4235,18 +4236,37 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         contentFilter.incrementMdDir(dirname(docName));
       }
       registerWrite(fullPath, contentHash(initialContent));
-      recordContributor(
-        docName,
-        createPageAgentId,
-        createPageAgentName,
-        createPageColorSeed,
-        undefined,
-        buildAgentActor({
-          clientName: createPageClientName,
-          clientVersion: createPageClientVersion,
-          label: createPageLabel,
-        }),
-      );
+      switch (actor.kind) {
+        case 'agent':
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            undefined,
+            actor.actor,
+          );
+          break;
+        case 'principal':
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            undefined,
+            actor.actor,
+          );
+          break;
+        case 'anonymous':
+          // UI-driven create with no loaded principal — no contributor recorded.
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
+      }
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
