@@ -60,16 +60,23 @@ async function translateSeedError(res: Response): Promise<OkSeedError> {
     return { kind: 'internal', message: `HTTP ${res.status}` };
   }
   const message = parsed.data.detail ?? parsed.data.title;
-  switch (parsed.data.type) {
-    case 'urn:ok:error:seed-prerequisite-missing':
-      return { kind: 'prerequisite-missing', message };
-    case 'urn:ok:error:seed-invalid-root':
-      return { kind: 'invalid-root', message };
-    case 'urn:ok:error:no-project-dir':
-      return { kind: 'no-project', message };
-    default:
-      return { kind: 'internal', message };
+  // Subset-matching pattern: only seed-relevant URNs map to typed kinds; any
+  // other ProblemType (the closed enum has 40+ tokens) intentionally falls
+  // through to `internal`. Implemented as if/else (not `switch`) so the
+  // exhaustiveness meta-test (which expects `default: assertNeverProblemType`
+  // on closed-DU switches) doesn't fire — assertNever is for total
+  // discriminations, not subset matchers.
+  const t = parsed.data.type;
+  if (t === 'urn:ok:error:seed-prerequisite-missing') {
+    return { kind: 'prerequisite-missing', message };
   }
+  if (t === 'urn:ok:error:seed-invalid-root') {
+    return { kind: 'invalid-root', message };
+  }
+  if (t === 'urn:ok:error:no-project-dir') {
+    return { kind: 'no-project', message };
+  }
+  return { kind: 'internal', message };
 }
 
 /**

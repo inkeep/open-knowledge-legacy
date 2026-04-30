@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import type { Scheduler } from '@inkeep/open-knowledge-core';
+import { ProblemDetailsSchema, type Scheduler } from '@inkeep/open-knowledge-core';
 import {
   acquireServerLock,
   readUiLock,
@@ -308,14 +308,19 @@ describe('startUiServer', () => {
     }
   });
 
-  test('GET /api/anything returns 503 with machine-readable error when server.lock is absent', async () => {
+  test('GET /api/anything returns RFC 9457 problem+json 503 when server.lock is absent', async () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { status, body, headers } = await get(handle.port, '/api/pages');
     expect(status).toBe(503);
-    expect(headers.get('content-type')).toContain('application/json');
-    const parsed = JSON.parse(body);
-    expect(parsed.error).toContain('Collab server not running');
-    expect(parsed.path).toBe('/api/pages');
+    expect(headers.get('content-type')).toContain('application/problem+json');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
+    expect(headers.get('cache-control')).toBe('no-store');
+    const parsed = ProblemDetailsSchema.parse(JSON.parse(body));
+    expect(parsed.type).toBe('urn:ok:error:collab-server-not-running');
+    expect(parsed.title).toContain('Collab server not running');
+    expect(parsed.status).toBe(503);
+    expect(parsed.instance).toMatch(/^[0-9a-f]{8}-/i);
+    expect(parsed.detail).toContain('/api/pages');
   });
 
   test('POST /api/create-page forwards method + body to the collab server', async () => {

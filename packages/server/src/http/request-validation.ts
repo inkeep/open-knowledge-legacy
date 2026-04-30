@@ -22,9 +22,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ProblemType } from '@inkeep/open-knowledge-core';
 import type { z } from 'zod';
-import { type ErrorResponseOptions, errorResponse } from './error-response.ts';
+import { errorResponse } from './error-response.ts';
 
 /** 1 MB request-body cap — matches `MAX_BODY_BYTES` in `api-extension.ts`. */
 const MAX_BODY_BYTES = 1_048_576;
@@ -144,13 +143,13 @@ export function withValidation<T>(
       raw = await readRequestBody(req);
     } catch (err) {
       if (err instanceof PayloadTooLargeError) {
-        emitInvalidRequest(res, 413, 'urn:ok:error:invalid-request', 'Payload too large.', {
+        errorResponse(res, 413, 'urn:ok:error:invalid-request', 'Payload too large.', {
           handler: options.handler,
           cause: err,
         });
         return;
       }
-      emitInvalidRequest(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
         handler: options.handler,
         cause: err,
       });
@@ -161,16 +160,10 @@ export function withValidation<T>(
     try {
       parsed = raw.length === 0 ? {} : JSON.parse(raw.toString('utf8'));
     } catch (err) {
-      emitInvalidRequest(
-        res,
-        400,
-        'urn:ok:error:invalid-request',
-        'Request body is not valid JSON.',
-        {
-          handler: options.handler,
-          cause: err,
-        },
-      );
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: options.handler,
+        cause: err,
+      });
       return;
     }
 
@@ -179,14 +172,4 @@ export function withValidation<T>(
 
     await handler(req, res, validated.value);
   };
-}
-
-function emitInvalidRequest(
-  res: ServerResponse,
-  status: number,
-  type: ProblemType,
-  title: string,
-  options: ErrorResponseOptions,
-): void {
-  errorResponse(res, status, type, title, options);
 }

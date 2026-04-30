@@ -217,7 +217,6 @@ describe('ProblemTypeSchema', () => {
       'urn:ok:error:storage-readonly',
       'urn:ok:error:storage-error',
       'urn:ok:error:no-file-received',
-      'urn:ok:error:parent-doc-name-required',
       'urn:ok:error:path-escape',
     ];
     for (const t of tokens) {

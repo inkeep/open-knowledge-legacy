@@ -160,7 +160,7 @@ import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-tra
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
-import { errorResponse, streamingProblemEvent } from './http/error-response.ts';
+import { createStreamingErrorWriter, errorResponse } from './http/error-response.ts';
 import { validateBody, withValidation } from './http/request-validation.ts';
 import {
   checkLocalOpSecurity,
@@ -5538,19 +5538,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
 
     /** Write a typed mid-stream error event and emit one telemetry+log line. */
-    const writeStreamError = (
-      status: number,
-      type: Parameters<typeof streamingProblemEvent>[1],
-      title: string,
-      options: { detail?: string; cause?: unknown } = {},
-    ): void => {
-      if (res.writableEnded) return;
-      const event = streamingProblemEvent(status, type, title, {
-        handler: HANDLE_LOCAL_OP_CLONE,
-        ...options,
-      });
-      res.write(`${JSON.stringify(event)}\n`);
-    };
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_CLONE);
 
     // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
     // Expand `~` here so the CLI doesn't treat it as a literal directory name.
@@ -5678,11 +5666,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
+          // Fixed-vocabulary detail — Node's spawn ENOENT/EACCES messages carry
+          // the resolved binary path; `cause` preserves diagnostics for Pino.
           writeStreamError(
             500,
             'urn:ok:error:clone-failed',
             'Failed to spawn the clone subprocess.',
-            { detail: err.message, cause: err },
+            { cause: err },
           );
           res.end();
         }
@@ -5953,19 +5943,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
 
     /** Write a typed mid-stream error event (US-005 pattern). */
-    const writeStreamError = (
-      status: number,
-      type: Parameters<typeof streamingProblemEvent>[1],
-      title: string,
-      options: { detail?: string; cause?: unknown } = {},
-    ): void => {
-      if (res.writableEnded) return;
-      const event = streamingProblemEvent(status, type, title, {
-        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
-        ...options,
-      });
-      res.write(`${JSON.stringify(event)}\n`);
-    };
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_AUTH_LOGIN);
 
     const [cmd, ...baseArgs] = localOpCliArgs;
     const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
@@ -6055,11 +6033,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
+          // Fixed-vocabulary detail — see clone-failed catch site.
           writeStreamError(
             500,
             'urn:ok:error:auth-failed',
             'Failed to spawn the auth login subprocess.',
-            { detail: err.message, cause: err },
+            { cause: err },
           );
           res.end();
         }
@@ -6170,9 +6149,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 200, { authenticated: false });
       }
     } catch (err) {
+      // Fixed-vocabulary detail — raw err.message can carry filesystem paths,
+      // git stderr, or errno strings. Pino logs preserve full diagnostics via
+      // `cause` for server-side triage; the wire body stays bounded.
       errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth status check failed.', {
         handler: HANDLE_LOCAL_OP_AUTH_STATUS,
-        detail: err instanceof Error ? err.message : undefined,
         cause: err,
       });
     } finally {
@@ -6249,19 +6230,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
 
     /** Write a typed mid-stream error event (US-005 pattern). */
-    const writeStreamError = (
-      status: number,
-      type: Parameters<typeof streamingProblemEvent>[1],
-      title: string,
-      options: { detail?: string; cause?: unknown } = {},
-    ): void => {
-      if (res.writableEnded) return;
-      const event = streamingProblemEvent(status, type, title, {
-        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
-        ...options,
-      });
-      res.write(`${JSON.stringify(event)}\n`);
-    };
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_AUTH_REPOS);
 
     const [cmd, ...baseArgs] = localOpCliArgs;
     const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
@@ -6329,11 +6298,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
+          // Fixed-vocabulary detail — see clone-failed catch site.
           writeStreamError(
             500,
             'urn:ok:error:auth-failed',
             'Failed to spawn the auth repos subprocess.',
-            { detail: err.message, cause: err },
+            { cause: err },
           );
           res.end();
         }
@@ -6424,9 +6394,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, {});
     } catch (err) {
+      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
       errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth signout failed.', {
         handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
-        detail: err instanceof Error ? err.message : undefined,
         cause: err,
       });
     } finally {
@@ -6543,9 +6513,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 200, {});
       }
     } catch (err) {
+      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
       errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth pat failed.', {
         handler: HANDLE_LOCAL_OP_AUTH_PAT,
-        detail: err instanceof Error ? err.message : undefined,
         cause: err,
       });
     } finally {
@@ -6584,9 +6554,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const identity = await resolveGitIdentity(projectDir);
       json(res, 200, { identity });
     } catch (err) {
+      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
       errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Identity resolution failed.', {
         handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
-        detail: err instanceof Error ? err.message : undefined,
         cause: err,
       });
     }
@@ -6670,9 +6640,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       json(res, 200, {});
     } catch (err) {
+      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
       errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Set-identity failed.', {
         handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
-        detail: err instanceof Error ? err.message : undefined,
         cause: err,
       });
     } finally {
@@ -6760,7 +6730,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         parsed = JSON.parse(raw.toString());
       } catch (e) {
-        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
           handler: 'sync-trigger',
           cause: e,
         });
@@ -6809,7 +6779,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       parsed = JSON.parse(raw.toString());
     } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
         handler: 'sync-set-enabled',
         cause: e,
       });
@@ -6884,7 +6854,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       parsed = JSON.parse(raw.toString());
     } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
         handler: 'sync-resolve-conflict',
         cause: e,
       });
@@ -7060,7 +7030,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       parsed = JSON.parse(raw.toString());
     } catch (e) {
-      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
         handler: 'seed-apply',
         cause: e,
       });

@@ -22,8 +22,15 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { ProblemTypeSchema } from '@inkeep/open-knowledge-core';
 import { Glob } from 'bun';
 import * as ts from 'typescript';
+
+// All ProblemType URN tokens are unique to ProblemType (every member starts
+// with `urn:ok:error:`), so variantLabels and uniqueLabels are the same set.
+// Derived from the schema at test-discovery time so the registry never drifts
+// from `core/src/schemas/api.ts`.
+const PROBLEM_TYPE_LABELS: ReadonlySet<string> = new Set(ProblemTypeSchema.options);
 
 interface DuRegistration {
   /** Display name (used in failure messages). */
@@ -72,36 +79,15 @@ const REGISTRY: readonly DuRegistration[] = [
   {
     name: 'ProblemType',
     helper: 'assertNeverProblemType',
-    // Seeded with the URN tokens defined in core/src/schemas/api.ts. The
-    // helper does not exist yet — there are no consumer switches over
-    // ProblemType today (handler-migration stories add them). This entry
-    // is vacuously satisfied; the test proactively guards future consumers.
-    variantLabels: new Set([
-      'urn:ok:error:malformed-upload',
-      'urn:ok:error:collision-exhaustion',
-      'urn:ok:error:storage-full',
-      'urn:ok:error:storage-readonly',
-      'urn:ok:error:storage-error',
-      'urn:ok:error:no-file-received',
-      'urn:ok:error:parent-doc-name-required',
-      'urn:ok:error:path-escape',
-      'urn:ok:error:method-not-allowed',
-      'urn:ok:error:invalid-request',
-      'urn:ok:error:internal-server-error',
-    ]),
-    uniqueLabels: new Set([
-      'urn:ok:error:malformed-upload',
-      'urn:ok:error:collision-exhaustion',
-      'urn:ok:error:storage-full',
-      'urn:ok:error:storage-readonly',
-      'urn:ok:error:storage-error',
-      'urn:ok:error:no-file-received',
-      'urn:ok:error:parent-doc-name-required',
-      'urn:ok:error:path-escape',
-      'urn:ok:error:method-not-allowed',
-      'urn:ok:error:invalid-request',
-      'urn:ok:error:internal-server-error',
-    ]),
+    // Derived from `ProblemTypeSchema.options` so adding a new URN to the
+    // schema automatically extends the meta-test's coverage. Pre-derivation
+    // the registry seeded only the upload-side ~11 tokens and silently
+    // disengaged for any consumer switch over a token outside that subset
+    // (e.g., `upload-errors.ts`'s switch on the upload-side 5 was already
+    // covered, but a future switch on `auth-failed` or `sync-not-active`
+    // would skip the heuristic without a registry update).
+    variantLabels: PROBLEM_TYPE_LABELS,
+    uniqueLabels: PROBLEM_TYPE_LABELS,
   },
 ];
 

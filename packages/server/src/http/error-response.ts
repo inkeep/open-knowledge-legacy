@@ -50,7 +50,7 @@ function apiErrorCounter(): Counter {
   return _apiErrorCounter;
 }
 
-export interface ErrorResponseOptions {
+interface ErrorResponseOptions {
   /** Optional handler attribute for telemetry (`ok.api.error.count{handler}`). */
   handler?: string;
   /** Optional pre-generated correlation ID. Defaults to a fresh UUID. */
@@ -181,6 +181,37 @@ export function streamingProblemEvent(
   );
 
   return event;
+}
+
+/**
+ * Bind a streaming-error writer to a specific `(res, handler)` pair. Returns
+ * a closure that writes a typed `{ type: 'error', problem: ProblemDetails }`
+ * event to the NDJSON stream, gated on `res.writableEnded` so a second call
+ * after the response has been ended is a benign no-op.
+ *
+ * Three NDJSON streaming handlers in `api-extension.ts` (clone, auth-login,
+ * auth-repos) need the same closure shape — extracting it here removes the
+ * three-site duplication and lets future streaming handlers consume the
+ * helper without rebuilding the same write/guard/counter scaffolding.
+ *
+ * @param res - The streaming response (already in `application/x-ndjson`
+ *   mode; helper does NOT write the head).
+ * @param handler - Handler tag for `ok.api.error.count{handler}`.
+ */
+export function createStreamingErrorWriter(
+  res: ServerResponse,
+  handler: string,
+): (
+  status: number,
+  type: ProblemType,
+  title: string,
+  options?: { detail?: string; cause?: unknown },
+) => void {
+  return (status, type, title, options = {}) => {
+    if (res.writableEnded) return;
+    const event = streamingProblemEvent(status, type, title, { handler, ...options });
+    res.write(`${JSON.stringify(event)}\n`);
+  };
 }
 
 /**

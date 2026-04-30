@@ -258,25 +258,19 @@ export const INLINE_RENDERABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   'tiff',
   'bmp',
   'ico',
-  // SVG: served as `<img src>` only (NFR-3). Top-level navigation to an
-  // SVG (`image/svg+xml`) executes embedded `<script>` regardless of
-  // `X-Content-Type-Options: nosniff` — nosniff blocks request-
-  // destinations of script/style and enables CORB, but `image/svg+xml`
-  // is explicitly excluded from CORB (per MDN + Chromium CORB
-  // explainer). The defenses that actually contain SVG XSS in this
-  // codebase are:
-  //   (a) `<img src>` embeds do NOT execute SVG scripts (only top-level
-  //       nav does), so the editor render path is safe by construction.
-  //   (b) `EXECUTABLE_BLOCKLIST_EXTENSIONS` blocks `.svg` from
-  //       `openAssetSafely` / `shell.openPath`
-  //       (`packages/desktop/src/main/asset-allowlist.ts`), so the
-  //       click-to-open path can't hand off to a top-level browser tab
-  //       in Electron.
-  // Aligns with Docmost's posture; cf. GHSA-rcg8-g69v-x23j (Plane SVG
-  // XSS) for the upstream class. nosniff stays on the response for
-  // additional defense against MIME confusion attacks even though it
-  // does not address the script-execution vector for SVG specifically.
-  'svg',
+  // SVG is INTENTIONALLY EXCLUDED. SVGs in IMAGE_EXTENSIONS still render via
+  // `<img src>` in the editor (browsers ignore Content-Disposition for embed
+  // contexts per WHATWG/MDN), but they get `Content-Disposition: attachment`
+  // here so top-level navigation (web-mode dispatcher fallback `window.open`
+  // on a markdown link to an `.svg`) downloads instead of executing embedded
+  // `<script>` under same origin. Nosniff alone is insufficient — `image/svg+xml`
+  // is explicitly excluded from CORB. Layered defenses:
+  //   (a) `<img src>` embeds do NOT execute SVG scripts — editor is safe.
+  //   (b) `EXECUTABLE_BLOCKLIST_EXTENSIONS` blocks `.svg` from `shell.openPath`
+  //       in Electron (`packages/desktop/src/main/asset-allowlist.ts`).
+  //   (c) Web mode: `Content-Disposition: attachment` forces download instead
+  //       of top-level rendering when a user clicks a markdown SVG link.
+  // Aligns with Docmost's posture; cf. GHSA-rcg8-g69v-x23j (Plane SVG XSS).
   // PDF (Chromium built-in viewer; attachment would defeat it)
   'pdf',
   // Video

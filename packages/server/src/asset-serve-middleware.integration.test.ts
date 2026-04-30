@@ -113,6 +113,16 @@ describe('asset-serve middleware (narrow integration)', () => {
     writeFileSync(join(contentDir, 'docs', 'notes.txt'), 'some text');
     writeFileSync(join(contentDir, 'docs', 'archive.zip'), 'fake-zip-bytes');
 
+    // SVG: in IMAGE_EXTENSIONS but explicitly excluded from
+    // INLINE_RENDERABLE_EXTENSIONS so top-level navigation downloads
+    // instead of executing embedded `<script>`. `<img src=svg>` in the
+    // editor still renders because browsers ignore Content-Disposition
+    // for embed contexts (WHATWG fetch).
+    writeFileSync(
+      join(contentDir, 'docs', 'icon.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    );
+
     harness = await startHarness(contentDir);
   });
 
@@ -149,6 +159,19 @@ describe('asset-serve middleware (narrow integration)', () => {
         expect(res.headers.get('content-disposition')).toBe('attachment');
         expect(res.headers.get('x-content-type-options')).toBe('nosniff');
       }
+    });
+
+    test('SVG gets `Content-Disposition: attachment` (XSS guard)', async () => {
+      // Stored-XSS guard: SVG is in IMAGE_EXTENSIONS (so editor `<img src>`
+      // embeds work) but excluded from INLINE_RENDERABLE_EXTENSIONS so a
+      // user clicking a markdown SVG link in web mode (web fallback opens
+      // the asset URL via `window.open`) downloads instead of top-level-
+      // navigating to it. Top-level nav to `image/svg+xml` would execute
+      // embedded `<script>` under same origin (CORB excludes `image/svg+xml`).
+      const res = await fetch(`${harness.baseURL}/docs/icon.svg`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-disposition')).toBe('attachment');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     });
 
     test('markdown direct-URL request bypasses Content-Disposition', async () => {

@@ -137,7 +137,6 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:storage-readonly',
   'urn:ok:error:storage-error',
   'urn:ok:error:no-file-received',
-  'urn:ok:error:parent-doc-name-required',
   'urn:ok:error:path-escape',
   // Cross-handler shared
   'urn:ok:error:method-not-allowed',
@@ -220,6 +219,10 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:project-repo-not-configured',
   'urn:ok:error:seed-prerequisite-missing',
   'urn:ok:error:seed-invalid-root',
+  // `ok ui` proxy fall-through when the collab server (`ok start`) isn't
+  // running. Surfaced through the same RFC 9457 contract as the in-process
+  // server emits so client `ProblemDetailsSchema.safeParse` flows match.
+  'urn:ok:error:collab-server-not-running',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;

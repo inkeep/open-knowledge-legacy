@@ -331,7 +331,7 @@ Full product spec: [`specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`](.
 
 | Method | Path          | Purpose |
 | ------ | ------------- | ------- |
-| POST   | `/api/upload` | Upload an asset (multipart, streamed to disk). Response: `{ok, src, path, deduped}` on success. Error envelope: `{ok:false, error:<reason>, message}` where `reason ∈ { 'malformed-upload' (400), 'storage-full' (507), 'storage-readonly' (500), 'collision-exhaustion' (500), 'storage-error' (500) }`. Dedup BEFORE filename synthesis so identical bytes return the existing path. |
+| POST   | `/api/upload` | Upload an asset (multipart, streamed to disk). Success: flat `{src, path, deduped, sha?, byteLength?}` body matching `UploadAssetSuccessSchema` (no `ok` wrapper, `application/json`). Errors: RFC 9457 problem+json with `type ∈ { 'urn:ok:error:malformed-upload' (400), 'urn:ok:error:storage-full' (507), 'urn:ok:error:storage-readonly' (500), 'urn:ok:error:collision-exhaustion' (500), 'urn:ok:error:storage-error' (500), 'urn:ok:error:no-file-received' (400), 'urn:ok:error:path-escape' (400), 'urn:ok:error:invalid-request' (400) }` per the canonical contract above (see [`src/http/README.md`](src/http/README.md)). Dedup BEFORE filename synthesis so identical bytes return the existing path. |
 
 ### Accept-all (D-M LOCKED)
 
