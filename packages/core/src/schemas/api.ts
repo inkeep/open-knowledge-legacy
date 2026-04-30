@@ -150,6 +150,17 @@ const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = Pro
 void _ProblemTypeSchemaIsStandard;
 
 /**
+ * Per-DU exhaustiveness helper for `ProblemType` (and any subset thereof —
+ * `UploadWriteReason` etc.). Mirrors `assertNeverLinkTarget` /
+ * `assertNeverDiskEvent`. Using it as `default: assertNeverProblemType(target)`
+ * forces a compile error at every consumer site when a new URN token is added
+ * to `ProblemTypeSchema` and the switch hasn't grown a matching case.
+ */
+export function assertNeverProblemType(value: never): never {
+  throw new Error(`Unexpected ProblemType variant: ${JSON.stringify(value)}`);
+}
+
+/**
  * RFC 9457 Problem Details body shape.
  *
  * Wire shape: `{ type, title, status, instance?, detail? }` with
@@ -213,17 +224,18 @@ void _UploadRequestSchemaIsStandard;
  * Success response for `POST /api/upload` — flat `{ ...data }` shape with
  * `Content-Type: application/json` (no `ok: true` wrapper per D22).
  *
- * `src` is the project-root-relative path the client renders. `deduped`
- * is true when the upload hit the same-dir sha256 cache (no new bytes
- * written). `sha` and `byteLength` enable optional client-side display of
- * upload metadata.
+ * `src` is the on-disk basename the server linked to. `path` is the
+ * contentDir-relative path the client emits in the markdown ref — clients
+ * MUST prefer `path` over `src` so non-default `attachmentFolderPath`
+ * configurations (Obsidian-style `attachments/`, bare-name, parent-relative)
+ * round-trip correctly. `deduped` is true when the upload hit the same-dir
+ * sha256 cache (no new bytes written).
  */
 export const UploadAssetSuccessSchema = z
   .object({
     src: z.string().min(1),
+    path: z.string().min(1).optional(),
     deduped: z.boolean().optional(),
-    sha: z.string().min(1).optional(),
-    byteLength: z.number().int().nonnegative().optional(),
   })
   .loose();
 export type UploadAssetSuccess = z.infer<typeof UploadAssetSuccessSchema>;

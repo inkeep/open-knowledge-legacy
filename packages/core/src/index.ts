@@ -215,6 +215,7 @@ export type {
   PropDefString,
 } from './registry/types.ts';
 export {
+  assertNeverProblemType,
   type PrincipalResponse,
   PrincipalResponseSchema,
   type ProblemDetails,

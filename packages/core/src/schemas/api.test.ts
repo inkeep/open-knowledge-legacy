@@ -259,16 +259,15 @@ describe('UploadAssetSuccessSchema', () => {
 
   test('parses a fully-populated success with dedup metadata', () => {
     const result = UploadAssetSuccessSchema.safeParse({
-      src: 'attachments/photo.png',
+      src: 'photo.png',
+      path: 'docs/photo.png',
       deduped: true,
-      sha: 'abc123',
-      byteLength: 1024,
     });
     expect(result.success).toBe(true);
     if (result.success) {
+      expect(result.data.src).toBe('photo.png');
+      expect(result.data.path).toBe('docs/photo.png');
       expect(result.data.deduped).toBe(true);
-      expect(result.data.sha).toBe('abc123');
-      expect(result.data.byteLength).toBe(1024);
     }
   });
 
@@ -304,8 +303,8 @@ describe('UploadAssetSuccessSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  test('fails when byteLength is negative', () => {
-    const result = UploadAssetSuccessSchema.safeParse({ src: 'foo.png', byteLength: -1 });
+  test('fails when path is empty', () => {
+    const result = UploadAssetSuccessSchema.safeParse({ src: 'foo.png', path: '' });
     expect(result.success).toBe(false);
   });
 });

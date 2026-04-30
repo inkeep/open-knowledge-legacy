@@ -8,6 +8,8 @@
  * admission via `ASSET_EXTENSIONS`), with magic-byte sniffing + path-escape
  * + symlink-realpath as the security boundary.
  */
+import { ProblemDetailsSchema, UploadAssetSuccessSchema } from '@inkeep/open-knowledge-core';
+import { HttpResponseParseError } from '../http-client.ts';
 import { getCurrentDocName } from './current-doc-name.ts';
 
 interface UploadFileResult {
@@ -61,18 +63,29 @@ export async function uploadFile(
     throw new Error(`Upload failed: ${message}`);
   }
 
-  if (!res.ok) {
-    let errorMessage = `Upload failed (${res.status})`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) errorMessage = body.error;
-    } catch {
-      // server returned non-JSON; keep the status-code default
-    }
-    throw new Error(errorMessage);
+  let rawBody: unknown;
+  try {
+    rawBody = await res.json();
+  } catch (parseError) {
+    throw new HttpResponseParseError('Upload response is not JSON.', {
+      cause: parseError,
+      status: res.status,
+    });
   }
 
-  // Server response shape: `{ ok: true, src, path, deduped }`. Prefer `path`
+  // RFC 9457 two-step parse: status-discriminate, then per-handler schema.
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(rawBody);
+    if (!problem.success) {
+      throw new HttpResponseParseError('Upload error response did not match ProblemDetails.', {
+        cause: problem.error,
+        status: res.status,
+      });
+    }
+    throw new Error(problem.data.title);
+  }
+
+  // Server success shape: `{ src, path, deduped }`. Prefer `path`
   // (contentDir-relative; honors a non-default `attachmentFolderPath`) over
   // `src` (bare basename — co-located-with-parent assumption that breaks
   // under Obsidian-style global attachment paths). Both POSIX-normalized,
@@ -88,18 +101,14 @@ export async function uploadFile(
   // Mirrors the drop path's `resolvedSrc = `/${assetContentPath}`` in
   // `image-upload/index.ts`. Emitted MDX carries the same server-absolute
   // shape, so byte-identity round-trips through parser → render.
-  let url: string;
-  try {
-    const body = (await res.json()) as { src?: string; path?: string };
-    const resolved = body.path ?? body.src;
-    if (typeof resolved !== 'string') {
-      throw new Error('Server response missing "path"/"src" field');
-    }
-    url = resolved.startsWith('/') ? resolved : `/${resolved}`;
-  } catch (parseError) {
-    const message = parseError instanceof Error ? parseError.message : String(parseError);
-    throw new Error(`Upload response parse error: ${message}`);
+  const success = UploadAssetSuccessSchema.safeParse(rawBody);
+  if (!success.success) {
+    throw new HttpResponseParseError('Upload success response did not match UploadAssetSuccess.', {
+      cause: success.error,
+      status: res.status,
+    });
   }
-
+  const resolved = success.data.path ?? success.data.src;
+  const url = resolved.startsWith('/') ? resolved : `/${resolved}`;
   return { url };
 }

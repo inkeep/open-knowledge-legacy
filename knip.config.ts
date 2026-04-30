@@ -43,13 +43,22 @@ export default {
     'docs/content/guides/properties.mdx': ['files'],
     'docs/content/guides/component-blocks.mdx': ['files'],
     'docs/content/guides/assets-and-embeds.mdx': ['files'],
-    // RFC 9457 HTTP API hardening foundation modules. The api.type-tests.ts
-    // file is typecheck-only and never imported at runtime — its purpose is
-    // to fail `tsc --noEmit` if the canonical schema shapes regress.
+    // RFC 9457 HTTP API hardening foundation modules.
+    //
+    //   `api.type-tests.ts` — typecheck-only; never imported at runtime; its
+    //   purpose is to fail `tsc --noEmit` if canonical schema shapes regress.
+    //
+    //   `request-validation.ts`, `error-response.ts`, `http-client.ts` — the
+    //   canonical foundation. Some exports (`withValidation`,
+    //   `_resetApiErrorCounterForTest`, `PayloadTooLargeError`, options/
+    //   handler types) are not consumed by every handler, but every body-
+    //   taking handler depends on the JSON-body wrapper being available
+    //   without re-exporting it from scratch. Treat as "exports may be
+    //   temporarily unused".
     'packages/core/src/schemas/api.type-tests.ts': ['files'],
-    'packages/server/src/http/error-response.ts': ['files'],
-    'packages/server/src/http/request-validation.ts': ['files'],
-    'packages/app/src/editor/http-client.ts': ['files'],
+    'packages/server/src/http/request-validation.ts': ['exports', 'types'],
+    'packages/server/src/http/error-response.ts': ['exports'],
+    'packages/app/src/editor/http-client.ts': ['types'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {

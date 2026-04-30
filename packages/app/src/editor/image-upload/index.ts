@@ -4,6 +4,9 @@ import {
   DEFAULT_EMIT_FORMAT,
   extensionOf,
   IMAGE_EXTENSIONS,
+  ProblemDetailsSchema,
+  type UploadAssetSuccess,
+  UploadAssetSuccessSchema,
   VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
@@ -13,6 +16,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { toast } from 'sonner';
 import { getEditorDocName } from '../extensions/doc-context.ts';
 import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
+import { HttpResponseParseError } from '../http-client.ts';
 import { getDescriptor } from '../registry/index.ts';
 import { focusInsertedComponent } from '../slash-command/component-items.tsx';
 
@@ -252,24 +256,6 @@ export function pickInsertShape(filename: string): InsertShape {
   return { kind: 'markdown-link', ext };
 }
 
-interface UploadResponseBody {
-  ok?: boolean;
-  /** Filename (basename only) of the written/existing asset. */
-  src?: string;
-  /**
-   * ContentDir-relative path the server actually wrote to. Reflects
-   * `upload.attachmentFolderPath` — for default `"./"` this is
-   * `<docDir>/<src>`, but for `attachmentFolderPath: 'attachments'` it's
-   * `attachments/<src>` regardless of doc location. Clients MUST prefer
-   * `path` over `src` when emitting the reference, otherwise non-default
-   * attachmentFolderPath configurations produce broken relative refs.
-   */
-  path?: string;
-  deduped?: boolean;
-  error?: string;
-  message?: string;
-}
-
 export async function uploadAndInsert(
   file: File,
   editor: Editor,
@@ -306,32 +292,48 @@ export async function uploadAndInsert(
     return;
   }
 
-  let body: UploadResponseBody = {};
+  let rawBody: unknown;
   try {
-    body = (await res.json()) as UploadResponseBody;
-  } catch {
-    // body parse failure handled below
-  }
-
-  if (!res.ok) {
-    // Server-side reasons the upload rejects a request
-    // (`malformed-upload`, `storage-full`, `storage-readonly`,
-    // `collision-exhaustion`, etc. — see `UploadWriteReason` in
-    // `packages/server/src/upload-errors.ts`) all populate `message` with
-    // a human-readable form. Fall through to a generic shape only if the
-    // response lacks one.
-    const message = body.message ?? body.error ?? `Upload failed (${res.status})`;
-    console.error('[uploadAndInsert] Server error:', message);
-    showError(editor, uploadId, message);
-    return;
-  }
-
-  if (typeof body.src !== 'string') {
-    console.error('[uploadAndInsert] Response missing src:', body);
+    rawBody = await res.json();
+  } catch (parseError) {
+    // Non-JSON response (proxy 502 HTML, network failure body, etc.).
+    // Distinct from a contract-shape parse failure handled below.
+    console.error('[uploadAndInsert] Response is not JSON:', parseError);
     showError(editor, uploadId);
     return;
   }
 
+  // RFC 9457 two-step parse: HTTP-status discrimination + per-handler schema.
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(rawBody);
+    if (!problem.success) {
+      const cause = new HttpResponseParseError('Upload response did not match ProblemDetails.', {
+        cause: problem.error,
+        status: res.status,
+      });
+      console.error('[uploadAndInsert] Server error (unparseable):', cause);
+      showError(editor, uploadId);
+      return;
+    }
+    console.error('[uploadAndInsert] Server error:', problem.data);
+    showError(editor, uploadId, problem.data.title);
+    return;
+  }
+
+  const success = UploadAssetSuccessSchema.safeParse(rawBody);
+  if (!success.success) {
+    const cause = new HttpResponseParseError(
+      'Upload success response did not match UploadAssetSuccess.',
+      {
+        cause: success.error,
+        status: res.status,
+      },
+    );
+    console.error('[uploadAndInsert] Response missing src:', cause);
+    showError(editor, uploadId);
+    return;
+  }
+  const body: UploadAssetSuccess = success.data;
   const src = body.src;
   const deduped = body.deduped === true;
   // Major-1 fix: prefer the server-returned `path` (contentDir-relative)

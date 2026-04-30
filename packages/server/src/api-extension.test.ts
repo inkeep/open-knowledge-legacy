@@ -164,7 +164,7 @@ describe('sanitizeFilename', () => {
   });
 });
 
-describe('handleUploadImage', () => {
+describe('handleUploadAsset', () => {
   let tmpDir: string;
   let contentDir: string;
   let server: import('node:http').Server;
@@ -247,16 +247,18 @@ describe('handleUploadImage', () => {
 
   test('happy path: sibling upload with parentDocName', async () => {
     const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
-    const body = (await res.json()) as { ok: boolean; src: string; path: string };
+    const body = (await res.json()) as { src: string; path: string; deduped: boolean };
     expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
-    // Response shape: `src` is the bare filename (co-located-with-parent
-    // assumption), `path` is contentDir-relative and honors a non-default
-    // `attachmentFolderPath`. The client helper prefers `path` for accurate
-    // refs under any attachment-path config.
+    expect(res.headers.get('content-type')).toBe('application/json');
+    // Wire shape post-D22: flat success (no `ok: true` wrapper). `src` is
+    // the bare filename (co-located-with-parent assumption), `path` is
+    // contentDir-relative and honors a non-default `attachmentFolderPath`.
     expect(body.src).toBe('screenshot.png');
     expect(body.path).toBe('docs/screenshot.png');
+    expect(body.deduped).toBe(false);
     expect(existsSync(join(contentDir, 'docs', 'screenshot.png'))).toBe(true);
+    // No `ok: true` discriminator on success path post-D22.
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
   });
 
   test('rejects missing parentDocName', async () => {
@@ -267,34 +269,49 @@ describe('handleUploadImage', () => {
       body: formData,
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('parentDocName is required');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as {
+      type: string;
+      title: string;
+      status: number;
+      instance: string;
+    };
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(body.status).toBe(400);
+    expect(body.title.length).toBeGreaterThan(0);
+    expect(body.instance).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 
   test('rejects parentDocName with .. traversal', async () => {
     const res = await uploadImage(createPngBuffer(), 'test.png', '../../etc/passwd.md');
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('path-escape');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type: string; status: number };
+    expect(body.type).toBe('urn:ok:error:path-escape');
+    expect(body.status).toBe(400);
   });
 
   test('rejects absolute parentDocName', async () => {
     const res = await uploadImage(createPngBuffer(), 'test.png', '/etc/passwd.md');
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('path-escape');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type: string };
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('rejects parentDocName with NUL byte', async () => {
     const res = await uploadImage(createPngBuffer(), 'test.png', 'docs/\x00evil.md');
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('path-escape');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type: string };
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('paste timestamp-stem synthesis for generic filename', async () => {
     const res = await uploadImage(createPngBuffer(), 'image.png', 'docs/guide.md');
-    const body = (await res.json()) as { ok: boolean; src: string; path: string };
+    const body = (await res.json()) as { src: string; path: string };
     expect(res.status).toBe(200);
     expect(body.src).toMatch(/^pasted-\d{8}-\d{6}\.png$/);
     expect(body.path).toMatch(/^docs\/pasted-\d{8}-\d{6}\.png$/);
@@ -311,17 +328,15 @@ describe('handleUploadImage', () => {
     const exeBuffer = Buffer.from('MZexecutable content here');
     const res = await uploadImage(exeBuffer, 'malicious.png', 'docs/guide.md');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
-    expect(body.ok).toBe(true);
+    const body = (await res.json()) as { src: string; deduped: boolean };
     expect(body.src).toBe('malicious.png');
     expect(body.deduped).toBe(false);
   });
 
   test('SVG accepted with image/svg+xml', async () => {
     const res = await uploadImage(createSvgBuffer(), 'diagram.svg', 'docs/guide.md');
-    const body = (await res.json()) as { ok: boolean; src: string; path: string };
+    const body = (await res.json()) as { src: string; path: string };
     expect(res.status).toBe(200);
-    expect(body.ok).toBe(true);
     expect(body.src).toBe('diagram.svg');
     expect(body.path).toBe('docs/diagram.svg');
   });
@@ -333,7 +348,7 @@ describe('handleUploadImage', () => {
     // identical-bytes dedup wins (covered separately in the dedup describe).
     writeFileSync(join(contentDir, 'docs', 'screenshot.png'), Buffer.from('different bytes'));
     const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
-    const body = (await res.json()) as { ok: boolean; src: string; path: string };
+    const body = (await res.json()) as { src: string; path: string };
     expect(res.status).toBe(200);
     expect(body.src).toBe('screenshot-1.png');
     expect(body.path).toBe('docs/screenshot-1.png');
@@ -346,8 +361,9 @@ describe('handleUploadImage', () => {
 
     const res = await uploadImage(createPngBuffer(), 'test.png', 'docs/escape/x.md');
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('path-escape');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as { type: string };
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('FR-8: /api/upload (new primary endpoint) accepts the same payload', async () => {
@@ -359,7 +375,7 @@ describe('handleUploadImage', () => {
       body: formData,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; src: string; deduped: boolean };
+    const body = (await res.json()) as { src: string; deduped: boolean };
     expect(body.src).toBe('screenshot.png');
     expect(body.deduped).toBe(false);
     expect(existsSync(join(contentDir, 'docs', 'screenshot.png'))).toBe(true);
@@ -376,7 +392,7 @@ describe('handleUploadImage', () => {
       body: formData,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; src: string };
+    const body = (await res.json()) as { src: string };
     expect(body.src).toBe('draft.pdf');
     expect(existsSync(join(contentDir, 'docs', 'draft.pdf'))).toBe(true);
   });
@@ -395,7 +411,7 @@ describe('handleUploadImage', () => {
       body: formData,
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; src: string };
+    const body = (await res.json()) as { src: string };
     expect(body.src).toBe('data.csv');
     expect(existsSync(join(contentDir, 'docs', 'data.csv'))).toBe(true);
   });
@@ -414,7 +430,7 @@ describe('handleUploadImage', () => {
   });
 });
 
-describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
+describe('handleUploadAsset — same-dir sha256 dedup (FR-2)', () => {
   let tmpDir: string;
   let contentDir: string;
   let server: import('node:http').Server;

@@ -46,6 +46,7 @@ import {
   readFmMap,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
+  UploadRequestSchema,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -138,6 +139,8 @@ import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-tra
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
+import { errorResponse } from './http/error-response.ts';
+import { validateBody } from './http/request-validation.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -584,7 +587,12 @@ async function findDuplicateAsset(
  * HTTP status differentiates transient-yet-retry (500) from full-disk
  * (507) per RFC 4918.
  */
-import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
+import {
+  UploadWriteError,
+  type UploadWriteReason,
+  uploadStatusFor,
+  uploadTitleFor,
+} from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
@@ -603,11 +611,11 @@ interface UploadResult {
  * HashingPassThrough Transform into createWriteStream(tempPath). Memory
  * becomes O(1); disk is the only bound.
  *
- * Error contract (typed via UploadWriteError.reason):
- *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
- *   - storage-full: ENOSPC / EDQUOT during the write stream
- *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
- *   - storage-error: any other write-stream error
+ * Error contract (typed via UploadWriteError.reason — URN-form ProblemType):
+ *   - urn:ok:error:malformed-upload: busboy 'error' (unparseable multipart, etc.)
+ *   - urn:ok:error:storage-full: ENOSPC / EDQUOT during the write stream
+ *   - urn:ok:error:storage-readonly: EROFS / EACCES / EPERM during the write stream
+ *   - urn:ok:error:storage-error: any other write-stream error
  *
  * On any error, the tempfile is best-effort unlinked before propagating.
  * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
@@ -630,7 +638,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
         limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
       });
     } catch (err) {
-      reject(new UploadWriteError('malformed-upload', err));
+      reject(new UploadWriteError('urn:ok:error:malformed-upload', err));
       return;
     }
 
@@ -667,11 +675,11 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     };
 
     const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
-      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'urn:ok:error:storage-full';
       if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
-        return 'storage-readonly';
+        return 'urn:ok:error:storage-readonly';
       }
-      return 'storage-error';
+      return 'urn:ok:error:storage-error';
     };
 
     bb.on('field', (name, val) => {
@@ -687,7 +695,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
       // uncaught throw here bubbles back through busboy's `_write` and
       // re-emits as `'error'`, which the listener below classifies as
-      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
+      // `'urn:ok:error:malformed-upload'` (HTTP 400). That misleads operators triaging
       // a full disk into chasing a phantom client bug. Catch the sync
       // throw, classify via the same table the pipeline rejection uses,
       // and drain the file part so busboy can finish parsing the rest.
@@ -727,7 +735,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     });
 
     bb.on('error', (err) => {
-      fail('malformed-upload', err);
+      fail('urn:ok:error:malformed-upload', err);
     });
 
     // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
@@ -765,7 +773,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     req.on('close', () => {
       if (settled || pipelineError) return;
       if (!req.complete) {
-        fail('malformed-upload', new Error('client disconnected'));
+        fail('urn:ok:error:malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -4836,9 +4844,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleUploadAsset(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'upload-asset',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
@@ -4846,41 +4857,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       uploadResult = await readUploadBody(req, contentDir);
     } catch (e) {
-      // All body-parse failures land as UploadWriteError with a typed reason.
-      // Tempfile cleanup is handled inside readUploadBody's error path.
+      // All body-parse failures land as UploadWriteError with a URN-form
+      // reason. Tempfile cleanup is handled inside readUploadBody's error
+      // path. Anonymous emit (no extractAgentIdentity yet) is semantically
+      // OK — no Y.Doc mutation has been attempted.
       if (e instanceof UploadWriteError) {
-        if (e.reason === 'malformed-upload') {
-          json(res, 400, { ok: false, error: 'malformed-upload' });
-          return;
-        }
-        if (e.reason === 'storage-full') {
-          json(res, 507, { ok: false, error: 'storage-full' });
-          return;
-        }
-        if (e.reason === 'storage-readonly') {
-          json(res, 500, { ok: false, error: 'storage-readonly' });
-          return;
-        }
-        json(res, 500, { ok: false, error: 'storage-error' });
+        errorResponse(res, uploadStatusFor(e.reason), e.reason, uploadTitleFor(e.reason), {
+          handler: 'upload-asset',
+          cause: e,
+        });
         return;
       }
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      errorResponse(res, 400, 'urn:ok:error:malformed-upload', 'Failed to parse upload.', {
+        handler: 'upload-asset',
+        cause: e,
+      });
       return;
     }
 
-    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
-
-    // Identity extracted from query params (multipart body precludes JSON).
-    // Capture agentId / agentName so structured upload logs carry
-    // attribution — mirrors precedent #24/#25 and lets operators trace
-    // unexpected file-creation events back to the originating agent
-    // during incident investigation. Both fields follow bounded shapes
-    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
-    // remain cardinality-safe for log indexing.
-    const { agentId, agentName } = extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
+    const { filename, tempPath, sha, byteLength, parentDocName: rawParentDocName } = uploadResult;
 
     // Belt-and-braces cleanup: if anything below this point errors or
     // early-returns, the tempfile must go away. Every early-return path
@@ -4895,26 +4890,57 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     };
 
+    // Validate metadata fields (parentDocName etc.) via the shared
+    // `validateBody` middleware. Body-shape failure emits 400
+    // `urn:ok:error:invalid-request` BEFORE `extractAgentIdentity` runs —
+    // an anonymous response is semantically correct here because no Y.Doc
+    // mutation is attempted. Mirrors `withValidation`'s policy for JSON
+    // handlers.
+    const validated = validateBody(UploadRequestSchema, { parentDocName: rawParentDocName }, res, {
+      handler: 'upload-asset',
+    });
+    if (!validated.ok) {
+      cleanupTempfile();
+      return;
+    }
+    const { parentDocName } = validated.value;
+
+    // Identity extracted from query params (multipart body precludes JSON).
+    // Capture agentId / agentName so structured upload logs carry
+    // attribution — mirrors precedent #24/#25 and lets operators trace
+    // unexpected file-creation events back to the originating agent
+    // during incident investigation. Both fields follow bounded shapes
+    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
+    // remain cardinality-safe for log indexing.
+    //
+    // CRUCIAL: identity extraction must precede every SEMANTIC error
+    // emission below (path-escape, no-file-received, storage-error). Body-
+    // shape errors above (urn:ok:error:invalid-request, urn:ok:error:malformed-upload)
+    // are anonymous because no Y.Doc mutation is attempted. The
+    // attribution-sweep-coverage ordering check enforces this distinction
+    // (precedent #24).
+    const { agentId, agentName } = extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+
     if (byteLength === 0) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'No file received' });
+      errorResponse(res, 400, 'urn:ok:error:no-file-received', 'No file received.', {
+        handler: 'upload-asset',
+      });
       return;
     }
 
-    if (!parentDocName) {
-      cleanupTempfile();
-      json(res, 400, { ok: false, error: 'parentDocName is required' });
-      return;
-    }
-
-    // D15: reject path-escape attempts
+    // D15: reject path-escape attempts.
     if (
       parentDocName.includes('\x00') ||
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'path-escape' });
+      errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+        handler: 'upload-asset',
+      });
       return;
     }
 
@@ -4926,7 +4952,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'path-escape' });
+      errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+        handler: 'upload-asset',
+      });
       return;
     }
     // mkdir -p the destination — bare-name / nested attachmentFolderPath
@@ -4937,8 +4965,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') {
         cleanupTempfile();
-        log.error({ err, destDir }, '[upload] failed to create attachment directory');
-        json(res, 500, { ok: false, error: 'storage-error' });
+        errorResponse(res, 500, 'urn:ok:error:storage-error', 'Failed to write upload.', {
+          handler: 'upload-asset',
+          cause: err,
+          detail: 'failed to create attachment directory',
+        });
         return;
       }
     }
@@ -4954,7 +4985,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
         cleanupTempfile();
-        json(res, 400, { ok: false, error: 'path-escape' });
+        errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+          handler: 'upload-asset',
+        });
         return;
       }
     } catch (e) {
@@ -4963,7 +4996,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
         cleanupTempfile();
-        json(res, 400, { ok: false, error: 'path-escape' });
+        errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+          handler: 'upload-asset',
+          cause: e,
+        });
         return;
       }
     }
@@ -5030,13 +5066,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           '[upload] dedup hit',
         );
-        // Include the contentDir-relative `path` in the response so the
-        // client honors non-default `attachmentFolderPath`. Without this
-        // the client assumes the asset is co-located with the parent doc
-        // and emits a broken relative ref when operators configure
-        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
-        // or similar.
-        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
+        // RFC 9457 §3 success path: drop the `ok: true` wrapper. Wire
+        // shape is `{ src, path, deduped }` with `Content-Type:
+        // application/json`. Clients use HTTP-status discrimination
+        // (`if (!res.ok)`) to choose between this success schema and
+        // `ProblemDetailsSchema`.
+        json(res, 200, { src: existing, path: relPath, deduped: true });
         return;
       }
     }
@@ -5087,15 +5122,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         },
         '[upload] write ok',
       );
-      // Major-1: same rationale as the dedup branch above — client needs
-      // the contentDir-relative path to emit correct refs under any
-      // attachmentFolderPath value.
-      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
+      json(res, 200, { src: destFilename, path: relPath, deduped: false });
     } catch (e) {
       // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
       // on throw; no extra cleanupTempfile() call needed here.
-      const message = e instanceof Error ? e.message : String(e);
-      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      const reason: UploadWriteReason =
+        e instanceof UploadWriteError ? e.reason : 'urn:ok:error:storage-error';
       log.error(
         {
           event: 'upload',
@@ -5105,34 +5137,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           filename: finalFilename,
           size: byteLength,
           reason,
-          message,
-          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+          httpStatus: uploadStatusFor(reason),
+          err: e,
         },
         '[upload] write failed',
       );
-      if (e instanceof UploadWriteError) {
-        if (e.reason === 'storage-full') {
-          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
-          // retry makes no sense until the operator frees space.
-          json(res, 507, { ok: false, error: 'storage-full' });
-          return;
-        }
-        if (e.reason === 'storage-readonly') {
-          json(res, 500, { ok: false, error: 'storage-readonly' });
-          return;
-        }
-        if (e.reason === 'collision-exhaustion') {
-          // Exhausted 100 collision-suffix candidates in one directory —
-          // practically unreachable absent an adversarial workload, but
-          // surfacing the reason helps operators diagnose a pathological
-          // filename that's dodging sanitize.
-          json(res, 500, { ok: false, error: 'collision-exhaustion' });
-          return;
-        }
-        json(res, 500, { ok: false, error: 'storage-error' });
-        return;
-      }
-      json(res, 500, { ok: false, error: 'storage-error' });
+      errorResponse(res, uploadStatusFor(reason), reason, uploadTitleFor(reason), {
+        handler: 'upload-asset',
+        cause: e,
+      });
     }
   }
 
@@ -6411,7 +6424,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/create-page': handleCreatePage,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload': handleUploadImage,
+    '/api/upload': handleUploadAsset,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

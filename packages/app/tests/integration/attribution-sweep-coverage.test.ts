@@ -43,8 +43,9 @@ const REQUIRED_HANDLERS = [
   // Single unified upload handler — `/api/upload` (accept-all by extension).
   // The per-MIME `handleUploadVideo` / `handleUploadAudio` shape was retired
   // when this branch superseded #310's pipeline; one handler, one identity
-  // call site.
-  'handleUploadImage',
+  // call site. Renamed handleUploadImage → handleUploadAsset (D24/US-004)
+  // because the route is no longer image-specific post-FR-8 unification.
+  'handleUploadAsset',
 ];
 
 /**
@@ -162,5 +163,68 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
     // Strip comments + JSDoc so the structural check only inspects executable code.
     const code = actorHelperSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(/body\s*[.[][^a-zA-Z0-9_]*['"]?principalId/.test(code)).toBe(false);
+  });
+
+  // For every mutating handler migrated to the RFC 9457 envelope, semantic
+  // `errorResponse(...)` calls MUST happen AFTER identity extraction (via
+  // either `extractAgentIdentity` for agent-write handlers or
+  // `extractActorIdentity` for rename + rollback handlers). Body-shape
+  // failures routed through `validateBody` are anonymous (semantically OK —
+  // no Y.Doc mutation attempted) and are excluded from the ordering check.
+  // The policy is documented in `packages/server/src/http/README.md`.
+  //
+  // The check is gated on the migrated handler being present and on it
+  // calling `errorResponse`. Pre-migration handlers (still using inline
+  // `json(res, NNN, { ok: false, ... })`) are skipped.
+  test('migrated mutating handlers extract identity before any semantic errorResponse', () => {
+    const failures: string[] = [];
+    for (const handler of REQUIRED_HANDLERS) {
+      const body = extractHandlerBody(handler);
+      if (body === null) continue;
+      if (!body.includes('errorResponse(')) continue; // pre-migration; skip
+      const identityIdx = Math.max(
+        body.indexOf('extractAgentIdentity('),
+        body.indexOf('extractActorIdentity('),
+      );
+      if (identityIdx === -1) continue; // already failed by the prior test
+
+      // Find the FIRST `errorResponse(` call. If it precedes the identity
+      // extraction it MUST be a body-shape error (i.e. the catch block that
+      // follows readUploadBody / inside validateBody) — those emissions are
+      // pre-identity by policy. Heuristic: a `validateBody(` call earlier
+      // in the function is fine; a bare `errorResponse(` not wrapped by
+      // `if (e instanceof UploadWriteError)` style guarding is suspicious.
+      // We approximate by scanning text between `errorResponse(` and
+      // identityIdx for the surrounding context.
+      const firstErrorIdx = body.indexOf('errorResponse(');
+      if (firstErrorIdx > identityIdx) continue; // post-identity already
+      // pre-identity emit detected — verify it sits inside body-shape paths:
+      // a `catch` of body parsing, or a `validateBody(` call site, or after
+      // a raw method-not-allowed early-return at the top of the function.
+      // These are the recognized pre-identity emission contexts.
+      const preIdentityRegion = body.slice(0, identityIdx);
+      const allErrorEmitsPreIdentity = [...preIdentityRegion.matchAll(/errorResponse\(/g)].map(
+        (m) => m.index ?? 0,
+      );
+      const bodyShapeContexts = [
+        /method-not-allowed/, // top-of-handler method check
+        /malformed-upload/, // body-parse failure
+        /invalid-request/, // validateBody auto-emit
+        /storage-/, // upload streaming pipeline failure pre-identity
+      ];
+      const allBodyShape = allErrorEmitsPreIdentity.every((idx) => {
+        // Inspect ~500 chars of context around the emit to confirm it is a
+        // body-shape error. Conservative: any of the allowlisted URN
+        // tokens within the surrounding window passes.
+        const context = body.slice(Math.max(0, idx - 100), Math.min(body.length, idx + 400));
+        return bodyShapeContexts.some((re) => re.test(context));
+      });
+      if (!allBodyShape) {
+        failures.push(
+          `${handler}: pre-identity errorResponse(...) emit is not a recognized body-shape error context — semantic errors must be post-identity-extraction per precedent #24`,
+        );
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });
