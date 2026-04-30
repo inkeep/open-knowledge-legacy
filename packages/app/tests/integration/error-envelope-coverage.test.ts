@@ -34,14 +34,6 @@ const source = readFileSync(API_EXT_PATH, 'utf8');
  * into fail-on-any-occurrence mode.
  */
 const UNMIGRATED_HANDLERS = new Set([
-  'handleLocalOpAuthIdentity',
-  'handleLocalOpAuthLogin',
-  'handleLocalOpAuthPat',
-  'handleLocalOpAuthRepos',
-  'handleLocalOpAuthSetIdentity',
-  'handleLocalOpAuthSignout',
-  'handleLocalOpAuthStatus',
-  'handleLocalOpOpen',
   'handleSeedApply',
   'handleSeedPlan',
   'handleSyncAbortMerge',

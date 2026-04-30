@@ -137,6 +137,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
     // All exit paths set repos + clear loading explicitly before returning.
     let list: RepoEntry[] = [];
     let aborted = false;
+    let errorTitle: string | null = null;
     try {
       const res = await fetch('/api/local-op/auth/repos', {
         method: 'POST',
@@ -144,24 +145,47 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
         body: JSON.stringify({}),
         signal,
       });
-      const reader = res.ok ? res.body?.getReader() : null;
-      if (reader) {
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          for (const line of buffer.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line) as { type?: string; repos?: RepoEntry[] };
-              if (event.repos) list.push(...event.repos);
-            } catch {
-              /* ignore malformed NDJSON line */
+      if (!res.ok) {
+        // Pre-stream error: surface the typed `problem.title` so the user
+        // sees why repo browse failed instead of an empty list.
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          errorTitle = result.success ? result.data.title : 'Failed to load repos';
+        } catch {
+          errorTitle = 'Failed to load repos';
+        }
+      } else {
+        const reader = res.body?.getReader();
+        if (reader) {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const event = JSON.parse(line) as {
+                  type?: string;
+                  repos?: RepoEntry[];
+                  problem?: { title?: string };
+                };
+                // Mid-stream error event — typed `{ type: 'error', problem }`
+                // per US-005 streaming envelope. Surface the title.
+                if (event.type === 'error' && event.problem?.title) {
+                  errorTitle = event.problem.title;
+                  continue;
+                }
+                if (event.repos) list.push(...event.repos);
+              } catch {
+                /* ignore malformed NDJSON line */
+              }
             }
           }
-          buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
         }
       }
     } catch (err) {
@@ -174,6 +198,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
     // Skip state writes on abort — the effect already tore down and React
     // would warn about a state update on an unmounted dialog.
     if (aborted || signal.aborted) return;
+    if (errorTitle) toast.error(errorTitle);
     setRepos(list);
     setLoadingRepos(false);
   }

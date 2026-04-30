@@ -48,7 +48,11 @@ import {
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  LocalOpAuthHostRequestSchema,
+  LocalOpAuthPatRequestSchema,
+  LocalOpAuthSetIdentityRequestSchema,
   LocalOpCloneRequestSchema,
+  LocalOpOpenRequestSchema,
   type Principal,
   prependFrontmatter,
   readFmMap,
@@ -5784,39 +5788,64 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
+  const HANDLE_LOCAL_OP_OPEN = 'local-op-open';
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-open' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_OPEN })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_OPEN,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let dir: string;
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { dir?: unknown };
-      if (typeof parsed.dir !== 'string' || !parsed.dir) {
-        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
-        return;
-      }
-      dir = parsed.dir;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_OPEN,
+        cause: err,
+      });
       return;
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_OPEN,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpOpenRequestSchema, parsed, res, {
+      handler: HANDLE_LOCAL_OP_OPEN,
+    });
+    if (!validated.ok) return;
+    const { dir } = validated.value;
 
     // Security: dir must be within user home dir
     if (!isSafeLocalPath(dir)) {
-      json(res, 400, {
-        ok: false,
-        error: 'dir must be within the user home directory',
-      });
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:dir-outside-home',
+        'dir must be within the user home directory.',
+        { handler: HANDLE_LOCAL_OP_OPEN, detail: `dir=${dir}` },
+      );
       return;
     }
 
     // Concurrency guard
     if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
-      json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'A server-open operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_OPEN },
+      );
       return;
     }
 
@@ -5825,7 +5854,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if ('port' in result) {
         json(res, 200, { port: result.port });
       } else {
-        json(res, 504, { ok: false, error: result.error });
+        errorResponse(
+          res,
+          504,
+          'urn:ok:error:server-open-failed',
+          'Failed to open project server.',
+          { handler: HANDLE_LOCAL_OP_OPEN, detail: result.error },
+        );
       }
     } finally {
       localOpGuard.release(LOCAL_OP_OPEN_KEY);
@@ -5850,26 +5885,59 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth login --json [--host <host>]
    * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
    * The device-flow subprocess manages its own timeout.
+   *
+   * Streaming endpoint per US-005 pattern: pre-stream errors emit
+   * `application/problem+json`; mid-stream errors emit a typed event
+   * `{ type: 'error', problem: ProblemDetails }`. The CLI's own
+   * `{ type: 'error', message }` events are intercepted and wrapped so the
+   * client always sees the canonical streaming envelope.
    */
+  const HANDLE_LOCAL_OP_AUTH_LOGIN = 'local-op-auth-login';
   async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-login' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_LOGIN })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let host = 'github.com';
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+        cause: err,
+      });
       return;
     }
+    let parsed: unknown;
+    try {
+      // Empty body is OK — host defaults to 'github.com'.
+      parsed = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthHostRequestSchema, parsed, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+    });
+    if (!validated.ok) return;
+    const host = validated.value.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth login operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth login operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_LOGIN },
+      );
       return;
     }
 
@@ -5879,6 +5947,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-cache',
     });
+
+    /** Write a typed mid-stream error event (US-005 pattern). */
+    const writeStreamError = (
+      status: number,
+      type: Parameters<typeof streamingProblemEvent>[1],
+      title: string,
+      options: { detail?: string; cause?: unknown } = {},
+    ): void => {
+      if (res.writableEnded) return;
+      const event = streamingProblemEvent(status, type, title, {
+        handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+        ...options,
+      });
+      res.write(`${JSON.stringify(event)}\n`);
+    };
 
     const [cmd, ...baseArgs] = localOpCliArgs;
     const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
@@ -5904,23 +5987,33 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.on('close', onClientClose);
 
     child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
-      // Parse line-by-line to detect whether the CLI emitted a terminal event
-      // (`complete` | `error`). If it didn't but the process exits 0, we
-      // synthesize one below so the client never hangs on a silent exit.
       stdoutBuffer += chunk.toString('utf-8');
       const lines = stdoutBuffer.split('\n');
       stdoutBuffer = lines.pop() ?? '';
       for (const line of lines) {
         if (!line.trim()) continue;
+        let evt: { type?: unknown; message?: unknown } | null = null;
         try {
-          const parsed = JSON.parse(line) as { type?: unknown };
-          if (parsed.type === 'complete' || parsed.type === 'error') {
-            sawTerminalEvent = true;
-          }
+          evt = JSON.parse(line) as { type?: unknown; message?: unknown };
         } catch {
           /* non-JSON line (e.g. keychain-backend log) — ignore */
         }
+        if (evt && evt.type === 'error') {
+          // Wrap the CLI's untyped error into the typed streaming envelope.
+          const detail = typeof evt.message === 'string' ? evt.message : undefined;
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Auth login subprocess reported an error.',
+            { detail },
+          );
+          sawTerminalEvent = true;
+          continue;
+        }
+        if (evt && evt.type === 'complete') {
+          sawTerminalEvent = true;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
       }
     });
 
@@ -5940,8 +6033,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             // filled in by the next /api/local-op/auth/status poll.
             res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
           } else if (code !== 0) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
+            writeStreamError(
+              500,
+              'urn:ok:error:auth-failed',
+              `Auth login subprocess exited with code ${code}.`,
             );
           }
         }
@@ -5956,7 +6051,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Failed to spawn the auth login subprocess.',
+            { detail: err.message, cause: err },
+          );
           res.end();
         }
       }
@@ -5971,28 +6071,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth status --json [--host <host>]
    * Returns: the single NDJSON line as parsed JSON.
    */
+  const HANDLE_LOCAL_OP_AUTH_STATUS = 'local-op-auth-status';
   async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-status' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_STATUS })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let host = 'github.com';
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const raw = body.toString().trim();
-      if (raw.length > 0) {
-        const parsed = JSON.parse(raw) as { host?: unknown };
-        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-      }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+        cause: err,
+      });
       return;
     }
+    let body: unknown;
+    try {
+      // Empty body is OK — host defaults to 'github.com'.
+      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+    });
+    if (!validated.ok) return;
+    const host = validated.value.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth status operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth status operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_STATUS },
+      );
       return;
     }
 
@@ -6042,9 +6166,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 200, { authenticated: false });
       }
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth status failed',
+      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth status check failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+        detail: err instanceof Error ? err.message : undefined,
+        cause: err,
       });
     } finally {
       localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
@@ -6057,29 +6182,58 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Body: { host?: string }
    * Spawns: auth repos --json [--host <host>]
    * Streams: NDJSON via chunked HTTP.
+   *
+   * Streaming endpoint per US-005 pattern: pre-stream errors emit
+   * `application/problem+json`; mid-stream errors emit a typed event
+   * `{ type: 'error', problem: ProblemDetails }`. CLI `error` events are
+   * intercepted and wrapped to keep the streaming envelope canonical.
    */
+  const HANDLE_LOCAL_OP_AUTH_REPOS = 'local-op-auth-repos';
   async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-repos' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_REPOS })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let host = 'github.com';
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const raw = body.toString().trim();
-      if (raw.length > 0) {
-        const parsed = JSON.parse(raw) as { host?: unknown };
-        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-      }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+        cause: err,
+      });
       return;
     }
+    let body: unknown;
+    try {
+      // Empty body is OK — host defaults to 'github.com'.
+      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+    });
+    if (!validated.ok) return;
+    const host = validated.value.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth repos operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth repos operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_REPOS },
+      );
       return;
     }
 
@@ -6090,10 +6244,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
+    /** Write a typed mid-stream error event (US-005 pattern). */
+    const writeStreamError = (
+      status: number,
+      type: Parameters<typeof streamingProblemEvent>[1],
+      title: string,
+      options: { detail?: string; cause?: unknown } = {},
+    ): void => {
+      if (res.writableEnded) return;
+      const event = streamingProblemEvent(status, type, title, {
+        handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+        ...options,
+      });
+      res.write(`${JSON.stringify(event)}\n`);
+    };
+
     const [cmd, ...baseArgs] = localOpCliArgs;
     const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
 
     let settled = false;
+    let stdoutBuffer = '';
     const child = spawn(cmd, spawnArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -6104,7 +6274,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }, LOCAL_OP_TIMEOUT_MS);
 
     child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let evt: { type?: unknown; message?: unknown } | null = null;
+        try {
+          evt = JSON.parse(line) as { type?: unknown; message?: unknown };
+        } catch {
+          /* non-JSON line — ignore */
+        }
+        if (evt && evt.type === 'error') {
+          // Wrap CLI's untyped error into the canonical streaming envelope.
+          const detail = typeof evt.message === 'string' ? evt.message : undefined;
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Auth repos subprocess reported an error.',
+            { detail },
+          );
+          continue;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
+      }
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
@@ -6116,8 +6309,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (code !== 0 && !res.writableEnded) {
-          res.write(
-            `${JSON.stringify({ type: 'error', message: `auth repos exited with code ${code}` })}\n`,
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            `Auth repos subprocess exited with code ${code}.`,
           );
         }
         res.end();
@@ -6130,7 +6325,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Failed to spawn the auth repos subprocess.',
+            { detail: err.message, cause: err },
+          );
           res.end();
         }
       }
@@ -6143,30 +6343,56 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { host?: string }
    * Spawns: auth signout [--host <host>]
-   * Returns: { ok: true }
+   * Returns: {} (flat success per D22)
    */
+  const HANDLE_LOCAL_OP_AUTH_SIGNOUT = 'local-op-auth-signout';
   async function handleLocalOpAuthSignout(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-signout' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let host = 'github.com';
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+        cause: err,
+      });
       return;
     }
+    let body: unknown;
+    try {
+      body = raw.length === 0 ? {} : JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthHostRequestSchema, body, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+    });
+    if (!validated.ok) return;
+    const host = validated.value.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth signout operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth signout operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT },
+      );
       return;
     }
 
@@ -6192,11 +6418,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      json(res, 200, { ok: true });
+      json(res, 200, {});
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth signout failed',
+      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth signout failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+        detail: err instanceof Error ? err.message : undefined,
+        cause: err,
       });
     } finally {
       localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
@@ -6210,31 +6437,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
    * Returns: the NDJSON complete-event as parsed JSON.
    */
+  const HANDLE_LOCAL_OP_AUTH_PAT = 'local-op-auth-pat';
   async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-pat' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_PAT })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_PAT,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let host = 'github.com';
-    let pat: string;
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { pat?: unknown; host?: unknown };
-      if (typeof parsed.pat !== 'string' || !parsed.pat) {
-        json(res, 400, { ok: false, error: 'Missing or invalid pat' });
-        return;
-      }
-      pat = parsed.pat;
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_PAT,
+        cause: err,
+      });
       return;
     }
+    let body: unknown;
+    try {
+      body = JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_PAT,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthPatRequestSchema, body, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_PAT,
+    });
+    if (!validated.ok) return;
+    const { pat, host: hostInput } = validated.value;
+    const host = hostInput ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth pat operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth pat operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_PAT },
+      );
       return;
     }
 
@@ -6288,12 +6536,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (parsed !== null) {
         json(res, 200, parsed);
       } else {
-        json(res, 200, { ok: true });
+        json(res, 200, {});
       }
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth pat failed',
+      errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth pat failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_PAT,
+        detail: err instanceof Error ? err.message : undefined,
+        cause: err,
       });
     } finally {
       localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
@@ -6302,19 +6551,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
   // Reads the resolved git identity via the identity resolution chain.
-  // Returns { ok: true, identity: { name, email } | null }.
+  // Returns flat { identity: { name, email } | null } per D22 (no `ok: true` wrapper).
 
+  const HANDLE_LOCAL_OP_AUTH_IDENTITY = 'local-op-auth-identity';
   async function handleLocalOpAuthIdentity(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-identity' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_IDENTITY })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!projectDir) {
-      json(res, 400, { ok: false, error: 'No project directory configured' });
+      errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+      });
       return;
     }
     try {
@@ -6323,11 +6578,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // only local + global config tiers here. Sign-in flows pre-fill the form
       // with OAuth name/email separately.
       const identity = await resolveGitIdentity(projectDir);
-      json(res, 200, { ok: true, identity });
+      json(res, 200, { identity });
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'identity resolution failed',
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Identity resolution failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+        detail: err instanceof Error ? err.message : undefined,
+        cause: err,
       });
     }
   }
@@ -6340,43 +6596,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
+  const HANDLE_LOCAL_OP_AUTH_SET_IDENTITY = 'local-op-auth-set-identity';
   async function handleLocalOpAuthSetIdentity(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-set-identity' })) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
-    let name: string;
-    let email: string;
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { name?: unknown; email?: unknown };
-      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
-        json(res, 400, { ok: false, error: 'Missing or invalid name' });
-        return;
-      }
-      if (typeof parsed.email !== 'string' || !parsed.email.trim()) {
-        json(res, 400, { ok: false, error: 'Missing or invalid email' });
-        return;
-      }
-      name = parsed.name.trim();
-      email = parsed.email.trim();
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+        cause: err,
+      });
       return;
     }
+    let body: unknown;
+    try {
+      body = JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpAuthSetIdentityRequestSchema, body, res, {
+      handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+    });
+    if (!validated.ok) return;
+    const name = validated.value.name.trim();
+    const email = validated.value.email.trim();
 
     if (!projectDir) {
-      json(res, 400, { ok: false, error: 'No project directory configured' });
+      errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+      });
       return;
     }
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
-      json(res, 429, { ok: false, error: 'A set-identity operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'A set-identity operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY },
+      );
       return;
     }
 
@@ -6389,11 +6664,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         .catch(() => {
           /* best-effort — status will catch up on next push cycle */
         });
-      json(res, 200, { ok: true });
+      json(res, 200, {});
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'set-identity failed',
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Set-identity failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+        detail: err instanceof Error ? err.message : undefined,
+        cause: err,
       });
     } finally {
       localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);

@@ -13,6 +13,7 @@
  *
  * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
  */
+import { type ProblemDetails, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { consumeAuthEventStream } from './auth-event-stream';
@@ -37,9 +38,14 @@ interface DeviceCompleteEvent {
   avatarUrl?: string;
 }
 
+/**
+ * Mid-stream error event per US-005 streaming envelope (D36 c). Replaces the
+ * pre-migration `{ type: 'error', message: string }` shape — title is sourced
+ * from the typed `problem` payload.
+ */
 interface DeviceErrorEvent {
   type: 'error';
-  message: string;
+  problem: ProblemDetails;
 }
 
 type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
@@ -100,7 +106,22 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
         body: JSON.stringify({ json: true }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
+        // Pre-stream error: server emitted RFC 9457 problem+json before
+        // committing to the NDJSON stream. Display the typed `title`.
+        let message = 'Failed to start sign-in — try again';
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          if (result.success) message = result.data.title;
+        } catch {
+          /* keep generic message */
+        }
+        setError(message);
+        setPolling(false);
+        return;
+      }
+      if (!res.body) {
         setError('Failed to start sign-in — try again');
         setPolling(false);
         return;
@@ -127,7 +148,7 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
             });
             return 'terminal';
           } else if (event.type === 'error') {
-            setError(event.message);
+            setError(event.problem.title);
             setPolling(false);
             return 'terminal';
           }
@@ -280,7 +301,21 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         body: JSON.stringify({ pat: pat.trim() }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
+        // Pre-validation error: emit RFC 9457 problem+json title.
+        let message = 'Invalid token — check that it has repo scope';
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          if (result.success) message = result.data.title;
+        } catch {
+          /* keep generic message */
+        }
+        setError(message);
+        setLoading(false);
+        return;
+      }
+      if (!res.body) {
         setError('Invalid token — check that it has repo scope');
         setLoading(false);
         return;
@@ -297,7 +332,7 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
             setLoading(false);
             return 'terminal';
           } else if (event.type === 'error') {
-            setError(event.message);
+            setError(event.problem.title);
             setLoading(false);
             return 'terminal';
           }
@@ -437,11 +472,14 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via config endpoint (best-effort)
-    void fetch('/api/local-op/auth/status', {
+    // Persist git identity via the correct endpoint (best-effort).
+    // /api/local-op/auth/set-identity writes to repo-local git config and
+    // nudges the sync engine to re-probe so the unresolved-identity UI
+    // banner clears on the next push cycle.
+    void fetch('/api/local-op/auth/set-identity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setIdentity: { name, email } }),
+      body: JSON.stringify({ name, email }),
     }).catch(() => {
       /* ignore */
     });

@@ -196,6 +196,17 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:host-not-allowed',
   'urn:ok:error:principal-not-available',
   'urn:ok:error:not-found',
+  // Cluster G: LocalOp + auth handlers (US-012).
+  // `auth-failed` is the catch-all for non-zero subprocess exits across
+  // login / repos / pat / status / signout. `no-project-dir` flags the
+  // service-unavailable case where the server has no projectDir configured
+  // (handleLocalOpAuthIdentity / handleLocalOpAuthSetIdentity). `server-open-failed`
+  // covers the local-op/open spawn-or-poll timeout (504). `concurrent-operation`,
+  // `loopback-required`, `invalid-origin`, `method-not-allowed`, `invalid-request`,
+  // `internal-server-error` are reused.
+  'urn:ok:error:auth-failed',
+  'urn:ok:error:no-project-dir',
+  'urn:ok:error:server-open-failed',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -1625,3 +1636,175 @@ export type InstalledAgentsSuccess = z.infer<typeof InstalledAgentsSuccessSchema
 const _InstalledAgentsSuccessSchemaIsStandard: StandardSchemaV1<unknown, InstalledAgentsSuccess> =
   InstalledAgentsSuccessSchema;
 void _InstalledAgentsSuccessSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster G: LocalOp + auth handlers (US-012)
+// ---------------------------------------------------------------------------
+//
+// Eight handlers: `handleLocalOpOpen`, `handleLocalOpAuthLogin`,
+// `handleLocalOpAuthStatus`, `handleLocalOpAuthRepos`, `handleLocalOpAuthSignout`,
+// `handleLocalOpAuthPat`, `handleLocalOpAuthIdentity`, `handleLocalOpAuthSetIdentity`.
+// Login + repos are NDJSON streaming endpoints — the validated US-005 streaming
+// pattern applies (pre-stream errors emit `application/problem+json`; mid-stream
+// errors emit a typed `{ type: 'error', problem: ProblemDetails }` event).
+// Identity / set-identity / open / signout / pat / status are non-streaming.
+
+/**
+ * Request body for `POST /api/local-op/open`.
+ *
+ * `dir` is the target project directory (`isSafeLocalPath` confines it to the
+ * user's home directory; failure emits `urn:ok:error:invalid-request`
+ * post-validation).
+ */
+export const LocalOpOpenRequestSchema = z
+  .object({
+    dir: z.string().min(1),
+  })
+  .loose();
+export type LocalOpOpenRequest = z.infer<typeof LocalOpOpenRequestSchema>;
+const _LocalOpOpenRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpOpenRequest> =
+  LocalOpOpenRequestSchema;
+void _LocalOpOpenRequestSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/local-op/open`. Flat shape per D22 — the client
+ * uses the returned `port` to redirect into the freshly-spawned UI server.
+ */
+export const LocalOpOpenSuccessSchema = z
+  .object({
+    port: z.number().int().positive(),
+  })
+  .loose();
+export type LocalOpOpenSuccess = z.infer<typeof LocalOpOpenSuccessSchema>;
+const _LocalOpOpenSuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpOpenSuccess> =
+  LocalOpOpenSuccessSchema;
+void _LocalOpOpenSuccessSchemaIsStandard;
+
+/**
+ * Request body shared by `POST /api/local-op/auth/{login,status,repos,signout}`.
+ *
+ * `host` is optional — defaults to `github.com` server-side. Empty / non-string
+ * `host` falls back to the default (history of permissive coercion preserved
+ * via `.optional()`).
+ */
+export const LocalOpAuthHostRequestSchema = z
+  .object({
+    host: z.string().min(1).optional(),
+  })
+  .loose();
+export type LocalOpAuthHostRequest = z.infer<typeof LocalOpAuthHostRequestSchema>;
+const _LocalOpAuthHostRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthHostRequest> =
+  LocalOpAuthHostRequestSchema;
+void _LocalOpAuthHostRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/local-op/auth/pat`. `pat` REQUIRED non-empty
+ * (the PAT itself; piped to the CLI subprocess on stdin and never logged).
+ * `host` defaults to `github.com`.
+ */
+export const LocalOpAuthPatRequestSchema = z
+  .object({
+    pat: z.string().min(1),
+    host: z.string().min(1).optional(),
+  })
+  .loose();
+export type LocalOpAuthPatRequest = z.infer<typeof LocalOpAuthPatRequestSchema>;
+const _LocalOpAuthPatRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthPatRequest> =
+  LocalOpAuthPatRequestSchema;
+void _LocalOpAuthPatRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/local-op/auth/set-identity`. `name` and `email`
+ * REQUIRED non-empty (after `.trim()` — empty-after-trim values fail schema
+ * via `.refine`). The handler writes these to repo-local git config.
+ */
+export const LocalOpAuthSetIdentityRequestSchema = z
+  .object({
+    name: z.string().refine((s) => s.trim().length > 0, { message: 'name must be non-empty' }),
+    email: z.string().refine((s) => s.trim().length > 0, { message: 'email must be non-empty' }),
+  })
+  .loose();
+export type LocalOpAuthSetIdentityRequest = z.infer<typeof LocalOpAuthSetIdentityRequestSchema>;
+const _LocalOpAuthSetIdentityRequestSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  LocalOpAuthSetIdentityRequest
+> = LocalOpAuthSetIdentityRequestSchema;
+void _LocalOpAuthSetIdentityRequestSchemaIsStandard;
+
+/**
+ * Resolved git identity emitted by `GET /api/local-op/auth/identity`. `null`
+ * when neither repo-local nor global git config carry a `user.name` /
+ * `user.email`. Mirrors the runtime shape of `resolveGitIdentity()`.
+ */
+export const LocalOpAuthIdentitySchema = z
+  .object({
+    name: z.string().min(1),
+    email: z.string().min(1),
+  })
+  .loose()
+  .nullable();
+export type LocalOpAuthIdentity = z.infer<typeof LocalOpAuthIdentitySchema>;
+const _LocalOpAuthIdentitySchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthIdentity> =
+  LocalOpAuthIdentitySchema;
+void _LocalOpAuthIdentitySchemaIsStandard;
+
+/** Success body for `GET /api/local-op/auth/identity`. Flat shape per D22. */
+export const LocalOpAuthIdentitySuccessSchema = z
+  .object({
+    identity: LocalOpAuthIdentitySchema,
+  })
+  .loose();
+export type LocalOpAuthIdentitySuccess = z.infer<typeof LocalOpAuthIdentitySuccessSchema>;
+const _LocalOpAuthIdentitySuccessSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  LocalOpAuthIdentitySuccess
+> = LocalOpAuthIdentitySuccessSchema;
+void _LocalOpAuthIdentitySuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/local-op/auth/status`. `authenticated` is the
+ * load-bearing field; the CLI may emit additional fields (`login`,
+ * `host`, …) which `.loose()` preserves. The handler returns the CLI's last
+ * JSON line directly — schema is permissive to accommodate evolving CLI
+ * output without lockstep migration.
+ */
+export const LocalOpAuthStatusSuccessSchema = z
+  .object({
+    authenticated: z.boolean(),
+  })
+  .loose();
+export type LocalOpAuthStatusSuccess = z.infer<typeof LocalOpAuthStatusSuccessSchema>;
+const _LocalOpAuthStatusSuccessSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  LocalOpAuthStatusSuccess
+> = LocalOpAuthStatusSuccessSchema;
+void _LocalOpAuthStatusSuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/local-op/auth/pat`. The CLI emits a `complete`
+ * event on success carrying `login` (and optionally `name`, `email`,
+ * `avatarUrl`); the handler returns the parsed line directly. Permissive
+ * `.loose()` for the same reason as status.
+ */
+export const LocalOpAuthPatSuccessSchema = z
+  .object({
+    type: z.literal('complete').optional(),
+    login: z.string().min(1).optional(),
+  })
+  .loose();
+export type LocalOpAuthPatSuccess = z.infer<typeof LocalOpAuthPatSuccessSchema>;
+const _LocalOpAuthPatSuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthPatSuccess> =
+  LocalOpAuthPatSuccessSchema;
+void _LocalOpAuthPatSuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/local-op/auth/signout` and
+ * `POST /api/local-op/auth/set-identity`. Empty object — clients only branch
+ * on HTTP status (200 = success). `.loose()` for forward-compat (e.g., a
+ * future `signedOutAt: ISO` echo).
+ */
+export const LocalOpAuthEmptySuccessSchema = z.object({}).loose();
+export type LocalOpAuthEmptySuccess = z.infer<typeof LocalOpAuthEmptySuccessSchema>;
+const _LocalOpAuthEmptySuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthEmptySuccess> =
+  LocalOpAuthEmptySuccessSchema;
+void _LocalOpAuthEmptySuccessSchemaIsStandard;
