@@ -14,19 +14,19 @@
 import {
   Box,
   ChevronRight,
-  Film,
+  Image,
   type LucideIcon,
   MessageSquareWarning,
+  SquarePlay,
   Volume2,
-  ZoomIn,
 } from 'lucide-react';
 
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronRight,
-  Film,
+  Image,
   MessageSquareWarning,
+  SquarePlay,
   Volume2,
-  ZoomIn,
 };
 
 /**

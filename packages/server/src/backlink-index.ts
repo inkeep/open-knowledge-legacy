@@ -11,7 +11,7 @@ import {
   resolveInternalHref,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
@@ -773,7 +773,7 @@ export class BacklinkIndex {
     externalLinks: ExtractedExternalLink[] = [],
     branch = this.activeBranch,
   ): void {
-    if (isSystemDoc(docName)) return;
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
     const state = this.getState(branch);
     const priorTargets = state.forward.get(docName) ?? new Set<string>();
     const priorExternalTargets = state.externalForward.get(docName) ?? new Map();
@@ -854,7 +854,7 @@ export class BacklinkIndex {
   }
 
   deleteDocument(docName: string, branch = this.activeBranch): void {
-    if (isSystemDoc(docName)) return;
+    if (isSystemDoc(docName) || isConfigDoc(docName)) return;
     const state = this.getState(branch);
     const targets = state.forward.get(docName) ?? new Set<string>();
     const externalTargets = state.externalForward.get(docName) ?? new Map();

@@ -1,13 +1,17 @@
 import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
+  CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
   CC1ServerInfoPayloadSchema,
+  CONFIG_DOC_NAMES,
+  type ConfigValidationError,
   type DerivedViewChannel,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
@@ -35,6 +39,25 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export function isSystemDoc(documentName: string): boolean {
   return documentName === SYSTEM_DOC_NAME;
+}
+
+const CONFIG_DOC_NAME_SET: ReadonlySet<string> = new Set(CONFIG_DOC_NAMES);
+
+/**
+ * True for the bounded set of well-known config document names
+ * (`__config__/workspace`, `__user__/config.yml`).
+ *
+ * Subsystems keyed off `documentName` MUST short-circuit on this predicate
+ * the same way they do on `isSystemDoc`. Config docs are admitted Y.Text-only
+ * via `hocuspocus.openDirectConnection()`; the markdown observer bridge,
+ * agent-session bookkeeping, file-watcher content classification, derived-
+ * index updates, and reconciliation paths all bypass.
+ *
+ * The membership set is a public contract per spec D39/D40 — adding more
+ * names requires explicit re-decision (ASK_FIRST per spec §16).
+ */
+export function isConfigDoc(documentName: string): boolean {
+  return CONFIG_DOC_NAME_SET.has(documentName);
 }
 
 export class CC1Broadcaster {
@@ -290,6 +313,50 @@ export class CC1Broadcaster {
       out[docName] = Buffer.from(sv).toString('base64');
     }
     return out;
+  }
+
+  /**
+   * Broadcast a `config-validation-rejected` CC1 signal — fired when the
+   * persistence-hook config-doc branch (D45 L3 / FR-34) rejects a Y.Text
+   * mutation that produces invalid YAML or schema-failing config.
+   *
+   * Synchronous emit (no debounce, mirrors `emitBranchSwitched`): rejection
+   * is a discrete user-visible event; the Settings pane needs the toast +
+   * field flash before the user takes another action.
+   *
+   * `error` carries the full `ConfigValidationError` envelope so the pane
+   * can render the same `humanFormat` text as CLI / MCP, plus map issue
+   * paths to rendered fields for `SCHEMA_INVALID`.
+   */
+  emitConfigValidationRejected(docName: string, error: ConfigValidationError): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn(
+            {},
+            `[cc1] __system__ document not found at emitConfigValidationRejected — dropped`,
+          );
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const seq = (this.seqs.get(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED) ?? 0) + 1;
+      this.seqs.set(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED, seq);
+      const payload = CC1ConfigValidationRejectedPayloadSchema.parse({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+        seq,
+        docName,
+        error,
+      });
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED, seq);
+    } catch (err) {
+      this.log.error({ err, docName }, '[cc1] emitConfigValidationRejected failed');
+    }
   }
 
   get subscriberCount(): number {

@@ -13,7 +13,7 @@
  * and descriptor.placeholder.icon || descriptor.icon || Box.
  */
 import { describe, expect, test } from 'bun:test';
-import { Box, ZoomIn } from 'lucide-react';
+import { Box, Image } from 'lucide-react';
 import { getDescriptor } from './index.ts';
 import {
   resolveDescriptorPlaceholder,
@@ -72,7 +72,7 @@ describe('resolveDescriptorPlaceholder', () => {
     const img = getDescriptor('img');
     const resolved = resolveDescriptorPlaceholder(img);
     expect(resolved.label).toBe('Add an image');
-    expect(resolved.Icon).toBe(ZoomIn);
+    expect(resolved.Icon).toBe(Image);
   });
 
   test('video returns the descriptor placeholder.label override', () => {
@@ -93,7 +93,7 @@ describe('resolveDescriptorPlaceholder', () => {
       hasChildren: false,
       props: [],
       displayName: 'Synthetic',
-      icon: 'ZoomIn',
+      icon: 'Image',
     };
     expect(
       resolveDescriptorPlaceholder(
@@ -108,14 +108,14 @@ describe('resolveDescriptorPlaceholder', () => {
       hasChildren: false,
       props: [],
       displayName: 'Synthetic',
-      icon: 'Film',
-      placeholder: { icon: 'ZoomIn' },
+      icon: 'SquarePlay',
+      placeholder: { icon: 'Image' },
     };
     expect(
       resolveDescriptorPlaceholder(
         synthetic as unknown as Parameters<typeof resolveDescriptorPlaceholder>[0],
       ).Icon,
-    ).toBe(ZoomIn);
+    ).toBe(Image);
   });
 
   test('Icon falls back to Box when neither override nor descriptor.icon resolve', () => {

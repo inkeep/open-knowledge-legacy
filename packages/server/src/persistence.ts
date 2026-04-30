@@ -12,6 +12,7 @@ import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
+  type ConfigValidationError,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
@@ -27,7 +28,8 @@ import type { JSONContent } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { type ConfigPersistenceCtx, loadConfigDoc, storeConfigDoc } from './config-persistence.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   contributorCount,
@@ -173,6 +175,20 @@ export interface PersistenceOptions {
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+  /**
+   * Override `os.homedir()` for config-doc persistence (US-006). Tests
+   * scope user-global writes (`__user__/config.yml`) to a tempdir; if
+   * unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   */
+  configHomedirOverride?: string;
+  /**
+   * Fired after the L3 persistence-hook reverts an invalid Y.Text
+   * mutation on a config doc. Wired in standalone boot to
+   * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
+   * so any open Settings pane sees the rejection toast. Omitted in
+   * plugin mode where no CC1Broadcaster is available.
+   */
+  onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
 }
 
 /**
@@ -281,6 +297,14 @@ export interface PersistenceHandle {
   extension: Extension;
   flushPendingGitCommit: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
+  /**
+   * Config-doc persistence context (US-007). Exposed so the file-watcher
+   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
+   * Treat as read-only — direct mutation breaks the L3 invariant that the
+   * cache only updates after a successful persist.
+   */
+  readonly configPersistenceCtx: ConfigPersistenceCtx;
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
@@ -301,6 +325,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
   const onDiskFlush = options?.onDiskFlush;
+
+  // Per-server-instance LKG cache for config docs (D45 L3 / D58). Maps
+  // each well-known config doc name to the most recent successfully-
+  // validated YAML string. Lives in the closure so multiple server
+  // instances don't share mutable state.
+  const configLkgCache = new Map<string, string>();
+  const configPersistenceCtx: ConfigPersistenceCtx = {
+    projectDir,
+    lkgCache: configLkgCache,
+    homedirOverride: options?.configHomedirOverride,
+    onConfigRejected: options?.onConfigRejected,
+  };
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -632,6 +668,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        loadConfigDoc(document, documentName, configPersistenceCtx);
+        return;
+      }
       ensureHistograms();
       const started = Date.now();
       return withSpan(
@@ -747,6 +787,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       lastContext: _lastContext,
     }) {
       if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        await storeConfigDoc(document, documentName, lastTransactionOrigin, configPersistenceCtx);
+        return;
+      }
       if (isBatchInProgress()) return;
       ensureHistograms();
       const started = Date.now();
@@ -791,6 +835,38 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
           if (markdownSemanticallyUnchanged) {
             if (contributorCount() > 0) scheduleGitCommit();
+            return;
+          }
+
+          // Phantom-doc guard: refuse to materialize a 0-byte file when the
+          // Y.Doc was never confirmed to exist on disk (no reconciled base
+          // from a successful onLoadDocument) AND the serialized content is
+          // empty. This blocks accidental orphan files from any code path
+          // that opens a Y.Doc for a non-existent docName: the browser race
+          // during a rename, GETs to `/api/document?docName=<missing>`, MCP
+          // queries on deleted docs, and any future caller of
+          // `openDirectConnection` that hits a missing path.
+          //
+          // Legitimate first-write flows are unaffected:
+          //   - `/api/create-page` writes the file synchronously before any
+          //     transaction, so the next onLoadDocument sets reconciledBase
+          //     to '' (defined) before this guard fires.
+          //   - `/api/agent-write-md` populates the XmlFragment with the
+          //     agent's content INSIDE the same transact that triggers the
+          //     debounced store, so by the time we get here `markdown` is
+          //     non-empty even when reconciledBase is still undefined.
+          //
+          // Mode-coupling note: the guard is asymmetric. It only blocks
+          // file *creation*. Once a file exists and reconciledBase is set,
+          // subsequent stores fall through to the normal write path,
+          // including legitimate transitions to empty content (user clears
+          // a doc) — those compare against the non-empty base above and
+          // proceed.
+          if (currentBase === undefined && normalizeBridge(markdown) === '') {
+            log.warn(
+              { documentName },
+              `[persistence] Skipped phantom write for ${documentName}: empty Y.Doc with no reconciled base`,
+            );
             return;
           }
 
@@ -934,5 +1010,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
-  return { extension, flushPendingGitCommit, waitForPendingCommits };
+  return {
+    extension,
+    flushPendingGitCommit,
+    waitForPendingCommits,
+    configPersistenceCtx,
+  };
 }

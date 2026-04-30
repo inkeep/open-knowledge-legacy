@@ -39,11 +39,13 @@ import {
   ArrowDownToLine,
   ChevronDown,
   ChevronRight,
+  Columns2,
   Diamond,
   FileArchive,
   GitBranch,
   HardDrive,
   Loader2,
+  Rows2,
   Sparkles,
   Undo2,
   User,
@@ -68,6 +70,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LruStringCache } from '@/lib/lru-string-cache';
 import {
@@ -85,6 +88,7 @@ const LazyActivityPanelDiffView = lazy(async () => {
 interface TimelineContentProps {
   docName: string;
   diffLayout: DiffLayout;
+  onDiffLayoutChange: (layout: DiffLayout) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -189,21 +193,6 @@ function ContributorIcon({ entry, isDark }: { entry: TimelineEntry; isDark: bool
     return <ArrowDownToLine className={iconClass} />;
   }
   return <User className={iconClass} />;
-}
-
-// ─── "Current version" pinned row ────────────────────────────────────────────
-
-function CurrentVersionRow() {
-  return (
-    <div className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5">
-      <div className="flex items-center justify-center w-3.5 h-3.5">
-        <span className="inline-block size-2 rounded-full bg-emerald-500 shrink-0" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">Current version</p>
-      </div>
-    </div>
-  );
 }
 
 // ─── WIP Group component ──────────────────────────────────────────────────────
@@ -747,7 +736,7 @@ function EntryRow({
 
 // ─── Main content (no Sheet wrapper) ─────────────────────────────────────────
 
-export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
+export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: TimelineContentProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const [entries, setEntries] = useState<TimelineEntry[]>([]);
@@ -855,8 +844,40 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
+  const hasEntries = !loading && !error && entries.length > 0;
+
   return (
     <div className="flex h-full flex-col">
+      {hasEntries && (
+        <div className="flex items-center justify-end gap-1 px-2 py-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroup
+                type="single"
+                value={diffLayout}
+                onValueChange={(v) => {
+                  if (v) onDiffLayoutChange(v as DiffLayout);
+                }}
+                aria-label="Diff layout"
+                variant="segmented"
+                size="sm"
+                spacing={1}
+                className="bg-muted dark:bg-background p-0.5 rounded-md shrink-0"
+              >
+                <ToggleGroupItem value="unified" aria-label="Unified diff" className="size-6 px-0">
+                  <Rows2 className="size-3.5" />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="split" aria-label="Split diff" className="size-6 px-0">
+                  <Columns2 className="size-3.5" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent>
+              {diffLayout === 'unified' ? 'Unified diff' : 'Split diff'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
       {/* Scrollable entry list */}
       <div className="flex-1 overflow-y-auto subtle-scrollbar">
         {/* Loading skeleton */}
@@ -896,7 +917,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
         {/* Flat list when no checkpoints */}
         {!loading && !error && hasNoCheckpoints && entries.length > 0 && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow />
             {entries.map((entry) => (
               <EntryRow
                 key={entry.sha}
@@ -916,7 +936,6 @@ export function TimelineContent({ docName, diffLayout }: TimelineContentProps) {
         {/* Grouped list with checkpoints */}
         {!loading && !error && !hasNoCheckpoints && (
           <div className="flex flex-col gap-1 p-2">
-            <CurrentVersionRow />
             {groups.map((group, idx) => {
               if (group.kind === 'checkpoint') {
                 return (

@@ -18,10 +18,13 @@
 
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
+  type CC1ConfigValidationRejectedPayload,
+  CC1ConfigValidationRejectedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
@@ -34,6 +37,7 @@ import type { z } from 'zod';
 
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   type DerivedViewChannel,
@@ -63,6 +67,12 @@ function parseCC1ServerInfo(payload: string): CC1ServerInfoPayload | null {
 
 export function parseCC1BranchSwitched(payload: string): CC1BranchSwitchedPayload | null {
   return safeParseJson(payload, CC1BranchSwitchedPayloadSchema);
+}
+
+export function parseCC1ConfigValidationRejected(
+  payload: string,
+): CC1ConfigValidationRejectedPayload | null {
+  return safeParseJson(payload, CC1ConfigValidationRejectedPayloadSchema);
 }
 
 /**
@@ -110,6 +120,7 @@ interface CC1StatelessHandlers {
   onBranchSwitched?: (payload: CC1BranchSwitchedPayload) => void;
   onDiskAck?: (parsed: CC1DiskAckParsed) => void;
   onDerivedView?: (payload: CC1DerivedViewPayload) => void;
+  onConfigValidationRejected?: (payload: CC1ConfigValidationRejectedPayload) => void;
   onUnknown?: (rawPayload: string) => void;
 }
 
@@ -147,6 +158,11 @@ export function dispatchCC1Stateless(payload: string, handlers: CC1StatelessHand
   const derivedView = parseCC1DerivedView(payload);
   if (derivedView) {
     handlers.onDerivedView?.(derivedView);
+    return;
+  }
+  const configRejected = parseCC1ConfigValidationRejected(payload);
+  if (configRejected) {
+    handlers.onConfigValidationRejected?.(configRejected);
     return;
   }
   handlers.onUnknown?.(payload);

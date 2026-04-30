@@ -8,24 +8,19 @@
  * ~5-6 kB of checkbox UI, pure helpers, and shadcn Dialog wiring only
  * loads at most once per user, ever (AC2.5 marker idempotence).
  *
- * Size-limit motivation (PR #289 CI `size` check): shipping the dialog in
- * the main bundle costs ~1.5 kB gzipped for every page load, desktop AND
- * web (`packages/app/` is the shared Vite bundle consumed by both
- * `ok ui` and the desktop renderer). A one-time dialog that runs <0.1%
- * of sessions has no business being in the initial critical path.
- *
- * Helpers (`computeInitialSelection`, `toggleSelectedId`,
- * `selectedIdsOrdered`) are re-exported from this module to preserve the
- * test-import surface. They still physically live in `McpConsentDialogBody.tsx`.
+ * Size-limit motivation: shipping the dialog in the main bundle costs
+ * ~1.5 kB gzipped for every page load, desktop AND web (`packages/app/` is
+ * the shared Vite bundle consumed by both `ok ui` and the desktop
+ * renderer). A one-time dialog that runs <0.1% of sessions has no business
+ * being in the initial critical path. The body must NOT also be reachable
+ * via a static re-export from this file — Rolldown's
+ * `INEFFECTIVE_DYNAMIC_IMPORT` warning fires when both paths exist, and
+ * the lazy chunk silently merges back into the main bundle.
  */
 
 import { lazy, Suspense, useSyncExternalStore } from 'react';
 import { mcpConsentStore } from '@/lib/mcp-consent-store';
 
-// Lazy-load the dialog body. Default-export in McpConsentDialogBody.tsx keeps
-// this one-liner — no `.then(m => ({ default: m.McpConsentDialogBody }))`
-// trampoline. The resulting chunk is code-split from the main bundle by
-// Vite / Rolldown automatically.
 const LazyMcpConsentDialogBody = lazy(() => import('./McpConsentDialogBody'));
 
 /**
@@ -47,14 +42,3 @@ export function McpConsentDialog() {
     </Suspense>
   );
 }
-
-// Re-exports for the test surface. The helpers (pure) stay importable from
-// this module path so `McpConsentDialog.test.ts` doesn't need to know about
-// the lazy-body split. Same pattern as `EditorActivityPool.tsx` → lazy-test
-// file re-exports.
-export {
-  computeInitialSelection,
-  selectedIdsOrdered,
-  type ToastImpl,
-  toggleSelectedId,
-} from './McpConsentDialogBody';

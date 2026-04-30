@@ -98,4 +98,35 @@ export default defineConfig({
       ignored: ['**/content/**'],
     },
   },
+  build: {
+    // Largest chunk today is ~1.13 MB pre-gzip (≈350 kB gzipped). The bundle
+    // is the editor + collab stack + every shadcn primitive — known-large by
+    // construction. Bump just above current ceiling so the advisory still
+    // catches a future regression but doesn't fire on every clean build.
+    chunkSizeWarningLimit: 1500,
+    rolldownOptions: {
+      // Filter known false-positive warnings. Re-evaluate when bumping
+      // rolldown / vite. Anything not matched falls through to default.
+      onLog(level, log, defaultHandler) {
+        // `@protobufjs/inquire` uses `eval("quire".replace(/^/,"re"))(name)`
+        // as a deliberate require-detection workaround for bundlers. Reaches
+        // us transitively via @opentelemetry/otlp-transformer (every OTLP
+        // exporter). Cannot be patched at source.
+        if (
+          log.code === 'EVAL' &&
+          typeof log.id === 'string' &&
+          log.id.includes('/@protobufjs/inquire/')
+        ) {
+          return;
+        }
+        // PLUGIN_TIMINGS is an informational performance breakdown; the bulk
+        // (84%) is @rolldown/plugin-babel for the React Compiler pass, which
+        // is intentional and not actionable from this side.
+        if (log.code === 'PLUGIN_TIMINGS') {
+          return;
+        }
+        defaultHandler(level, log);
+      },
+    },
+  },
 });

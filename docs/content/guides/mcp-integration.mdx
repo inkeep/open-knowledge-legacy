@@ -60,12 +60,17 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `get_backlinks` / `get_forward_links`         | Both      | Wiki-link graph queries                                                                      |
 | `get_hubs` / `get_orphans` / `get_dead_links` | Both      | Link-graph diagnostics                                                                       |
 | `suggest_links`                               | Both      | Suggest missing wiki-links for a target page                                                 |
+| `get_config`                                  | Always    | Read the effective merged config (defaults → user → workspace)                              |
+| `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
+| `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
 | `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
 | `edit_document`                               | Connected | Find-and-replace on a document through the CRDT                                              |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
 | `get_history`                                 | Connected | Query the shadow-repo version timeline                                                       |
 | `save_version`                                | Connected | Checkpoint the project to a named shadow-repo commit                                         |
+
+Tools marked `Always` operate directly on the YAML files via the imported Zod schema and so work whether or not `ok start` is running. When a server IS running, the file watcher detects the write and propagates it into Y.Text, refreshing any open Settings panes within ~500ms.
 
 All 21 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block).
 
@@ -81,6 +86,55 @@ The four write tools — `write_document`, `edit_document`, `rename_document`, `
 - **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document` and `edit_document` produce a bulletless row in that case.
 - **Attribution.** Only MCP-driven calls (i.e. those that pass through agent identity) attach a contributor entry. Human Restore actions taken in the React editor stay anonymous on the timeline as they always have.
 - **Privacy.** Avoid secrets or PII in summaries — they are persisted to git history.
+
+### Config tools
+
+`get_config`, `set_config`, and `set_folder_rule` operate directly on `.open-knowledge/config.yml` (workspace) and `~/.open-knowledge/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
+
+#### `get_config`
+
+Read the full effective merged config (defaults → user → workspace), or a sub-path:
+
+```ts
+get_config()                              // full config
+get_config({ path: ["folders"] })          // folder rules only
+get_config({ path: ["mcp", "tools"] })     // mcp.tools sub-tree
+```
+
+Read-only and idempotent; no allowlist gating — every field is readable. Returns `structuredContent: { value }` with the resolved JSON.
+
+#### `set_config`
+
+Patch one or more fields on the agent-settable allowlist. The patch is a deep-partial; `null` at any leaf clears the field; arrays replace wholesale (RFC 7396 spirit, TypeScript-only — no wire format).
+
+The allowlist is exactly five paths:
+
+- `content.include`
+- `content.exclude`
+- `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
+- `mcp.tools.search.maxResults`
+- `mcp.tools.read_document.historyDepth`
+
+Anything else returns `error.code: NOT_AGENT_SETTABLE`.
+
+There is no `scope` parameter — the server picks the write target (workspace vs user) per leaf via the inspect-ladder: existing-at-workspace → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
+
+Validation runs as a single Zod parse over the merged config before any disk write; on failure the response shape is `{ ok: false, error: ConfigValidationError }` (a discriminated union of `YAML_PARSE | SCHEMA_INVALID | SCOPE_VIOLATION | NOT_AGENT_SETTABLE | MIXED_SCOPE | WRITE_ERROR | UNKNOWN`) with a human-rendered error in `content[].text` that primes a retry. On success, the response includes `{ applied, scope, current }` so the agent can confirm the effective state without re-fetching.
+
+#### `set_folder_rule`
+
+Transactional upsert of one or more `folders[]` rules — the schema-aware alternative to `set_config({patch: {folders: [...]}})` when you want to add, replace, or rename rules without managing the whole array.
+
+```ts
+set_folder_rule({
+  rules: [
+    { match: "specs/**",   frontmatter: { tags: ["spec"] } },
+    { match: "reports/**", frontmatter: { tags: ["report"] } },
+  ]
+})
+```
+
+Always pass an array, even for a single rule. Each entry is `{match, frontmatter, new_match?}`; `new_match` renames an existing rule keyed by `match`. All-or-nothing: if any rule produces an invalid merged config, no rules land on disk (atomic tmp+rename + Zod parse give the transactional guarantee for free). Removal is read-modify-write through `set_config` with a filtered array — keeps the tool surface narrow.
 
 ## previewUrl in tool results
 

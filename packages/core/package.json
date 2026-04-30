@@ -13,6 +13,11 @@
       "development": "./src/shadow-repo-layout.ts",
       "types": "./src/shadow-repo-layout.ts",
       "default": "./dist/shadow-repo-layout.mjs"
+    },
+    "./server": {
+      "development": "./src/server.ts",
+      "types": "./src/server.ts",
+      "default": "./dist/server.mjs"
     }
   },
   "files": [
@@ -21,6 +26,7 @@
   ],
   "dependencies": {
     "@handlewithcare/remark-prosemirror": "0.1.5",
+    "@opentelemetry/api": "^1.9.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-bold": "^3.22.3",
     "@tiptap/extension-code": "3.22.3",
@@ -55,6 +61,7 @@
     "unist-util-visit": "^5.1.0",
     "vfile": "^6.0.0",
     "vfile-message": "^4.0.3",
+    "yaml": "^2.7.1",
     "yjs": "^13.6.30",
     "zod": "^4.3.6"
   },
@@ -79,6 +86,8 @@
     "@types/mdast": "^4.0.4",
     "@types/node": "^25.6.0",
     "@types/unist": "^3.0.3",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "commonmark.json": "^0.31.0",
     "fast-check": "^4.6.0",
     "mdast-util-to-hast": "^13.2.1",

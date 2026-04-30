@@ -140,6 +140,23 @@ describe('getSession — composite key (docName + agentId)', () => {
     await manager.closeSession('doc.md', 'agent-alice');
     expect(mockHocuspocus.awarenessCalls).toEqual([]);
   });
+
+  test('rejects reserved system doc names with a thrown error (D49)', async () => {
+    await expect(manager.getSession('__system__', 'agent-alice')).rejects.toThrow(/reserved doc/i);
+  });
+
+  test('rejects reserved config doc names with a thrown error (D49 / FR-29)', async () => {
+    // Config docs (US-005) are admitted Y.Text-only at boot; agent
+    // sessions on them would attempt to attach the markdown bridge and
+    // corrupt YAML. The short-circuit at AgentSessionManager.getSession
+    // is the load-bearing gate.
+    await expect(manager.getSession('__config__/workspace', 'agent-alice')).rejects.toThrow(
+      /reserved doc/i,
+    );
+    await expect(manager.getSession('__user__/config.yml', 'agent-alice')).rejects.toThrow(
+      /reserved doc/i,
+    );
+  });
 });
 
 describe('closeSession', () => {
