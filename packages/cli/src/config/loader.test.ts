@@ -1,12 +1,26 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { OK_DIR } from '../constants.ts';
-import { createProjectConfigResolver, loadConfig } from './loader';
 
 let testDir: string;
+let fakeHome: string;
+
+// Stub node:os.homedir() before importing the loader so Layer 1 (user-global
+// config) doesn't read the real `~/.open-knowledge/config.yml` and pollute
+// every test that asserts on `sources`. Bun caches the resolved homedir on
+// first call, so mutating `process.env.HOME` in beforeEach is too late.
+await mock.module('node:os', () => {
+  const actual = require('node:os');
+  return {
+    ...actual,
+    homedir: () => fakeHome,
+  };
+});
+
+const { OK_DIR } = await import('../constants.ts');
+const { createProjectConfigResolver, loadConfig } = await import('./loader');
 
 beforeEach(() => {
   testDir = resolve(
@@ -14,6 +28,7 @@ beforeEach(() => {
     `ok-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   mkdirSync(testDir, { recursive: true });
+  fakeHome = resolve(testDir, '__home__');
 });
 
 afterEach(() => {
