@@ -112,14 +112,14 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/create-page', () => {
-  test('creates a file and returns { ok: true, docName }', async () => {
+  test('creates a file and returns flat { docName } success body', async () => {
     const dir = setupTmpDir();
     const result = await callCreatePage(dir, 'POST', { path: 'my-page.md' });
 
     expect(result.status).toBe(200);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('my-page');
+    expect(body.ok).toBeUndefined();
     expect(existsSync(join(dir, 'my-page.md'))).toBe(true);
   });
 
@@ -129,8 +129,8 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(200);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('component');
+    expect(body.ok).toBeUndefined();
     expect(existsSync(join(dir, 'component.mdx'))).toBe(true);
     // Must not create a shadow .md file.
     expect(existsSync(join(dir, 'component.md'))).toBe(false);
@@ -142,8 +142,8 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(400);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(false);
-    expect(String(body.error)).toContain('.mdx');
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(String(body.title)).toContain('.mdx');
   });
 
   test('creates parent directories for nested paths and returns full docName', async () => {
@@ -152,8 +152,8 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(200);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(true);
     expect(body.docName).toBe('nested/folder/my-page');
+    expect(body.ok).toBeUndefined();
     expect(existsSync(join(dir, 'nested/folder/my-page.md'))).toBe(true);
   });
 
@@ -183,8 +183,8 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(400);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(false);
-    expect(typeof body.error).toBe('string');
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof body.title).toBe('string');
   });
 
   test('returns 400 when path contains ..', async () => {
@@ -193,7 +193,7 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(400);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(false);
+    expect(body.type).toBe('urn:ok:error:path-escape');
   });
 
   test('returns 409 when the file already exists', async () => {
@@ -206,7 +206,7 @@ describe('POST /api/create-page', () => {
 
     expect(result.status).toBe(409);
     const body = JSON.parse(result.body) as Record<string, unknown>;
-    expect(body.ok).toBe(false);
+    expect(body.type).toBe('urn:ok:error:doc-already-exists');
   });
 
   test('returns 405 for GET requests', async () => {

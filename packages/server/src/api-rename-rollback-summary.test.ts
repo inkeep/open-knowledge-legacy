@@ -237,7 +237,9 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    const summaryErr = JSON.parse(response.body) as Record<string, unknown>;
+    expect(summaryErr.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof summaryErr.title).toBe('string');
     // File must NOT have been renamed (guard runs before the spine fires)
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(getMetrics().agentWriteCalls).toBe(0);
@@ -311,7 +313,9 @@ describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => 
     });
 
     expect(response.status).toBe(400);
-    expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
+    const summaryErr = JSON.parse(response.body) as Record<string, unknown>;
+    expect(summaryErr.type).toBe('urn:ok:error:invalid-request');
+    expect(typeof summaryErr.title).toBe('string');
     // File must NOT have been renamed — validation runs before the rename.
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     // No attribution side-effects either (no agentId AND no principal in

@@ -215,7 +215,7 @@ async function callPages(contentDir: string, method = 'GET'): Promise<CapturedRe
 }
 
 describe('GET /api/pages', () => {
-  test('returns ok: true and lists markdown files recursively', async () => {
+  test('returns flat { pages } success body and lists markdown files recursively', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ok-pages-'));
     try {
       writeFileSync(join(dir, 'root.md'), '# Root\n', 'utf-8');
@@ -229,7 +229,7 @@ describe('GET /api/pages', () => {
         ok?: boolean;
         pages?: Array<{ docName: string; title: string; size: number; modified: string }>;
       };
-      expect(body.ok).toBe(true);
+      expect(body.ok).toBeUndefined();
       expect(body.pages).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ docName: 'nested/deeper/page', title: 'Nested Page' }),
@@ -246,15 +246,15 @@ describe('GET /api/pages', () => {
     }
   });
 
-  test('returns JSON 405 envelope for unsupported methods', async () => {
+  test('returns RFC 9457 problem+json 405 envelope for unsupported methods', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ok-pages-'));
     try {
       const result = await callPages(dir, 'POST');
 
       expect(result.status).toBe(405);
       const body = JSON.parse(result.body) as Record<string, unknown>;
-      expect(body.ok).toBe(false);
-      expect(body.error).toBe('Method not allowed');
+      expect(body.type).toBe('urn:ok:error:method-not-allowed');
+      expect(body.title).toBe('Method not allowed.');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -199,9 +199,9 @@ describe('CC1 broadcast — L1 integration', () => {
       body: JSON.stringify({ path: '__system__.md' }),
     });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('reserved');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:reserved-docname');
+    expect(String(body.title)).toContain('reserved');
   });
 
   // CC1 forgery guard. Hocuspocus's MessageReceiver relays every

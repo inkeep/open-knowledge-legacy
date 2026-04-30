@@ -129,6 +129,16 @@ export function withValidation<T>(
       return;
     }
 
+    if (options.skipBodyParse) {
+      // GET-style endpoint: don't read the body. Validate against an empty
+      // object so the schema is still load-bearing (catches schemas that
+      // require fields when paired with a no-body method by mistake).
+      const validated = validateBody(schema, {}, res, options);
+      if (!validated.ok) return;
+      await handler(req, res, validated.value);
+      return;
+    }
+
     let raw: Buffer;
     try {
       raw = await readRequestBody(req);

@@ -1,3 +1,4 @@
+import { CreatePageSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { usePageList } from '@/components/PageListContext';
@@ -209,25 +210,28 @@ export function NewItemDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
       });
+      let body: unknown = null;
+      try {
+        body = await res.json();
+      } catch {
+        // Non-JSON body falls through to a generic status message.
+      }
       if (!res.ok) {
-        let msg = `Server error (HTTP ${res.status})`;
-        try {
-          const d = (await res.json()) as { error?: string };
-          if (d?.error) msg = d.error;
-        } catch {}
+        const problem = ProblemDetailsSchema.safeParse(body);
+        const msg = problem.success ? problem.data.title : `Server error (HTTP ${res.status})`;
         setBusy(false);
         setError(msg);
         setErrorField('form');
         return;
       }
-      const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
+      const success = CreatePageSuccessSchema.safeParse(body);
       setBusy(false);
-      if (!data.ok) {
-        setError(data.error ?? `Failed to create ${kind}`);
+      if (!success.success) {
+        setError(`Failed to create ${kind}`);
         setErrorField('form');
         return;
       }
-      const docName = data.docName ?? path.replace(/\.(mdx|md)$/, '');
+      const docName = success.data.docName;
       onOpenChange(false);
       window.location.hash = `#/${docName}`;
       addPage(docName);

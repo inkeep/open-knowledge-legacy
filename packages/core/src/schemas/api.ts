@@ -164,6 +164,16 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:stale-target',
   'urn:ok:error:frontmatter-edit-not-supported',
   'urn:ok:error:no-active-session',
+  // Cluster B: pages CRUD (US-007). `doc-not-found` covers rename / rollback
+  // / delete / rename-path "doesn't exist" cases; `doc-already-exists` covers
+  // create-page collision and rename-into-existing destinations.
+  // `document-not-open` distinguishes rollback's open-in-editor requirement
+  // from the absent-on-disk case. `rollback-not-configured` flags the
+  // shadow-repo-unavailable startup state separately from internal-error.
+  'urn:ok:error:doc-not-found',
+  'urn:ok:error:doc-already-exists',
+  'urn:ok:error:document-not-open',
+  'urn:ok:error:rollback-not-configured',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -535,3 +545,252 @@ export type AgentUndoSuccess = z.infer<typeof AgentUndoSuccessSchema>;
 const _AgentUndoSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentUndoSuccess> =
   AgentUndoSuccessSchema;
 void _AgentUndoSuccessSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster B: pages CRUD (US-007)
+// ---------------------------------------------------------------------------
+//
+// Read + mutate handlers backing the FileTree / NewItemDialog / EditorHeader
+// rename surface. `withValidation()` enforces these schemas at the wire
+// boundary; semantic failures (doc-not-found, doc-already-exists, etc.) emit
+// post-extractAgentIdentity for mutating handlers. Read-only handlers
+// (`handlePages`, `handlePageHeadings`) take query params, not bodies; they
+// route through a no-op request schema so the wrapper still gates 405.
+
+/**
+ * Mapping from a pre-rename docName to its post-rename docName. Used in
+ * the `renamed` array of `/api/rename` and `/api/rename-path` success bodies
+ * so client UIs (FileTree, EditorHeader) can update their per-doc model
+ * atomically without re-fetching the whole tree.
+ */
+export const RenamedDocMappingSchema = z
+  .object({
+    fromDocName: z.string().min(1),
+    toDocName: z.string().min(1),
+  })
+  .loose();
+export type RenamedDocMapping = z.infer<typeof RenamedDocMappingSchema>;
+const _RenamedDocMappingSchemaIsStandard: StandardSchemaV1<unknown, RenamedDocMapping> =
+  RenamedDocMappingSchema;
+void _RenamedDocMappingSchemaIsStandard;
+
+/** Empty request schema for GET endpoints whose body is unused. */
+export const EmptyRequestSchema = z.object({}).loose();
+export type EmptyRequest = z.infer<typeof EmptyRequestSchema>;
+const _EmptyRequestSchemaIsStandard: StandardSchemaV1<unknown, EmptyRequest> = EmptyRequestSchema;
+void _EmptyRequestSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/create-page`. `path` is the relative
+ * content-dir path including the `.md`/`.mdx` suffix; the handler runs the
+ * `isSupportedDocFile` + path-traversal + reserved-docname checks
+ * post-validation. `agentId` etc. are optional — `extractAgentIdentity`
+ * carries the default-agent fallback when absent.
+ */
+export const CreatePageRequestSchema = z
+  .object({
+    path: z.string().min(1),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type CreatePageRequest = z.infer<typeof CreatePageRequestSchema>;
+const _CreatePageRequestSchemaIsStandard: StandardSchemaV1<unknown, CreatePageRequest> =
+  CreatePageRequestSchema;
+void _CreatePageRequestSchemaIsStandard;
+
+/** Success body for `POST /api/create-page`. */
+export const CreatePageSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+  })
+  .loose();
+export type CreatePageSuccess = z.infer<typeof CreatePageSuccessSchema>;
+const _CreatePageSuccessSchemaIsStandard: StandardSchemaV1<unknown, CreatePageSuccess> =
+  CreatePageSuccessSchema;
+void _CreatePageSuccessSchemaIsStandard;
+
+/**
+ * Single page entry in the `pages` array of `GET /api/pages`. `docExt` is
+ * the actual on-disk extension (`.md` or `.mdx`); `title` is the first
+ * non-empty heading or the docName fallback.
+ */
+export const PageEntrySchema = z
+  .object({
+    docName: z.string().min(1),
+    title: z.string(),
+    docExt: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    modified: z.string().min(1),
+  })
+  .loose();
+export type PageEntry = z.infer<typeof PageEntrySchema>;
+const _PageEntrySchemaIsStandard: StandardSchemaV1<unknown, PageEntry> = PageEntrySchema;
+void _PageEntrySchemaIsStandard;
+
+/** Success body for `GET /api/pages`. Sorted alphabetically by docName. */
+export const PagesSuccessSchema = z
+  .object({
+    pages: z.array(PageEntrySchema),
+  })
+  .loose();
+export type PagesSuccess = z.infer<typeof PagesSuccessSchema>;
+const _PagesSuccessSchemaIsStandard: StandardSchemaV1<unknown, PagesSuccess> = PagesSuccessSchema;
+void _PagesSuccessSchemaIsStandard;
+
+/** ATX heading entry (level + slug) emitted by `GET /api/page-headings`. */
+export const HeadingEntrySchema = z
+  .object({
+    level: z.number().int().min(1).max(6),
+    text: z.string(),
+    slug: z.string(),
+  })
+  .loose();
+export type HeadingEntry = z.infer<typeof HeadingEntrySchema>;
+const _HeadingEntrySchemaIsStandard: StandardSchemaV1<unknown, HeadingEntry> = HeadingEntrySchema;
+void _HeadingEntrySchemaIsStandard;
+
+/** Success body for `GET /api/page-headings?docName=...`. */
+export const PageHeadingsSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+    headings: z.array(HeadingEntrySchema),
+  })
+  .loose();
+export type PageHeadingsSuccess = z.infer<typeof PageHeadingsSuccessSchema>;
+const _PageHeadingsSuccessSchemaIsStandard: StandardSchemaV1<unknown, PageHeadingsSuccess> =
+  PageHeadingsSuccessSchema;
+void _PageHeadingsSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/rename`. Mirrors `handleRename`'s legacy
+ * field set. `agentId` is the explicit-attribution gate (D22 LOCKED 1-way
+ * door): when absent, `extractAgentIdentity` defaults are NOT used to
+ * attribute the rename — UI-driven Restore stays anonymous. `summary`
+ * validation runs unconditionally (independent of `hasAgentId`) so a
+ * malformed `summary: 42` returns 400 even when identity is absent.
+ */
+export const RenameRequestSchema = z
+  .object({
+    docName: z.string().min(1),
+    newDocName: z.string().min(1),
+    summary: summaryField,
+    ...agentIdentityFields,
+  })
+  .loose();
+export type RenameRequest = z.infer<typeof RenameRequestSchema>;
+const _RenameRequestSchemaIsStandard: StandardSchemaV1<unknown, RenameRequest> =
+  RenameRequestSchema;
+void _RenameRequestSchemaIsStandard;
+
+/** Backlink-rewrite summary entry returned by `/api/rename`. */
+export const RenameRewrittenDocSchema = z
+  .object({
+    docName: z.string().min(1),
+    rewrites: z.number().int().nonnegative(),
+  })
+  .loose();
+export type RenameRewrittenDoc = z.infer<typeof RenameRewrittenDocSchema>;
+const _RenameRewrittenDocSchemaIsStandard: StandardSchemaV1<unknown, RenameRewrittenDoc> =
+  RenameRewrittenDocSchema;
+void _RenameRewrittenDocSchemaIsStandard;
+
+/** Success body for `POST /api/rename`. */
+export const RenameSuccessSchema = z
+  .object({
+    renamed: z.array(RenamedDocMappingSchema),
+    rewrittenDocs: z.array(RenameRewrittenDocSchema),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose();
+export type RenameSuccess = z.infer<typeof RenameSuccessSchema>;
+const _RenameSuccessSchemaIsStandard: StandardSchemaV1<unknown, RenameSuccess> =
+  RenameSuccessSchema;
+void _RenameSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/rename-path`. `kind` selects file vs folder
+ * semantics; the handler enforces the actual on-disk shape post-validation.
+ */
+export const RenamePathRequestSchema = z
+  .object({
+    kind: z.enum(['file', 'folder']),
+    fromPath: z.string().min(1),
+    toPath: z.string().min(1),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type RenamePathRequest = z.infer<typeof RenamePathRequestSchema>;
+const _RenamePathRequestSchemaIsStandard: StandardSchemaV1<unknown, RenamePathRequest> =
+  RenamePathRequestSchema;
+void _RenamePathRequestSchemaIsStandard;
+
+/** Success body for `POST /api/rename-path`. */
+export const RenamePathSuccessSchema = z
+  .object({
+    renamed: z.array(RenamedDocMappingSchema),
+  })
+  .loose();
+export type RenamePathSuccess = z.infer<typeof RenamePathSuccessSchema>;
+const _RenamePathSuccessSchemaIsStandard: StandardSchemaV1<unknown, RenamePathSuccess> =
+  RenamePathSuccessSchema;
+void _RenamePathSuccessSchemaIsStandard;
+
+/** Request body for `POST /api/delete-path`. */
+export const DeletePathRequestSchema = z
+  .object({
+    kind: z.enum(['file', 'folder']),
+    path: z.string().min(1),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type DeletePathRequest = z.infer<typeof DeletePathRequestSchema>;
+const _DeletePathRequestSchemaIsStandard: StandardSchemaV1<unknown, DeletePathRequest> =
+  DeletePathRequestSchema;
+void _DeletePathRequestSchemaIsStandard;
+
+/** Success body for `POST /api/delete-path`. */
+export const DeletePathSuccessSchema = z
+  .object({
+    deletedDocNames: z.array(z.string().min(1)),
+  })
+  .loose();
+export type DeletePathSuccess = z.infer<typeof DeletePathSuccessSchema>;
+const _DeletePathSuccessSchemaIsStandard: StandardSchemaV1<unknown, DeletePathSuccess> =
+  DeletePathSuccessSchema;
+void _DeletePathSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/rollback`. `commitSha` is a 40-char git SHA;
+ * `versionTag` is optional — when present it appears in the parent-git
+ * commit message instead of the short SHA. `agentId` mirrors the rename
+ * handler's D22 LOCKED 1-way door — the UI Restore button posts no
+ * `agentId` so attribution stays anonymous.
+ */
+export const RollbackRequestSchema = z
+  .object({
+    docName: z.string().min(1),
+    commitSha: z
+      .string()
+      .regex(/^[0-9a-f]{40}$/i, { message: 'commitSha must be a 40-char git SHA' }),
+    versionTag: z.string().optional(),
+    summary: summaryField,
+    ...agentIdentityFields,
+  })
+  .loose();
+export type RollbackRequest = z.infer<typeof RollbackRequestSchema>;
+const _RollbackRequestSchemaIsStandard: StandardSchemaV1<unknown, RollbackRequest> =
+  RollbackRequestSchema;
+void _RollbackRequestSchemaIsStandard;
+
+/** Success body for `POST /api/rollback`. */
+export const RollbackSuccessSchema = z
+  .object({
+    restoredFrom: z.string().min(1),
+    timestamp: z.string().min(1),
+    summary: SummaryResponseFieldSchema.optional(),
+  })
+  .loose();
+export type RollbackSuccess = z.infer<typeof RollbackSuccessSchema>;
+const _RollbackSuccessSchemaIsStandard: StandardSchemaV1<unknown, RollbackSuccess> =
+  RollbackSuccessSchema;
+void _RollbackSuccessSchemaIsStandard;

@@ -38,10 +38,13 @@ import {
   AgentWriteRequestSchema,
   ASSET_EXTENSIONS,
   applyFastDiff,
+  CreatePageRequestSchema,
   colorFromSeed,
   createCodeFenceTracker,
   DEFAULT_ATTACHMENT_FOLDER_PATH,
   DEFAULT_DEDUP_MODE,
+  DeletePathRequestSchema,
+  EmptyRequestSchema,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -49,6 +52,8 @@ import {
   type Principal,
   prependFrontmatter,
   readFmMap,
+  RenamePathRequestSchema,
+  RollbackRequestSchema,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
   UploadRequestSchema,
@@ -3620,255 +3625,239 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   // ── POST /api/rollback ────────────────────────────────────────────────────
-  async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleRollback = withValidation(
+    RollbackRequestSchema,
+    async (_req, res, body) => {
+      const bodyObj = body as unknown as Record<string, unknown>;
+      const actor = extractActorIdentity(bodyObj, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+          handler: 'rollback',
+        });
+        return;
+      }
 
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
+      // Server-mode availability check. Identity is extracted first so the
+      // attribution-sweep ordering invariant holds: any errorResponse below
+      // this point is post-identity. The emit is still anonymous on the
+      // wire because identity is captured but never echoed.
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:rollback-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'rollback' },
+        );
+        return;
+      }
 
-    let rawBody: Buffer;
-    try {
-      rawBody = await readBody(req);
-    } catch {
-      json(res, 413, { ok: false, error: 'Payload too large' });
-      return;
-    }
+      const { docName, commitSha, versionTag: versionTagForRollback } = body;
 
-    let body: unknown;
-    try {
-      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON' });
-      return;
-    }
+      const resolvedContentRoot = contentRoot ?? '.';
+      const pathResult = safeDocPath(docName, resolvedContentRoot);
+      if ('error' in pathResult) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+          handler: 'rollback',
+        });
+        return;
+      }
+      const docPath = pathResult.path;
+      const sg = shadowGit(shadow);
 
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-      return;
-    }
-
-    const bodyObj = body as Record<string, unknown>;
-    const actor = extractActorIdentity(bodyObj, getPrincipal);
-    if (actor.kind === 'invalid-summary') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
-      return;
-    }
-
-    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
-    const docName = typeof rawDocName === 'string' ? rawDocName : '';
-    const commitSha = typeof rawSha === 'string' ? rawSha : '';
-    const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
-
-    if (!docName) {
-      json(res, 400, { ok: false, error: 'docName required' });
-      return;
-    }
-    if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
-      json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    const resolvedContentRoot = contentRoot ?? '.';
-    const pathResult = safeDocPath(docName, resolvedContentRoot);
-    if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
-      return;
-    }
-    const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
-
-    const t0 = Date.now();
-    try {
-      // Verify file exists at this commit
+      const t0 = Date.now();
       try {
-        await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
-        return;
-      }
+        // Verify file exists at this commit
+        try {
+          await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
+        } catch (catFileErr) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:doc-not-found',
+            'Document did not exist at this version.',
+            { handler: 'rollback', cause: catFileErr },
+          );
+          return;
+        }
 
-      const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
-      const timestamp = new Date().toISOString();
+        const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
+        const timestamp = new Date().toISOString();
 
-      // snapshot current state before the destructive rollback
-      await safetyCheckpoint(shadow, resolvedContentRoot, {
-        action: 'rollback',
-        context: { docName, targetSha: commitSha },
-      });
-
-      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
-      const document = hocuspocus.documents.get(docName);
-      if (!document) {
-        json(res, 409, {
-          ok: false,
-          error: 'Document is not currently open — open it in the editor first',
+        // snapshot current state before the destructive rollback
+        await safetyCheckpoint(shadow, resolvedContentRoot, {
+          action: 'rollback',
+          context: { docName, targetSha: commitSha },
         });
-        return;
-      }
 
-      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
-      // body parse only needs the body half — `frontmatter` is no longer
-      // mirrored into a separate metaMap slot.
-      const { body: mdBody } = stripFrontmatter(markdown);
-      const rollbackParseOpts = options.resolveEmbed
-        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-        : undefined;
-      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
-      const pmNode = schema.nodeFromJSON(parsedJson);
-      const xmlFragment = document.getXmlFragment('default');
-
-      document.transact(() => {
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(document, xmlFragment, pmNode, meta);
-
-        // Y.Text receives the full markdown (FM + body) verbatim — the
-        // YAML region IS the FM source of truth (D8/D26). No separate
-        // metadata-map mirror.
-        const ytext = document.getText('source');
-        const currentText = ytext.toString();
-        if (currentText !== markdown) {
-          ytext.delete(0, currentText.length);
-          ytext.insert(0, markdown);
-        }
-      }, ROLLBACK_ORIGIN);
-
-      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
-      // here. Setting the base before `onStoreDocument` has fired would trip the
-      // "skip write when serialized === currentBase" guard at
-      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
-      // — which also skips the following `scheduleGitCommit()`, orphaning any
-      // `recordContributor(...)` entry we add below into the next unrelated
-      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
-      // Letting `onStoreDocument` fire naturally writes disk AND updates the
-      // reconciled base (line 497 of persistence.ts), which is the correct order.
-
-      // Default summary `"Restored to <sha-short>"` applies for the agent path
-      // when no agent-supplied summary was given; the default goes through
-      // `normalizeSummary` so the 80-char cap covers it. When the default
-      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
-      // chars, but symmetric with `handleRenamePath` where defaults frequently
-      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
-      // `hint` from the response so the truncation message doesn't misattribute
-      // blame to the caller. The principal path records the contributor with
-      // the rollback subject but does NOT generate a default summary bullet —
-      // the rollback subject already drives the timeline display.
-      let summaryResponse: SummaryResponse | undefined;
-      switch (actor.kind) {
-        case 'agent': {
-          const shaShort = commitSha.slice(0, 8);
-          const agentProvidedSummary = actor.summary.kind === 'value';
-          const effectiveNormalized = agentProvidedSummary
-            ? actor.summary
-            : normalizeSummary(`Restored to ${shaShort}`);
-          const fields = summaryResponseFields(effectiveNormalized);
-          summaryResponse =
-            agentProvidedSummary || !fields.response
-              ? fields.response
-              : stripDefaultPathTruncation(fields.response);
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRollbackSubject(docName, commitSha),
-            actor.actor,
-            fields.stored,
+        // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
+        const document = hocuspocus.documents.get(docName);
+        if (!document) {
+          errorResponse(
+            res,
+            409,
+            'urn:ok:error:document-not-open',
+            'Document is not currently open — open it in the editor first.',
+            { handler: 'rollback' },
           );
-          incrementAgentWriteCalls();
-          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-          break;
+          return;
         }
-        case 'principal': {
-          const fields = summaryResponseFields(actor.summary);
-          summaryResponse = fields.response;
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRollbackSubject(docName, commitSha),
-            actor.actor,
-            fields.stored,
-          );
-          countNormalizedSummary(actor.summary, false);
-          break;
+
+        // FM lives in the YAML region of Y.Text directly (#365); the rollback
+        // body parse only needs the body half — `frontmatter` is no longer
+        // mirrored into a separate metaMap slot.
+        const { body: mdBody } = stripFrontmatter(markdown);
+        const rollbackParseOpts = options.resolveEmbed
+          ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+          : undefined;
+        const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
+        const pmNode = schema.nodeFromJSON(parsedJson);
+        const xmlFragment = document.getXmlFragment('default');
+
+        document.transact(() => {
+          const meta = { mapping: new Map(), isOMark: new Map() };
+          updateYFragment(document, xmlFragment, pmNode, meta);
+
+          // Y.Text receives the full markdown (FM + body) verbatim — the
+          // YAML region IS the FM source of truth. No separate metadata-map
+          // mirror.
+          const ytext = document.getText('source');
+          const currentText = ytext.toString();
+          if (currentText !== markdown) {
+            ytext.delete(0, currentText.length);
+            ytext.insert(0, markdown);
+          }
+        }, ROLLBACK_ORIGIN);
+
+        // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
+        // here. Setting the base before `onStoreDocument` has fired would trip the
+        // "skip write when serialized === currentBase" guard at
+        // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
+        // — which also skips the following `scheduleGitCommit()`, orphaning any
+        // `recordContributor(...)` entry we add below into the next unrelated
+        // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
+        // Letting `onStoreDocument` fire naturally writes disk AND updates the
+        // reconciled base (line 497 of persistence.ts), which is the correct order.
+
+        // 4-way actor switch (NG12 invariant): agent records contributor with
+        // optional default summary; principal records with the rollback subject;
+        // anonymous skips recordContributor entirely (never default-attribute);
+        // invalid-summary already returned above.
+        let summaryResponse: SummaryResponse | undefined;
+        switch (actor.kind) {
+          case 'agent': {
+            const shaShort = commitSha.slice(0, 8);
+            const agentProvidedSummary = actor.summary.kind === 'value';
+            const effectiveNormalized = agentProvidedSummary
+              ? actor.summary
+              : normalizeSummary(`Restored to ${shaShort}`);
+            const fields = summaryResponseFields(effectiveNormalized);
+            summaryResponse =
+              agentProvidedSummary || !fields.response
+                ? fields.response
+                : stripDefaultPathTruncation(fields.response);
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRollbackSubject(docName, commitSha),
+              actor.actor,
+              fields.stored,
+            );
+            incrementAgentWriteCalls();
+            countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+            break;
+          }
+          case 'principal': {
+            const fields = summaryResponseFields(actor.summary);
+            summaryResponse = fields.response;
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRollbackSubject(docName, commitSha),
+              actor.actor,
+              fields.stored,
+            );
+            countNormalizedSummary(actor.summary, false);
+            break;
+          }
+          case 'anonymous':
+            log.debug(
+              { docName, commitSha: commitSha.slice(0, 8) },
+              '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+            );
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
         }
-        case 'anonymous':
-          log.debug(
-            { docName, commitSha: commitSha.slice(0, 8) },
-            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
-          );
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
+        renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
+
+        // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
+        // restored version + attribution appear in the timeline within ~100ms
+        // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
+        // the shared `flushDocToGit` helper (same pattern as the three
+        // agent-write handlers) rather than a raw `flushGitCommit()` which
+        // no-ops when no L2 timer is set yet.
+        flushDocToGit(docName, 'rollback');
+
+        const duration = Date.now() - t0;
+        console.log(
+          `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
+        );
+
+        // Parent-git commit for team-visible restore record (non-fatal)
+        if (projectDir) {
+          const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
+          const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
+          const resolvedContentRoot = contentRoot ?? '.';
+          withParentLock(async () => {
+            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+            const gitPathspec = resolvedContentRoot || '.';
+            await pg.add(gitPathspec);
+            await pg.commit(restoreMsg, { '--allow-empty': null });
+            console.log(`[rollback] parent-git commit: ${restoreMsg}`);
+          }).catch((e) => {
+            console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+          });
         }
-      }
-      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
-      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
-      // restored version + attribution appear in the timeline within ~100ms
-      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
-      // the shared `flushDocToGit` helper (same pattern as the three
-      // agent-write handlers) rather than a raw `flushGitCommit()` which
-      // no-ops when no L2 timer is set yet.
-      flushDocToGit(docName, 'rollback');
+        // Only broadcast agent-focus push-nav when the caller explicitly
+        // identified as an agent. UI-driven Restore (principal or anonymous)
+        // must not trigger a cross-client push-nav as if an agent did the
+        // rollback.
+        if (actor.kind === 'agent') {
+          agentFocusBroadcaster?.setFocus(actor.writerId, {
+            agentName: actor.displayName,
+            currentDoc: docName,
+            writeKind: 'rollback-apply',
+            ts: Date.now(),
+          });
+        }
 
-      const duration = Date.now() - t0;
-      console.log(
-        `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
-      );
-
-      // Parent-git commit for team-visible restore record (non-fatal)
-      if (projectDir) {
-        const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
-        const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
-        const resolvedContentRoot = contentRoot ?? '.';
-        withParentLock(async () => {
-          const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-          const gitPathspec = resolvedContentRoot || '.';
-          await pg.add(gitPathspec);
-          await pg.commit(restoreMsg, { '--allow-empty': null });
-          console.log(`[rollback] parent-git commit: ${restoreMsg}`);
-        }).catch((e) => {
-          console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+        json(res, 200, {
+          restoredFrom: commitSha,
+          timestamp,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        console.error('[rollback]', e);
+        const message = e instanceof Error ? e.message : String(e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+          handler: 'rollback',
+          cause: e,
         });
       }
-
-      // Only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (principal or anonymous)
-      // must not trigger a cross-client push-nav as if an agent did the
-      // rollback.
-      if (actor.kind === 'agent') {
-        agentFocusBroadcaster?.setFocus(actor.writerId, {
-          agentName: actor.displayName,
-          currentDoc: docName,
-          writeKind: 'rollback-apply',
-          ts: Date.now(),
-        });
-      }
-
-      json(res, 200, {
-        ok: true,
-        restoredFrom: commitSha,
-        timestamp,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : 'Failed to roll back document';
-      json(res, 500, { ok: false, error: message });
-    }
-  }
+    },
+    { handler: 'rollback', method: 'POST' },
+  );
 
   async function handleMetricsReconciliation(
     req: IncomingMessage,
@@ -4266,481 +4255,494 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end('Not found');
   }
 
-  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      let rawBody: Buffer;
+  const handleCreatePage = withValidation(
+    CreatePageRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-      // Identity boundary (D22 LOCKED): only attribute when the caller
-      // explicitly supplies agentId. UI-driven creates fall through to the
-      // loaded principal (if any) or anonymous — never to a synthetic
-      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
-      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
-      if (actor.kind === 'invalid-summary') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { path: filePath } = body as Record<string, unknown>;
-      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
-        json(res, 400, { ok: false, error: 'path is required' });
-        return;
-      }
-      if (!isSupportedDocFile(filePath)) {
-        json(res, 400, { ok: false, error: 'path must end with .md or .mdx' });
-        return;
-      }
-      if (
-        filePath.includes('..') ||
-        filePath.startsWith('/') ||
-        filePath.includes('\x00') ||
-        filePath.includes('\\')
-      ) {
-        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
-        return;
-      }
-      const resolvedContentDir = resolve(contentDir);
-      const fullPath = resolve(resolvedContentDir, filePath);
-      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
-        json(res, 400, { ok: false, error: 'path must not escape content directory' });
-        return;
-      }
-      const candidateDocName = stripDocExtension(filePath);
-      if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
-        json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
-        return;
-      }
-      mkdirSync(dirname(fullPath), { recursive: true });
-      const initialContent = '';
-      try {
-        writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          json(res, 409, { ok: false, error: 'File already exists' });
-          return;
-        }
-        throw err;
-      }
-      const docName = stripDocExtension(filePath);
-      // Synchronously bump the content filter's sibling-asset dirCount so any
-      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
-      // rule. The file watcher's `create` event will also increment later,
-      // which would double-count — so we also `registerWrite` to mark this
-      // as a self-write, and the watcher skips its own `incrementMdDir` on
-      // self-writes. See file-watcher.ts for the paired logic.
-      if (contentFilter) {
-        contentFilter.incrementMdDir(dirname(docName));
-      }
-      registerWrite(fullPath, contentHash(initialContent));
-      switch (actor.kind) {
-        case 'agent':
-        case 'principal':
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            undefined,
-            actor.actor,
-          );
-          break;
-        case 'anonymous':
-          // UI-driven create with no loaded principal — no contributor recorded.
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
-        }
-      }
-      const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
-      if (fileIndex instanceof Map) {
-        updateFileIndex(
-          { kind: 'create', path: fullPath, docName, content: initialContent },
-          fileIndex as Map<string, FileIndexEntry>,
-        );
-      }
-      if (backlinkIndex) {
-        backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
-        void backlinkIndex.saveToDisk().catch((err) => {
-          console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
-        });
-        signalChannel?.('backlinks');
-        signalChannel?.('graph');
-      }
-      signalChannel?.('files');
-      json(res, 200, { ok: true, docName });
-    } catch (e) {
-      console.error('[create-page]', e);
-      json(res, 500, { ok: false, error: 'Failed to create page' });
-    }
-  }
-
-  async function handlePageHeadings(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName || typeof docName !== 'string' || docName.length === 0) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
-      }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const filePath = resolveDocPath(docName);
-      if (!filePath) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      if (!existsSync(filePath)) {
-        json(res, 404, { ok: false, error: 'Page not found' });
-        return;
-      }
-      const content = readFileSync(filePath, 'utf-8');
-      const headings = extractHeadings(content);
-      json(res, 200, { ok: true, docName, headings });
-    } catch (e) {
-      console.error('[page-headings]', e);
-      json(res, 500, { ok: false, error: 'Failed to read headings' });
-    }
-  }
-
-  async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const bodyObj = body as Record<string, unknown>;
-      const actor = extractActorIdentity(bodyObj, getPrincipal);
-      if (actor.kind === 'invalid-summary') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { kind, fromPath, toPath } = bodyObj;
-      if (kind !== 'file' && kind !== 'folder') {
-        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
-        return;
-      }
-      if (typeof fromPath !== 'string' || typeof toPath !== 'string') {
-        json(res, 400, { ok: false, error: 'fromPath and toPath are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
-        json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
-        return;
-      }
-      if (
-        kind === 'file' &&
-        (isSystemDoc(fromPath) ||
-          isSystemDoc(toPath) ||
-          isConfigDoc(fromPath) ||
-          isConfigDoc(toPath))
-      ) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      // Reject paths whose first segment is `.ok` — that directory
-      // holds per-machine OK runtime state (server.lock, principal.json, cache,
-      // etc.) and is symmetric with the `__system__` carve-out above. The
-      // `AGENTS.md` file inside `.ok/` is a tracked content file
-      // by design, but a rename TO or FROM this directory would clobber OK
-      // bookkeeping.
-      if (
-        fromPath === '.ok' ||
-        fromPath.startsWith('.ok/') ||
-        toPath === '.ok' ||
-        toPath.startsWith('.ok/')
-      ) {
-        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
-        return;
-      }
-      if (fromPath === toPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
-      // a case-only move would no-op or behave unpredictably; reject explicitly.
-      if (fromPath.toLowerCase() === toPath.toLowerCase()) {
-        json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
-        return;
-      }
-
-      // Register the source's actual on-disk extension before downstream
-      // checks so admission and existsSync probes both see the right value
-      // when the file watcher hasn't yet observed the source (boot race).
-      if (kind === 'file') {
-        probeAndRegisterSourceFileExtension(contentDir, fromPath);
-      }
-
-      if (contentFilter) {
-        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
-        // a destination like `bar.mdx` is checked verbatim instead of as
-        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
-        const excluded =
-          kind === 'file'
-            ? contentFilter.isExcluded(
-                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
-              )
-            : contentFilter.isDirExcluded(toPath);
-        if (excluded) {
-          json(res, 400, {
-            ok: false,
-            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+        const bodyObj = body as unknown as Record<string, unknown>;
+        // Identity boundary: only attribute when the caller explicitly supplies
+        // agentId. UI-driven creates fall through to the loaded principal (if
+        // any) or anonymous — never to a synthetic 'Claude' default. Mirrors
+        // handleRollback / handleRenamePath.
+        const actor = extractActorIdentity(bodyObj, getPrincipal);
+        if (actor.kind === 'invalid-summary') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+            handler: 'create-page',
           });
           return;
         }
-      }
 
-      let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
-      try {
-        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
-      } catch (err) {
-        if (err instanceof ManagedRenameCollisionError) {
-          json(res, 409, {
-            ok: false,
-            error: err.message,
-            colliding: err.colliding,
+        const filePath = body.path;
+        if (!isSupportedDocFile(filePath)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'path must end with .md or .mdx.',
+            { handler: 'create-page' },
+          );
+          return;
+        }
+        if (
+          filePath.includes('..') ||
+          filePath.startsWith('/') ||
+          filePath.includes('\x00') ||
+          filePath.includes('\\')
+        ) {
+          errorResponse(res, 400, 'urn:ok:error:path-escape', 'Invalid path.', {
+            handler: 'create-page',
+            detail: 'path must not contain .. or start with /',
           });
           return;
         }
-        throw err;
-      }
-
-      if (result.renamed.length === 0) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-
-      let summaryResponse: SummaryResponse | undefined;
-      switch (actor.kind) {
-        case 'agent': {
-          const agentProvidedSummary = actor.summary.kind === 'value';
-          const effectiveNormalized = agentProvidedSummary
-            ? actor.summary
-            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
-          const fields = summaryResponseFields(effectiveNormalized);
-          summaryResponse =
-            agentProvidedSummary || !fields.response
-              ? fields.response
-              : stripDefaultPathTruncation(fields.response);
-          for (const { fromDocName, toDocName } of result.renamed) {
-            recordContributor(
-              toDocName,
-              actor.writerId,
-              actor.displayName,
-              actor.colorSeed,
-              formatRenameSubject(fromDocName, toDocName),
-              actor.actor,
-              fields.stored,
-            );
-          }
-          incrementAgentWriteCalls();
-          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-          for (const { toDocName } of result.renamed) {
-            flushDocToGit(toDocName, 'rename-path');
-          }
-          break;
-        }
-        case 'principal': {
-          const fields = summaryResponseFields(actor.summary);
-          summaryResponse = fields.response;
-          for (const { fromDocName, toDocName } of result.renamed) {
-            recordContributor(
-              toDocName,
-              actor.writerId,
-              actor.displayName,
-              actor.colorSeed,
-              formatRenameSubject(fromDocName, toDocName),
-              actor.actor,
-              fields.stored,
-            );
-          }
-          countNormalizedSummary(actor.summary, false);
-          for (const { toDocName } of result.renamed) {
-            flushDocToGit(toDocName, 'rename-path');
-          }
-          break;
-        }
-        case 'anonymous':
-          log.debug(
-            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
-            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+        const resolvedContentDir = resolve(contentDir);
+        const fullPath = resolve(resolvedContentDir, filePath);
+        if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:path-escape',
+            'path must not escape content directory.',
+            { handler: 'create-page' },
           );
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
+          return;
         }
-      }
-      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename-path]', e);
-      const { status, error } = toManagedRenamePublicError(e);
-      json(res, status, { ok: false, error });
-    }
-  }
-
-  async function handleDeletePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { kind, path } = body as Record<string, unknown>;
-      if (kind !== 'file' && kind !== 'folder') {
-        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
-        return;
-      }
-      if (typeof path !== 'string' || !isValidRelativeContentPath(path)) {
-        json(res, 400, { ok: false, error: 'path must be a relative content path' });
-        return;
-      }
-
-      const targetPath = resolveContentEntryPath(contentDir, kind, path);
-      if (!existsSync(targetPath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-
-      const targetStat = statSync(targetPath);
-      if (
-        (kind === 'file' && !targetStat.isFile()) ||
-        (kind === 'folder' && !targetStat.isDirectory())
-      ) {
-        json(res, 400, { ok: false, error: `Target path is not a ${kind}` });
-        return;
-      }
-
-      const deletedDocNames =
-        kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
-
-      await captureAndCloseDocuments(deletedDocNames);
-
-      if (kind === 'file') {
-        unlinkSync(targetPath);
-      } else {
-        rmSync(targetPath, { recursive: true, force: false });
-      }
-
-      json(res, 200, { ok: true, deletedDocNames });
-    } catch (e) {
-      console.error('[delete-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to delete path' });
-    }
-  }
-
-  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const index = getFileIndex();
-      const pages: {
-        docName: string;
-        title: string;
-        docExt: string;
-        size: number;
-        modified: string;
-      }[] = [];
-      for (const [docName, entry] of index) {
-        let title = docName;
-        const docExt = getDocExtension(docName);
+        const candidateDocName = stripDocExtension(filePath);
+        if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${candidateDocName}' is a reserved document name.`,
+            { handler: 'create-page' },
+          );
+          return;
+        }
+        mkdirSync(dirname(fullPath), { recursive: true });
+        const initialContent = '';
         try {
-          const filePath = resolve(contentDir, `${docName}${docExt}`);
-          const content = readFileSync(filePath, 'utf-8');
-          title = extractPageTitle(content, docName);
+          writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
         } catch (err) {
-          console.warn(`[pages] Failed to read title for ${docName}:`, err);
+          if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+            errorResponse(res, 409, 'urn:ok:error:doc-already-exists', 'File already exists.', {
+              handler: 'create-page',
+              cause: err,
+            });
+            return;
+          }
+          throw err;
         }
-        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
+        const docName = stripDocExtension(filePath);
+        // Synchronously bump the content filter's sibling-asset dirCount so any
+        // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
+        // rule. The file watcher's `create` event will also increment later,
+        // which would double-count — so we also `registerWrite` to mark this
+        // as a self-write, and the watcher skips its own `incrementMdDir` on
+        // self-writes. See file-watcher.ts for the paired logic.
+        if (contentFilter) {
+          contentFilter.incrementMdDir(dirname(docName));
+        }
+        registerWrite(fullPath, contentHash(initialContent));
+        switch (actor.kind) {
+          case 'agent':
+          case 'principal':
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              undefined,
+              actor.actor,
+            );
+            break;
+          case 'anonymous':
+            // UI-driven create with no loaded principal — no contributor recorded.
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
+        }
+        const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
+        if (fileIndex instanceof Map) {
+          updateFileIndex(
+            { kind: 'create', path: fullPath, docName, content: initialContent },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
+        if (backlinkIndex) {
+          backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+        signalChannel?.('files');
+        json(res, 200, { docName });
+      } catch (e) {
+        console.error('[create-page]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to create page.', {
+          handler: 'create-page',
+          cause: e,
+        });
       }
-      pages.sort((a, b) => a.docName.localeCompare(b.docName));
-      json(res, 200, { ok: true, pages });
-    } catch (e) {
-      console.error('[pages]', e);
-      json(res, 500, { ok: false, error: 'Failed to list pages' });
-    }
-  }
+    },
+    { handler: 'create-page', method: 'POST' },
+  );
+
+  const handlePageHeadings = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName || docName.length === 0) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Missing docName query parameter.',
+            { handler: 'page-headings' },
+          );
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        const filePath = resolveDocPath(docName);
+        if (!filePath) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        if (!existsSync(filePath)) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', 'Page not found.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        const content = readFileSync(filePath, 'utf-8');
+        const headings = extractHeadings(content);
+        json(res, 200, { docName, headings });
+      } catch (e) {
+        console.error('[page-headings]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read headings.', {
+          handler: 'page-headings',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'page-headings', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleRenamePath = withValidation(
+    RenamePathRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const bodyObj = body as unknown as Record<string, unknown>;
+        const actor = extractActorIdentity(bodyObj, getPrincipal);
+        if (actor.kind === 'invalid-summary') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+            handler: 'rename-path',
+          });
+          return;
+        }
+        const { kind, fromPath, toPath } = body;
+        if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Paths must be relative content paths.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
+        if (
+          kind === 'file' &&
+          (isSystemDoc(fromPath) ||
+            isSystemDoc(toPath) ||
+            isConfigDoc(fromPath) ||
+            isConfigDoc(toPath))
+        ) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            'Reserved document names cannot be renamed.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
+        // Reject paths whose first segment is `.ok` — that directory holds
+        // per-machine OK runtime state (server.lock, principal.json, cache,
+        // etc.) and is symmetric with the `__system__` carve-out above. The
+        // `AGENTS.md` file inside `.ok/` is a tracked content file by design,
+        // but a rename TO or FROM this directory would clobber OK bookkeeping.
+        if (
+          fromPath === '.ok' ||
+          fromPath.startsWith('.ok/') ||
+          toPath === '.ok' ||
+          toPath.startsWith('.ok/')
+        ) {
+          errorResponse(res, 400, 'urn:ok:error:reserved-docname', '.ok is a reserved directory.', {
+            handler: 'rename-path',
+          });
+          return;
+        }
+        if (fromPath === toPath) {
+          json(res, 200, { renamed: [], rewrittenDocs: [] });
+          return;
+        }
+        // On case-insensitive filesystems (macOS APFS default, Windows NTFS) a
+        // case-only move would no-op or behave unpredictably; reject explicitly.
+        if (fromPath.toLowerCase() === toPath.toLowerCase()) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Case-only renames are not supported.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
+
+        // Register the source's actual on-disk extension before downstream
+        // checks so admission and existsSync probes both see the right value
+        // when the file watcher hasn't yet observed the source (boot race).
+        if (kind === 'file') {
+          probeAndRegisterSourceFileExtension(contentDir, fromPath);
+        }
+
+        if (contentFilter) {
+          // Mirror `resolveContentEntryPath`'s explicit-extension detection so
+          // a destination like `bar.mdx` is checked verbatim instead of as
+          // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
+          const excluded =
+            kind === 'file'
+              ? contentFilter.isExcluded(
+                  isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+                )
+              : contentFilter.isDirExcluded(toPath);
+          if (excluded) {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the project content config.`,
+              { handler: 'rename-path' },
+            );
+            return;
+          }
+        }
+
+        let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
+        try {
+          result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+        } catch (err) {
+          if (err instanceof ManagedRenameCollisionError) {
+            errorResponse(res, 409, 'urn:ok:error:doc-already-exists', err.message, {
+              handler: 'rename-path',
+              detail: `colliding: ${err.colliding
+                .map((c) => `${c.existing}→${c.incoming}@${c.to}`)
+                .join(', ')}`,
+              cause: err,
+            });
+            return;
+          }
+          throw err;
+        }
+
+        if (result.renamed.length === 0) {
+          json(res, 200, { renamed: [], rewrittenDocs: [] });
+          return;
+        }
+
+        let summaryResponse: SummaryResponse | undefined;
+        switch (actor.kind) {
+          case 'agent': {
+            const agentProvidedSummary = actor.summary.kind === 'value';
+            const effectiveNormalized = agentProvidedSummary
+              ? actor.summary
+              : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+            const fields = summaryResponseFields(effectiveNormalized);
+            summaryResponse =
+              agentProvidedSummary || !fields.response
+                ? fields.response
+                : stripDefaultPathTruncation(fields.response);
+            for (const { fromDocName, toDocName } of result.renamed) {
+              recordContributor(
+                toDocName,
+                actor.writerId,
+                actor.displayName,
+                actor.colorSeed,
+                formatRenameSubject(fromDocName, toDocName),
+                actor.actor,
+                fields.stored,
+              );
+            }
+            incrementAgentWriteCalls();
+            countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+            for (const { toDocName } of result.renamed) {
+              flushDocToGit(toDocName, 'rename-path');
+            }
+            break;
+          }
+          case 'principal': {
+            const fields = summaryResponseFields(actor.summary);
+            summaryResponse = fields.response;
+            for (const { fromDocName, toDocName } of result.renamed) {
+              recordContributor(
+                toDocName,
+                actor.writerId,
+                actor.displayName,
+                actor.colorSeed,
+                formatRenameSubject(fromDocName, toDocName),
+                actor.actor,
+                fields.stored,
+              );
+            }
+            countNormalizedSummary(actor.summary, false);
+            for (const { toDocName } of result.renamed) {
+              flushDocToGit(toDocName, 'rename-path');
+            }
+            break;
+          }
+          case 'anonymous':
+            log.debug(
+              { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+              '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+            );
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
+        }
+        renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
+
+        json(res, 200, {
+          renamed: result.renamed,
+          rewrittenDocs: result.rewrittenDocs,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        console.error('[rename-path]', e);
+        const { status, error } = toManagedRenamePublicError(e);
+        errorResponse(res, status, 'urn:ok:error:internal-server-error', error, {
+          handler: 'rename-path',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'rename-path', method: 'POST' },
+  );
+
+  const handleDeletePath = withValidation(
+    DeletePathRequestSchema,
+    async (_req, res, body) => {
+      try {
+        extractAgentIdentity(body as unknown as Record<string, unknown>); // attribution threading (FR-5, D42)
+        const { kind, path } = body;
+        if (!isValidRelativeContentPath(path)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'path must be a relative content path.',
+            { handler: 'delete-path' },
+          );
+          return;
+        }
+
+        const targetPath = resolveContentEntryPath(contentDir, kind, path);
+        if (!existsSync(targetPath)) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', `${kind} does not exist.`, {
+            handler: 'delete-path',
+          });
+          return;
+        }
+
+        const targetStat = statSync(targetPath);
+        if (
+          (kind === 'file' && !targetStat.isFile()) ||
+          (kind === 'folder' && !targetStat.isDirectory())
+        ) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', `Target path is not a ${kind}.`, {
+            handler: 'delete-path',
+          });
+          return;
+        }
+
+        const deletedDocNames =
+          kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
+
+        await captureAndCloseDocuments(deletedDocNames);
+
+        if (kind === 'file') {
+          unlinkSync(targetPath);
+        } else {
+          rmSync(targetPath, { recursive: true, force: false });
+        }
+
+        json(res, 200, { deletedDocNames });
+      } catch (e) {
+        console.error('[delete-path]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to delete path.', {
+          handler: 'delete-path',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'delete-path', method: 'POST' },
+  );
+
+  const handlePages = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        const index = getFileIndex();
+        const pages: {
+          docName: string;
+          title: string;
+          docExt: string;
+          size: number;
+          modified: string;
+        }[] = [];
+        for (const [docName, entry] of index) {
+          let title = docName;
+          const docExt = getDocExtension(docName);
+          try {
+            const filePath = resolve(contentDir, `${docName}${docExt}`);
+            const content = readFileSync(filePath, 'utf-8');
+            title = extractPageTitle(content, docName);
+          } catch (err) {
+            console.warn(`[pages] Failed to read title for ${docName}:`, err);
+          }
+          pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
+        }
+        pages.sort((a, b) => a.docName.localeCompare(b.docName));
+        json(res, 200, { pages });
+      } catch (e) {
+        console.error('[pages]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to list pages.', {
+          handler: 'pages',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'pages', method: 'GET', skipBodyParse: true },
+  );
+
 
   async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
