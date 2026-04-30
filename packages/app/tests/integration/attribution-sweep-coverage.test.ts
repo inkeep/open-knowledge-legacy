@@ -12,12 +12,19 @@ import { join } from 'node:path';
 const API_EXT_PATH = join(import.meta.dirname, '../../../server/src/api-extension.ts');
 const source = readFileSync(API_EXT_PATH, 'utf8');
 
-/** Mutating POST handlers that must call extractAgentIdentity. */
+/** Mutating POST handlers that must call extractAgentIdentity.
+ *
+ * Frontmatter writes from the property panel intentionally do NOT appear
+ * here — they bypass HTTP entirely and reach `Y.Map('metadata')` through
+ * `bindFrontmatterDoc.patch()` under `FORM_WRITE_ORIGIN`. Attribution
+ * comes from the WebSocket connection's `ctx.principalId`, resolved by
+ * `resolveWriterFromOrigin` in `persistence.ts`. The HTTP-handler scan
+ * here doesn't see those writers — that's expected.
+ */
 const REQUIRED_HANDLERS = [
   'handleAgentWrite',
   'handleAgentWriteMd',
   'handleAgentPatch',
-  'handleFrontmatterPatch',
   'handleAgentUndo',
   'handleSaveVersion',
   'handleRollback',

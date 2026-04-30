@@ -1,12 +1,8 @@
 /**
- * Tests for frontmatter telemetry helpers (US-012).
+ * Tests for frontmatter telemetry helpers.
  *
  * Verifies:
  *   - `recordFrontmatterEditSurface` increments the bounded-label counter
- *   - `recordFrontmatterPatchDuration` records into the duration histogram
- *   - `withFormWriteSpan` emits a `frontmatter.form_write` span with
- *     `doc.name` + `frontmatter.op` attributes (and no high-cardinality
- *     attributes like `frontmatter.key`)
  *
  * Uses the InMemoryMetricExporter / InMemorySpanExporter test pattern from
  * `telemetry.test.ts` — registers a test provider, resets the lazy-init
@@ -29,8 +25,6 @@ import {
 import {
   __resetFrontmatterTelemetryForTests,
   recordFrontmatterEditSurface,
-  recordFrontmatterPatchDuration,
-  withFormWriteSpan,
 } from './frontmatter-telemetry.ts';
 
 interface TelemetryHarness {
@@ -99,22 +93,6 @@ function readCounterPoints(harness: TelemetryHarness, name: string): CounterPoin
   return out;
 }
 
-function readHistogramSampleCount(harness: TelemetryHarness, name: string): number {
-  let count = 0;
-  for (const rm of harness.metricExporter.getMetrics()) {
-    for (const sm of rm.scopeMetrics) {
-      for (const metric of sm.metrics) {
-        if (metric.descriptor.name !== name) continue;
-        for (const dp of metric.dataPoints) {
-          const value = dp.value as { count?: number };
-          if (typeof value?.count === 'number') count += value.count;
-        }
-      }
-    }
-  }
-  return count;
-}
-
 describe('frontmatter-telemetry', () => {
   let harness: TelemetryHarness;
 
@@ -151,65 +129,5 @@ describe('frontmatter-telemetry', () => {
     for (const p of points) {
       expect(Object.keys(p.attributes).sort()).toEqual(['source']);
     }
-  });
-
-  test('recordFrontmatterPatchDuration records into histogram', async () => {
-    recordFrontmatterPatchDuration(0.001);
-    recordFrontmatterPatchDuration(0.05);
-    recordFrontmatterPatchDuration(0.2);
-
-    await harness.flush();
-
-    const sampleCount = readHistogramSampleCount(harness, 'ok.frontmatter.patch.duration');
-    expect(sampleCount).toBe(3);
-  });
-
-  test('withFormWriteSpan emits frontmatter.form_write span with bounded attributes', () => {
-    let returnedFromInner = '';
-    const result = withFormWriteSpan('test-doc', 'set', () => {
-      returnedFromInner = 'inner-ran';
-      return 42;
-    });
-    expect(result).toBe(42);
-    expect(returnedFromInner).toBe('inner-ran');
-
-    const spans = harness.spanExporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
-    const span = spans[0];
-    expect(span.name).toBe('frontmatter.form_write');
-    expect(span.attributes['doc.name']).toBe('test-doc');
-    expect(span.attributes['frontmatter.op']).toBe('set');
-    // Bounded-cardinality enforcement: NEVER emit `frontmatter.key`
-    // (user-controlled, unbounded). SPEC §7 originally listed it; US-012
-    // AC drops it per the cardinality rule.
-    expect(span.attributes['frontmatter.key']).toBeUndefined();
-  });
-
-  test('withFormWriteSpan supports each enum value of FrontmatterFormOp', () => {
-    withFormWriteSpan('a', 'set', () => undefined);
-    withFormWriteSpan('a', 'add', () => undefined);
-    withFormWriteSpan('a', 'remove', () => undefined);
-    withFormWriteSpan('a', 'rename', () => undefined);
-    withFormWriteSpan('a', 'reorder', () => undefined);
-
-    const ops = harness.spanExporter
-      .getFinishedSpans()
-      .map((s) => String(s.attributes['frontmatter.op']));
-    expect(ops.sort()).toEqual(['add', 'remove', 'rename', 'reorder', 'set']);
-  });
-
-  test('withFormWriteSpan rethrows from inner and ends the span', () => {
-    const err = new Error('boom');
-    expect(() =>
-      withFormWriteSpan('test-doc', 'set', () => {
-        throw err;
-      }),
-    ).toThrow('boom');
-
-    const spans = harness.spanExporter.getFinishedSpans();
-    expect(spans).toHaveLength(1);
-    expect(spans[0].name).toBe('frontmatter.form_write');
-    // Status code 2 = ERROR per OTel
-    expect(spans[0].status.code).toBe(2);
   });
 });

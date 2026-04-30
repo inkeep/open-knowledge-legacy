@@ -3,16 +3,19 @@ import {
   CC1_CHANNEL_BRANCH_SWITCHED,
   CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
+  CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED,
   CC1_CHANNEL_SERVER_INFO,
   CC1_CONTRACT_VERSION,
   CC1BranchSwitchedPayloadSchema,
   CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
+  CC1FrontmatterValidationRejectedPayloadSchema,
   CC1ServerInfoPayloadSchema,
   CONFIG_DOC_NAMES,
   type ConfigValidationError,
   type DerivedViewChannel,
+  type FrontmatterValidationError,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
 import { getLogger } from './logger.ts';
@@ -356,6 +359,45 @@ export class CC1Broadcaster {
       setCC1LastSeq(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED, seq);
     } catch (err) {
       this.log.error({ err, docName }, '[cc1] emitConfigValidationRejected failed');
+    }
+  }
+
+  /**
+   * Broadcast a frontmatter validation rejection on the `__system__` doc's
+   * stateless channel. Sibling of `emitConfigValidationRejected`, scoped to
+   * per-key `Y.Map('metadata')` writes that the L3 hook reverted.
+   *
+   * Synchronous (no debounce) — error paths should surface immediately.
+   * The originating PropertyPanel filters by `docName` to render the toast.
+   */
+  emitFrontmatterValidationRejected(docName: string, error: FrontmatterValidationError): void {
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn(
+            {},
+            `[cc1] __system__ document not found at emitFrontmatterValidationRejected — dropped`,
+          );
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
+      }
+      const seq = (this.seqs.get(CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED) ?? 0) + 1;
+      this.seqs.set(CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED, seq);
+      const payload = CC1FrontmatterValidationRejectedPayloadSchema.parse({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED,
+        seq,
+        docName,
+        error,
+      });
+      doc.broadcastStateless(JSON.stringify(payload));
+      incrementCC1Broadcast();
+      setCC1LastSeq(CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED, seq);
+    } catch (err) {
+      this.log.error({ err, docName }, '[cc1] emitFrontmatterValidationRejected failed');
     }
   }
 

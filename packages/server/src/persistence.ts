@@ -14,6 +14,7 @@ import type { Extension } from '@hocuspocus/server';
 import {
   type ConfigValidationError,
   composeFrontmatterForStore,
+  type FrontmatterValidationError,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
@@ -43,6 +44,11 @@ import {
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
+import {
+  type FrontmatterL3Ctx,
+  type FrontmatterLkgCache,
+  validateAndRevertFrontmatterIfBad,
+} from './frontmatter-l3.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -191,6 +197,14 @@ export interface PersistenceOptions {
    * plugin mode where no CC1Broadcaster is available.
    */
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
+  /**
+   * Fired after the L3 frontmatter validation hook reverts an invalid
+   * `Y.Map('metadata')` mutation on a regular doc. Wired in standalone
+   * boot to `cc1Broadcaster.emitFrontmatterValidationRejected(docName, error)`
+   * so any open property panel sees the rejection toast. Omitted in
+   * plugin mode where no CC1Broadcaster is available.
+   */
+  onFrontmatterRejected?: (docName: string, error: FrontmatterValidationError) => void;
 }
 
 /**
@@ -338,6 +352,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     lkgCache: configLkgCache,
     homedirOverride: options?.configHomedirOverride,
     onConfigRejected: options?.onConfigRejected,
+  };
+
+  // L3 frontmatter validation cache — sibling of `configLkgCache`, scoped
+  // per regular doc. Updated only after a successful per-key validation
+  // pass; revert path uses it to restore last-good values for failed keys.
+  const frontmatterLkgCache: FrontmatterLkgCache = new Map();
+  const frontmatterL3Ctx: FrontmatterL3Ctx = {
+    lkgCache: frontmatterLkgCache,
+    onFrontmatterRejected: options?.onFrontmatterRejected,
   };
 
   // reconciledBase and batchInProgress use the module-level systems
@@ -810,6 +833,20 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         return;
       }
       if (isBatchInProgress()) return;
+
+      // L3 frontmatter validation hook — defense-in-depth gate for direct
+      // `Y.Map('metadata')` writes that bypass `bindFrontmatterDoc`'s L1.
+      // Reverts bad-shape entries to LKG (or deletes when no LKG) and fires
+      // `onFrontmatterRejected` so the originating client can toast via CC1.
+      // No-op for the revert origin itself (loop guard) and for unchanged
+      // metaMap state. The disk-write path proceeds in all cases — after
+      // a revert, the post-revert state is the one that lands on disk.
+      validateAndRevertFrontmatterIfBad(
+        document,
+        documentName,
+        lastTransactionOrigin,
+        frontmatterL3Ctx,
+      );
       ensureHistograms();
       const started = Date.now();
       return withSpan(

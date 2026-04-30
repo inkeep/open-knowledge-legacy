@@ -360,6 +360,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       // affected field. Same closure-deferred pattern.
       onConfigRejected: (docName, error) =>
         cc1Broadcaster?.emitConfigValidationRejected(docName, error),
+      // L3 frontmatter validation rejection — sibling of `onConfigRejected`
+      // for non-config docs. Fired when the persistence-hook reverts a bad
+      // `Y.Map('metadata')` write; the broadcast tells the originating
+      // PropertyPanel to toast + flash the affected key's row.
+      onFrontmatterRejected: (docName, error) =>
+        cc1Broadcaster?.emitFrontmatterValidationRejected(docName, error),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);

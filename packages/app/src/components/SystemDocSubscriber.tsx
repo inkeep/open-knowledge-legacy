@@ -6,6 +6,7 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { emitConfigValidationRejected } from '@/lib/config-validation-events';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { emitFrontmatterValidationRejected } from '@/lib/frontmatter-validation-events';
 import { createSyncedReconnectGate } from '@/lib/server-info-refresh';
 
 export function SystemDocSubscriber() {
@@ -71,6 +72,9 @@ export function SystemDocSubscriber() {
           },
           onConfigValidationRejected: (p) => {
             emitConfigValidationRejected(p);
+          },
+          onFrontmatterValidationRejected: (p) => {
+            emitFrontmatterValidationRejected(p);
           },
           onUnknown: (raw) => {
             console.warn('[CC1] Unparseable stateless payload, skipping:', raw.slice(0, 100));

@@ -10,6 +10,15 @@
  * `specs/2026-04-16-bridge-correctness/SPEC.md`.
  */
 export { applyFastDiff, applyIncrementalDiff } from './apply-diff.ts';
+export {
+  bindFrontmatterDoc,
+  FORM_WRITE_ORIGIN,
+  type FrontmatterBinding,
+  type FrontmatterBindingPatchResult,
+  type FrontmatterBindingPatchSuccess,
+  type FrontmatterDocProvider,
+  type Unsubscribe as FrontmatterBindingUnsubscribe,
+} from './bind-frontmatter-doc.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export {
   composeFrontmatterForStore,

@@ -3,8 +3,10 @@
  *
  * Each widget reads `value` (from `Y.Map('metadata')` per-key state) and emits
  * `onCommit(newValue)` on Enter / blur (or click for boolean). The parent
- * (PropertyRow in PropertyPanel) routes commits via HTTP POST to
- * `/api/frontmatter-patch` (the same path EditorHeader's toolbar trigger uses).
+ * (PropertyRow in PropertyPanel) routes commits through `bindFrontmatterDoc.patch()`,
+ * which writes per-key entries to the CRDT under `FORM_WRITE_ORIGIN`. No HTTP
+ * round-trip — the change reaches the server via the same WebSocket the editor
+ * already uses.
  *
  * Type picker (TypeIconButton) opens a dropdown listing the five widget types;
  * selecting a different type triggers a value coercion + commit so the slot

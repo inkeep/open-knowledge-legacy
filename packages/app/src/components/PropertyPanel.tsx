@@ -1,8 +1,12 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
+  bindFrontmatterDoc,
+  type FrontmatterBinding,
   type FrontmatterMap,
+  type FrontmatterPatch,
   type FrontmatterType,
   type FrontmatterValue,
+  fieldErrorsFromError,
   getFrontmatterMap,
   inferType,
 } from '@inkeep/open-knowledge-core';
@@ -22,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
+import { subscribeToFrontmatterValidationRejected } from '@/lib/frontmatter-validation-events';
 
 interface PropertyPanelProps {
   provider: HocuspocusProvider;
@@ -36,7 +41,26 @@ const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
 };
 
 export function PropertyPanel({ provider }: PropertyPanelProps) {
+  // Read the frontmatter map directly from `Y.Map('metadata')` — synchronous
+  // so SSR / first-render readers see the right state. The binding below is
+  // for writes only; subscriptions to remote updates are handled via a
+  // separate `metaMap.observeDeep` effect to keep first-render synchronous.
   const map = useFrontmatterMap(provider);
+
+  // Binding for write operations — created in an effect so React Compiler
+  // can manage memoization without `useMemo` (CLAUDE.md rule). The binding
+  // owns its own metaMap observer + provider 'synced' listener for the
+  // pub/sub surface, but our `useFrontmatterMap` covers the React-render
+  // subscription independently. `binding.dispose()` detaches both.
+  const [binding, setBinding] = useState<FrontmatterBinding | null>(null);
+  useEffect(() => {
+    const next = bindFrontmatterDoc(provider);
+    setBinding(next);
+    return () => {
+      next.dispose();
+      setBinding((prev) => (prev === next ? null : prev));
+    };
+  }, [provider]);
   const [collapsed, setCollapsed] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, FrontmatterType>>({});
   const [adding, setAdding] = useState<AddDraft | null>(null);
@@ -45,35 +69,41 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
-  async function commitPatch(
-    patch: Record<string, FrontmatterValue | null>,
-    op: FormOp,
-  ): Promise<PatchResult> {
-    try {
-      const res = await fetch('/api/frontmatter-patch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName, patch, source: 'form', op }),
-      });
-      if (res.ok) return { ok: true, status: res.status };
-      let parsed: { error?: unknown; fieldErrors?: unknown } = {};
-      try {
-        parsed = (await res.json()) as { error?: unknown; fieldErrors?: unknown };
-      } catch {}
-      const error = typeof parsed.error === 'string' ? parsed.error : undefined;
-      const fieldErrors =
-        parsed.fieldErrors && typeof parsed.fieldErrors === 'object'
-          ? (parsed.fieldErrors as Record<string, string>)
-          : undefined;
-      console.warn('[PropertyPanel] frontmatter-patch failed', {
-        status: res.status,
-        error,
-      });
-      return { ok: false, status: res.status, error, fieldErrors };
-    } catch (err) {
-      console.warn('[PropertyPanel] frontmatter-patch network error', { err });
-      return { ok: false, status: 0, error: 'Network error' };
+  /**
+   * Commit a JSON-Merge-Patch through the CRDT binding. Local L1 validation
+   * runs synchronously inside `binding.patch`; on success the per-key writes
+   * land in `Y.Map('metadata')` under `FORM_WRITE_ORIGIN` and propagate to
+   * the server via Hocuspocus.
+   *
+   * The async signature is preserved for compatibility with callers that
+   * assumed the network round-trip — there is no `await` here, but keeping
+   * the Promise<PatchResult> return type avoids touching every callsite.
+   * Returning `Promise.resolve(...)` is fine because the binding's transact
+   * is fully synchronous.
+   *
+   * Server-side L3 rejections (rare — would only fire if a non-form writer
+   * inserts an invalid value into metaMap) arrive asynchronously via
+   * `subscribeToFrontmatterValidationRejected`. Those errors are folded
+   * into the same `errors` state map by the effect below.
+   */
+  function commitPatch(patch: FrontmatterPatch): PatchResult {
+    if (!binding) {
+      return { ok: false, status: 0, error: 'Connecting…' };
     }
+    const result = binding.patch(patch);
+    if (result.ok) return { ok: true, status: 200 };
+    if (result.error.code === 'WRITE_ERROR') {
+      console.warn('[PropertyPanel] binding write error:', result.error.detail);
+      return { ok: false, status: 0, error: result.error.detail };
+    }
+    const fieldErrors = fieldErrorsFromError(result.error);
+    const firstIssue = result.error.issues[0]?.message ?? 'Invalid patch payload';
+    return {
+      ok: false,
+      status: 400,
+      error: firstIssue,
+      fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined,
+    };
   }
 
   function clearError(key: string) {
@@ -105,19 +135,19 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     });
   }
 
-  async function commitProperty(key: string, value: FrontmatterValue) {
+  function commitProperty(key: string, value: FrontmatterValue) {
     clearError(key);
-    const result = await commitPatch({ [key]: value }, 'set');
+    const result = commitPatch({ [key]: value });
     setErrorForKeys(result, [key]);
   }
 
-  async function removeProperty(key: string) {
+  function removeProperty(key: string) {
     clearError(key);
-    const result = await commitPatch({ [key]: null }, 'remove');
+    const result = commitPatch({ [key]: null });
     setErrorForKeys(result, [key]);
   }
 
-  async function renameProperty(oldKey: string, newKey: string): Promise<PatchResult> {
+  function renameProperty(oldKey: string, newKey: string): PatchResult {
     if (oldKey === newKey) return { ok: true, status: 200 };
     if (Object.hasOwn(map, newKey)) {
       return { ok: false, status: 0, error: `Property "${newKey}" already exists` };
@@ -126,7 +156,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     if (value === undefined) {
       return { ok: false, status: 0, error: `Property "${oldKey}" not found` };
     }
-    return commitPatch({ [oldKey]: null, [newKey]: value }, 'rename');
+    return commitPatch({ [oldKey]: null, [newKey]: value });
   }
 
   function setType(key: string, nextType: FrontmatterType) {
@@ -135,9 +165,38 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     setOverrides((prev) => ({ ...prev, [key]: nextType }));
     const coerced = coerceValue(current, nextType);
     if (!sameValue(current, coerced)) {
-      void commitProperty(key, coerced);
+      commitProperty(key, coerced);
     }
   }
+
+  // Server-side L3 rejection — fires when a non-binding writer (e.g., a
+  // direct `metaMap.set(...)` from an MCP path that bypasses
+  // `setFrontmatterProperty`) inserts an invalid value, the persistence
+  // hook reverts it, and the broadcast tells us. Surface as an error
+  // overlay on the affected key. Filtered to this doc only.
+  useEffect(() => {
+    return subscribeToFrontmatterValidationRejected((event) => {
+      if (event.docName !== docName) return;
+      if (event.error.code !== 'SCHEMA_INVALID') return;
+      const fieldErrors = fieldErrorsFromError(event.error);
+      const keys = Object.keys(fieldErrors);
+      if (keys.length === 0) return;
+      setErrors((prev) => {
+        const next = { ...prev };
+        for (const key of keys) {
+          next[key] = fieldErrors[key] ?? 'Validation failed';
+        }
+        return next;
+      });
+      setResetCounters((prev) => {
+        const next = { ...prev };
+        for (const key of keys) {
+          next[key] = (next[key] ?? 0) + 1;
+        }
+        return next;
+      });
+    });
+  }, [docName]);
 
   function beginAdd() {
     setAdding({ name: '', type: 'text', value: '', error: null });
@@ -207,7 +266,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setAdding({ ...adding, error: `Property "${trimmed}" already exists` });
       return;
     }
-    const result = await commitPatch({ [trimmed]: adding.value }, 'add');
+    const result = commitPatch({ [trimmed]: adding.value });
     if (result.ok) {
       setAdding(null);
       return;
@@ -252,7 +311,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setRenaming({ ...renaming, error: `Property "${trimmed}" already exists` });
       return;
     }
-    const result = await renameProperty(renaming.key, trimmed);
+    const result = renameProperty(renaming.key, trimmed);
     if (result.ok) {
       setOverrides((prev) => {
         if (!Object.hasOwn(prev, renaming.key)) return prev;
@@ -345,8 +404,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     </div>
   );
 }
-
-type FormOp = 'set' | 'add' | 'remove' | 'rename';
 
 interface PatchResult {
   ok: boolean;
@@ -658,6 +715,12 @@ function sameValue(a: FrontmatterValue, b: FrontmatterValue): boolean {
   return a === b;
 }
 
+/**
+ * Synchronous read + observeDeep subscription on `Y.Map('metadata')` for the
+ * React render path. SSR + first-render see the right map without waiting
+ * for a useEffect to create the binding. The `bindFrontmatterDoc` binding
+ * (used for writes) maintains its own listener pool for non-React subscribers.
+ */
 function useFrontmatterMap(provider: HocuspocusProvider): FrontmatterMap {
   const [map, setMap] = useState<FrontmatterMap>(() => getFrontmatterMap(provider.document));
   useEffect(() => {

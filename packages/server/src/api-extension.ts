@@ -31,25 +31,16 @@ import {
   ALLOWED_IMAGE_MIME_TYPES,
   ALLOWED_VIDEO_MIME_TYPES,
   applyFastDiff,
-  applyPatchToDocument,
   colorFromSeed,
   createCodeFenceTracker,
-  type FrontmatterPatch,
-  FrontmatterPatchSchema,
-  FrontmatterTypeSchema,
   getFrontmatterMap,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
-  parseFrontmatterYaml,
   prependFrontmatter,
   SYSTEM_DOC_NAME,
-  serializeFrontmatterMap,
-  setFrontmatterProperty,
   stripFrontmatter,
-  unwrapFrontmatterFences,
-  withFences,
   writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import {
@@ -61,7 +52,6 @@ import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-ti
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
-import { z } from 'zod';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -116,13 +106,6 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
-import {
-  type FrontmatterEditSource,
-  type FrontmatterFormOp,
-  recordFrontmatterEditSurface,
-  recordFrontmatterPatchDuration,
-  withFormWriteSpan,
-} from './frontmatter-telemetry.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -178,7 +161,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer, withSpan } from './telemetry.ts';
+import { getMeter, getTracer } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 // Cache the HTTP duration histogram at module scope — lazy-init at first use
@@ -255,18 +238,6 @@ function findLooksLikeFrontmatter(find: string): boolean {
   // `draft:` similarly fall through to position-based rejection.
   if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
   return false;
-}
-
-// `reorder` is intentionally absent from the runtime accept-set: reorder is
-// deferred from MVP and no UI emits it, so accepting it here would fire
-// `frontmatter.form_write` with an op the system doesn't actually
-// implement. The type retains the variant for forward compatibility;
-// re-add to this set together with the UI implementation when it lands.
-const FORM_OPS: ReadonlySet<FrontmatterFormOp> = new Set(['set', 'add', 'remove', 'rename']);
-
-function coerceFormOp(raw: unknown): FrontmatterFormOp | null {
-  if (typeof raw !== 'string') return null;
-  return FORM_OPS.has(raw as FrontmatterFormOp) ? (raw as FrontmatterFormOp) : null;
 }
 
 /**
@@ -2399,409 +2370,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  /**
-   * POST /api/frontmatter-patch — typed per-key frontmatter writes via JSON
-   * Merge Patch (RFC 7396) semantics. Single MCP / form surface for FM edits
-   * once `agent-patch` rejects FM-intersecting calls (see US-006).
-   *
-   * Body: {
-   *   docName: string,
-   *   patch: Record<string, FrontmatterValue|null>,
-   *   types?: Record<string, 'text'|'number'|'boolean'|'date'|'list'>,
-   *   summary?: string,
-   *   agentId?, agentName?, ...
-   * }
-   *
-   * Semantics:
-   *   - `key: value` → set or create the key
-   *   - `key: null` → delete the key
-   *   - missing keys → unchanged
-   *   - any value failing Zod validation → reject the WHOLE patch atomically
-   *     with HTTP 400 + a `fieldErrors` map identifying offending keys
-   *
-   * Origin: per-session `formOrigin` from `getSession` — single-root writer
-   * (touches only metaMap, no `paired: true` marker). Observer A fires
-   * normally on the metaMap deep observer and recomposes YAML+body for Y.Text.
-   */
-  const TYPES_MAP_SCHEMA = z.record(z.string(), FrontmatterTypeSchema);
-  const FRONTMATTER_PATCH_FM_KEY = 'frontmatter';
-
-  async function handleFrontmatterPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const bodyObj = body as Record<string, unknown>;
-
-      const rawDocName = bodyObj.docName;
-      const effectiveDocName =
-        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
-      if (!isSafeDocName(effectiveDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(effectiveDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-
-      const rawPatch = bodyObj.patch;
-      if (!rawPatch || typeof rawPatch !== 'object' || Array.isArray(rawPatch)) {
-        json(res, 400, { ok: false, error: 'patch field required (object)' });
-        return;
-      }
-      // Reject the legacy single-string slot key — its surface is internal
-      // (transition mirror), not part of the per-key contract.
-      if (Object.hasOwn(rawPatch, FRONTMATTER_PATCH_FM_KEY)) {
-        json(res, 400, {
-          ok: false,
-          error: `'${FRONTMATTER_PATCH_FM_KEY}' is a reserved frontmatter key`,
-        });
-        return;
-      }
-      const patchResult = FrontmatterPatchSchema.safeParse(rawPatch);
-      if (!patchResult.success) {
-        const fieldErrors: Record<string, string> = {};
-        for (const issue of patchResult.error.issues) {
-          const key = issue.path[0];
-          if (typeof key === 'string') {
-            fieldErrors[key] = fieldErrors[key]
-              ? `${fieldErrors[key]}; ${issue.message}`
-              : issue.message;
-          }
-        }
-        // **Error envelope convention extension.** This is the precedent for
-        // per-field validation errors: `{ ok: false, error: <human msg>,
-        // fieldErrors: Record<key, msg> }`. Future validation-heavy
-        // endpoints should reuse `fieldErrors` (NOT invent
-        // `validationErrors` / `details` / similar) so MCP clients can
-        // depend on one shape. The form panel already keys off this in
-        // `commitPatch` (PropertyPanel.tsx).
-        json(res, 400, { ok: false, error: 'Invalid patch payload', fieldErrors });
-        return;
-      }
-      const validatedPatch: FrontmatterPatch = patchResult.data;
-
-      // The `types` map is validated for shape but not yet persisted —
-      // declared types are session-local on the client today. The wire-level
-      // shape check guards against drift even when the value is unused
-      // server-side; the parameter remains advertised so MCP clients can
-      // forward the override without a contract change once persistence
-      // lands.
-      const rawTypes = bodyObj.types;
-      if (rawTypes !== undefined) {
-        const typesResult = TYPES_MAP_SCHEMA.safeParse(rawTypes);
-        if (!typesResult.success) {
-          json(res, 400, { ok: false, error: 'Invalid types map' });
-          return;
-        }
-      }
-
-      const normalizedSummary = normalizeSummary(bodyObj.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-
-      // Form callers send `source: 'form'` + an `op` from the browser
-      // property panel; MCP callers omit both.
-      const isFormWrite = bodyObj.source === 'form';
-      const editSurfaceLabel: FrontmatterEditSource = isFormWrite ? 'form' : 'mcp-patch';
-      const formOp = isFormWrite ? coerceFormOp(bodyObj.op) : null;
-
-      // Resolve writer identity. precedent #25 writer-ID taxonomy:
-      //   - MCP callers (no `source` field): use caller-supplied agentId,
-      //     falling back to `claude-1` for legacy/anonymous callers (existing
-      //     behavior preserved by extractAgentIdentity).
-      //   - Form callers (`source: 'form'`): the writer is the local human
-      //     principal, not an agent. Attribute to `principal-<UUID>` from
-      //     getPrincipal() so contributor tracking, presence broadcasts, and
-      //     focus pushes carry the user's identity instead of `claude-1`/Claude.
-      //     Falls back to `principal-local`/`Local User` when getPrincipal
-      //     is not wired (test setups) or returns null.
-      let agentId: string;
-      let agentName: string;
-      let colorSeed: string;
-      let clientName: string | undefined;
-      let clientVersion: string | undefined;
-      let label: string | undefined;
-      if (isFormWrite) {
-        const principal = getPrincipal?.() ?? null;
-        agentId = principal?.id ?? 'principal-local';
-        agentName = principal?.display_name ?? 'Local User';
-        colorSeed = principal?.id ?? 'principal-local';
-        clientName = undefined;
-        clientVersion = undefined;
-        label = undefined;
-      } else {
-        const extracted = extractAgentIdentity(bodyObj);
-        agentId = extracted.agentId;
-        agentName = extracted.agentName;
-        colorSeed = extracted.colorSeed;
-        clientName = extracted.clientName;
-        clientVersion = extracted.clientVersion;
-        label = extracted.label;
-      }
-
-      const session = await sessionManager.getSession(docName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-
-      const patchKeysCount = Object.keys(validatedPatch).length;
-      let opsSetCount = 0;
-      let opsDeleteCount = 0;
-      for (const value of Object.values(validatedPatch)) {
-        if (value === null) opsDeleteCount += 1;
-        else opsSetCount += 1;
-      }
-
-      const patchStartMs = performance.now();
-      let unsupportedFmDetected = false;
-      // Outer try-finally samples duration on every code path (success +
-      // thrown error) so the histogram doesn't understate real-world
-      // latency. Inner try-finally is the agent-write race-safety pattern
-      // (precedent #18) — its sole `finally` statement must remain the
-      // touchMode('idle') pairing so the structural agent-presence test
-      // continues to recognise this handler as a write site.
-      try {
-        try {
-          const icon = iconFromClientName(clientName);
-          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-          agentPresenceBroadcaster?.setPresence(agentId, {
-            displayName: agentName,
-            icon,
-            color,
-            currentDoc: docName,
-            mode: 'writing',
-            ts: Date.now(),
-          });
-
-          await withSpan(
-            'frontmatter.patch',
-            {
-              attributes: {
-                'doc.name': docName,
-                'frontmatter.patch_keys_count': patchKeysCount,
-                'frontmatter.patch_ops_set': opsSetCount,
-                'frontmatter.patch_ops_delete': opsDeleteCount,
-                'frontmatter.source': editSurfaceLabel,
-              },
-            },
-            async () => {
-              // Apply patch under session.formOrigin — NOT paired. Observer A's
-              // metaMap deep observer re-composes YAML+body and propagates
-              // to Y.Text under OBSERVER_SYNC_ORIGIN after the transaction settles.
-              //
-              // Note on captureEffect: sibling agent-write handlers
-              // (handleAgentWrite, handleAgentWriteMd, handleAgentPatch) call
-              // captureEffect before their transact to populate the
-              // agent-effects ring buffer. We deliberately do NOT call it here
-              // — captureEffect registers a one-shot Y.Text observer, but FM
-              // writes don't directly mutate Y.Text. Observer A propagates
-              // under OBSERVER_SYNC_ORIGIN in a separate transact, which the
-              // ring buffer correctly attributes to the observer (not the
-              // agent). FM-only edits surface in the Activity Panel via the
-              // agent-flash side-channel below instead.
-              const applyTransaction = () => {
-                session.dc.document.transact(() => {
-                  const document = session.dc.document;
-                  const metaMap = document.getMap('metadata');
-
-                  // Capture pre-patch legacy yaml so the mirror update below can
-                  // apply the patch to the comment-bearing AST instead of
-                  // re-synthesizing from per-key state. Reading inside the
-                  // transact gives a consistent snapshot for the duration of
-                  // the txn.
-                  const preLegacy = metaMap.get(FRONTMATTER_PATCH_FM_KEY);
-                  const preLegacyStr = typeof preLegacy === 'string' ? preLegacy : '';
-
-                  // Pre-flight inside the transact (atomic with the writes
-                  // below): if the legacy slot holds shapes that fail
-                  // FrontmatterMapSchema (nested objects, non-string arrays,
-                  // …), the per-key model can't represent them — patching
-                  // would silently drop them when we synthesize fenced YAML
-                  // from per-key state. Refuse the patch and leave the doc
-                  // unchanged so the caller sees a clear 4xx instead of
-                  // disappearing values on the next persistence cycle.
-                  if (preLegacyStr.length > 0) {
-                    const { map: preflightMap } = parseFrontmatterYaml(
-                      unwrapFrontmatterFences(preLegacyStr),
-                    );
-                    if (preflightMap === null) {
-                      unsupportedFmDetected = true;
-                      return;
-                    }
-                  }
-
-                  // Per-key Merge Patch application. Each setFrontmatterProperty call
-                  // writes a single slot — UM tracks per-property granularity.
-                  for (const [key, value] of Object.entries(validatedPatch)) {
-                    setFrontmatterProperty(document, key, value);
-                  }
-
-                  // Mirror the legacy single-string slot inside the same
-                  // transaction so `attachBridgeInvariantWatcher` (which reads
-                  // the legacy slot directly) and any other untouched-yet
-                  // readers stay consistent with per-key state. Apply the patch
-                  // to the original parsed Document (whose AST has comment
-                  // trivia + blank lines) rather than synthesizing fresh from
-                  // per-key state — this preserves YAML comments through
-                  // form/MCP frontmatter_patch round-trips. Falls back to
-                  // canonical synthesis when the legacy slot is empty or
-                  // malformed (no comments to preserve in those cases).
-                  const map = getFrontmatterMap(document);
-                  let fenced: string;
-                  if (Object.keys(map).length === 0) {
-                    fenced = '';
-                  } else if (preLegacyStr.length > 0) {
-                    const yamlBody = unwrapFrontmatterFences(preLegacyStr);
-                    const { doc: parsedDoc, map: parsedMap } = parseFrontmatterYaml(yamlBody);
-                    if (parsedMap === null) {
-                      fenced = withFences(serializeFrontmatterMap(map));
-                    } else {
-                      try {
-                        fenced = withFences(applyPatchToDocument(parsedDoc, validatedPatch));
-                      } catch (patchErr) {
-                        // applyPatchToDocument throws on schema mismatch
-                        // between the API boundary and the codec (e.g. yaml@2
-                        // serialization edge case). Silently dropping comments
-                        // would leave operators investigating "why are my
-                        // YAML comments vanishing" with no signal.
-                        console.warn(
-                          `[frontmatter-patch] comment-preserving patch failed for ${docName}; falling back to canonical synthesis (comments dropped):`,
-                          patchErr,
-                        );
-                        fenced = withFences(serializeFrontmatterMap(map));
-                      }
-                    }
-                  } else {
-                    fenced = withFences(serializeFrontmatterMap(map));
-                  }
-                  if (fenced === '') {
-                    metaMap.delete(FRONTMATTER_PATCH_FM_KEY);
-                  } else {
-                    metaMap.set(FRONTMATTER_PATCH_FM_KEY, fenced);
-                  }
-
-                  // Activity flash side-channel — same shape as agent-write
-                  // paths. Skipped for form writes: the user is the local
-                  // principal editing their own properties, so flashing the
-                  // body text in agent colors would be misleading.
-                  if (!isFormWrite) {
-                    const activityMap = document.getMap('agent-flash');
-                    activityMap.set(agentId, {
-                      agentId,
-                      timestamp: Date.now(),
-                      type: 'insert',
-                      description: `Frontmatter patch (${agentName}): ${Object.keys(validatedPatch).length} key(s)`,
-                    });
-                  }
-                }, session.formOrigin);
-              };
-              if (formOp) {
-                withFormWriteSpan(docName, formOp, applyTransaction);
-              } else {
-                applyTransaction();
-              }
-            },
-          );
-
-          if (unsupportedFmDetected) {
-            // Persona-neutral: this error reaches both UI form callers
-            // (form panel) and MCP agents. Source mode is UI-only — agents
-            // need their own actionable path (write_document with
-            // position:replace rewrites the whole document).
-            json(res, 400, {
-              ok: false,
-              error:
-                'Document frontmatter contains values not supported by frontmatter_patch (nested objects or non-string arrays). Simplify the values to supported shapes (string, number, boolean, string[]) — in the editor use source mode; via MCP use write_document with position:replace to rewrite the document.',
-            });
-            return;
-          }
-
-          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
-          recordContributor(
-            docName,
-            agentId,
-            agentName,
-            colorSeed,
-            undefined,
-            buildAgentActor({ clientName, clientVersion, label }),
-            storedSummary,
-          );
-          // Form writes use the local principal's identity, not an agent —
-          // counting them inflates the agent-write metric. Same gate as the
-          // agent-flash side-channel above (line 2691). MCP-originated FM
-          // writes still count.
-          if (!isFormWrite) incrementAgentWriteCalls();
-          countNormalizedSummary(normalizedSummary);
-          recordFrontmatterEditSurface(editSurfaceLabel);
-        } finally {
-          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-        }
-      } finally {
-        recordFrontmatterPatchDuration((performance.now() - patchStartMs) / 1000);
-      }
-
-      flushDocToGit(docName, 'frontmatter-patch');
-
-      agentFocusBroadcaster?.setFocus(agentId, {
-        agentName,
-        currentDoc: docName,
-        writeKind: 'edit',
-        ts: Date.now(),
-      });
-      onAgentWrite?.();
-
-      const subscriberCount = getSubscriberCount(docName);
-      const systemSubscriberCount = getSystemSubscriberCount();
-
-      if (systemSubscriberCount === 0) {
-        hintEmittedCounter().add(1, {
-          'shadow.writer': 'agent',
-          'agent.type': resolveAgentType(clientName),
-        });
-      }
-
-      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        subscriberCount,
-        systemSubscriberCount,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[frontmatter-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -6203,7 +5771,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
-    '/api/frontmatter-patch': handleFrontmatterPatch,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-activity': handleAgentActivity,
     '/api/agent-burst-diff': handleAgentBurstDiff,
