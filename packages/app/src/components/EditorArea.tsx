@@ -23,14 +23,12 @@ import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
 import { useSettingsRoute } from '@/lib/use-settings-route';
-import type { DiffLayout } from './DiffView';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
-  diffLayout: DiffLayout;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
 }
@@ -43,12 +41,7 @@ export function EditorArea(props: EditorAreaProps) {
   );
 }
 
-function EditorAreaInner({
-  editorMode,
-  diffLayout,
-  activeTab,
-  onActiveTabChange,
-}: EditorAreaProps) {
+function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAreaProps) {
   const settingsRoute = useSettingsRoute();
   const {
     activeDocName,
@@ -284,7 +277,6 @@ function EditorAreaInner({
               isSourceMode={isSourceMode}
               activeTab={activeTab}
               onActiveTabChange={onActiveTabChange}
-              diffLayout={diffLayout}
               mode={docPanelMode}
             />
           </SheetContent>
@@ -319,7 +311,6 @@ function EditorAreaInner({
             isSourceMode={isSourceMode}
             activeTab={activeTab}
             onActiveTabChange={onActiveTabChange}
-            diffLayout={diffLayout}
             mode={docPanelMode}
           />
         </ResizablePanel>
