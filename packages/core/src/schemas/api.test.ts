@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { PrincipalResponseSchema } from './api';
+import {
+  PrincipalResponseSchema,
+  ProblemDetailsSchema,
+  ProblemTypeSchema,
+  UploadAssetSuccessSchema,
+  UploadRequestSchema,
+} from './api';
 
 const validPrincipal = {
   id: 'principal-abc123',
@@ -103,6 +109,236 @@ describe('PrincipalResponseSchema', () => {
 
   test('fails when the entire object is null', () => {
     const result = PrincipalResponseSchema.safeParse(null);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RFC 9457 Problem Details (D22, D38)
+// ---------------------------------------------------------------------------
+
+describe('ProblemTypeSchema', () => {
+  test('accepts the seeded upload-side URN tokens', () => {
+    const tokens = [
+      'urn:ok:error:malformed-upload',
+      'urn:ok:error:collision-exhaustion',
+      'urn:ok:error:storage-full',
+      'urn:ok:error:storage-readonly',
+      'urn:ok:error:storage-error',
+      'urn:ok:error:no-file-received',
+      'urn:ok:error:parent-doc-name-required',
+      'urn:ok:error:path-escape',
+    ];
+    for (const t of tokens) {
+      const result = ProblemTypeSchema.safeParse(t);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test('accepts the cross-handler shared URN tokens', () => {
+    const tokens = [
+      'urn:ok:error:method-not-allowed',
+      'urn:ok:error:invalid-request',
+      'urn:ok:error:internal-server-error',
+    ];
+    for (const t of tokens) {
+      const result = ProblemTypeSchema.safeParse(t);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test('rejects relative-URI form (D38: URN form is canonical, not /errors/<kebab>)', () => {
+    const result = ProblemTypeSchema.safeParse('/errors/malformed-upload');
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects bare kebab tokens (closed by policy, NG1)', () => {
+    const result = ProblemTypeSchema.safeParse('malformed-upload');
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects undeclared URN tokens (closed by policy)', () => {
+    const result = ProblemTypeSchema.safeParse('urn:ok:error:undeclared-token');
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ProblemDetailsSchema', () => {
+  const validProblem = {
+    type: 'urn:ok:error:malformed-upload' as const,
+    title: 'The uploaded multipart payload is malformed.',
+    status: 400,
+  };
+
+  test('parses a minimal valid problem (required fields only)', () => {
+    const result = ProblemDetailsSchema.safeParse(validProblem);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe('urn:ok:error:malformed-upload');
+      expect(result.data.title).toBe('The uploaded multipart payload is malformed.');
+      expect(result.data.status).toBe(400);
+    }
+  });
+
+  test('parses a fully-populated problem with instance and detail', () => {
+    const result = ProblemDetailsSchema.safeParse({
+      ...validProblem,
+      instance: '01234567-89ab-4def-8123-456789abcdef',
+      detail: 'busboy reported a parse error during upload.',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.instance).toBe('01234567-89ab-4def-8123-456789abcdef');
+      expect(result.data.detail).toBe('busboy reported a parse error during upload.');
+    }
+  });
+
+  test('preserves unknown extension fields (RFC 9457 §3.2 / .loose())', () => {
+    const result = ProblemDetailsSchema.safeParse({
+      ...validProblem,
+      errors: [{ field: 'parentDocName', message: 'required' }],
+      documentation_url: 'https://example.com/docs/upload',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as Record<string, unknown>).errors).toBeDefined();
+      expect((result.data as Record<string, unknown>).documentation_url).toBe(
+        'https://example.com/docs/upload',
+      );
+    }
+  });
+
+  test('fails when title is missing', () => {
+    const { title: _title, ...withoutTitle } = validProblem;
+    const result = ProblemDetailsSchema.safeParse(withoutTitle);
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when title is empty string (D14: title required, non-empty)', () => {
+    const result = ProblemDetailsSchema.safeParse({ ...validProblem, title: '' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when status is below 400 (errors only)', () => {
+    const result = ProblemDetailsSchema.safeParse({ ...validProblem, status: 200 });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when status is above 599 (HTTP status range)', () => {
+    const result = ProblemDetailsSchema.safeParse({ ...validProblem, status: 600 });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when status is not an integer', () => {
+    const result = ProblemDetailsSchema.safeParse({ ...validProblem, status: 400.5 });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when instance is not a UUID', () => {
+    const result = ProblemDetailsSchema.safeParse({ ...validProblem, instance: 'not-a-uuid' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when type is not a registered URN token', () => {
+    const result = ProblemDetailsSchema.safeParse({
+      ...validProblem,
+      type: 'urn:ok:error:fictional-token',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('UploadAssetSuccessSchema', () => {
+  test('parses a minimal valid success (src only)', () => {
+    const result = UploadAssetSuccessSchema.safeParse({ src: 'attachments/photo.png' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.src).toBe('attachments/photo.png');
+    }
+  });
+
+  test('parses a fully-populated success with dedup metadata', () => {
+    const result = UploadAssetSuccessSchema.safeParse({
+      src: 'attachments/photo.png',
+      deduped: true,
+      sha: 'abc123',
+      byteLength: 1024,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.deduped).toBe(true);
+      expect(result.data.sha).toBe('abc123');
+      expect(result.data.byteLength).toBe(1024);
+    }
+  });
+
+  test('preserves unknown fields for forward-compat (.loose())', () => {
+    const result = UploadAssetSuccessSchema.safeParse({
+      src: 'attachments/photo.png',
+      future_field: 'new-server-value',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('does NOT contain ok:true wrapper field (D22 success drops wrapper)', () => {
+    // A response shape with `{ ok: true, src: '...' }` is still parsed by .loose()
+    // because .loose() preserves unknown fields. The wire-shape change is enforced
+    // structurally — handlers no longer emit `ok: true`. This test simply documents
+    // the schema shape: top-level fields are flat (no discriminator).
+    const result = UploadAssetSuccessSchema.safeParse({ src: 'foo.png' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // No `ok` field exists on the canonical type.
+      // @ts-expect-error -- ok is not a field on UploadAssetSuccess
+      void result.data.ok;
+    }
+  });
+
+  test('fails when src is missing', () => {
+    const result = UploadAssetSuccessSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when src is empty', () => {
+    const result = UploadAssetSuccessSchema.safeParse({ src: '' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when byteLength is negative', () => {
+    const result = UploadAssetSuccessSchema.safeParse({ src: 'foo.png', byteLength: -1 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('UploadRequestSchema', () => {
+  test('parses a valid request with parentDocName only', () => {
+    const result = UploadRequestSchema.safeParse({ parentDocName: 'notes/index' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.parentDocName).toBe('notes/index');
+    }
+  });
+
+  test('parses a request with optional agent identity', () => {
+    const result = UploadRequestSchema.safeParse({
+      parentDocName: 'notes/index',
+      agentId: 'claude-1',
+      agentName: 'Claude',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agentId).toBe('claude-1');
+      expect(result.data.agentName).toBe('Claude');
+    }
+  });
+
+  test('fails when parentDocName is missing', () => {
+    const result = UploadRequestSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when parentDocName is empty', () => {
+    const result = UploadRequestSchema.safeParse({ parentDocName: '' });
     expect(result.success).toBe(false);
   });
 });

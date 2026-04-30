@@ -43,6 +43,13 @@ export default {
     'docs/content/guides/properties.mdx': ['files'],
     'docs/content/guides/component-blocks.mdx': ['files'],
     'docs/content/guides/assets-and-embeds.mdx': ['files'],
+    // RFC 9457 HTTP API hardening foundation modules. The api.type-tests.ts
+    // file is typecheck-only and never imported at runtime — its purpose is
+    // to fail `tsc --noEmit` if the canonical schema shapes regress.
+    'packages/core/src/schemas/api.type-tests.ts': ['files'],
+    'packages/server/src/http/error-response.ts': ['files'],
+    'packages/server/src/http/request-validation.ts': ['files'],
+    'packages/app/src/editor/http-client.ts': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {

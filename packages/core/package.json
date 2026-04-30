@@ -78,6 +78,7 @@
     "test:health": "bun run tests/health/parse-health-gate.ts tests/health/baseline.json"
   },
   "devDependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "@tiptap/extension-document": "^3.22.3",
     "@tiptap/extension-paragraph": "^3.22.3",
     "@tiptap/extension-text": "^3.22.3",

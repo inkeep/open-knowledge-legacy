@@ -34,6 +34,19 @@ export type ClassifiedLinkTarget =
   | AnchorLinkTarget
   | AssetLinkTarget;
 
+/**
+ * Compile-time exhaustiveness guard for `switch (target.kind)` consumers
+ * over `ClassifiedLinkTarget`. Adding a new variant produces a TypeScript
+ * error at every site that forgot to handle it (the new variant fails to
+ * narrow to `never`). Per-DU helper rather than one shared `assertNever`
+ * matches the codebase precedent (`assertNeverDiskEvent` in
+ * `packages/server/src/file-watcher.ts`) and yields clearer error
+ * messages.
+ */
+export function assertNeverLinkTarget(value: never): never {
+  throw new Error(`Unhandled ClassifiedLinkTarget variant: ${JSON.stringify(value as unknown)}`);
+}
+
 const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
 
 /**

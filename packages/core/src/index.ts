@@ -217,8 +217,16 @@ export type {
 export {
   type PrincipalResponse,
   PrincipalResponseSchema,
+  type ProblemDetails,
+  ProblemDetailsSchema,
+  type ProblemType,
+  ProblemTypeSchema,
   type ServerInfoResponse,
   ServerInfoResponseSchema,
+  type UploadAssetSuccess,
+  UploadAssetSuccessSchema,
+  type UploadRequest,
+  UploadRequestSchema,
 } from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
@@ -369,6 +377,7 @@ export {
 export {
   type AnchorLinkTarget,
   type AssetLinkTarget,
+  assertNeverLinkTarget,
   buildRelativeMarkdownHref,
   type ClassifiedLinkTarget,
   classifyMarkdownHref,

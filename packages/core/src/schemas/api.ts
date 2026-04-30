@@ -9,9 +9,13 @@
  * bundle.
  *
  * Convention per `/eng:type-safety`: `.loose()` preserves unknown
- * fields for forward-compat; inferred types via `z.infer`.
+ * fields for forward-compat; inferred types via `z.infer`. Every
+ * exported schema satisfies `StandardSchemaV1<...>` so non-Zod
+ * consumers (form libraries, validators) can interop without binding
+ * to Zod directly. Zod v4 schemas natively expose `~standard`.
  */
 
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { z } from 'zod';
 
 /**
@@ -53,6 +57,13 @@ export const ServerInfoResponseSchema = z
   })
   .loose();
 export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;
+// Compile-time assertion: Zod v4 native `~standard` is a `StandardSchemaV1`.
+// The cast is a structural identity check — Zod v4 schemas conform to
+// StandardSchemaV1 at runtime, but TypeScript doesn't accept the structural
+// match without help because the input type is unknown by default.
+const _ServerInfoResponseSchemaIsStandard: StandardSchemaV1<unknown, ServerInfoResponse> =
+  ServerInfoResponseSchema;
+void _ServerInfoResponseSchemaIsStandard;
 
 /**
  * Response shape for `GET /api/principal`.
@@ -91,3 +102,131 @@ export const PrincipalResponseSchema = z
   })
   .loose();
 export type PrincipalResponse = z.infer<typeof PrincipalResponseSchema>;
+const _PrincipalResponseSchemaIsStandard: StandardSchemaV1<unknown, PrincipalResponse> =
+  PrincipalResponseSchema;
+void _PrincipalResponseSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// RFC 9457 Problem Details (D22, D38)
+// ---------------------------------------------------------------------------
+//
+// Errors emitted from `api-extension.ts` use RFC 9457 Problem Details on the
+// wire. The server's `errorResponse` helper constructs a `ProblemDetails`
+// object, validates it through `ProblemDetailsSchema.parse()`, and emits with
+// `Content-Type: application/problem+json`.
+//
+// `type` tokens are URN form `urn:ok:error:<kebab>` per D38 (RFC 9457 §3.1.1
+// recommends absolute URIs and warns that path-only relative URIs depend on
+// base-URI resolution). URNs are routing-independent so the meaning won't
+// shift under reverse-proxy / path-prefix.
+//
+// The schema is closed by policy (NG1) — adding a new token is a single
+// edit here in lockstep with the handler PR that emits it. Future opening
+// triggers (MCP `upload_asset` ships, public SDK ships) get a new spec.
+
+/**
+ * RFC 9457 `type` URN tokens. Closed by policy.
+ *
+ * Naming convention: `urn:ok:error:<kebab-action-or-condition>`.
+ * Adding a new token = single edit here + the handler PR that emits it.
+ */
+export const ProblemTypeSchema = z.enum([
+  // Upload-side (covers all 5 UploadWriteReason variants 1:1)
+  'urn:ok:error:malformed-upload',
+  'urn:ok:error:collision-exhaustion',
+  'urn:ok:error:storage-full',
+  'urn:ok:error:storage-readonly',
+  'urn:ok:error:storage-error',
+  'urn:ok:error:no-file-received',
+  'urn:ok:error:parent-doc-name-required',
+  'urn:ok:error:path-escape',
+  // Cross-handler shared
+  'urn:ok:error:method-not-allowed',
+  'urn:ok:error:invalid-request',
+  'urn:ok:error:internal-server-error',
+]);
+export type ProblemType = z.infer<typeof ProblemTypeSchema>;
+const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
+void _ProblemTypeSchemaIsStandard;
+
+/**
+ * RFC 9457 Problem Details body shape.
+ *
+ * Wire shape: `{ type, title, status, instance?, detail? }` with
+ * `Content-Type: application/problem+json`. Top-level fields per RFC 9457 §3:
+ * - `type` (REQUIRED, URN per D38) — typed problem identifier
+ * - `title` (REQUIRED per D14) — short human-readable summary
+ * - `status` (REQUIRED) — must equal HTTP response status (D22)
+ * - `instance` (OPTIONAL) — UUID per error emit (D13); same value mirrored
+ *   in Pino structured log line for grep correlation
+ * - `detail` (OPTIONAL) — longer human-readable explanation
+ *
+ * `.loose()` preserves unknown extension fields per RFC 9457 §3.2.
+ */
+export const ProblemDetailsSchema = z
+  .object({
+    type: ProblemTypeSchema,
+    title: z.string().min(1),
+    status: z.number().int().min(400).max(599),
+    instance: z.string().uuid().optional(),
+    detail: z.string().optional(),
+  })
+  .loose();
+export type ProblemDetails = z.infer<typeof ProblemDetailsSchema>;
+const _ProblemDetailsSchemaIsStandard: StandardSchemaV1<unknown, ProblemDetails> =
+  ProblemDetailsSchema;
+void _ProblemDetailsSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Per-handler request + success schemas
+// ---------------------------------------------------------------------------
+//
+// Per-handler schemas live alongside the canonical envelope so consumers
+// only need a single import path. Success schemas drop the `{ ok: true }`
+// wrapper — clients use HTTP-status discrimination (`if (!res.ok)`) per D22.
+// Request schemas feed the `withValidation()` middleware wrapper (D34 / FR12)
+// so handlers receive an already-typed body and can never be added without
+// going through the wrapper.
+
+/**
+ * Multipart-form metadata fields validated by `withValidation` for
+ * `POST /api/upload`. The binary payload itself is parsed by busboy upstream;
+ * Zod validates only the fields that flow through normal parsing.
+ *
+ * `parentDocName` is required so the server can resolve the asset's
+ * destination directory. `agentId` and `agentName` are optional; missing
+ * identity routes the upload through the default-agent fallback.
+ */
+export const UploadRequestSchema = z
+  .object({
+    parentDocName: z.string().min(1),
+    agentId: z.string().min(1).optional(),
+    agentName: z.string().min(1).optional(),
+  })
+  .loose();
+export type UploadRequest = z.infer<typeof UploadRequestSchema>;
+const _UploadRequestSchemaIsStandard: StandardSchemaV1<unknown, UploadRequest> =
+  UploadRequestSchema;
+void _UploadRequestSchemaIsStandard;
+
+/**
+ * Success response for `POST /api/upload` — flat `{ ...data }` shape with
+ * `Content-Type: application/json` (no `ok: true` wrapper per D22).
+ *
+ * `src` is the project-root-relative path the client renders. `deduped`
+ * is true when the upload hit the same-dir sha256 cache (no new bytes
+ * written). `sha` and `byteLength` enable optional client-side display of
+ * upload metadata.
+ */
+export const UploadAssetSuccessSchema = z
+  .object({
+    src: z.string().min(1),
+    deduped: z.boolean().optional(),
+    sha: z.string().min(1).optional(),
+    byteLength: z.number().int().nonnegative().optional(),
+  })
+  .loose();
+export type UploadAssetSuccess = z.infer<typeof UploadAssetSuccessSchema>;
+const _UploadAssetSuccessSchemaIsStandard: StandardSchemaV1<unknown, UploadAssetSuccess> =
+  UploadAssetSuccessSchema;
+void _UploadAssetSuccessSchemaIsStandard;
