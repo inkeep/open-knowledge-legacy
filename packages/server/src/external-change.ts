@@ -1,7 +1,7 @@
 /**
  * Shared handler for applying external file changes to a live Y.Doc.
  *
- * Used by both standalone.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
+ * Used by both server-factory.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
  * Extracted to prevent drift between copies — a bug fix in one would
  * otherwise easily miss the other.
  */
@@ -10,6 +10,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
+import type * as Y from 'yjs';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
@@ -41,8 +42,43 @@ export const FILE_WATCHER_ORIGIN = {
 } as const satisfies PairedWriteOrigin;
 
 /**
+ * Apply file content to a live Y.Doc inside a single FILE_WATCHER_ORIGIN
+ * transact. Pure CRDT update — no contributor recording, no reconciledBase
+ * advance, no `Hocuspocus` lookup. Used both by the file-watcher path
+ * (`applyExternalChange`, which adds those side effects) and by the
+ * persistence tripwire reset path (which must NOT advance attribution or
+ * the reconciled base because no disk write happened).
+ */
+export function applyDiskContentToDoc(
+  document: Y.Doc,
+  content: string,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
+  sourcePath?: string,
+): void {
+  const { body } = stripFrontmatter(content);
+  const parseOpts = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
+  const parsedJson = mdManager.parseWithFallback(body, parseOpts);
+  const pmNode = schema.nodeFromJSON(parsedJson);
+  const xmlFragment = document.getXmlFragment('default');
+
+  document.transact(() => {
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+
+    // Y.Text receives the full file content (FM + body) directly — the FM
+    // region IS the source of truth for FM (D8/D26). Malformed YAML on disk
+    // round-trips as-is; the panel renders last-valid + a banner per D21.
+    const ytext = document.getText('source');
+    const currentText = ytext.toString();
+    if (currentText !== content) {
+      applyFastDiff(ytext, currentText, content);
+    }
+  }, FILE_WATCHER_ORIGIN);
+}
+
+/**
  * Apply external file content to a live Y.Doc — the throwing core of the
- * disk→CRDT bridge. Both standalone.ts (CLI) and the dev plugin delegate here.
+ * disk→CRDT bridge. Both server-factory.ts (CLI) and the dev plugin delegate here.
  *
  * 1. Looks up the live Y.Doc by docName (no-op if missing)
  * 2. Strips frontmatter and parses markdown → ProseMirror JSON
@@ -59,36 +95,22 @@ export function applyExternalChange(
   hocuspocus: Hocuspocus,
   docName: string,
   content: string,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): void {
   if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
-  const { frontmatter, body } = stripFrontmatter(content);
-  const parsedJson = mdManager.parseWithFallback(body);
-  const pmNode = schema.nodeFromJSON(parsedJson);
-  const xmlFragment = document.getXmlFragment('default');
 
   // Capture prior FM region from Y.Text so the edit_surface counter only
   // fires when disk content actually changed FM (body-only edits shouldn't
   // count). After D8, the YAML region of `Y.Text('source')` IS the FM source
-  // of truth — read it before the transact applies the disk content.
+  // of truth — read it before applyDiskContentToDoc applies the disk content.
   const priorFm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+  const { frontmatter: nextFm } = stripFrontmatter(content);
 
-  document.transact(() => {
-    const meta = { mapping: new Map(), isOMark: new Map() };
-    updateYFragment(document, xmlFragment, pmNode, meta);
+  applyDiskContentToDoc(document, content, resolveEmbed, docName);
 
-    // Y.Text receives the full file content (FM + body) directly — the FM
-    // region IS the source of truth for FM (D8, D26). Malformed YAML on disk
-    // round-trips as-is; the panel renders last-valid + a banner per D21.
-    const ytext = document.getText('source');
-    const currentText = ytext.toString();
-    if (currentText !== content) {
-      applyFastDiff(ytext, currentText, content);
-    }
-  }, FILE_WATCHER_ORIGIN);
-
-  if (priorFm !== frontmatter) {
+  if (priorFm !== nextFm) {
     recordFrontmatterEditSurface('file-watcher');
   }
 
@@ -116,10 +138,11 @@ export function applyExternalChange(
  */
 export function createExternalChangeHandler(
   hocuspocus: Hocuspocus,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): (docName: string, content: string) => Promise<void> {
   return async (docName: string, content: string): Promise<void> => {
     try {
-      applyExternalChange(hocuspocus, docName, content);
+      applyExternalChange(hocuspocus, docName, content, resolveEmbed);
       console.log(`[file-watcher] Applied external change: ${docName}`);
     } catch (err) {
       console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);

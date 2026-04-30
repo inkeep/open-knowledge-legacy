@@ -86,6 +86,18 @@ interface DocumentContextValue {
   clearTarget: () => void;
   closeDocument: (docName: string) => void;
   /**
+   * Close `docName` and synchronously delete its client-side IndexedDB.
+   * Used by rename flows so a future open at this name starts from a
+   * clean persistence. Without this, moving a doc back to a previously-
+   * occupied folder would hydrate the new Y.Doc from the leftover IDB
+   * rows of the prior session at that name and then append-merge with
+   * the server's freshly-loaded content (no shared ancestor → CRDT
+   * union-merge), producing visible content duplication. Returns a
+   * promise so callers can await IDB deletion before triggering the
+   * navigation that opens the new provider.
+   */
+  closeAndClearForRename: (docName: string) => Promise<void>;
+  /**
    * Destroy and recreate the pool entry for `docName` while preserving
    * `activeDocName`. Used by the "Try again" path in `DocumentErrorBoundary`
    * to recover from `BridgeSetupError` (and any other sync failure where the
@@ -100,16 +112,6 @@ interface DocumentContextValue {
    * eventual click. Idempotent + no-op for system docs.
    */
   prewarm: (docName: string) => void;
-  /**
-   * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
-   * does not change the URL even when agent focus moves elsewhere. Persisted
-   * per-tab via localStorage `ok-pin-v1`. Null = not pinned = follow agent.
-   */
-  pinnedDoc: string | null;
-  /** Pin the given doc — subsequent agent focus changes are suppressed. */
-  pin: (docName: string) => void;
-  /** Unpin — resume agent nav on the next focus change. */
-  unpin: () => void;
   /**
    * The `__system__` HocuspocusProvider, lifted from `SystemDocSubscriber`
    * so presence-bar consumers (`usePresence` in US-006) can read agent
@@ -194,14 +196,13 @@ interface DocumentContextValue {
    *   - `'doc'`:   existing 5-tab info pane keyed to `activeDocName`.
    *   - `'agent'`: Activity view keyed to `docPanelAgentId` (one agent session).
    *
-   * Default is `'doc'` on every fresh tab. Tab-scoped state (not persisted),
-   * per SPEC 2026-04-24-activity-panel-to-docpanel-mode-toggle FR-T11.
+   * Default is `'doc'` on every fresh tab. Tab-scoped state (not persisted).
    */
   docPanelMode: 'doc' | 'agent';
   /**
    * connectionId of the agent the panel is scoped to when in `'agent'` mode.
-   * Preserved across mode flips (FR-T12) — flipping `agent → doc → agent`
-   * still shows the previously-scoped agent. Cleared only by explicit
+   * Preserved across mode flips — flipping `agent → doc → agent` still
+   * shows the previously-scoped agent. Cleared only by explicit
    * `closeActivityPanel()` or swap to a different agent.
    */
   docPanelAgentId: string | null;
@@ -210,7 +211,7 @@ interface DocumentContextValue {
    * in the same setState pass that flips `docPanelMode`. `EditorArea`
    * observes the counter via `useEffect` and calls `panel.expand()` (desktop)
    * or `setSheetOpen(true)` (mobile) on each increment — idempotent if the
-   * panel is already visible. Implements FR-T10 (auto-expand on avatar click).
+   * panel is already visible.
    */
   docPanelExpandSignal: number;
   /**
@@ -230,26 +231,6 @@ interface DocumentContextValue {
   closeActivityPanel: () => void;
 }
 
-const PIN_STORAGE_KEY = 'ok-pin-v1';
-
-/**
- * Emit a one-time console.warn when localStorage access fails (private mode,
- * quota exceeded, disabled storage). The silent-swallow itself is correct —
- * the pin stays in-memory and UX is unaffected within the current tab —
- * but a single log per session helps diagnose "my pin keeps disappearing
- * across reloads" reports. Module-scope flag so noise is bounded even when
- * many writes fail in sequence.
- */
-let pinPersistWarned = false;
-function warnPinPersistFailureOnce(err: unknown): void {
-  if (pinPersistWarned) return;
-  pinPersistWarned = true;
-  console.warn(
-    '[DocumentContext] localStorage unavailable — pinned doc will not persist across tabs/reloads.',
-    err,
-  );
-}
-
 let principalFetchWarned = false;
 function warnPrincipalFetchOnce(err: unknown): void {
   if (principalFetchWarned) return;
@@ -258,27 +239,6 @@ function warnPrincipalFetchOnce(err: unknown): void {
     '[principal-fetch] failed to resolve principal — falling back to random identity.',
     err,
   );
-}
-
-function loadPinFromStorage(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage.getItem(PIN_STORAGE_KEY);
-  } catch (err) {
-    warnPinPersistFailureOnce(err);
-    return null;
-  }
-}
-
-function persistPinToStorage(value: string | null): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (value === null) window.localStorage.removeItem(PIN_STORAGE_KEY);
-    else window.localStorage.setItem(PIN_STORAGE_KEY, value);
-  } catch (err) {
-    // quota exceeded / private mode — pin stays in-memory; warn once for observability
-    warnPinPersistFailureOnce(err);
-  }
 }
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
@@ -348,7 +308,6 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
-  const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [systemProvider, setSystemProvider] = useState<HocuspocusProvider | null>(null);
   const [docPanelMode, setDocPanelModeState] = useState<'doc' | 'agent'>('doc');
@@ -383,10 +342,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
     // Subscribe to pool changes
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
-
-    // Hydrate pin state from localStorage (client-only; safe no-op on SSR).
-    const persisted = loadPinFromStorage();
-    if (persisted !== null) setPinnedDoc(persisted);
 
     // Fetch principal and wire tab identity so HocuspocusProvider includes
     // {principalId, tabSessionId} in its auth token. The server's
@@ -481,33 +436,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     };
   }, [collabUrl]);
 
-  // DEV-only: expose a pin-setter hook for Playwright E2E — keeps tests
-  // off the private `ok-pin-v1` localStorage key + reload dance, so
-  // storage-key renames or versioning changes don't silently break E2E
-  // coverage. Calls the real `setPinnedDoc` state setter (matches in-app
-  // UX via `pin()` button) + `persistPinToStorage` so post-reload
-  // behavior also matches.
-  //
-  // STOP — empty deps is intentional and must stay empty:
-  //   - `setPinnedDoc` is a stable React state setter (guaranteed by
-  //     React's useState contract).
-  //   - `persistPinToStorage` is module-scope (not a closure over render).
-  //   - Widening the deps would cause this effect to re-register on
-  //     every render, tearing down + re-installing `window.__test_setPin`
-  //     mid-test and racing Playwright's `page.evaluate`.
-  useEffect(() => {
-    if (!import.meta.env.DEV || typeof window === 'undefined') return;
-    (window as unknown as { __test_setPin: (docName: string | null) => void }).__test_setPin = (
-      docName: string | null,
-    ) => {
-      setPinnedDoc(docName);
-      persistPinToStorage(docName);
-    };
-    return () => {
-      delete (window as { __test_setPin?: unknown }).__test_setPin;
-    };
-  }, []);
-
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const openDocument = (docName: string) => {
     mark('ok/nav/open-document', { docName, transition: false });
@@ -582,6 +510,15 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         return docNameForNavigationTarget(current) === docName ? null : current;
       });
     },
+    closeAndClearForRename: async (docName: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      await p.closeAndClearPersistence(docName);
+      setActiveTarget((current) => {
+        if (!current) return current;
+        return docNameForNavigationTarget(current) === docName ? null : current;
+      });
+    },
     recycleDocument: (docName: string) => {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
@@ -591,15 +528,6 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
       p.prewarm(docName);
-    },
-    pinnedDoc,
-    pin: (docName: string) => {
-      setPinnedDoc(docName);
-      persistPinToStorage(docName);
-    },
-    unpin: () => {
-      setPinnedDoc(null);
-      persistPinToStorage(null);
     },
     systemProvider,
     setSystemProvider,
@@ -641,7 +569,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     docPanelAgentId,
     docPanelExpandSignal,
     openActivityPanel: (connectionId: string) => {
-      // Toggle / swap / open-with-expand, per SPEC-24 FR-T6/T7/T8/T9.
+      // Toggle / swap / open-with-expand.
       // Same agent already scoped AND already in agent mode → flip back
       // to doc mode (toggle). Anything else → go/stay in agent mode with
       // the new (or same) id AND bump the expand signal so `EditorArea`
@@ -701,7 +629,6 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     pool?.dispose();
     pool = null;
-    pinPersistWarned = false;
     principalFetchWarned = false;
     if (typeof window !== 'undefined') {
       try {

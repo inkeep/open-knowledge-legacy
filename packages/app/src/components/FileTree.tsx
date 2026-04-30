@@ -135,6 +135,16 @@ const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="tr
   ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
 
+// Pierre's per-extension icon color (specificity 0,1,0 on the inner [data-icon-token]
+// element) wins over the inherited selected-fg color from the parent row, so the
+// markdown icon stays gray when its row is selected. Re-target the inner element on
+// selection so it picks up --trees-selected-fg.
+const FILE_TREE_UNSAFE_CSS = `
+  [data-item-selected='true'] [data-icon-token='markdown'] {
+    color: var(--trees-selected-fg);
+  }
+`;
+
 function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
   return {
     ...themeToTreeStyles({
@@ -158,6 +168,8 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
     '--trees-border-radius-override': '0.375rem',
     '--trees-selected-fg': 'var(--color-primary)',
     '--truncate-marker-fade-in-duration': '0s', // render ellipsis without delay
+    '--trees-file-icon-color-markdown': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
+    '--trees-fg-muted': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
   } as CSSProperties;
 }
 
@@ -448,7 +460,8 @@ export interface FileTreeHandle {
  * Today only `FileSidebar` mounts it, which is always inside the provider.
  */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, closeAndClearForRename, prewarm } =
+    useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
   const { resolvedTheme } = useTheme();
   function navigateToWithPulse(targetPath: string) {
@@ -509,6 +522,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       set: 'complete',
       spriteSheet: FILE_TREE_DECORATION_SPRITE_SHEET,
     },
+    unsafeCSS: FILE_TREE_UNSAFE_CSS,
     composition: {
       contextMenu: {
         enabled: true,
@@ -685,11 +699,23 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
   }, [model]);
 
-  const applyRenamedDocuments = (renamed: RenamedDocMapping[]) => {
+  const applyRenamedDocuments = async (renamed: RenamedDocMapping[]) => {
     const currentActiveDocName = activeDocNameRef.current;
     const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
-    for (const entry of renamed) closeDocument(entry.fromDocName);
+    // Wipe IDB for BOTH ends of every rename pair before any new provider
+    // opens. The `to` clear catches the move-back-to-previous-folder case
+    // where the destination docName already had IDB rows from an earlier
+    // session — opening into that stale IDB would hydrate the new Y.Doc
+    // with prior-session content (foreign clientID, no shared ancestor
+    // with the server's freshly-loaded Y.Doc), and the union-merge would
+    // append the stale content to the post-rename body.
+    await Promise.all(
+      renamed.flatMap((entry) => [
+        closeAndClearForRename(entry.fromDocName),
+        closeAndClearForRename(entry.toDocName),
+      ]),
+    );
 
     setDocuments((current) => {
       const next = applyRenameToDocuments(current, renamed);
@@ -753,19 +779,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const endpoint = event.isFolder ? '/api/rename-path' : '/api/rename';
       const payload = event.isFolder
         ? {
-            kind: 'folder',
+            kind: 'folder' as const,
             fromPath: treeDirectoryPathToFolderPath(sourceTreePath),
             toPath: treeDirectoryPathToFolderPath(destinationTreePath),
           }
         : {
-            docName: treeFilePathToDocName(sourceTreePath),
-            newDocName: treeFilePathToDocName(destinationTreePath),
+            kind: 'file' as const,
+            fromPath: treeFilePathToDocName(sourceTreePath),
+            toPath: treeFilePathToDocName(destinationTreePath),
           };
 
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -782,7 +808,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
+      await applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -812,19 +838,19 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       let renamed: RenamedDocMapping[] = [];
       for (const operation of operations) {
         const isFolder = operation.sourcePath.endsWith('/');
-        const endpoint = isFolder ? '/api/rename-path' : '/api/rename';
         const payload = isFolder
           ? {
-              kind: 'folder',
+              kind: 'folder' as const,
               fromPath: treeDirectoryPathToFolderPath(operation.sourcePath),
               toPath: treeDirectoryPathToFolderPath(operation.destinationTreePath),
             }
           : {
-              docName: treeFilePathToDocName(operation.sourcePath),
-              newDocName: treeFilePathToDocName(operation.destinationTreePath),
+              kind: 'file' as const,
+              fromPath: treeFilePathToDocName(operation.sourcePath),
+              toPath: treeFilePathToDocName(operation.destinationTreePath),
             };
 
-        const res = await fetch(endpoint, {
+        const res = await fetch('/api/rename-path', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -842,7 +868,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         renamed = renamed.concat(Array.isArray(data.renamed) ? data.renamed : []);
       }
 
-      applyRenamedDocuments(renamed);
+      await applyRenamedDocuments(renamed);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] move failed:', err);

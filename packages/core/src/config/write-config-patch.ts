@@ -28,7 +28,7 @@ import { CONFIG_SCHEMA_MAJOR_PATH } from './schema-version.ts';
 import { addConfigSpanEvent, withConfigSpan, withConfigSpanSync } from './telemetry.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
-/** Filename of the workspace + user config under `.open-knowledge/`. */
+/** Filename of the project + user config under `.open-knowledge/`. */
 const CONFIG_FILENAME = 'config.yml';
 
 /**
@@ -39,7 +39,7 @@ const CONFIG_FILENAME = 'config.yml';
  * the running package reports. Falls back to a non-pinned URL if the
  * lookup fails for any reason (won't crash a write).
  *
- * `ok init` scaffolds its own header for workspace files; this helper covers
+ * `ok init` scaffolds its own header for project files; this helper covers
  * the user-global lazy-write path.
  *
  * URL shape: `unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/v<N>/config.<scope>.schema.json`.
@@ -50,24 +50,24 @@ const CONFIG_FILENAME = 'config.yml';
  *     Breaking changes bump v<N> → v<N+1> and emit to a new directory; the
  *     old directory keeps shipping forever, so legacy YAMLs never lose
  *     autocomplete.
- *   - `<scope>` is `workspace` or `user`. Each scoped schema lists only
+ *   - `<scope>` is `project` or `user`. Each scoped schema lists only
  *     fields valid at that scope, so autocomplete in either file surfaces
  *     only the fields that belong there.
  */
-function schemaUrl(scope: 'workspace' | 'user'): string {
-  const filename = scope === 'user' ? 'config.user.schema.json' : 'config.workspace.schema.json';
+function schemaUrl(scope: 'project' | 'user'): string {
+  const filename = scope === 'user' ? 'config.user.schema.json' : 'config.project.schema.json';
   return `https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/${filename}`;
 }
 
-function defaultFirstWriteHeader(scope: 'workspace' | 'user'): string {
+function defaultFirstWriteHeader(scope: 'project' | 'user'): string {
   return `# yaml-language-server: $schema=${schemaUrl(scope)}\n`;
 }
 
 export interface WriteConfigPatchOptions {
-  /** Project root (workspace scope) or any path (user scope ignores this). */
+  /** Project root (project scope) or any path (user scope ignores this). */
   cwd: string;
   /** Which file to write. */
-  scope: 'workspace' | 'user';
+  scope: 'project' | 'user';
   /** Deep-partial patch. Null at any path means "clear that field". */
   patch: ConfigPatch;
   /**
@@ -99,13 +99,13 @@ export type WriteConfigPatchResult = Result<WriteConfigPatchSuccess, ConfigValid
 /**
  * Resolve the absolute config file path for a given scope.
  *
- * Workspace: `<cwd>/.open-knowledge/config.yml` (relative paths resolved
+ * Project: `<cwd>/.open-knowledge/config.yml` (relative paths resolved
  * against process.cwd() if `cwd` is relative).
  *
  * User: `<homedir>/.open-knowledge/config.yml`.
  */
 export function resolveConfigPath(
-  scope: 'workspace' | 'user',
+  scope: 'project' | 'user',
   cwd: string,
   homedirOverride?: string,
 ): string {

@@ -48,7 +48,7 @@ describe('ConfigValidationErrorSchema', () => {
     const parsed = ConfigValidationErrorSchema.parse({
       code: 'MIXED_SCOPE',
       paths: [
-        { path: ['content', 'dir'], scope: 'workspace' },
+        { path: ['content', 'dir'], scope: 'project' },
         { path: ['mcp', 'tools', 'search', 'maxResults'], scope: 'user' },
       ],
     });
@@ -138,10 +138,10 @@ describe('humanFormat', () => {
       code: 'SCOPE_VIOLATION',
       path: ['appearance', 'theme'],
       expectedScope: 'user',
-      actualScope: 'workspace',
+      actualScope: 'project',
     });
     expect(out).toContain('appearance.theme');
-    expect(out).toContain('workspace');
+    expect(out).toContain('project');
     expect(out).toContain('user');
   });
 
@@ -149,11 +149,11 @@ describe('humanFormat', () => {
     const out = humanFormat({
       code: 'MIXED_SCOPE',
       paths: [
-        { path: ['content', 'dir'], scope: 'workspace' },
+        { path: ['content', 'dir'], scope: 'project' },
         { path: ['mcp', 'tools', 'search', 'maxResults'], scope: 'user' },
       ],
     });
-    expect(out).toContain('content.dir → workspace');
+    expect(out).toContain('content.dir → project');
     expect(out).toContain('mcp.tools.search.maxResults → user');
   });
 

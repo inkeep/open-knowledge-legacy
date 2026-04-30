@@ -3,8 +3,9 @@
  * lowercase media pivot).
  *
  * Pure HTML5 `<audio>` wrapper. Self-closing leaf descriptor symmetric with
- * Video. Renders the descriptor's 7-prop surface — 3 common (src + controls
- * + autoplay) + 4 advanced (title + muted + loop + preload).
+ * Video. Renders the descriptor's 7-prop surface — 1 common (src) + 6
+ * advanced (controls + autoplay + title + muted + loop + preload). Toggle
+ * `controls={false}` for chrome-less playback (rare, mostly hero loops).
  *
  * ── `controls` is now an explicit prop ───────────────────────────────────────
  *

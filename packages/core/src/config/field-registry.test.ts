@@ -36,19 +36,19 @@ describe('getFieldMeta walker (descends innerType)', () => {
 
   test('descends through chained .optional().nullable().default()', () => {
     const inner = z.number();
-    fieldRegistry.add(inner, { scope: 'workspace', agentSettable: true });
+    fieldRegistry.add(inner, { scope: 'project', agentSettable: true });
     const wrapped = inner.optional().nullable().default(42);
-    expect(getFieldMeta(wrapped)).toEqual({ scope: 'workspace', agentSettable: true });
+    expect(getFieldMeta(wrapped)).toEqual({ scope: 'project', agentSettable: true });
   });
 
   test('descends through z.array(...).min(...).default(...)', () => {
     const arr = z.array(z.string()).min(1);
-    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'workspace' });
+    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'project' });
     const wrapped = arr.default(['a']);
     expect(getFieldMeta(wrapped)).toEqual({
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     });
   });
 
@@ -140,18 +140,18 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     );
   });
 
-  test('workspace-strict fields cover content.* + preview.baseUrl', () => {
-    // `content.dir` / `content.include` / `content.exclude` are workspace-only
+  test('project-strict fields cover content.* + preview.baseUrl', () => {
+    // `content.dir` / `content.include` / `content.exclude` are project-only
     // per user direction 2026-04-29 — they define which files are part of *this*
     // project's knowledge graph; a user-global override doesn't make sense.
-    // `preview.baseUrl` is workspace-only per spec §9.5.4 ❌ marker.
+    // `preview.baseUrl` is project-only per spec §9.5.4 ❌ marker.
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
-    const workspaceStrict = leaves
-      .filter((l) => getFieldMeta(l.schema)?.scope === 'workspace')
+    const projectStrict = leaves
+      .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(workspaceStrict).toEqual(
+    expect(projectStrict).toEqual(
       ['content.dir', 'content.exclude', 'content.include', 'preview.baseUrl'].sort(),
     );
   });

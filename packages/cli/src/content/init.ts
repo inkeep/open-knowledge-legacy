@@ -4,7 +4,7 @@ import { CONFIG_SCHEMA_MAJOR_PATH } from '@inkeep/open-knowledge-core';
 import { CACHE_DIR, CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
 /**
- * Build the `$schema` URL for a scaffolded workspace `config.yml`.
+ * Build the `$schema` URL for a scaffolded project `config.yml`.
  *
  * Schema versioning is INDEPENDENT of the npm package version. The URL pins
  * to the schema MAJOR (`v0`, `v1`, …) and uses the npm `@latest` dist-tag
@@ -29,10 +29,10 @@ export function packageVersionMajorMinor(version: string): string {
 }
 
 export function buildConfigYmlContent(_version: string): string {
-  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/config.workspace.schema.json
-# Open Knowledge — workspace configuration
+  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/config.project.schema.json
+# Open Knowledge — project configuration
 #
-# This file overrides built-in defaults for this workspace. Every key below
+# This file overrides built-in defaults for this project. Every key below
 # is commented out and shows its current default value. Uncomment any key
 # to override it.
 #
@@ -164,7 +164,7 @@ function writeIfMissing(filePath: string, content: string): boolean {
  * entries that aren't already present (via trim-equality) get appended.
  *
  * Required entries are derived from `scaffoldContent`'s non-comment, non-empty
- * lines. This is the upgrade path: workspaces that ran `ok init` before this
+ * lines. This is the upgrade path: projects that ran `ok init` before this
  * scaffold gained `principal.json` / `last-spawn-error.log` would otherwise
  * never see the new entries because `writeIfMissing` short-circuits.
  */
@@ -209,6 +209,7 @@ ui.lock
 # Sync watermarks + per-machine principal identity
 sync-state.json
 principal.json
+state.json
 
 # MCP spawn diagnostics
 last-spawn-error.log
@@ -231,7 +232,7 @@ export function initContent(projectDir: string): {
 
   // .gitignore: merge-on-upgrade — append missing scaffold entries to an
   // existing file rather than skipping outright. Keeps the SSoT contract for
-  // workspaces created before new entries (`principal.json`,
+  // projects created before new entries (`principal.json`,
   // `last-spawn-error.log`) joined the scaffold.
   const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
   if (gitignoreAction === 'created') {

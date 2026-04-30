@@ -1,8 +1,8 @@
 /**
  * `rename_document` MCP tool — managed page rename via the server API.
  *
- * Calls POST /api/rename, which renames the target document and rewrites
- * inbound wiki-links plus supported internal inline Markdown links.
+ * Calls POST /api/rename-path with kind: 'file'. Renames the target document
+ * and rewrites inbound wiki-links plus supported internal inline Markdown links.
  */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -12,6 +12,8 @@ import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  parseRenameCollidingPairs,
+  type RenameCollisionPair,
   ROUTED_CWD_DESCRIPTION,
   resolveProjectServerContext,
   summaryArgSchema,
@@ -50,16 +52,24 @@ interface RenameDocumentSuccess {
 interface RenameDocumentError {
   ok: false;
   error: string;
+  /** Server-supplied structured collision list when 409 is a rename-map collision. */
+  colliding?: RenameCollisionPair[];
 }
 
 export const DESCRIPTION = [
-  '[Requires: Hocuspocus server] Rename a document through the managed rename flow at `POST /api/rename`.',
+  '[Requires: Hocuspocus server] Rename a document through the managed rename flow at `POST /api/rename-path` (kind: file).',
   'Renames the target document and rewrites inbound wiki-links plus supported internal inline Markdown links in affected docs.',
   '',
   '**Parameters:**',
   '- `docName` — Current document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `newDocName` — New document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `summary` — Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline. If omitted, a default like "Renamed X → Y" is generated. Provide your own summary to explain the why. Avoid including secrets or PII — summaries are persisted to git history.',
+  '',
+  '**Errors:**',
+  '- 400 — case-only renames (e.g. `Auth` → `auth`) are not supported.',
+  '- 400 — destination document is excluded by the workspace `content.include` / `content.exclude` config.',
+  '- 404 — source document does not exist.',
+  '- 409 — destination document already exists.',
 ].join('\n');
 
 function parseRenameMappings(value: unknown): RenameDocumentMapping[] {
@@ -126,9 +136,10 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
       if (!normalizedNewDoc.ok) return textResult(normalizedNewDoc.error, true);
 
       const identity = deps.identityRef?.current;
-      const result = await httpPost(url, '/api/rename', {
-        docName: normalizedDoc.docName,
-        newDocName: normalizedNewDoc.docName,
+      const result = await httpPost(url, '/api/rename-path', {
+        kind: 'file',
+        fromPath: normalizedDoc.docName,
+        toPath: normalizedNewDoc.docName,
         ...(args.summary !== undefined ? { summary: args.summary } : {}),
         ...(identity
           ? {
@@ -142,7 +153,12 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
 
       if (!result.ok) {
         const error = typeof result.error === 'string' ? result.error : 'Rename failed';
-        const structured: RenameDocumentError = { ok: false, error };
+        const colliding = parseRenameCollidingPairs(result.colliding);
+        const structured: RenameDocumentError = {
+          ok: false,
+          error,
+          ...(colliding.length > 0 ? { colliding } : {}),
+        };
         return textPlusStructured(`Error: ${error}`, structured, true);
       }
 

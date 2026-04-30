@@ -6,7 +6,6 @@ import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigati
 import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { AuthModal } from './AuthModal';
-import { CloneDialog } from './CloneDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
 import { type PanelTab, TABS } from './DocPanel';
@@ -25,8 +24,6 @@ export function EditorPane() {
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
-  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
-  const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
   const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
   const [saving, setSaving] = useState(false);
   const optInToastShownRef = useRef(false);
@@ -112,33 +109,15 @@ export function EditorPane() {
           setAuthModalOpen(true);
         }}
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
-        onOpenClone={() => setCloneDialogOpen(true)}
       />
       <EditorArea editorMode={editorMode} activeTab={activeTab} onActiveTabChange={setActiveTab} />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal
         open={authModalOpen}
-        onOpenChange={(next) => {
-          setAuthModalOpen(next);
-          if (!next) setReturnToCloneAfterAuth(false);
-        }}
+        onOpenChange={setAuthModalOpen}
         identityPrompt={authInitialStep === 'identity'}
         onSuccess={() => {
           setAuthModalOpen(false);
-          if (returnToCloneAfterAuth) {
-            setReturnToCloneAfterAuth(false);
-            setCloneDialogOpen(true);
-          }
-        }}
-      />
-      <CloneDialog
-        open={cloneDialogOpen}
-        onOpenChange={setCloneDialogOpen}
-        onSignIn={() => {
-          setCloneDialogOpen(false);
-          setAuthInitialStep('auth');
-          setReturnToCloneAfterAuth(true);
-          setAuthModalOpen(true);
         }}
       />
       {/*

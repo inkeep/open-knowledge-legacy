@@ -40,6 +40,7 @@ import {
   swapContributors,
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
+import { applyDiskContentToDoc } from './external-change.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
@@ -49,6 +50,7 @@ import {
   incrementGitWriterCommitFailure,
   incrementPersistenceDiskWrite,
 } from './metrics.ts';
+import { classifyDuplication } from './persistence-tripwire.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import {
   buildWipTree,
@@ -150,6 +152,13 @@ export interface PersistenceOptions {
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
   /**
+   * US-013 FR-3b: resolves `![[photo.png]]` embed targets to disk-relative
+   * paths before PM dispatch. Consumed by `onLoadDocument`'s
+   * `mdManager.parseWithFallback` call so image-extension embeds materialize
+   * as PM `image` nodes with the resolved `src` (not the literal target).
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Accessor for the server's principal record. When a browser connection's
    * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
    * emits WriterIdentity with the real display_name / display_email instead
@@ -170,11 +179,12 @@ export interface PersistenceOptions {
    * any updates received after capture but before the rename completes
    * are excluded by construction, matching the actual durable state.
    *
-   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
-   * boot. Omitted in plugin mode where no CC1Broadcaster is available
+   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in boot.
+   * Omitted in plugin mode where no CC1Broadcaster is available
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+  applyDiskContentToDoc?: (document: Y.Doc, content: string) => void;
   /**
    * Override `os.homedir()` for config-doc persistence (US-006). Tests
    * scope user-global writes (`__user__/config.yml`) to a tempdir; if
@@ -183,7 +193,7 @@ export interface PersistenceOptions {
   configHomedirOverride?: string;
   /**
    * Fired after the L3 persistence-hook reverts an invalid Y.Text
-   * mutation on a config doc. Wired in standalone boot to
+   * mutation on a config doc. Wired in boot to
    * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
    * so any open Settings pane sees the rejection toast. Omitted in
    * plugin mode where no CC1Broadcaster is available.
@@ -295,11 +305,12 @@ export function isBatchInProgress(): boolean {
 
 export interface PersistenceHandle {
   extension: Extension;
+  flushDeferredStores: (mode?: 'within-branch' | 'discard-stale') => Promise<void>;
   flushPendingGitCommit: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
   /**
    * Config-doc persistence context (US-007). Exposed so the file-watcher
-   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * orchestration in `server-factory.ts` can call `applyExternalConfigChange`
    * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
    * Treat as read-only — direct mutation breaks the L3 invariant that the
    * cache only updates after a successful persist.
@@ -338,13 +349,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     onConfigRejected: options?.onConfigRejected,
   };
 
+  // Frontmatter lives in the YAML region of `Y.Text('source')` (D8/D26):
+  // `onStoreDocument` reads FM via `stripFrontmatter(ytext.toString())` and
+  // writes Y.Text verbatim — no recompose step, no per-key cache, no L3 hook
+  // (D31 LOCKED).
+  const tripwireResetFailedDocs = new Set<string>();
+  const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
+  let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
+
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
-  // so that standalone.ts and persistence stay in sync.
-  //
-  // Frontmatter lives in the YAML region of `Y.Text('source')` (D8/D26):
-  // `onStoreDocument` writes `ytext.toString()` verbatim — no recompose
-  // step, no per-key cache, no L3 hook (D31 LOCKED).
+  // so that server-factory.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -358,6 +373,15 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   let consecutiveGitFailures = 0;
   let commitInFlight: Promise<void> | null = null;
   let pendingAfterCommit = false;
+  let deferredStoreDrainInFlight: Promise<void> | null = null;
+  const deferredStores = new Map<
+    string,
+    {
+      branch: string;
+      document: Y.Doc;
+      lastTransactionOrigin: unknown;
+    }
+  >();
 
   async function commitToWipRef(): Promise<void> {
     ensureHistograms();
@@ -665,6 +689,352 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     });
   }
 
+  async function storeDocumentNow({
+    document,
+    documentName,
+    lastTransactionOrigin,
+  }: {
+    document: Y.Doc;
+    documentName: string;
+    lastTransactionOrigin: unknown;
+  }): Promise<void> {
+    ensureHistograms();
+    const started = Date.now();
+    return withSpan(
+      'persistence.onStoreDocument',
+      { attributes: { 'doc.name': documentName } },
+      async () => {
+        // Lifecycle guard: when the file watcher saw an external delete or
+        // rename, the disk-event handler in standalone.ts sets the doc's
+        // lifecycle status to mark the Y.Doc as no-longer-tracking-disk.
+        // But `unloadDocument` does NOT cancel debounced stores already
+        // queued from prior transactions — and any in-flight rewrite that
+        // mutated the Y.Doc just before the rm/mv leaves a pending store.
+        // Without this short-circuit, that store fires, serializes the
+        // in-memory state, and writes it via `tracedWriteFileSync` —
+        // recreating the file at the OLD path. The CRDT-ghost behavior
+        // the agent sees ("rm couldn't kill them, the CRDT kept
+        // resurrecting them on disk") is exactly this race.
+        //
+        // Statuses guarded:
+        //   - 'deleted-upstream': file removed externally; Y.Doc must
+        //     not write to the now-empty path.
+        //   - 'renamed': file moved externally; the old docName must
+        //     not get rewritten — the new docName has its own Y.Doc.
+        const lifecycleStatus = document.getMap('lifecycle').get('status');
+        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+          log.info(
+            { documentName, lifecycleStatus },
+            `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
+          );
+          return;
+        }
+
+        // Atomic pre-write snapshot — `sv` and `json` MUST be captured
+        // at the same synchronous instant. See
+        // `captureDocSnapshotForPersistence` for the timing contract;
+        // splitting the destructure across the upcoming `await`
+        // boundary would silently break the disk-ack watermark.
+        const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
+
+        // D26: Y.Text IS the FM source of truth. Read FM from the YAML
+        // region of `Y.Text('source')` directly; no recompose step, no
+        // metaMap mirror, no per-instance cache.
+        const body = mdManager.serialize(json);
+        const ytextSnapshot = document.getText('source').toString();
+        const { frontmatter } = stripFrontmatter(ytextSnapshot);
+        const markdown = prependFrontmatter(frontmatter, body);
+
+        // Skip the write when the serialized output matches the load-time
+        // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
+        // including the first-pass observer sync that populates Y.Text from the
+        // freshly-loaded XmlFragment — that mutation is semantically a no-op
+        // but would otherwise rewrite the file in normalized form (padded
+        // tables, added backslash-escapes, etc.), polluting the user's git
+        // working tree on mere file open.
+        //
+        // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
+        // an empty <paragraph> to Y.XmlFragment on every editor mount. That
+        // serializes to extra trailing newlines — byte-unequal to currentBase
+        // but semantically identical. Reusing normalizeBridge (the canonical
+        // bridge-invariant normalization — trim per-line whitespace, collapse
+        // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
+        // consistent with server-observers.ts + the test-harness. Catching this
+        // class as a no-op skips both the disk write AND the principal
+        // safety-net below, preventing phantom commits attributed to the
+        // browser's principal when a later agent write triggers the L2 fan-out.
+        const currentBase = getReconciledBase(documentName);
+        const markdownSemanticallyUnchanged =
+          currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
+        if (markdownSemanticallyUnchanged) {
+          if (contributorCount() > 0) scheduleGitCommit();
+          return;
+        }
+
+        // Phantom-doc guard: refuse to materialize a 0-byte file when the
+        // Y.Doc was never confirmed to exist on disk (no reconciled base
+        // from a successful onLoadDocument) AND the serialized content is
+        // empty. This blocks accidental orphan files from any code path
+        // that opens a Y.Doc for a non-existent docName: the browser race
+        // during a rename, GETs to `/api/document?docName=<missing>`, MCP
+        // queries on deleted docs, and any future caller of
+        // `openDirectConnection` that hits a missing path.
+        //
+        // Legitimate first-write flows are unaffected:
+        //   - `/api/create-page` writes the file synchronously before any
+        //     transaction, so the next onLoadDocument sets reconciledBase
+        //     to '' (defined) before this guard fires.
+        //   - `/api/agent-write-md` populates the XmlFragment with the
+        //     agent's content INSIDE the same transact that triggers the
+        //     debounced store, so by the time we get here `markdown` is
+        //     non-empty even when reconciledBase is still undefined.
+        //
+        // Mode-coupling note: the guard is asymmetric. It only blocks
+        // file *creation*. Once a file exists and reconciledBase is set,
+        // subsequent stores fall through to the normal write path,
+        // including legitimate transitions to empty content (user clears
+        // a doc) — those compare against the non-empty base above and
+        // proceed.
+        if (currentBase === undefined && normalizeBridge(markdown) === '') {
+          log.warn(
+            { documentName },
+            `[persistence] Skipped phantom write for ${documentName}: empty Y.Doc with no reconciled base`,
+          );
+          return;
+        }
+
+        // Thread origin → contributor tracker. Safety-net for writes that
+        // bypass api-extension.ts handlers. Agent write handlers already
+        // call recordContributor explicitly; this handles human-browser
+        // connection writes and any other origin that doesn't go through a
+        // handler. Gated on `markdown !== currentBase` above — semantic
+        // no-op writes (y-prosemirror empty-paragraph init) do not record
+        // the principal, so the L2 fan-out no longer attributes phantom
+        // commits to the browser alongside a legitimate agent write.
+        const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
+        if (writer && writer.id !== SERVICE_WRITER.id) {
+          // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
+          // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
+          // the handler-path entry is in the tracker by the time we get here.
+          // The safety-net only fills in for writes that never pass through an
+          // /api/* handler — specifically browser-principal writes via the
+          // `source: 'connection'` origin path. Skipping when the entry already
+          // exists guarantees the stub `Agent (<short>)` displayName can never
+          // overwrite the handler's rich identity under any ordering edge case.
+          if (!hasContributor(writer.id)) {
+            recordContributor(documentName, writer.id, writer.name, writer.id);
+          }
+          // else: entry exists with rich handler-path identity; keep it untouched.
+          // The docs Set is still correct because the handler path recorded this
+          // docName already when it fired recordContributor for this write.
+        }
+
+        // Structural-duplication tripwire. Refuses to overwrite the disk
+        // file when the candidate body is an integer concatenation (k≥2) of
+        // the bridge-normalized base body — the failure shape the stale
+        // browser-IDB merge causes. Resets the live Y.Doc to the disk
+        // canonical state so the in-memory duplicate doesn't keep
+        // re-triggering this hook on its 2s debounce. First writes (no
+        // currentBase) bypass — there's nothing to duplicate yet.
+        if (currentBase !== undefined) {
+          const classification = classifyDuplication(markdown, currentBase);
+          if (classification.kind === 'block') {
+            if (tripwireResetFailedDocs.has(documentName)) {
+              log.warn(
+                { documentName },
+                `[persistence] Tripwire breaker active — skipping duplicate store for ${documentName}`,
+              );
+              return;
+            }
+            const fragmentChildren = document.getXmlFragment('default').length;
+            console.warn(
+              JSON.stringify({
+                event: 'ok-persistence-duplication-blocked',
+                'doc.name': documentName,
+                candidateBytes: markdown.length,
+                baseBytes: currentBase.length,
+                fragmentChildren,
+                copies: classification.copies,
+                reason: classification.reason,
+              }),
+            );
+            try {
+              const requestedDiskPath = safeContentPath(documentName, contentDir);
+              const diskContent = existsSync(requestedDiskPath)
+                ? readFileSync(requestedDiskPath, 'utf-8')
+                : currentBase;
+              applyDiskContent(document, diskContent);
+              tripwireResetFailedDocs.delete(documentName);
+            } catch (err) {
+              tripwireResetFailedDocs.add(documentName);
+              log.error(
+                { err, documentName },
+                `[persistence] Tripwire reset failed for ${documentName}`,
+              );
+            }
+            return;
+          }
+        }
+
+        const requestedPath = safeContentPath(documentName, contentDir);
+        await tracedMkdir(dirname(requestedPath), { recursive: true });
+
+        let canonicalPath: string;
+        try {
+          canonicalPath = await realpath(requestedPath);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT') {
+            let isBrokenSymlink = false;
+            try {
+              isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
+            } catch (lstatErr) {
+              if ((lstatErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+                log.warn(
+                  { err: lstatErr, path: requestedPath },
+                  '[persistence] lstat failed during broken-symlink check',
+                );
+              }
+            }
+            if (isBrokenSymlink) {
+              console.warn(`[persistence] broken-symlink fallback`, {
+                docName: documentName,
+                reason: 'broken-symlink',
+              });
+            }
+            canonicalPath = requestedPath;
+          } else if (code === 'ELOOP') {
+            console.error(`[persistence] Symlink cycle at ${requestedPath}`);
+            throw new Error(`Symlink cycle detected at ${requestedPath}`);
+          } else {
+            throw e;
+          }
+        }
+
+        if (!isWithinContentDir(canonicalPath, contentDir)) {
+          const msg = `symlink-escape: ${requestedPath} resolves to ${canonicalPath} outside ${contentDir}`;
+          console.error(`[persistence] ${msg}`, {
+            docName: documentName,
+            originalPath: requestedPath,
+            canonical: canonicalPath,
+            contentDir,
+          });
+          throw new Error(msg);
+        }
+
+        const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
+        try {
+          await tracedWriteFile(tmpPath, markdown, 'utf-8');
+          await tracedRename(tmpPath, canonicalPath);
+          registerWrite(canonicalPath, contentHash(markdown));
+          // Increment disk-write counter after the atomic rename succeeds.
+          // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
+          // drops skipStoreHooks, observer writes trigger onStoreDocument
+          // and produce amplified disk writes per user/agent edit.
+          incrementPersistenceDiskWrite();
+          // Notify clients that disk durability has been achieved up to the
+          // pre-write state vector. Fired AFTER `tracedRename` succeeds so
+          // a write failure (caught below) skips the watermark advance.
+          onDiskFlush?.(documentName, stateVectorAtRead);
+        } catch (e) {
+          try {
+            tracedUnlinkSync(tmpPath);
+          } catch {
+            /* cleanup best-effort */
+          }
+          log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
+          throw e;
+        }
+        log.info(
+          { filePath: canonicalPath, bytes: markdown.length },
+          `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
+        );
+
+        // Update reconciled base after successful store
+        setReconciledBase(documentName, markdown);
+        tripwireResetFailedDocs.delete(documentName);
+
+        if (backlinkIndex) {
+          backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            log.warn(
+              { err, documentName },
+              `[backlinks] Failed to persist cache for ${documentName}`,
+            );
+          });
+        }
+
+        setActiveSpanAttributes({ 'persistence.bytes': markdown.length });
+        scheduleGitCommit();
+      },
+    ).finally(() => {
+      // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
+      // would blow up Prometheus label storage at scale. The span carries it.
+      storeDurationHist?.record((Date.now() - started) / 1000);
+    });
+  }
+
+  function deferStore({
+    document,
+    documentName,
+    lastTransactionOrigin,
+  }: {
+    document: Y.Doc;
+    documentName: string;
+    lastTransactionOrigin: unknown;
+  }): void {
+    deferredStores.set(documentName, {
+      branch: getActiveBranch(),
+      document,
+      lastTransactionOrigin,
+    });
+  }
+
+  async function flushDeferredStores(mode: 'within-branch' | 'discard-stale' = 'within-branch') {
+    if (deferredStoreDrainInFlight) {
+      pendingDeferredStoreFlushMode =
+        pendingDeferredStoreFlushMode === 'discard-stale' || mode === 'discard-stale'
+          ? 'discard-stale'
+          : 'within-branch';
+      return deferredStoreDrainInFlight;
+    }
+
+    deferredStoreDrainInFlight = (async () => {
+      let drainMode = mode;
+      while (true) {
+        const entries = [...deferredStores.entries()];
+        deferredStores.clear();
+
+        if (drainMode !== 'discard-stale') {
+          for (const [documentName, entry] of entries) {
+            if (entry.branch !== getActiveBranch()) continue;
+            try {
+              await storeDocumentNow({
+                document: entry.document,
+                documentName,
+                lastTransactionOrigin: entry.lastTransactionOrigin,
+              });
+            } catch (err) {
+              log.error(
+                { err, documentName },
+                `[persistence] Deferred store failed for ${documentName}`,
+              );
+            }
+          }
+        }
+
+        const nextMode = pendingDeferredStoreFlushMode;
+        pendingDeferredStoreFlushMode = null;
+        if (deferredStores.size === 0 && nextMode === null) break;
+        drainMode = nextMode ?? 'within-branch';
+      }
+    })().finally(() => {
+      deferredStoreDrainInFlight = null;
+    });
+
+    return deferredStoreDrainInFlight;
+  }
+
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
@@ -721,8 +1091,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           // rawMdxFallback preserving surrounding structure. On position-less
           // error, splits at blank-line boundaries per-block. Only falls
           // through to whole-doc raw text when every block fails — strictly
-          // better than parse() throwing on broken MDX.
-          const json = mdManager.parseWithFallback(body);
+          // better than parse() throwing on broken MDX. The optional
+          // `resolveEmbed` threads the basename-index resolver so post-load
+          // PM image/link nodes carry resolved src/href for `![[file.ext]]`.
+          const parseOpts = options?.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+            : undefined;
+          const json = mdManager.parseWithFallback(body, parseOpts);
 
           if (xmlFragment.length === 0) {
             const pmNode = schema.nodeFromJSON(json);
@@ -799,222 +1174,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         await storeConfigDoc(document, documentName, lastTransactionOrigin, configPersistenceCtx);
         return;
       }
-      if (isBatchInProgress()) return;
-
-      // D31 LOCKED: no L3 server-side validation hook. Y.Text region IS the
-      // source of truth, including malformed bytes. Defense moves to the
-      // binding's L1 commit gate (against UI-driven malformed inputs) and
-      // the panel's last-valid render (D21).
-      ensureHistograms();
-      const started = Date.now();
-      return withSpan(
-        'persistence.onStoreDocument',
-        { attributes: { 'doc.name': documentName } },
-        async () => {
-          // Atomic pre-write snapshot — `sv` and `json` MUST be captured
-          // at the same synchronous instant. See
-          // `captureDocSnapshotForPersistence` for the timing contract;
-          // splitting the destructure across the upcoming `await`
-          // boundary would silently break the disk-ack watermark.
-          const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
-
-          // D26: Y.Text IS the FM source of truth. Read FM from the YAML
-          // region of `Y.Text('source')` directly; no recompose step.
-          const body = mdManager.serialize(json);
-          const ytextSnapshot = document.getText('source').toString();
-          const { frontmatter } = stripFrontmatter(ytextSnapshot);
-          const markdown = prependFrontmatter(frontmatter, body);
-
-          // Skip the write when the serialized output matches the load-time
-          // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
-          // including the first-pass observer sync that populates Y.Text from the
-          // freshly-loaded XmlFragment — that mutation is semantically a no-op
-          // but would otherwise rewrite the file in normalized form (padded
-          // tables, added backslash-escapes, etc.), polluting the user's git
-          // working tree on mere file open.
-          //
-          // normalizeBridge-tolerant compare: y-prosemirror's ySyncPlugin appends
-          // an empty <paragraph> to Y.XmlFragment on every editor mount. That
-          // serializes to extra trailing newlines — byte-unequal to currentBase
-          // but semantically identical. Reusing normalizeBridge (the canonical
-          // bridge-invariant normalization — trim per-line whitespace, collapse
-          // 3+ newlines to 2, strip trailing newlines) keeps comparison semantics
-          // consistent with server-observers.ts + the test-harness. Catching this
-          // class as a no-op skips both the disk write AND the principal
-          // safety-net below, preventing phantom commits attributed to the
-          // browser's principal when a later agent write triggers the L2 fan-out.
-          const currentBase = getReconciledBase(documentName);
-          const markdownSemanticallyUnchanged =
-            currentBase !== undefined && normalizeBridge(markdown) === normalizeBridge(currentBase);
-          if (markdownSemanticallyUnchanged) {
-            if (contributorCount() > 0) scheduleGitCommit();
-            return;
-          }
-
-          // Phantom-doc guard: refuse to materialize a 0-byte file when the
-          // Y.Doc was never confirmed to exist on disk (no reconciled base
-          // from a successful onLoadDocument) AND the serialized content is
-          // empty. This blocks accidental orphan files from any code path
-          // that opens a Y.Doc for a non-existent docName: the browser race
-          // during a rename, GETs to `/api/document?docName=<missing>`, MCP
-          // queries on deleted docs, and any future caller of
-          // `openDirectConnection` that hits a missing path.
-          //
-          // Legitimate first-write flows are unaffected:
-          //   - `/api/create-page` writes the file synchronously before any
-          //     transaction, so the next onLoadDocument sets reconciledBase
-          //     to '' (defined) before this guard fires.
-          //   - `/api/agent-write-md` populates the XmlFragment with the
-          //     agent's content INSIDE the same transact that triggers the
-          //     debounced store, so by the time we get here `markdown` is
-          //     non-empty even when reconciledBase is still undefined.
-          //
-          // Mode-coupling note: the guard is asymmetric. It only blocks
-          // file *creation*. Once a file exists and reconciledBase is set,
-          // subsequent stores fall through to the normal write path,
-          // including legitimate transitions to empty content (user clears
-          // a doc) — those compare against the non-empty base above and
-          // proceed.
-          if (currentBase === undefined && normalizeBridge(markdown) === '') {
-            log.warn(
-              { documentName },
-              `[persistence] Skipped phantom write for ${documentName}: empty Y.Doc with no reconciled base`,
-            );
-            return;
-          }
-
-          // Thread origin → contributor tracker. Safety-net for writes that
-          // bypass api-extension.ts handlers. Agent write handlers already
-          // call recordContributor explicitly; this handles human-browser
-          // connection writes and any other origin that doesn't go through a
-          // handler. Gated on `markdown !== currentBase` above — semantic
-          // no-op writes (y-prosemirror empty-paragraph init) do not record
-          // the principal, so the L2 fan-out no longer attributes phantom
-          // commits to the browser alongside a legitimate agent write.
-          const writer = resolveWriterFromOrigin(lastTransactionOrigin, getPrincipal);
-          if (writer && writer.id !== SERVICE_WRITER.id) {
-            // api-extension handlers register rich WriterIdentity BEFORE the Y.Doc
-            // transact fires; onStoreDocument runs on Hocuspocus's 2s debounce, so
-            // the handler-path entry is in the tracker by the time we get here.
-            // The safety-net only fills in for writes that never pass through an
-            // /api/* handler — specifically browser-principal writes via the
-            // `source: 'connection'` origin path. Skipping when the entry already
-            // exists guarantees the stub `Agent (<short>)` displayName can never
-            // overwrite the handler's rich identity under any ordering edge case.
-            if (!hasContributor(writer.id)) {
-              recordContributor(documentName, writer.id, writer.name, writer.id);
-            }
-            // else: entry exists with rich handler-path identity; keep it untouched.
-            // The docs Set is still correct because the handler path recorded this
-            // docName already when it fired recordContributor for this write.
-          }
-
-          // Debug: detect duplication before writing
-          if (currentBase && markdown.length > currentBase.length * 1.5) {
-            log.warn(
-              { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
-              `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
-            );
-            log.warn(
-              { documentName, children: document.getXmlFragment('default').length },
-              `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
-            );
-          }
-
-          const requestedPath = safeContentPath(documentName, contentDir);
-          await tracedMkdir(dirname(requestedPath), { recursive: true });
-
-          let canonicalPath: string;
-          try {
-            canonicalPath = await realpath(requestedPath);
-          } catch (e) {
-            const code = (e as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
-              let isBrokenSymlink = false;
-              try {
-                isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
-              } catch (lstatErr) {
-                if ((lstatErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-                  log.warn(
-                    { err: lstatErr, path: requestedPath },
-                    '[persistence] lstat failed during broken-symlink check',
-                  );
-                }
-              }
-              if (isBrokenSymlink) {
-                console.warn(`[persistence] broken-symlink fallback`, {
-                  docName: documentName,
-                  reason: 'broken-symlink',
-                });
-              }
-              canonicalPath = requestedPath;
-            } else if (code === 'ELOOP') {
-              console.error(`[persistence] Symlink cycle at ${requestedPath}`);
-              throw new Error(`Symlink cycle detected at ${requestedPath}`);
-            } else {
-              throw e;
-            }
-          }
-
-          if (!isWithinContentDir(canonicalPath, contentDir)) {
-            const msg = `symlink-escape: ${requestedPath} resolves to ${canonicalPath} outside ${contentDir}`;
-            console.error(`[persistence] ${msg}`, {
-              docName: documentName,
-              originalPath: requestedPath,
-              canonical: canonicalPath,
-              contentDir,
-            });
-            throw new Error(msg);
-          }
-
-          const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
-          try {
-            await tracedWriteFile(tmpPath, markdown, 'utf-8');
-            await tracedRename(tmpPath, canonicalPath);
-            registerWrite(canonicalPath, contentHash(markdown));
-            // Increment disk-write counter after the atomic rename succeeds.
-            // Used as the Mutation F regression gate — if OBSERVER_SYNC_ORIGIN
-            // drops skipStoreHooks, observer writes trigger onStoreDocument
-            // and produce amplified disk writes per user/agent edit.
-            incrementPersistenceDiskWrite();
-            // Notify clients that disk durability has been achieved up to the
-            // pre-write state vector. Fired AFTER `tracedRename` succeeds so
-            // a write failure (caught below) skips the watermark advance.
-            onDiskFlush?.(documentName, stateVectorAtRead);
-          } catch (e) {
-            try {
-              tracedUnlinkSync(tmpPath);
-            } catch {
-              /* cleanup best-effort */
-            }
-            log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
-            throw e;
-          }
-          log.info(
-            { filePath: canonicalPath, bytes: markdown.length },
-            `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
-          );
-
-          // Update reconciled base after successful store
-          setReconciledBase(documentName, markdown);
-
-          if (backlinkIndex) {
-            backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
-            void backlinkIndex.saveToDisk().catch((err) => {
-              log.warn(
-                { err, documentName },
-                `[backlinks] Failed to persist cache for ${documentName}`,
-              );
-            });
-          }
-
-          setActiveSpanAttributes({ 'persistence.bytes': markdown.length });
-          scheduleGitCommit();
-        },
-      ).finally(() => {
-        // doc.name deliberately NOT recorded on the histogram — per-doc cardinality
-        // would blow up Prometheus label storage at scale. The span carries it.
-        storeDurationHist?.record((Date.now() - started) / 1000);
+      if (isBatchInProgress()) {
+        deferStore({ document, documentName, lastTransactionOrigin });
+        return;
+      }
+      return storeDocumentNow({
+        document,
+        documentName,
+        lastTransactionOrigin,
       });
     },
   };
@@ -1025,6 +1192,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   return {
     extension,
+    flushDeferredStores,
     flushPendingGitCommit,
     waitForPendingCommits,
     configPersistenceCtx,

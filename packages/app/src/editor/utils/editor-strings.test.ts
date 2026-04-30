@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DOCUMENT_ROOT_LABEL, formatContainerAriaLabel } from './editor-strings';
+import { DOCUMENT_ROOT_LABEL, formatContainerAriaLabel, humanizePropName } from './editor-strings';
 
 describe('formatContainerAriaLabel', () => {
   test('empty container emits "(empty)"', () => {
@@ -32,5 +32,27 @@ describe('formatContainerAriaLabel', () => {
 describe('DOCUMENT_ROOT_LABEL', () => {
   test('is the expected English string (fine to change; codify here so a11y tests can import it)', () => {
     expect(DOCUMENT_ROOT_LABEL).toBe('Document');
+  });
+});
+
+describe('humanizePropName', () => {
+  test('camelCase splits on uppercase boundaries', () => {
+    expect(humanizePropName('emptyChildName')).toBe('Empty Child Name');
+  });
+
+  test('snake_case splits on underscore (only first character capitalized)', () => {
+    expect(humanizePropName('default_value')).toBe('Default value');
+  });
+
+  test('kebab-case splits on dash (only first character capitalized)', () => {
+    expect(humanizePropName('default-value')).toBe('Default value');
+  });
+
+  test('consecutive capitals followed by lowercase split correctly', () => {
+    expect(humanizePropName('ARIALabel')).toBe('ARIA Label');
+  });
+
+  test('empty string passes through unchanged', () => {
+    expect(humanizePropName('')).toBe('');
   });
 });

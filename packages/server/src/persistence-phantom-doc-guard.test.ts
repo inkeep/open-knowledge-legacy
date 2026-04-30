@@ -18,12 +18,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
-import { createServer } from './standalone.ts';
+import { createServer } from './server-factory.ts';
 
 interface Fixture {
   tmpDir: string;
@@ -144,6 +144,74 @@ describe('persistence onStoreDocument phantom-doc guard', () => {
 
     // Post-condition: still no file at the path.
     expect(existsSync(ghostPath)).toBe(false);
+  });
+
+  test('lifecycle="deleted-upstream" prevents persistence from resurrecting a removed file', async () => {
+    // Repro for the user-reported "CRDT ghost auto-regenerates on rm"
+    // class: a file is loaded into a Y.Doc, the user rms it, the file
+    // watcher's delete event marks the doc lifecycle, but a debounced
+    // store from a prior transaction still fires after the unload — and
+    // before this guard, that store rewrote the in-memory state to disk,
+    // resurrecting the file the user just deleted.
+    //
+    // Guard: `onStoreDocument` checks `lifecycle.status === 'deleted-upstream'`
+    // at the very top and short-circuits before any disk write.
+    const docPath = join(fixture.contentDir, 'mortal-doc.md');
+    writeFileSync(docPath, '# Mortal\n\nReal content here.\n', 'utf-8');
+
+    const server = createServer({
+      contentDir: fixture.contentDir,
+      projectDir: fixture.tmpDir,
+      quiet: true,
+      debounce: 100,
+      maxDebounce: 500,
+      gitEnabled: false,
+    });
+    await server.ready;
+    try {
+      // Load the doc into memory (simulates a prior session leaving the
+      // Y.Doc resident). reconciledBase is set by onLoadDocument.
+      const conn = await server.hocuspocus.openDirectConnection('mortal-doc');
+      const serverDoc = server.hocuspocus.documents.get('mortal-doc');
+      expect(serverDoc).toBeDefined();
+      if (!serverDoc) return;
+
+      // Simulate the file-watcher delete handler: mark lifecycle BEFORE
+      // any pending store fires. (The real handler also calls
+      // forceUnloadDocument; here we just verify the persistence guard
+      // in isolation since unload behavior is Hocuspocus-internal.)
+      serverDoc.getMap('lifecycle').set('status', 'deleted-upstream');
+
+      // rm the file out from under the Y.Doc.
+      rmSync(docPath);
+      expect(existsSync(docPath)).toBe(false);
+
+      // Fire a transaction with REAL content — not just an empty paragraph.
+      // Without the lifecycle guard, the semantically-unchanged short-circuit
+      // wouldn't fire (markdown differs from base), so onStoreDocument would
+      // proceed past every other check and write the resurrected file.
+      const connectionOrigin = {
+        source: 'connection' as const,
+        connection: { context: { principalId: 'principal-test-rm-after-load' } },
+      };
+      serverDoc.transact(() => {
+        const frag = serverDoc.getXmlFragment('default');
+        const para = new Y.XmlElement('paragraph');
+        para.insert(0, [new Y.XmlText('NEW content that would resurrect the file')]);
+        frag.push([para]);
+      }, connectionOrigin);
+
+      // Steady-state poll: the file MUST stay absent across the debounce
+      // window. A regression that drops the lifecycle guard would have
+      // resurrected the file by now.
+      await expectFileAbsentFor(docPath, { durationMs: 800 });
+
+      conn.disconnect();
+    } finally {
+      await server.destroy();
+    }
+
+    expect(existsSync(docPath)).toBe(false);
   });
 
   test('opening a Y.Doc for a missing docName + non-empty transaction DOES create the file', async () => {

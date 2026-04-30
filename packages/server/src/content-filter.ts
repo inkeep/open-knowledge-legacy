@@ -87,6 +87,15 @@ export interface ContentFilter {
   incrementMdDir(dir: string): void;
   /** Decrement refcount for a directory; removes key when count reaches 0. */
   decrementMdDir(dir: string): void;
+  /**
+   * Re-walk contentDir from scratch and rebuild the refcount map used by the
+   * sibling-asset inclusion rule. Required after operations that mutate the
+   * working tree without going through the file-watcher's `incrementMdDir` /
+   * `decrementMdDir` path — most notably cross-branch `git checkout`, where
+   * the head-watcher's `eventBuffer.splice` discards the create/delete events
+   * that would have kept the count current.
+   */
+  rebuildDirCount(): void;
 }
 
 /**
@@ -188,7 +197,7 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   return {
     isExcluded(relativePath: string): boolean {
       // (0) Reserved system + config doc names are always excluded
-      // (e.g. __system__.md / __config__/workspace.md / __user__/config.yml.md)
+      // (e.g. __system__.md / __config__/project.md / __user__/config.yml.md)
       const docName = stripDocExtension(relativePath);
       if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
 
@@ -240,6 +249,11 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       } else {
         dirCount.set(normalizedDir, current - 1);
       }
+    },
+
+    rebuildDirCount(): void {
+      dirCount.clear();
+      populateDirCount(contentDir, '', isIncluded, isGitignoreExcluded, dirCount);
     },
   };
 }

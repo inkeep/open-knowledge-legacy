@@ -44,6 +44,7 @@
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * for the un-deferral framework.
  */
+import type { Nodes as MdastNodes } from 'mdast';
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
@@ -69,6 +70,7 @@ import type { JsxComponentMeta, PropDef } from './types.ts';
 // from the generic switch per `hasEditableProps` in JsxComponentView).
 
 const calloutProps: PropDef[] = [
+  // common — what the typical author actually picks per insert
   {
     name: 'type',
     type: 'enum',
@@ -83,16 +85,21 @@ const calloutProps: PropDef[] = [
     required: false,
     description: 'Optional heading shown above the body',
   },
+  // advanced — taste-and-edge-case knobs (custom icon override, accent color
+  // override, foldable behavior). Default rendering is good enough for the
+  // typical author; PropPanel collapses these under "Advanced".
   {
     name: 'icon',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Custom lucide icon override (e.g. `lucide:Lightbulb`)',
   },
   {
     name: 'color',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Optional accent color override (hex — e.g. `#F05032`)',
   },
   {
@@ -100,6 +107,7 @@ const calloutProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: false,
+    advanced: true,
     description: 'Render as a foldable `<details>` (Obsidian `[!TYPE]+/-`)',
   },
   {
@@ -107,6 +115,7 @@ const calloutProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
     description: 'When collapsible, start in the open state',
   },
   {
@@ -149,10 +158,15 @@ const calloutProps: PropDef[] = [
 //     always wraps in `<Zoom>`; Frame v2 will introduce `<Frame zoom={false}>`
 //     as the opt-out path when it lands.
 
-// htmlImgProps — 12 props (4 common + 8 advanced).
+// htmlImgProps — 12 props (2 common + 10 advanced).
 //
-// Common: src + alt + width + height. Advanced: srcset + sizes + loading +
+// Common: src + alt. Advanced: width + height + srcset + sizes + loading +
 // title + decoding + fetchpriority + crossorigin + referrerpolicy.
+//
+// `width` / `height` are layout-shift-prevention specialist knobs — most
+// authors lay out images with CSS or container width, not pixel dimensions.
+// Demoted to advanced so the default PropPanel for a fresh image stays a
+// simple two-field form (src + alt).
 //
 // Index map (used by commonMarkImageProps below — identity-shared):
 //   [0] src         [4] srcset          [8]  decoding
@@ -165,6 +179,13 @@ const htmlImgProps: PropDef[] = [
     name: 'src',
     type: 'string',
     required: true,
+    // Empty default so slash-insert pre-populates `src: ''`; the placeholder
+    // predicate (`shouldRenderPlaceholder`) keys off `=== ''` to surface the
+    // "Add an image" pill. Authored markdown like `<img />` (no attr) parses
+    // to `src: undefined` and intentionally does NOT trigger the pill — the
+    // strict-empty-string check distinguishes slash-insert (interactive
+    // placeholder UX) from authored content (declared-empty respect).
+    defaultValue: '',
     description: 'Image source URL',
     accept: ALLOWED_IMAGE_MIME_TYPES,
     autoFocus: true,
@@ -176,9 +197,21 @@ const htmlImgProps: PropDef[] = [
     defaultValue: '',
     description: 'Alt text',
   },
-  { name: 'width', type: 'number', required: false, description: 'Image width' },
-  { name: 'height', type: 'number', required: false, description: 'Image height' },
   // advanced
+  {
+    name: 'width',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Image width',
+  },
+  {
+    name: 'height',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Image height',
+  },
   {
     name: 'srcset',
     type: 'string',
@@ -200,6 +233,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'lazy',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Native img loading strategy (defaults to lazy)',
   },
   {
@@ -216,6 +250,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Hint for how the browser should decode the image',
   },
   {
@@ -225,6 +260,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Resource fetch priority hint',
   },
   {
@@ -244,45 +280,65 @@ const htmlImgProps: PropDef[] = [
   },
 ];
 
-// htmlVideoProps — 11 props (6 common + 5 advanced).
+// htmlVideoProps — 11 props (1 common + 10 advanced).
 //
-// Common: src + controls + autoplay + poster + width + height.
-// Advanced: title + muted + loop + playsinline + preload.
+// Common: src. Advanced: controls + autoplay + poster + width + height +
+// title + muted + loop + playsinline + preload.
 //
-// Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps to
-// React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
+// `controls` defaults true (most authors want them); `autoplay` is niche and
+// destructive; `poster` is power-user nice-to-have. Demoting these keeps the
+// fresh-insert PropPanel a single src field — same shape as Notion's video
+// block. Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps
+// to React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
 const htmlVideoProps: PropDef[] = [
   // common
   {
     name: 'src',
     type: 'string',
     required: true,
+    defaultValue: '',
     description: 'Video source URL',
     accept: ALLOWED_VIDEO_MIME_TYPES,
     autoFocus: true,
   },
+  // advanced
   {
     name: 'controls',
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 video controls (defaults to true)',
   },
   {
     name: 'autoplay',
     type: 'boolean',
     required: false,
+    advanced: true,
     description: 'Begin playback as soon as possible (usually requires muted)',
   },
   {
     name: 'poster',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Poster image URL shown before playback',
   },
-  { name: 'width', type: 'number', required: false, description: 'Video width' },
-  { name: 'height', type: 'number', required: false, description: 'Video height' },
-  // advanced
+  {
+    name: 'width',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Video width',
+  },
+  {
+    name: 'height',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Video height',
+  },
   {
     name: 'title',
     type: 'string',
@@ -321,37 +377,42 @@ const htmlVideoProps: PropDef[] = [
   },
 ];
 
-// htmlAudioProps — 7 props (3 common + 4 advanced).
+// htmlAudioProps — 7 props (1 common + 6 advanced).
 //
-// Common: src + controls + autoplay. Advanced: title + muted + loop + preload.
+// Common: src. Advanced: controls + autoplay + title + muted + loop + preload.
 //
-// `controls` is now an explicit prop (default true) — Audio.tsx no longer
+// `controls` is an explicit prop (default true) — Audio.tsx no longer
 // hardcodes always-on. Authors who want a chrome-less audio set
-// `controls={false}` instead of escaping to raw HTML.
+// `controls={false}` from the Advanced section instead of escaping to raw
+// HTML. Demoted to keep the typical insert a single src field.
 const htmlAudioProps: PropDef[] = [
   // common
   {
     name: 'src',
     type: 'string',
     required: true,
+    defaultValue: '',
     description: 'Audio source URL',
     accept: ALLOWED_AUDIO_MIME_TYPES,
     autoFocus: true,
   },
+  // advanced
   {
     name: 'controls',
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 audio controls (defaults to true)',
   },
   {
     name: 'autoplay',
     type: 'boolean',
     required: false,
+    advanced: true,
     description: 'Begin playback as soon as possible (usually requires muted)',
   },
-  // advanced
   {
     name: 'title',
     type: 'string',
@@ -426,6 +487,8 @@ const htmlAudioProps: PropDef[] = [
 // closed `<details>`, but PM children stay live so editing doesn't lose state.
 
 const accordionProps: PropDef[] = [
+  // common — every accordion needs a title; defaultOpen is the one stylistic
+  // knob the typical author actually picks (start open vs closed).
   {
     name: 'title',
     type: 'string',
@@ -439,28 +502,35 @@ const accordionProps: PropDef[] = [
     defaultValue: false,
     description: 'When true, the accordion renders expanded on initial load',
   },
+  // advanced — custom icon override, subtitle, deep-link anchor, exclusive-
+  // group identifier. All taste-and-edge-case territory; default rendering
+  // (lucide ChevronRight + bare title) is good enough for typical use.
   {
     name: 'icon',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Custom lucide icon override (e.g. `lucide:Rocket`)',
   },
   {
     name: 'description',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Optional subtitle rendered below the title inside <summary>',
   },
   {
     name: 'id',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'HTML id attribute for deep-linking (e.g. `#advanced-options`)',
   },
   {
     name: 'name',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'HTML5 <details name=> group — siblings with the same name are mutually exclusive',
   },
 ];
@@ -510,6 +580,45 @@ const htmlDetailsAccordionProps: PropDef[] = [
   accordionProps[5],
 ];
 
+// WikiEmbed* compats expose only what `![[file.ext|alias]]` can encode — a
+// single editable string slot. Stored target / anchor stay on the prop bag
+// alongside `alias` so `serialize` can rebuild byte-identical source bytes,
+// but they are not surfaced in PropPanel (the parser owns them; the user
+// edits the alias and nothing else).
+//
+// The three sibling PropDef arrays differ only in the description string —
+// kept distinct so PropPanel renders the user-friendly alias-syntax example
+// matching the file kind they're editing (image / video / audio).
+const wikiEmbedImageProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Alt text (Obsidian alias syntax: `![[file.png|alt text]]`)',
+  },
+];
+
+const wikiEmbedVideoProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[clip.mp4|title]]`)',
+  },
+];
+
+const wikiEmbedAudioProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[song.mp3|title]]`)',
+  },
+];
+
 // ── Compat serialize helpers ─────────────────────────────────────────────────
 
 /** Minimal HTML attribute-value escape (matches the lossiness of the parser). */
@@ -524,6 +633,30 @@ function escapeHtmlAttr(value: string): string {
 /** Minimal HTML text-content escape for `<summary>` inner text. */
 function escapeHtmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Shared serialize for the WikiEmbed* compat descriptors (Image / Video /
+ * Audio). All three render `![[target|alias]]` source bytes via wiki-embed
+ * mdast — only `rendersAs` and `translateProps` differ across the three
+ * descriptors, the source-form emit is identical. Reads the prop bag from
+ * `node.attrs.props`; an absent / non-string `target` collapses to `''`,
+ * matching the wikiLinkEmbed parser's default.
+ */
+function serializeWikiEmbed(node: { attrs: { props?: unknown } }): MdastNodes {
+  const p = node.attrs.props as
+    | { target?: string; alias?: string | null; anchor?: string | null }
+    | undefined;
+  const target = p?.target ?? '';
+  const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+  const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+  const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+  return {
+    type: 'wikiLinkEmbed' as const,
+    value: label,
+    data: { target, anchor, alias },
+    children: [{ type: 'text' as const, value: label }],
+  } as unknown as MdastNodes;
 }
 
 // ── Manifest ─────────────────────────────────────────────────────────────────
@@ -552,7 +685,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
     searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
-    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx, calloutProps),
   },
 
   // Media — lowercase per the rule above. HTML's `<img>` / `<video>` /
@@ -571,7 +704,8 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with click-to-zoom and HTML-native attributes',
     searchTerms: ['image', 'zoom', 'picture', 'photo'],
-    serialize: (node, ctx) => emitMdxJsx('img', node, ctx),
+    placeholder: { label: 'Add an image' },
+    serialize: (node, ctx) => emitMdxJsx('img', node, ctx, htmlImgProps),
   },
   {
     name: 'video',
@@ -584,7 +718,8 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
-    serialize: (node, ctx) => emitMdxJsx('video', node, ctx),
+    placeholder: { label: 'Add a video' },
+    serialize: (node, ctx) => emitMdxJsx('video', node, ctx, htmlVideoProps),
   },
   {
     name: 'audio',
@@ -597,7 +732,8 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
-    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx),
+    placeholder: { label: 'Add audio' },
+    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx, htmlAudioProps),
   },
 
   // Content
@@ -612,7 +748,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
-    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
   },
 
   // ── Compat descriptors ─────────────────────────────────────────────────────
@@ -708,6 +844,80 @@ export const builtInComponents: JsxComponentMeta[] = [
         children: [image],
       };
     },
+  },
+
+  {
+    name: 'WikiEmbedImage',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedImageProps,
+    icon: 'ZoomIn',
+    category: 'media',
+    displayName: 'Wiki Embed Image',
+    description:
+      'Obsidian-style `![[file.png]]` wiki-embed — read-only compat. Edit the alt-text via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'img',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        alt: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
+  },
+
+  // Video / audio sibling compats. Both canonicals (Video.tsx / Audio.tsx)
+  // expose `title` as the user-visible authored string — neither HTML5 element
+  // accepts an `alt` attribute. Alias maps to `title` for both. The serialize
+  // shape is identical to WikiEmbedImage's (shared `serializeWikiEmbed`
+  // helper); only `rendersAs` and the prop mapping differ.
+  {
+    name: 'WikiEmbedVideo',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedVideoProps,
+    icon: 'Film',
+    category: 'media',
+    displayName: 'Wiki Embed Video',
+    description:
+      'Obsidian-style `![[clip.mp4]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'video',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
+  },
+
+  {
+    name: 'WikiEmbedAudio',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedAudioProps,
+    icon: 'Volume2',
+    category: 'media',
+    displayName: 'Wiki Embed Audio',
+    description:
+      'Obsidian-style `![[song.mp3]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'audio',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
   },
 
   {

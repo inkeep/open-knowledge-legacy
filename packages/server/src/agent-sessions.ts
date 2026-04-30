@@ -94,6 +94,16 @@ export function applyAgentMarkdownWrite(
   document: Document,
   markdown: string,
   position: 'append' | 'prepend' | 'replace',
+  /**
+   * US-013 FR-3b embed-resolver context. When provided, `mdManager.parse`
+   * uses `resolveEmbed(target, sourcePath)` to map `![[photo.png]]` → disk
+   * path before PM dispatch. Omit in tests that don't exercise the embed
+   * path — the handler falls back to literal target.
+   */
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
 ): void {
   withSpanSync(
     'agent.applyAgentMarkdownWrite',
@@ -104,7 +114,7 @@ export function applyAgentMarkdownWrite(
         'agent.markdown.bytes': markdown.length,
       },
     },
-    () => applyAgentMarkdownWriteInner(document, markdown, position),
+    () => applyAgentMarkdownWriteInner(document, markdown, position, embedResolver),
   );
 }
 
@@ -112,6 +122,10 @@ function applyAgentMarkdownWriteInner(
   document: Document,
   markdown: string,
   position: 'append' | 'prepend' | 'replace',
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
 ): void {
   try {
     const xmlFragment = document.getXmlFragment('default');
@@ -155,7 +169,7 @@ function applyAgentMarkdownWriteInner(
 
     // 4. Apply composed body to XmlFragment via structural diff
     //    (preserves user-content Items at matching positions).
-    const parsedJson = mdManager.parseWithFallback(newBody);
+    const parsedJson = mdManager.parseWithFallback(newBody, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
@@ -184,7 +198,9 @@ function applyAgentMarkdownWriteInner(
 }
 
 /**
- * XmlFragment-authoritative agent undo (V0-14, US-009, precedent #10, D4).
+ * XmlFragment-authoritative agent undo. The only sanctioned server-side
+ * undo write surface — every other path is the deleted client-side
+ * cross-CRDT anti-pattern.
  *
  * Calls session.um.undo() INSIDE an outer doc.transact(..., session.undoOrigin)
  * so Y.js merges the UM's internal transaction into the outer. The whole
@@ -202,9 +218,42 @@ function applyAgentMarkdownWriteInner(
  * an observable effect), `false` when the stack was already empty. Callers
  * can surface this to the HTTP response so MCP clients know the no-op case.
  *
+ * Contract — every requirement is load-bearing; do not relax without re-running
+ * the bridge fuzzer + conversion-PBT suite that guards against the bug-A class:
+ *
+ *   (1) XmlFragment-authoritative composition reusing `applyAgentMarkdownWrite`
+ *       semantics. Never rebuild XmlFragment from raw Y.Text — that's the
+ *       deleted `syncTextToFragment` anti-pattern (precedent #12).
+ *   (2) Fires under per-session `session.undoOrigin`, distinct from
+ *       `session.origin`. The UM is constructed with
+ *       `captureTransaction: tr => tr.origin !== session.undoOrigin` so
+ *       undo-of-undo never lands on the stack.
+ *   (3) No client-side cross-CRDT writes. Server-authoritative observer-
+ *       bridge is the only mirror path; client observers are baseline-only
+ *       (precedent #14).
+ *   (4) Single `doc.transact()` block — no defensive mutex. The atomicity
+ *       comes from the transact, not from extra serialization.
+ *   (5) Every change here ships with fuzzer + conversion-PBT coverage.
+ *
  * @see PRECEDENTS.md precedent #10 (XmlFragment-authoritative writes)
+ * @see PRECEDENTS.md precedent #14 (cross-CRDT sync is single-writer, server-side)
  */
-export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'): boolean {
+export function applyAgentUndo(
+  session: SessionRecord,
+  scope: 'last' | 'session',
+  /**
+   * Embed-resolver context for `mdManager.parseWithFallback` — same shape
+   * `applyAgentMarkdownWrite` accepts. Required for parity: the post-undo
+   * body re-parse maps `![[photo.png]]` → resolved disk path so the
+   * XmlFragment shape matches what `onLoadDocument` would produce on a
+   * fresh load. Omitting it leaves PM image `src` as the literal target,
+   * which renders as a broken inline preview until the next round-trip.
+   */
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
+): boolean {
   return withSpanSync(
     'agent.applyAgentUndo',
     {
@@ -214,14 +263,21 @@ export function applyAgentUndo(session: SessionRecord, scope: 'last' | 'session'
       },
     },
     () => {
-      const undone = applyAgentUndoInner(session, scope);
+      const undone = applyAgentUndoInner(session, scope, embedResolver);
       setActiveSpanAttributes({ 'agent.undo_effective': undone });
       return undone;
     },
   );
 }
 
-function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'): boolean {
+function applyAgentUndoInner(
+  session: SessionRecord,
+  scope: 'last' | 'session',
+  embedResolver?: {
+    resolveEmbed: (basename: string, sourcePath: string) => string | null;
+    sourcePath: string;
+  },
+): boolean {
   const { dc, um, undoOrigin } = session;
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
@@ -249,7 +305,7 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
     const fullMd = ytext.toString();
     const { body, frontmatter: finalFm } = stripFrontmatter(fullMd);
 
-    const parsedJson = mdManager.parseWithFallback(body);
+    const parsedJson = mdManager.parseWithFallback(body, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);

@@ -91,8 +91,9 @@ describe('rename_document MCP tool', () => {
 
     expect(fetchCalls).toHaveLength(1);
     expect(JSON.parse(String(fetchCalls[0]?.init?.body))).toEqual({
-      docName: 'old-page',
-      newDocName: 'new-page',
+      kind: 'file',
+      fromPath: 'old-page',
+      toPath: 'new-page',
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('old-page');
@@ -138,12 +139,13 @@ describe('rename_document MCP tool', () => {
 
     const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
 
-    expect(tool.description).toContain('/api/rename');
+    expect(tool.description).toContain('/api/rename-path');
     expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]?.input).toBe('http://localhost:4321/api/rename');
+    expect(fetchCalls[0]?.input).toBe('http://localhost:4321/api/rename-path');
     expect(JSON.parse(String(fetchCalls[0]?.init?.body))).toEqual({
-      docName: 'old-page',
-      newDocName: 'new-page',
+      kind: 'file',
+      fromPath: 'old-page',
+      toPath: 'new-page',
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('old-page');

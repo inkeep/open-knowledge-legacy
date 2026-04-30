@@ -19,6 +19,12 @@ export {
   safeSubdir,
 } from './api-extension.ts';
 export {
+  type AssetServeFilter,
+  createAssetServeMiddleware,
+  type SirvLikeMiddleware,
+} from './asset-serve-middleware.ts';
+export { seedBasenameIndex } from './asset-walk.ts';
+export {
   HOCUSPOCUS_AUTH_REJECTION_REASONS,
   HocuspocusAuthRejection,
   type HocuspocusAuthRejectionReason,
@@ -79,6 +85,7 @@ export {
 } from './external-change.ts';
 export {
   type AsyncSubscription,
+  assertNeverDiskEvent,
   classifyEvents,
   contentHash,
   type DiskEvent,
@@ -186,6 +193,7 @@ export {
   type StarterFolder,
   starterFolderRule,
 } from './seed/index.ts';
+export { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 export {
   acquireServerLock,
   readServerLock,
@@ -236,7 +244,6 @@ export {
   type SkillInstallLogger,
   type SpawnLike,
 } from './skill-install.ts';
-export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,

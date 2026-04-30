@@ -15,8 +15,16 @@
  * and the overhead is a single function-call indirection.
  */
 
-import type { WriteFileOptions } from 'node:fs';
-import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import type { RmOptions, WriteFileOptions } from 'node:fs';
+import {
+  linkSync,
+  mkdirSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
@@ -141,5 +149,31 @@ export function tracedRenameSync(from: string, to: string): void {
 export function tracedUnlinkSync(path: string): void {
   withSpanSync('fs.unlinkSync', { attributes: buildAttrs('unlinkSync', path) }, () => {
     unlinkSync(path);
+  });
+}
+
+export function tracedLinkSync(existingPath: string, newPath: string): void {
+  withSpanSync(
+    'fs.linkSync',
+    {
+      attributes: buildAttrs('linkSync', newPath, {
+        'fs.source_path': normalizeFsPath(existingPath),
+      }),
+    },
+    () => {
+      linkSync(existingPath, newPath);
+    },
+  );
+}
+
+export function tracedRmSync(path: string, options?: RmOptions): void {
+  withSpanSync('fs.rmSync', { attributes: buildAttrs('rmSync', path) }, () => {
+    rmSync(path, options);
+  });
+}
+
+export function tracedRmdirSync(path: string): void {
+  withSpanSync('fs.rmdirSync', { attributes: buildAttrs('rmdirSync', path) }, () => {
+    rmdirSync(path);
   });
 }

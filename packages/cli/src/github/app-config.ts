@@ -10,7 +10,7 @@ const DEFAULT_OAUTH_CLIENT_ID = 'Ov23liqlSd0V1MwR6rhI';
 /**
  * Resolve the OAuth App client ID with this precedence:
  *   1. OPEN_KNOWLEDGE_GITHUB_CLIENT_ID environment variable
- *   2. config.github.oauthAppClientId (workspace or user config)
+ *   2. config.github.oauthAppClientId (project or user config)
  *   3. DEFAULT_OAUTH_CLIENT_ID built-in constant
  */
 export function getOAuthClientId(config?: Pick<Config, 'github'>): string {

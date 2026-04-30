@@ -4,14 +4,15 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 5 canonical + 3 compat descriptors + wildcard', () => {
-    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 3 compats
-    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion) + '*' wildcard.
-    // Compats are registered for parse + render but filtered out of the slash
-    // menu; they preserve source-form fidelity through round-trip edits.
+  test('returns the 5 canonical + 6 compat descriptors + wildcard', () => {
+    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 6 compats
+    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion, WikiEmbedImage,
+    // WikiEmbedVideo, WikiEmbedAudio) + '*' wildcard. Compats are registered
+    // for parse + render but filtered out of the slash menu; they preserve
+    // source-form fidelity through round-trip edits.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(9);
+    expect(entries.length).toBe(12);
   });
 
   test('get returns registered component by name', () => {
@@ -93,12 +94,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 5 canonical + 3 compat entries (5-pack + source-form preservation)', () => {
-    expect(builtInComponents.length).toBe(8);
+  test('contains 5 canonical + 6 compat entries (5-pack + source-form preservation)', () => {
+    expect(builtInComponents.length).toBe(11);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
     expect(canonical.length).toBe(5);
-    expect(compat.length).toBe(3);
+    expect(compat.length).toBe(6);
   });
 
   test('all entries have required fields', () => {
@@ -198,7 +199,7 @@ describe('builtInComponents manifest', () => {
     );
   });
 
-  test('img exposes the 12-prop HTML-native surface (4 common + 8 advanced)', () => {
+  test('img exposes the 12-prop HTML-native surface (2 common + 10 advanced)', () => {
     // Lowercase media canonical pivot. Drops the OK-specific `caption` and
     // `zoom` props from the descriptor — caption belongs on a future Frame
     // wrapper; zoom is always-on inside the Image React component.
@@ -257,7 +258,7 @@ describe('builtInComponents manifest', () => {
     expect(img?.isSelfClosing).toBe(true);
   });
 
-  test('video exposes the 11-prop HTML-native surface (6 common + 5 advanced)', () => {
+  test('video exposes the 11-prop HTML-native surface (1 common + 10 advanced)', () => {
     // Lowercase media canonical pivot. Adds `width` / `height` (today's
     // canonical lacked them); HTML-attr lowercase names (`autoplay`,
     // `playsinline`) so the rendered MDX matches the spec exactly.
@@ -328,7 +329,7 @@ describe('builtInComponents manifest', () => {
     expect(start).toBeUndefined();
   });
 
-  test('audio exposes the 7-prop HTML-native surface (3 common + 4 advanced)', () => {
+  test('audio exposes the 7-prop HTML-native surface (1 common + 6 advanced)', () => {
     // Lowercase media canonical pivot. `controls` is now an explicit prop
     // (default true) — Audio.tsx no longer hardcodes always-on; authors who
     // want a chrome-less audio set controls={false} from the descriptor.
@@ -453,4 +454,104 @@ describe('builtInComponents manifest', () => {
     const names = builtInComponents.map((m) => m.name);
     expect(names).not.toContain('*');
   });
+});
+
+describe('placeholder contract — media descriptor src prop invariants', () => {
+  // The placeholder feature depends on a precise contract on each media
+  // descriptor's `src` prop. If a future PR drops `defaultValue: ''`, removes
+  // `autoFocus: true`, or marks `src` as `advanced`, the placeholder pill
+  // silently stops rendering and users get the broken-source icon back.
+  // Downstream tests (resolve-descriptor-placeholder.test.ts, e2e) would
+  // catch the regression eventually, but a manifest-level guard here flags
+  // it at `bun test` time with descriptor-named error messages.
+  for (const name of ['img', 'video', 'audio'] as const) {
+    test(`${name}.src satisfies the placeholder contract`, () => {
+      const meta = builtInComponents.find((m) => m.name === name);
+      expect(meta).toBeDefined();
+      const src = meta?.props.find((p) => p.name === 'src');
+      expect(src, `${name} must declare a src prop`).toBeDefined();
+      if (!src || src.type !== 'string') return;
+      expect(
+        src.defaultValue,
+        `${name}.src must have defaultValue '' so slash-insert pre-populates the placeholder predicate's =='' check`,
+      ).toBe('');
+      expect(
+        src.autoFocus,
+        `${name}.src must have autoFocus: true so getAutoFocusedPropName returns 'src'`,
+      ).toBe(true);
+      expect(
+        'advanced' in src && src.advanced === true,
+        `${name}.src must NOT be advanced — getAutoFocusedPropName skips advanced props, so an advanced src silently disables the placeholder pill`,
+      ).toBe(false);
+    });
+  }
+});
+
+describe('common/advanced split per descriptor', () => {
+  // Locks down the exact prop classification shipped in this PR. The
+  // non-advanced (default-visible) section is calibrated to props the typical
+  // author actually picks (≥20% of inserts). A future PR that demotes or
+  // promotes a prop must update this test, surfacing the design decision
+  // rather than silently changing the PropPanel layout.
+  type Split = { common: string[]; advanced: string[] };
+  const expected: Record<string, Split> = {
+    img: {
+      common: ['src', 'alt'],
+      advanced: [
+        'width',
+        'height',
+        'srcset',
+        'sizes',
+        'loading',
+        'title',
+        'decoding',
+        'fetchpriority',
+        'crossorigin',
+        'referrerpolicy',
+      ],
+    },
+    video: {
+      common: ['src'],
+      advanced: [
+        'controls',
+        'autoplay',
+        'poster',
+        'width',
+        'height',
+        'title',
+        'muted',
+        'loop',
+        'playsinline',
+        'preload',
+      ],
+    },
+    audio: {
+      common: ['src'],
+      advanced: ['controls', 'autoplay', 'title', 'muted', 'loop', 'preload'],
+    },
+    Callout: {
+      common: ['type', 'title'],
+      advanced: ['icon', 'color', 'collapsible', 'defaultOpen'],
+    },
+    Accordion: {
+      common: ['title', 'defaultOpen'],
+      advanced: ['icon', 'description', 'id', 'name'],
+    },
+  };
+  for (const [name, split] of Object.entries(expected)) {
+    test(`${name} common/advanced split matches the typical-author calibration`, () => {
+      const meta = builtInComponents.find((m) => m.name === name);
+      expect(meta).toBeDefined();
+      if (!meta) return;
+      const editable = meta.props.filter((p) => p.type !== 'reactnode');
+      const common = editable
+        .filter((p) => !('advanced' in p && p.advanced === true))
+        .map((p) => p.name);
+      const advanced = editable
+        .filter((p) => 'advanced' in p && p.advanced === true)
+        .map((p) => p.name);
+      expect(common).toEqual(split.common);
+      expect(advanced).toEqual(split.advanced);
+    });
+  }
 });

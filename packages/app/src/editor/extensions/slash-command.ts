@@ -152,6 +152,12 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
 
           let doPosition: (() => void) | null = null;
 
+          const onHoverIndex = (idx: number) => {
+            if (idx === selectedIndex) return;
+            selectedIndex = idx;
+            rerender();
+          };
+
           const rerender = () => {
             if (!renderer || !currentProps) return;
             renderer.updateProps({
@@ -159,6 +165,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               selectedIndex,
               categoryLabels: extension.options.categoryLabels,
               onSelect: currentProps.command,
+              onHoverIndex,
             });
           };
 
@@ -177,6 +184,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                   selectedIndex,
                   categoryLabels: extension.options.categoryLabels,
                   onSelect: props.command,
+                  onHoverIndex,
                 },
                 editor: props.editor,
               });

@@ -28,7 +28,7 @@ function makeTempProject(): { cwd: string; userHome: string; cleanup: () => void
   };
 }
 
-function workspaceConfigPath(cwd: string): string {
+function projectConfigPath(cwd: string): string {
   return join(cwd, OK_DIR, CONFIG_FILENAME);
 }
 
@@ -86,7 +86,7 @@ describe('runValidate', () => {
   test('source-located error rendering through real loadConfig', () => {
     const project = makeTempProject();
     try {
-      const wsPath = workspaceConfigPath(project.cwd);
+      const wsPath = projectConfigPath(project.cwd);
       writeConfigYaml(wsPath, `mcp:\n  tools:\n    search:\n      maxResults: "fifty"\n`);
       const stderr: string[] = [];
       const outcome = runValidate({
@@ -128,8 +128,8 @@ describe('runMigrate', () => {
     expect(outcome.outcomes.every((o) => o.found.length === 0)).toBe(true);
   });
 
-  test('clean workspace + missing user → no-op summary', async () => {
-    writeConfigYaml(workspaceConfigPath(project.cwd), 'mcp:\n  autoStart: true\n');
+  test('clean project + missing user → no-op summary', async () => {
+    writeConfigYaml(projectConfigPath(project.cwd), 'mcp:\n  autoStart: true\n');
     const stdout: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
@@ -140,14 +140,14 @@ describe('runMigrate', () => {
     expect(stdout).toEqual(['No deprecated fields found.']);
   });
 
-  test('removes sync.* + preserves comments and unrelated fields (workspace)', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+  test('removes sync.* + preserves comments and unrelated fields (project)', async () => {
+    const wsPath = projectConfigPath(project.cwd);
     const original = `# Header comment\n\n# --- mcp ---\nmcp:\n  autoStart: true\n\n# Should be migrated away\nsync:\n  pushIntervalSeconds: 30\n  enabled: true\n\n# Trailing comment\n`;
     writeConfigYaml(wsPath, original);
     const stdout: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: (msg) => stdout.push(msg),
     });
@@ -164,13 +164,13 @@ describe('runMigrate', () => {
     expect(stdout.some((m) => m.includes('removed') && m.includes('sync'))).toBe(true);
   });
 
-  test('removes server.port and persistence.* leaf fields (workspace)', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+  test('removes server.port and persistence.* leaf fields (project)', async () => {
+    const wsPath = projectConfigPath(project.cwd);
     const original = `server:\n  host: localhost\n  port: 3000\n  openOnAgentEdit: false\npersistence:\n  debounceMs: 5000\n  maxDebounceMs: 10000\n`;
     writeConfigYaml(wsPath, original);
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: () => {},
     });
@@ -182,18 +182,18 @@ describe('runMigrate', () => {
     // Sibling fields preserved
     expect(migrated).toContain('host: localhost');
     expect(migrated).toContain('openOnAgentEdit: false');
-    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'workspace');
+    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
     expect(wsOutcome?.removed.sort()).toEqual(
       ['persistence.debounceMs', 'persistence.maxDebounceMs', 'server.port'].sort(),
     );
   });
 
   test('idempotent — second run is a no-op', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+    const wsPath = projectConfigPath(project.cwd);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\nmcp:\n  autoStart: true\n');
     await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: () => {},
     });
@@ -201,7 +201,7 @@ describe('runMigrate', () => {
     const stdout: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: (msg) => stdout.push(msg),
     });
@@ -212,13 +212,13 @@ describe('runMigrate', () => {
   });
 
   test('--dry-run on file with deprecated fields → preview, no write', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+    const wsPath = projectConfigPath(project.cwd);
     const original = 'sync:\n  pushIntervalSeconds: 30\nmcp:\n  autoStart: true\n';
     writeConfigYaml(wsPath, original);
     const stdout: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       dryRun: true,
       homedirOverride: project.userHome,
       log: (msg) => stdout.push(msg),
@@ -226,19 +226,19 @@ describe('runMigrate', () => {
     expect(outcome.ok).toBe(true);
     expect(readFileSync(wsPath, 'utf-8')).toBe(original);
     expect(stdout.some((m) => m.includes('[dry-run]') && m.includes('sync'))).toBe(true);
-    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'workspace');
+    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
     expect(wsOutcome?.found).toContain('sync');
     expect(wsOutcome?.removed).toEqual([]);
   });
 
   test('--dry-run on clean file → "No deprecated fields found.", no write', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+    const wsPath = projectConfigPath(project.cwd);
     const original = 'mcp:\n  autoStart: true\n';
     writeConfigYaml(wsPath, original);
     const stdout: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       dryRun: true,
       homedirOverride: project.userHome,
       log: (msg) => stdout.push(msg),
@@ -248,27 +248,27 @@ describe('runMigrate', () => {
     expect(readFileSync(wsPath, 'utf-8')).toBe(original);
   });
 
-  test('--scope workspace → does not touch user file', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+  test('--scope project → does not touch user file', async () => {
+    const wsPath = projectConfigPath(project.cwd);
     const userPath = userConfigPath(project.userHome);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\n');
     writeConfigYaml(userPath, 'sync:\n  pushIntervalSeconds: 60\n');
     const userOriginal = readFileSync(userPath, 'utf-8');
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: () => {},
     });
     expect(outcome.ok).toBe(true);
     expect(readFileSync(wsPath, 'utf-8')).not.toContain('sync:');
     expect(readFileSync(userPath, 'utf-8')).toBe(userOriginal);
-    // Outcomes only includes workspace, not user
-    expect(outcome.outcomes.every((o) => o.scope === 'workspace')).toBe(true);
+    // Outcomes only includes project, not user
+    expect(outcome.outcomes.every((o) => o.scope === 'project')).toBe(true);
   });
 
-  test('--scope user → does not touch workspace file', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+  test('--scope user → does not touch project file', async () => {
+    const wsPath = projectConfigPath(project.cwd);
     const userPath = userConfigPath(project.userHome);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\n');
     writeConfigYaml(userPath, 'sync:\n  pushIntervalSeconds: 60\n');
@@ -286,7 +286,7 @@ describe('runMigrate', () => {
   });
 
   test('--scope both processes both files', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+    const wsPath = projectConfigPath(project.cwd);
     const userPath = userConfigPath(project.userHome);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\n');
     writeConfigYaml(userPath, 'persistence:\n  debounceMs: 5000\n');
@@ -302,14 +302,14 @@ describe('runMigrate', () => {
     expect(outcome.outcomes.length).toBe(2);
   });
 
-  test('unparseable YAML in workspace → ok:false with parse error reported', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+  test('unparseable YAML in project → ok:false with parse error reported', async () => {
+    const wsPath = projectConfigPath(project.cwd);
     writeConfigYaml(wsPath, '{{{ not yaml at all\n');
     const wsOriginal = readFileSync(wsPath, 'utf-8');
     const stderr: string[] = [];
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: () => {},
       error: (msg) => stderr.push(msg),
@@ -320,12 +320,12 @@ describe('runMigrate', () => {
   });
 
   test('writeConfigPatch error path → ok:false, file untouched', async () => {
-    const wsPath = workspaceConfigPath(project.cwd);
+    const wsPath = projectConfigPath(project.cwd);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\n');
     const wsOriginal = readFileSync(wsPath, 'utf-8');
     const outcome = await runMigrate({
       cwd: project.cwd,
-      scope: 'workspace',
+      scope: 'project',
       homedirOverride: project.userHome,
       log: () => {},
       error: () => {},
@@ -336,7 +336,7 @@ describe('runMigrate', () => {
     });
     expect(outcome.ok).toBe(false);
     expect(readFileSync(wsPath, 'utf-8')).toBe(wsOriginal);
-    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'workspace');
+    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
     expect(wsOutcome?.error).toContain('simulated disk full');
   });
 });

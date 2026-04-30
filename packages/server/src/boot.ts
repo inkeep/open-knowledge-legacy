@@ -27,7 +27,7 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
 import { isProcessAlive } from './process-alive.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
-import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** Default parent-death poll interval. Spec NFR2 — 5 s is well below CPU noise floor. */
@@ -516,7 +516,11 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
       clearInterval(parentDeathPoll);
       parentDeathPoll = null;
     }
-    idleHandle?.detach();
+    try {
+      idleHandle?.detach();
+    } catch (err) {
+      log.warn({ err }, '[bootServer.destroy] idleHandle.detach failed');
+    }
     // Cancel any pending keepalive-grace timers so they don't fire against a
     // disposed sessionManager / agentFocusBroadcaster after destroy returns.
     for (const timer of keepaliveGraceTimers.values()) {
@@ -529,13 +533,50 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     if (keepaliveGraceInflight.size > 0) {
       await Promise.allSettled([...keepaliveGraceInflight]);
     }
-    await new Promise<void>((resolveClose) => {
-      httpServer.close(() => resolveClose());
-    });
-    await destroyHocuspocus();
-    // Flush pending spans/metrics LAST so the teardown sequence itself is
-    // observable. shutdownTelemetry is idempotent and has a 5s timeout.
-    await shutdownTelemetry();
+    // Bound the listener shutdown so a stuck keep-alive socket or hung
+    // upgrade can't wedge the server.lock release. `closeAllConnections()`
+    // (Node ≥18.2) severs in-flight sockets, and the 10s race guarantees
+    // forward progress. The `try/finally` is load-bearing: `destroyHocuspocus`
+    // MUST run so its own `try/finally` can release the server.lock — the
+    // outer wrapper's earlier shape silently skipped it when close() hung.
+    try {
+      try {
+        httpServer.closeAllConnections?.();
+      } catch (err) {
+        log.warn({ err }, '[bootServer.destroy] closeAllConnections failed');
+      }
+      // Capture the race-timer handle so we can cancel it on the happy
+      // path. Without this, a `close()` that resolves before 10 s leaves
+      // the `setTimeout` handle pending in the event loop — timers are
+      // ref'd by default, which keeps Node alive and defeats the
+      // "release everything ASAP" contract destroy() is meant to uphold.
+      // Symptom surfaces under tests that spin up+tear down bootServer
+      // rapidly, or in the Electron utility's shutdown path.
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          new Promise<void>((resolveClose) => httpServer.close(() => resolveClose())),
+          new Promise<void>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('httpServer.close timeout after 10s')),
+              10_000,
+            );
+          }),
+        ]).catch((err) => {
+          log.warn(
+            { err },
+            '[bootServer.destroy] httpServer.close did not complete within timeout',
+          );
+        });
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    } finally {
+      await destroyHocuspocus();
+      // Flush pending spans/metrics LAST so the teardown sequence itself is
+      // observable. shutdownTelemetry is idempotent and has a 5s timeout.
+      await shutdownTelemetry();
+    }
   };
 
   // Parent-death watch. When this server was spawned by an MCP (the

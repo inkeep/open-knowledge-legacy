@@ -42,6 +42,7 @@ import {
   createRestartableServer,
   pollDiskContentStable,
   pollUntil,
+  seedPoolServerInstanceId,
 } from './test-harness';
 
 const CONTENT_A = `# Main Branch Doc
@@ -175,10 +176,13 @@ describe('T5: Branch switch while tab open', () => {
     });
 
     // Mirror production: DocumentContext seeds the pool's observed branch
-    // from the boot fetch before any doc opens. Without this, the pool's
-    // first IDB attach uses the `_unknown_` sentinel branch and the
-    // post-switch deletion target wouldn't be `ok-ydoc:main:test-doc`.
+    // and serverInstanceId from the boot fetch before any doc opens.
+    // Without the branch seed, the pool's first IDB attach uses the
+    // `_unknown_` sentinel branch. Without the serverInstanceId seed,
+    // persistence wouldn't attach at all (epoch-scoped DB names require
+    // the live id) and the post-switch deletion would never fire.
     pool.setObservedBranch('main');
+    const serverInstanceId = await seedPoolServerInstanceId(server, pool);
 
     pool.open('test-doc');
     pool.setActive('test-doc');
@@ -279,12 +283,15 @@ describe('T5: Branch switch while tab open', () => {
     // Client-side invalidation fired: `handleBranchSwitched` called
     // `clearData()` on the pool's active persistence, which deletes the
     // OLD-branch-prefixed IDB. The pool's default observed branch on
-    // first observation was `main` (the server's startup branch), so
-    // the deleted DB is `ok-ydoc:main:test-doc`. The branch-switched
+    // first observation was `main` (the server's startup branch); the
+    // epoch-scoped DB name embeds the live `serverInstanceId` between
+    // branch and docName, so the deleted DB is
+    // `ok-ydoc:main:${serverInstanceId}:test-doc`. The branch-switched
     // CC1 signal rides the __system__ doc's stateless channel and
     // travels independently of the main doc's sync round-trip, so poll
     // to absorb the handshake latency.
-    await pollUntil(() => deletedDbs.includes('ok-ydoc:main:test-doc'), 10_000, 50);
-    expect(deletedDbs).toContain('ok-ydoc:main:test-doc');
+    const expectedDbName = `ok-ydoc:main:${serverInstanceId}:test-doc`;
+    await pollUntil(() => deletedDbs.includes(expectedDbName), 10_000, 50);
+    expect(deletedDbs).toContain(expectedDbName);
   }, 45_000);
 });

@@ -2,37 +2,42 @@
  * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
- * the standalone Server and the Vite dev plugin.
+ * the production Server (assembled by `createServer()` in `server-factory.ts`)
+ * and the Vite dev plugin.
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createReadStream,
+  createWriteStream,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
-  ALLOWED_AUDIO_MIME_TYPES,
-  ALLOWED_IMAGE_MIME_TYPES,
-  ALLOWED_VIDEO_MIME_TYPES,
+  ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -50,7 +55,7 @@ import {
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
-import { fileTypeFromBuffer } from 'file-type';
+import { fileTypeFromFile } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -77,6 +82,11 @@ import {
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
 import { readUiLock } from './ui-lock.ts';
+import {
+  HashingPassThrough,
+  linkTempToFinalWithCollisionRetry,
+  mintTempUploadPath,
+} from './upload-streaming.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -90,7 +100,15 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { parseAgentBodyFields, resolveAgentType, validateAgentId } from './agent-id.ts';
+import {
+  applyRenameMap,
+  buildRenameMap,
+  ManagedRenameCollisionError,
+  ManagedRenameDestinationExistsError,
+  ManagedRenameSourceNotFoundError,
+  ManagedRenameSourceTypeMismatchError,
+} from './apply-managed-rename.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -98,13 +116,24 @@ import {
 } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
-import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import type { ContentFilter } from './content-filter.ts';
+import {
+  type DocExtension,
+  forgetDocExtension,
+  getDocExtension,
+  isSupportedDocFile,
+  registerDocExtension,
+  SUPPORTED_DOC_EXTENSIONS,
+  stripDocExtension,
+} from './doc-extensions.ts';
+import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
   contentHash,
   type FileIndexEntry,
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -122,10 +151,6 @@ import {
   type ManagedRenameSnapshot,
   withManagedRenameRecovery,
 } from './managed-rename-journal.ts';
-import {
-  rewriteMarkdownLinksForDocumentRename,
-  rewriteWikiLinksForDocumentRename,
-} from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
   getMetrics,
@@ -160,7 +185,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer } from './telemetry.ts';
+import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 // Cache the HTTP duration histogram at module scope — lazy-init at first use
@@ -239,6 +264,27 @@ function findLooksLikeFrontmatter(find: string): boolean {
   return false;
 }
 
+let _renameAttributionCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_renameAttributionCounter) {
+    _renameAttributionCounter = getMeter().createCounter('ok.rename.attribution_kind', {
+      description:
+        'Count of rename and rollback handler dispatches by attribution kind (agent | principal | anonymous)',
+    });
+  }
+  return _renameAttributionCounter;
+}
+
+/**
+ * Test-only: clear the lazy-initialized rename counter so a test that
+ * registers a fresh meter provider via `metrics.setGlobalMeterProvider`
+ * can capture subsequent counter increments. Production code never calls this.
+ */
+export function __resetRenameTelemetryForTesting(): void {
+  _renameAttributionCounter = null;
+}
+
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
@@ -252,7 +298,7 @@ function findLooksLikeFrontmatter(find: string): boolean {
  * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -269,7 +315,7 @@ export const ROLLBACK_ORIGIN = {
  * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -292,59 +338,298 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
-const ALLOWED_VIDEO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_VIDEO_MIME_TYPES);
-const ALLOWED_AUDIO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_AUDIO_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
+// F9: unicode-preserving. Permits any Unicode letter, number, or combining
+// mark, plus pictographic emoji and the punctuation whitelist (., -, _, space).
+// Everything else (including `/`, `\`, null bytes, control chars, CRLF) is
+// either stripped or replaced so path-escape guards downstream keep their
+// invariants. CJK, Arabic, Cyrillic, and emoji survive — macOS/Finder
+// ergonomics without sacrificing filesystem safety.
+const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
+// Stripping C0 + DEL is the whole point — the rule fires on intentional use.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
+const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
+
 export function sanitizeFilename(name: string): string {
-  const base = name.replace(/[/\\]/g, '');
-  const ext = extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
-  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
-  return safeStem + safeExt;
-}
+  // Strip path separators and null/control bytes BEFORE any other pass so
+  // they cannot reappear inside a replacement and dodge later checks.
+  let stripped = name.replace(STRIP_ON_SIGHT, '');
+  stripped = stripped.replace(SAFE_FILENAME_CHARS, '_');
 
-function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
-  const ext = extname(sanitized);
-  const stem = sanitized.slice(0, sanitized.length - ext.length);
-  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
+  // Collapse underscore and dot runs so "../etc/passwd" → "etcpasswd" and
+  // "foo__bar" → "foo_bar".
+  stripped = stripped.replace(/_+/g, '_').replace(/\.{2,}/g, '.');
 
-  for (const name of candidates) {
-    const destPath = resolve(destDir, name);
-    try {
-      const fd = openSync(destPath, 'wx');
-      try {
-        writeSync(fd, buffer);
-      } finally {
-        closeSync(fd);
-      }
-      return name;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw err;
+  // No hidden files — trim leading dots and leading underscores.
+  stripped = stripped.replace(/^[._]+/, '');
+  // Filesystem portability — strip trailing dots (Windows trims them too).
+  stripped = stripped.replace(/\.+$/, '');
+
+  if (stripped === '') return 'upload';
+
+  // Most filesystems cap basenames at 255 bytes (ext4, APFS, exFAT). Without a
+  // ceiling, a multipart `Content-Disposition` filename approaching busboy's
+  // header size can sail through Unicode-letter sanitization and surface as
+  // `ENAMETOOLONG` from `linkSync`, which classifies as a generic
+  // `storage-error` → 500. Truncate the stem (preserving the extension) to
+  // stay within the portable basename ceiling.
+  const MAX_BYTES = 255;
+  const encoder = new TextEncoder();
+  if (encoder.encode(stripped).length > MAX_BYTES) {
+    const dotIdx = stripped.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
+    let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
+    // `slice(0, -1)` removes one UTF-16 code unit. A trailing emoji is a
+    // surrogate pair, so the loop transiently produces a lone-surrogate
+    // string that `TextEncoder` re-encodes as U+FFFD (3 bytes) — harmless
+    // since the emoji is fully consumed before the loop exits and the
+    // returned string is always valid UTF-8.
+    while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
+      stem = stem.slice(0, -1);
     }
+    stripped = (stem || 'upload') + ext;
+    // The loop drains the stem; it cannot shrink the extension itself.
+    // An adversarial 250+ byte extension (e.g. `'x.' + 'a'.repeat(300)`)
+    // would drain the stem to empty and still leave `'upload' + ext`
+    // above the ceiling. Final-pass guard: fall back to extensionless
+    // `'upload'` when even the floor exceeds MAX_BYTES.
+    if (encoder.encode(stripped).length > MAX_BYTES) stripped = 'upload';
   }
-  throw new Error('Could not find available filename after 100 attempts');
+
+  return stripped;
 }
+
+/**
+ * SPEC §6 FR-5 / docs/assets-and-embeds.mdx: resolve the destination
+ * directory for an upload from the parent doc's path and the configured
+ * `upload.attachmentFolderPath`. Matches Obsidian's literal schema (D-J
+ * free-form string):
+ *
+ *   - `"./"` (default)  → same directory as the doc
+ *   - `"/"`             → content-directory root
+ *   - `"./<sub>"`       → subdirectory beside the doc
+ *   - `"<name>"` (bare) → fixed content-relative path
+ *
+ * Treats any `./` prefix as "relative to doc dir," any other value as
+ * "relative to content dir." Empty or whitespace-only strings fall back
+ * to the default (doc dir).
+ *
+ * Returns an absolute path within `resolvedContentDir` — path-escape
+ * enforcement happens at the caller via `isWithinContentDir` + `realpath`.
+ */
+export function resolveUploadDestDir(
+  parentDocName: string,
+  attachmentFolderPath: string,
+  resolvedContentDir: string,
+): string {
+  const trimmed = attachmentFolderPath.trim();
+  if (trimmed === '' || trimmed === './') {
+    return resolve(resolvedContentDir, dirname(parentDocName));
+  }
+  if (trimmed === '/') {
+    return resolvedContentDir;
+  }
+  if (trimmed.startsWith('./')) {
+    // Subdirectory beside the doc. `"./attachments"` → `<docDir>/attachments`.
+    return resolve(resolvedContentDir, dirname(parentDocName), trimmed.slice(2));
+  }
+  // Bare name or nested path: fixed content-relative location.
+  return resolve(resolvedContentDir, trimmed);
+}
+
+/**
+ * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
+ * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
+ * the tempfile, read its head, and check for `<svg` / `<?xml ... <svg`
+ * without ever materializing the whole file.
+ */
+function readTempFileHead(path: string, n: number): Buffer {
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const read = readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * SPEC §6 FR-2: scan `destDir` non-recursively for an existing file whose
+ * sha256 matches the buffer's. Returns the matching basename (case-preserving)
+ * or null if no match. Bounded by directory size — O(n) in sibling count, not
+ * vault size, per NFR-1. Only files with extensions in ASSET_EXTENSIONS are
+ * candidates; everything else (markdown, .git/, etc.) is skipped.
+ *
+ * `expectedSize` is the buffer's byte length — passed in so we can size-
+ * prefilter before hashing siblings. sha256 collision requires equal-sized
+ * inputs, so same-extension siblings with a different size are not
+ * candidates and we skip their (potentially multi-MB) read. This turns
+ * the common "paste a new screenshot" path from O(total asset bytes in
+ * dir) back to O(sibling count × stat). Non-ENOENT read failures log at
+ * WARN so silent dedup degradation has a signal.
+ */
+/**
+ * Upper bound on size-matched candidates we'll read+hash in a single
+ * dedup call. A capture-device folder with 1000+ screenshots at the same
+ * resolution could theoretically produce that many same-size siblings;
+ * each candidate costs a sync readFileSync + sha256Hex of the entire
+ * buffer, which would block the event loop for seconds per upload under
+ * adversarial / pathological load.
+ *
+ * Past the bound, dedup degrades to best-effort: we log a structured
+ * WARN and return null (treat as no-match → write a new file with the
+ * collision-suffix loop). This is a bounded-resource defense, not a
+ * correctness change — a duplicate that slips through produces the
+ * cheap storage cost of one extra on-disk copy, not silent data loss.
+ * The O(1) hash-cache alternative proposed in the review note is a
+ * larger architectural change and a follow-on.
+ */
+const MAX_DEDUP_SCAN_CANDIDATES = 1000;
+
+/**
+ * Stream a file's bytes through a sha256 Hash transform and return the hex
+ * digest. Keeps memory O(1) regardless of file size — a 500 MB candidate
+ * read by the buffer-based `readFileSync` path would otherwise materialize
+ * the whole file in heap, which defeats the streaming-upload amendment's
+ * O(1) memory guarantee (SPEC.md §Post-finalization amendment, NFR-1).
+ *
+ * Throws on read errors so the caller can classify ENOENT (concurrent
+ * rename — stay silent) vs other errors (log and skip).
+ */
+async function streamingHashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(path), hash);
+  return hash.digest('hex');
+}
+
+async function findDuplicateAsset(
+  destDir: string,
+  sha: string,
+  expectedSize: number,
+): Promise<string | null> {
+  let entries: string[];
+  try {
+    // Async `readdir` so the directory walk doesn't block the event
+    // loop during uploads — bun's loop is shared with WebSocket sync
+    // and CRDT updates, and a 1k-entry walk is observable on bursty
+    // upload traffic. The MAX_DEDUP_SCAN_CANDIDATES cap (line ~76)
+    // bounds the worst case at 1000 same-size siblings, but the
+    // pre-cap entry list can still be much larger.
+    entries = await readdir(destDir);
+  } catch {
+    return null;
+  }
+  const log = getLogger('upload');
+  let scanned = 0;
+  for (const entry of entries) {
+    const ext = extname(entry).slice(1).toLowerCase();
+    if (!ASSET_EXTENSIONS.has(ext)) continue;
+    const fullPath = resolve(destDir, entry);
+    let entryStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      entryStat = await stat(fullPath);
+    } catch {
+      continue;
+    }
+    if (!entryStat.isFile() || entryStat.size !== expectedSize) continue;
+    // Bounded scan: only count candidates that passed the cheap size
+    // prefilter, since same-size siblings are the ones that cost a
+    // full-file hash each (streaming now, not buffered).
+    scanned++;
+    if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
+      log.warn(
+        {
+          event: 'upload-dedup-skip',
+          reason: 'scan-cap-exceeded',
+          destDir,
+          scanned: MAX_DEDUP_SCAN_CANDIDATES,
+          expectedSize,
+        },
+        `[upload-dedup] candidate scan exceeded ${MAX_DEDUP_SCAN_CANDIDATES} same-size siblings — degrading to no-dedup for this upload`,
+      );
+      return null;
+    }
+    let candidateSha: string;
+    try {
+      // Stream + hash the candidate to preserve the O(1) memory guarantee
+      // the upload pipeline otherwise maintains end-to-end. A 500 MB
+      // candidate otherwise spiked heap to 500 MB per scan.
+      candidateSha = await streamingHashFile(fullPath);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOENT is the legitimate concurrent-rename race — stay silent.
+      if (code !== 'ENOENT') {
+        log.warn(
+          { event: 'upload-dedup-skip', reason: 'read-failed', code, entry },
+          '[upload-dedup] skipped candidate — read failed',
+        );
+      }
+      continue;
+    }
+    if (candidateSha === sha) return entry;
+  }
+  return null;
+}
+
+/**
+ * Discriminator for write failures so the upload handler can surface a
+ * specific error code (`collision-exhaustion` / `storage-full` /
+ * `storage-readonly` / `storage-error`) instead of collapsing every
+ * filesystem failure into a generic 500 "Failed to save file" response.
+ * The code field is a stable part of the error envelope; the numeric
+ * HTTP status differentiates transient-yet-retry (500) from full-disk
+ * (507) per RFC 4918.
+ */
+import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
   mimeType: string;
-  buffer: Buffer;
   parentDocName: string;
+  tempPath: string;
+  sha: string;
+  byteLength: number;
 }
 
-function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+/**
+ * Stream multipart upload body to a tempfile while hashing on-the-fly.
+ *
+ * Replaces the buffer-to-memory pattern (chunks.push(chunk) +
+ * Buffer.concat) with busboy's streaming 'file' event piped through a
+ * HashingPassThrough Transform into createWriteStream(tempPath). Memory
+ * becomes O(1); disk is the only bound.
+ *
+ * Error contract (typed via UploadWriteError.reason):
+ *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
+ *   - storage-full: ENOSPC / EDQUOT during the write stream
+ *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
+ *   - storage-error: any other write-stream error
+ *
+ * On any error, the tempfile is best-effort unlinked before propagating.
+ * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
+ */
+function readUploadBody(req: IncomingMessage, contentDir: string): Promise<UploadResult> {
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+      // `files: 1` caps the file part; `fields` + `fieldSize` cap non-file
+      // surface so a flooded multipart can't buffer thousands of fields or a
+      // multi-MB string field in memory before the upload body resolves. The
+      // legitimate schema (agentId / docName / position / summary) is bounded
+      // — short identifiers, never approaching 2 KB or 10 entries. The
+      // ENAMETOOLONG-via-crafted-filename DoS path is closed by the 255-byte
+      // ceiling in `sanitizeFilename` (the filesystem-portability layer);
+      // busboy does not expose a header-section-size limit (only headerPairs
+      // count), so the parsed-value cap is the right place.
+      bb = busboy({
+        headers: req.headers,
+        limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
+      });
     } catch (err) {
-      reject(err);
+      reject(new UploadWriteError('malformed-upload', err));
       return;
     }
 
@@ -352,59 +637,134 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
     let filename = 'upload';
     let mimeType = '';
     let parentDocName = '';
-    const chunks: Buffer[] = [];
-    let exceeded = false;
+    let tempPath: string | undefined;
+    let pipelineError: unknown;
+    // Track whether the 'file' event ever fired. busboy emits 'close' as
+    // soon as it finishes parsing the request body — but the file
+    // pipeline (createWriteStream + HashingPassThrough) is async and may
+    // still be running when 'close' fires. We must NOT resolve to an
+    // empty UploadResult on 'close' when a file IS being processed; the
+    // pipeline `.then()` is the legitimate resolver in that case. Only
+    // the no-file path needs the 'close' fallback.
+    let fileEventFired = false;
+
+    // Mint the tempfile path lazily on the first 'file' event — busboy
+    // can fire 'error' before any file arrives (e.g. missing boundary)
+    // and we'd otherwise create a zero-byte tempfile for no reason.
+
+    const fail = (reason: UploadWriteReason, cause: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (tempPath) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep catches stragglers
+        }
+      }
+      reject(cause instanceof UploadWriteError ? cause : new UploadWriteError(reason, cause));
+    };
+
+    const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
+        return 'storage-readonly';
+      }
+      return 'storage-error';
+    };
 
     bb.on('field', (name, val) => {
       if (name === 'parentDocName') parentDocName = val;
     });
 
     bb.on('file', (_fieldname, file, info) => {
+      fileEventFired = true;
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      file.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      file.on('limit', () => {
-        exceeded = true;
-        req.unpipe(bb);
-        if (!settled) {
-          settled = true;
-          reject(new Error('Payload too large'));
-        }
-      });
-
-      file.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      });
-    });
-
-    bb.on('finish', () => {
-      if (!settled) {
-        if (exceeded) {
-          settled = true;
-          reject(new Error('Payload too large'));
-          return;
-        }
-        if (!mimeType && chunks.length === 0) {
-          settled = true;
-          reject(new Error('No file received'));
-          return;
-        }
-        settled = true;
-        resolveP({ filename, mimeType, buffer: Buffer.concat(chunks), parentDocName });
+      // `mintTempUploadPath` does `tracedMkdirSync(.., { recursive: true })`
+      // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
+      // uncaught throw here bubbles back through busboy's `_write` and
+      // re-emits as `'error'`, which the listener below classifies as
+      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
+      // a full disk into chasing a phantom client bug. Catch the sync
+      // throw, classify via the same table the pipeline rejection uses,
+      // and drain the file part so busboy can finish parsing the rest.
+      let path: string;
+      try {
+        path = mintTempUploadPath(contentDir);
+      } catch (err) {
+        const nodeErr = err as NodeJS.ErrnoException;
+        fail(classifyWriteError(nodeErr), err as Error);
+        file.resume();
+        return;
       }
+      tempPath = path;
+      const hasher = new HashingPassThrough();
+      const writeStream = createWriteStream(path);
+
+      pipeline(file, hasher, writeStream)
+        .then(() => {
+          if (settled) return;
+          settled = true;
+          resolveP({
+            filename,
+            mimeType,
+            parentDocName,
+            tempPath: path,
+            sha: hasher.digest(),
+            byteLength: hasher.byteLength(),
+          });
+        })
+        .catch((err) => {
+          pipelineError = err;
+          // Classify from the deepest write error if available; otherwise
+          // treat as a generic storage-error. The unlink happens inside fail().
+          const nodeErr = err as NodeJS.ErrnoException;
+          fail(classifyWriteError(nodeErr), err);
+        });
     });
 
     bb.on('error', (err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
+      fail('malformed-upload', err);
+    });
+
+    // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
+    // fires once busboy finishes parsing the request body. If by then
+    // no `file` event ever fired, the request was a well-formed
+    // multipart with fields-only (no file part) — resolve with a
+    // synthetic empty UploadResult so the route handler's
+    // `byteLength === 0` guard returns the standard 400 "No file
+    // received." Without this hook the Promise never settles on fields-
+    // only uploads and the connection hangs until Node's request
+    // timeout fires (DoS).
+    //
+    // CRUCIAL: gate on `!fileEventFired`. If a file part IS present,
+    // busboy emits 'close' as soon as it finishes parsing — but the
+    // async write/hash pipeline below may still be running. Resolving
+    // here would race the pipeline's legitimate resolveP and produce a
+    // spurious empty result. Pipeline resolves win in that case.
+    bb.on('close', () => {
+      if (settled || pipelineError) return;
+      if (fileEventFired) return;
+      settled = true;
+      resolveP({
+        filename: '',
+        mimeType: '',
+        parentDocName,
+        tempPath: '',
+        sha: '',
+        byteLength: 0,
+      });
+    });
+
+    // Guard the "client disconnected mid-stream" path. busboy never
+    // reaches `_final` if the request aborts before the closing boundary,
+    // so its `close` would not fire and the Promise would otherwise hang.
+    req.on('close', () => {
+      if (settled || pipelineError) return;
+      if (!req.complete) {
+        fail('malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -472,27 +832,6 @@ function remapDocNameForRename(
   return `${toPath}${docName.slice(fromPath.length)}`;
 }
 
-function rewriteSupportedLinksForDocumentRename(
-  markdown: string,
-  sourceDocName: string,
-  oldDocName: string,
-  newDocName: string,
-): ManagedRenameRewriteSummary {
-  const { frontmatter, body } = stripFrontmatter(markdown);
-  const wikiRewrite = rewriteWikiLinksForDocumentRename(body, oldDocName, newDocName);
-  const markdownRewrite = rewriteMarkdownLinksForDocumentRename(
-    wikiRewrite.markdown,
-    sourceDocName,
-    oldDocName,
-    newDocName,
-  );
-
-  return {
-    markdown: prependFrontmatter(frontmatter, markdownRewrite.markdown),
-    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites,
-  };
-}
-
 /**
  * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
  * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
@@ -540,10 +879,10 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
 
   const resolvedContentDir = resolve(contentDir);
   // When kind is 'file': if the caller passed an explicit supported extension,
-  // use the path verbatim — this is how the rename handler signals an
-  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
-  // Extension-less paths fall through to getDocExtension() + the registered
-  // extension map so legacy callers keep the source's existing extension.
+  // use the path verbatim — this is how rename callers signal an extension
+  // change (toPath: "foo.mdx" renames foo.md → foo.mdx). Extension-less paths
+  // fall through to getDocExtension() + the registered extension map so legacy
+  // callers keep the source's existing extension.
   const relativePath =
     kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
@@ -555,6 +894,32 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   assertNoSymlinkEscape(fullPath, resolvedContentDir);
 
   return fullPath;
+}
+
+/**
+ * Probe disk for the actual on-disk extension of a file's docName, registering
+ * it in the doc-extensions map if found. Closes a boot/watcher race where the
+ * rename handler runs before the file watcher has observed the source — without
+ * this, `getDocExtension()` returns the `.md` default, which silently defeats
+ * `.mdx`-specific exclusion patterns and routes existence checks to the wrong
+ * path. Iterating in `SUPPORTED_DOC_EXTENSIONS` precedence order ensures the
+ * `.mdx` precedence rule is preserved when both files exist on disk.
+ * Idempotent — `registerDocExtension` is a no-op when the higher-precedence
+ * extension is already registered.
+ */
+function probeAndRegisterSourceFileExtension(contentDir: string, fromPath: string): void {
+  if (!isValidRelativeContentPath(fromPath)) return;
+  const resolvedContentDir = resolve(contentDir);
+  for (const ext of SUPPORTED_DOC_EXTENSIONS) {
+    const candidate = resolve(resolvedContentDir, `${fromPath}${ext}`);
+    if (candidate !== resolvedContentDir && !candidate.startsWith(`${resolvedContentDir}${sep}`)) {
+      continue;
+    }
+    if (existsSync(candidate)) {
+      registerDocExtension(fromPath, ext);
+      return;
+    }
+  }
 }
 
 function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
@@ -581,7 +946,19 @@ async function renameTrackedPathInGit(
 
   return await withParentLock(async () => {
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    // `ls-files` throws `GitError: fatal: not a git repository` when
+    // projectDir isn't a git checkout — normal in test tmpdirs and in Vite
+    // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
+    // so the caller falls back to `fs.renameSync`. Any other git failure
+    // (permission denied, corrupted index) also falls through to fs rename
+    // rather than 500ing the /api/rename-path handler.
+    let tracked = '';
+    try {
+      tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git ls-files failed, falling back to fs rename:', err);
+      return false;
+    }
     if (!tracked) return false;
     mkdirSync(dirname(destinationPath), { recursive: true });
     try {
@@ -626,7 +1003,7 @@ export interface ApiExtensionOptions {
   getCurrentBranch?: () => string | null;
   /**
    * Accessor for the latest disk-ack state vectors per document. Wired
-   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
+   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in boot.
    * Returned as part of `GET /api/server-info` so clients can recover
    * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
    * without relying on stateless CC1 broadcasts (which have no replay).
@@ -683,11 +1060,26 @@ export interface ApiExtensionOptions {
    */
   projectDir?: string;
   /**
+   * Basename-index resolver for `![[photo.png]]` wiki-embed refs. Threaded
+   * into every server-side `mdManager.parseWithFallback` call (managed-rename
+   * body rewrite, rollback content apply) so the resulting PM image/link
+   * carries the resolved src/href.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Getter for the server's principal record. Called at request time so
    * deferred async init propagates. Returns null if principal has not
    * yet been loaded or loading failed.
    */
   getPrincipal?: () => Principal | null;
+  /**
+   * Active ContentFilter (the same instance threaded into the file watcher).
+   * When present, `POST /api/rename-path` rejects destinations excluded by
+   * the workspace's `content.include`/`content.exclude` config so renames
+   * cannot land outside the watched scope. Omit in tests where admission
+   * checks aren't relevant.
+   */
+  contentFilter?: ContentFilter;
   /**
    * OS-scheme install probe used by `GET /api/installed-agents` (web-host
    * parity for the Electron `ok:shell:detect-protocol` IPC — see
@@ -816,6 +1208,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     localOpCliArgs = ['open-knowledge'],
     projectDir,
     getPrincipal,
+    contentFilter,
     installedAgentsProbe,
     forceUnloadDocument,
   } = options;
@@ -1025,20 +1418,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): string {
+  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
     if (!(error instanceof Error)) {
-      return 'Failed to rename document';
+      return { status: 500, error: 'Failed to rename document' };
     }
-
-    if (
-      error.message === 'Managed rename requires backlink index support' ||
-      error.message.startsWith('Cannot rename missing document:') ||
-      error.message.startsWith('symlink-escape:')
-    ) {
-      return error.message;
+    if (error instanceof ManagedRenameSourceNotFoundError) {
+      return { status: 404, error: error.message };
     }
-
-    return 'Failed to rename document';
+    if (error instanceof ManagedRenameDestinationExistsError) {
+      return { status: 409, error: error.message };
+    }
+    if (error instanceof ManagedRenameSourceTypeMismatchError) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message.startsWith('Cannot rename missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('Cannot snapshot missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('symlink-escape:')) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message === 'Managed rename requires backlink index support') {
+      return { status: 503, error: error.message };
+    }
+    return { status: 500, error: 'Failed to rename document' };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -1076,7 +1481,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const filePath = safeContentPath(toDocName, contentDir);
       const liveContent = liveContents.get(fromDocName);
       if (typeof liveContent === 'string') {
-        writeFileSync(filePath, liveContent, 'utf-8');
+        tracedWriteFileSync(filePath, liveContent, 'utf-8');
       }
 
       const finalContent =
@@ -1129,8 +1534,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function writeManagedRenameDocumentToDisk(docName: string, markdown: string): void {
     const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, markdown, 'utf-8');
+    tracedMkdirSync(dirname(filePath), { recursive: true });
+    tracedWriteFileSync(filePath, markdown, 'utf-8');
     registerWrite(filePath, contentHash(markdown));
     setReconciledBase(docName, markdown);
 
@@ -1143,10 +1548,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  function applyManagedRenameToLoadedDocument(
+  function applyManagedRenameMapToLoadedDocument(
     docName: string,
-    oldDocName: string,
-    newDocName: string,
+    renameMap: ReadonlyMap<string, string>,
   ): ManagedRenameRewriteSummary {
     const document = hocuspocus.documents.get(docName);
     if (!document) {
@@ -1158,7 +1562,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
-      result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
+      result = applyRenameMap(currentText, docName, renameMap);
       if (result.rewrites === 0) {
         return;
       }
@@ -1168,7 +1572,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // updateYFragment (preserves user-content Items at matching positions) →
       // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
-      const parsedJson = mdManager.parseWithFallback(body);
+      const parseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       updateYFragment(document, xmlFragment, pmNode, {
         mapping: new Map(),
@@ -1179,144 +1586,271 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return result;
   }
 
-  async function _performManagedRename(
-    sourceDocName: string,
-    destinationDocName: string,
+  async function _performManagedRenameForDocs(
+    fromPath: string,
+    toPath: string,
+    kind: ContentEntryKind,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
-    return runSerialized(async () => {
-      if (!backlinkIndex) {
-        throw new Error('Managed rename requires backlink index support');
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', sourceDocName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', destinationDocName);
-      const renamed: RenamedDocMapping[] = [
-        { fromDocName: sourceDocName, toDocName: destinationDocName },
-      ];
-
-      const backlinkSources = [
-        ...new Set(backlinkIndex.getBacklinks(sourceDocName).map((entry) => entry.source)),
-      ].sort((a, b) => a.localeCompare(b));
-      const snapshotContents = new Map<string, string>();
-      const rewriteDocNames: string[] = [];
-      const missingBacklinkSources: string[] = [];
-
-      for (const docName of [sourceDocName, ...backlinkSources]) {
-        if (snapshotContents.has(docName)) continue;
-        const content = readCurrentDocumentContent(docName);
-        if (typeof content === 'string') {
-          snapshotContents.set(docName, content);
-          if (docName !== sourceDocName) {
-            rewriteDocNames.push(docName);
-          }
-        } else if (docName !== sourceDocName) {
-          missingBacklinkSources.push(docName);
-        }
-      }
-
-      const sourceSnapshot = snapshotContents.get(sourceDocName);
-      if (typeof sourceSnapshot !== 'string') {
-        throw new Error(`Cannot rename missing document: ${sourceDocName}`);
-      }
-
-      const recoveryJournal = createManagedRenameRecoveryJournal({
-        sourceDocName,
-        destinationDocName,
-        snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
-      });
-
-      const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
-
-      await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
-        for (const docName of missingBacklinkSources) {
-          backlinkIndex.deleteDocument(docName);
-        }
-
-        for (const docName of rewriteDocNames) {
-          const document = hocuspocus.documents.get(docName);
-          const rewritten = document
-            ? applyManagedRenameToLoadedDocument(docName, sourceDocName, destinationDocName)
-            : rewriteSupportedLinksForDocumentRename(
-                snapshotContents.get(docName) ?? '',
-                docName,
-                sourceDocName,
-                destinationDocName,
-              );
-
-          if (rewritten.rewrites > 0) {
-            writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
-            rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+    return runSerialized(async () =>
+      withSpan(
+        'rename.executeRewrites',
+        {
+          attributes: {
+            'rename.kind': kind,
+          },
+        },
+        async (span) => {
+          if (!backlinkIndex) {
+            throw new Error('Managed rename requires backlink index support');
           }
 
-          backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
-        }
+          // Existence + stat + affected-doc enumeration all live inside the
+          // serialized critical section so a concurrent file watcher event
+          // (external mv add) or in-flight write to the source folder cannot
+          // land between enumeration and the disk move and produce a "ghost"
+          // file that the recovery journal doesn't know about. POSIX
+          // rename(2) does not fail-loud on overwrite, so the lock is the
+          // only backstop against silent data loss.
+          const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
+          const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
+          // Handles the case where the client sends an explicit extension that
+          // matches the source's existing one (e.g. `toPath: "foo.md"` when
+          // the file is already `foo.md`) — `fromPath !== toPath` textually
+          // but the on-disk paths resolve to the same file. Treat as no-op,
+          // mirroring the extension-less `fromPath === toPath` short-circuit
+          // in the handler. Returning empty arrays here propagates as
+          // `{ ok: true, renamed: [], rewrittenDocs: [] }` to the caller.
+          if (sourcePathRoot === destinationPathRoot) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
+          if (!existsSync(sourcePathRoot)) {
+            throw new ManagedRenameSourceNotFoundError(kind);
+          }
+          if (existsSync(destinationPathRoot)) {
+            throw new ManagedRenameDestinationExistsError();
+          }
+          const sourceStat = statSync(sourcePathRoot);
+          if (
+            (kind === 'file' && !sourceStat.isFile()) ||
+            (kind === 'folder' && !sourceStat.isDirectory())
+          ) {
+            throw new ManagedRenameSourceTypeMismatchError(kind);
+          }
 
-        const sourceLiveContents = await captureAndCloseDocuments([sourceDocName]);
-        const sourceCurrentContent =
-          sourceLiveContents.get(sourceDocName) ??
-          snapshotContents.get(sourceDocName) ??
-          readFileSync(sourcePath, 'utf-8');
-        const renamedSource = rewriteSupportedLinksForDocumentRename(
-          sourceCurrentContent,
-          sourceDocName,
-          sourceDocName,
-          destinationDocName,
-        );
-
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
-        setReconciledBase(destinationDocName, renamedSource.markdown);
-
-        const fileIndex = getFileIndex();
-        if (fileIndex instanceof Map) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: sourcePath,
-              newPath: destinationPath,
-              oldDocName: sourceDocName,
-              newDocName: destinationDocName,
-              content: renamedSource.markdown,
-            },
-            fileIndex as Map<string, FileIndexEntry>,
+          // Downstream code (safeContentPath, setReconciledBase,
+          // backlinkIndex, file index, applyRenameMap) keys on extension-less
+          // docNames; folder rename naturally produces them via the file
+          // index, but file rename receives `fromPath`/`toPath` with the
+          // user-supplied extension. Strip here so the rename map matches
+          // currentDocName in applyRenameMap (otherwise pass 1's image-ref
+          // recompute is silently skipped) and syncRenamedDocsToDisk doesn't
+          // double-extension via getDocExtension fallback.
+          const affectedDocNames =
+            kind === 'file'
+              ? [stripDocExtension(fromPath)]
+              : listAffectedDocNames(getFileIndex(), kind, fromPath);
+          const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map(
+            (docName) => ({
+              from: docName,
+              to:
+                kind === 'file'
+                  ? stripDocExtension(toPath)
+                  : remapDocNameForRename(docName, kind, fromPath, toPath),
+            }),
           );
-        }
+          span.setAttribute('rename.affected_docs', affectedDocs.length);
 
-        backlinkIndex.renameDocument(sourceDocName, destinationDocName, renamedSource.markdown);
-        if (renamedSource.rewrites > 0) {
-          rewrittenDocs.push({ docName: destinationDocName, rewrites: renamedSource.rewrites });
-        }
-      });
+          if (affectedDocs.length === 0) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
 
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn(
-          `[backlinks] Failed to persist managed rename cache for ${sourceDocName} -> ${destinationDocName}:`,
-          err,
-        );
-      });
-      signalChannel?.('files');
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
+          const renameMap = buildRenameMap(affectedDocs);
+          const renamed: RenamedDocMapping[] = affectedDocs.map(({ from, to }) => ({
+            fromDocName: from,
+            toDocName: to,
+          }));
 
-      rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
-      return { renamed, rewrittenDocs };
-    });
+          const backlinkSourceSet = new Set<string>();
+          for (const { from } of affectedDocs) {
+            for (const entry of backlinkIndex.getBacklinks(from)) {
+              if (!renameMap.has(entry.source)) {
+                backlinkSourceSet.add(entry.source);
+              }
+            }
+          }
+          const backlinkSources = [...backlinkSourceSet].sort((a, b) => a.localeCompare(b));
+
+          const snapshotContents = new Map<string, string>();
+          const rewriteDocNames: string[] = [];
+          const missingBacklinkSources: string[] = [];
+
+          for (const docName of [...renameMap.keys(), ...backlinkSources]) {
+            if (snapshotContents.has(docName)) continue;
+
+            // For backlink sources (non-renamed docs that link to a rename
+            // target): require a real on-disk file. A Y.Doc may be in
+            // memory for a docName that has no disk file (e.g.,
+            // `openDirectConnection` was triggered by a hover or pre-warm
+            // on a redlink). Treating in-memory-only Y.Docs as legitimate
+            // backlink sources here would funnel them into the
+            // `rewriteDocNames` loop and `writeManagedRenameDocumentToDisk`
+            // would materialize a phantom file — `tracedMkdirSync` +
+            // `tracedWriteFileSync` create whatever path it's handed.
+            // Treat as missing and let the index purge the stale entry.
+            if (!renameMap.has(docName)) {
+              const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+              if (!existsSync(filePath)) {
+                missingBacklinkSources.push(docName);
+                continue;
+              }
+            }
+
+            const content = readCurrentDocumentContent(docName);
+            if (typeof content === 'string') {
+              snapshotContents.set(docName, content);
+              if (!renameMap.has(docName)) {
+                rewriteDocNames.push(docName);
+              }
+            } else if (!renameMap.has(docName)) {
+              missingBacklinkSources.push(docName);
+            }
+          }
+
+          for (const { from } of affectedDocs) {
+            if (typeof snapshotContents.get(from) !== 'string') {
+              throw new Error(`Cannot rename missing document: ${from}`);
+            }
+          }
+
+          const recoveryJournal = createManagedRenameRecoveryJournal({
+            fromPath,
+            toPath,
+            affectedDocs: [...affectedDocs],
+            snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
+          });
+
+          const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
+
+          await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
+            for (const docName of missingBacklinkSources) {
+              backlinkIndex.deleteDocument(docName);
+            }
+
+            for (const docName of rewriteDocNames) {
+              const document = hocuspocus.documents.get(docName);
+              const rewritten = document
+                ? applyManagedRenameMapToLoadedDocument(docName, renameMap)
+                : applyRenameMap(snapshotContents.get(docName) ?? '', docName, renameMap);
+
+              if (rewritten.rewrites > 0) {
+                writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
+                rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+              }
+
+              backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
+            }
+
+            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
+
+            const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
+            const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
+            const renamedWithGit = await renameTrackedPathInGit(
+              projectDir,
+              rootSourcePath,
+              rootDestinationPath,
+            );
+            if (!renamedWithGit) {
+              tracedMkdirSync(dirname(rootDestinationPath), { recursive: true });
+              tracedRenameSync(rootSourcePath, rootDestinationPath);
+            }
+
+            // Pre-register destination extensions so loop 2's
+            // `resolveContentEntryPath` and `safeContentPath` produce the
+            // correct on-disk paths. For an extension-change rename
+            // (`foo.md` → `foo.mdx`), inheriting from the source's recorded
+            // extension would point at the no-longer-extant `.md` path; for
+            // a same-extension cross-folder rename, the destination docName
+            // has no recorded extension yet and would default to `.md`,
+            // miscomputing `.mdx` source paths. Forget the source mapping
+            // so a renamed-then-recreated source doesn't inherit a stale
+            // extension. The file watcher would converge to the same state
+            // asynchronously — this just makes loop 2 see it synchronously.
+            const explicitDestExt: DocExtension | null =
+              kind === 'file' && isSupportedDocFile(toPath)
+                ? (extname(toPath).toLowerCase() as DocExtension)
+                : null;
+            for (const { from, to } of affectedDocs) {
+              const sourceExt = getDocExtension(from);
+              forgetDocExtension(from);
+              registerDocExtension(to, explicitDestExt ?? sourceExt);
+            }
+
+            const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
+
+            for (const { from: fromDocName, to: toDocName } of sortedAffected) {
+              const sourcePath = resolveContentEntryPath(contentDir, 'file', fromDocName);
+              const destinationPath = resolveContentEntryPath(contentDir, 'file', toDocName);
+              const sourceCurrentContent =
+                liveContents.get(fromDocName) ??
+                snapshotContents.get(fromDocName) ??
+                readFileSync(destinationPath, 'utf-8');
+              const renamedSource = applyRenameMap(sourceCurrentContent, fromDocName, renameMap);
+
+              syncRenamedDocsToDisk(
+                [{ fromDocName, toDocName }],
+                new Map([[fromDocName, renamedSource.markdown]]),
+              );
+              setReconciledBase(toDocName, renamedSource.markdown);
+
+              const fileIndex = getFileIndex();
+              if (fileIndex instanceof Map) {
+                updateFileIndex(
+                  {
+                    kind: 'rename',
+                    oldPath: sourcePath,
+                    newPath: destinationPath,
+                    oldDocName: fromDocName,
+                    newDocName: toDocName,
+                    content: renamedSource.markdown,
+                  },
+                  fileIndex as Map<string, FileIndexEntry>,
+                );
+              }
+
+              backlinkIndex.renameDocument(fromDocName, toDocName, renamedSource.markdown);
+              if (renamedSource.rewrites > 0) {
+                rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
+              }
+            }
+          });
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist managed rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('files');
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+
+          rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
+          span.setAttribute('rename.rewrite_count', rewrittenDocs.length);
+          return { renamed, rewrittenDocs };
+        },
+      ),
+    );
   }
-
-  const AGENT_NAME_MAX_LEN = 128;
 
   /**
    * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
    * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
    * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   *
+   * Body parsing + sanitization is shared with `extractActorIdentity` via
+   * `parseAgentBodyFields` in `agent-id.ts`. This wrapper adds the write-handler
+   * default — absent agentId becomes `'claude-1'` so attribution always lands on
+   * a stable broadcaster key (matches `getSession()` for presence bar color).
    */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
@@ -1327,47 +1861,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     clientVersion: string | undefined;
     label: string | undefined;
   } {
-    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
-    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
-      rawAgentId = undefined;
-    }
-    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
-    const agentName =
-      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
-    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    if (clientName !== undefined) {
-      clientName = sanitizeGitIdentity(clientName);
-    }
-    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
-    if (clientVersion !== undefined) {
-      clientVersion = sanitizeGitIdentity(clientVersion);
-    }
-    let label = typeof body.label === 'string' ? body.label : undefined;
-    if (label !== undefined) {
-      label = sanitizeGitIdentity(label);
-    }
-    // colorSeed must match what getSession() uses for presence bar color consistency.
-    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
-    const colorSeed =
-      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
-        : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
-  }
-
-  /**
-   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
-   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
-   */
-  function resolveAgentType(clientName: string | undefined): string {
-    if (!clientName) return 'bot';
-    const lower = clientName.toLowerCase();
-    if (lower.includes('claude')) return 'claude';
-    if (lower.includes('cursor')) return 'cursor';
-    if (lower.includes('codex')) return 'codex';
-    if (lower.includes('cline')) return 'cline';
-    if (lower.includes('windsurf')) return 'windsurf';
-    return 'bot';
+    const fields = parseAgentBodyFields(body);
+    const agentId = fields.writerId ?? 'claude-1';
+    return {
+      rawAgentId: fields.rawAgentId,
+      agentId,
+      agentName: fields.displayName,
+      colorSeed: fields.colorSeed ?? fields.rawAgentId ?? agentId,
+      clientName: fields.clientName,
+      clientVersion: fields.clientVersion,
+      label: fields.label,
+    };
   }
 
   /**
@@ -1538,7 +2042,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            `${content}\n`,
+            'append',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -1660,7 +2171,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, markdown, position);
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            markdown,
+            position,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -1750,6 +2268,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
+
+      // Existing in-memory Y.Doc → read it directly; no need to round-trip
+      // through openDirectConnection (which would still resolve to the same
+      // doc but adds a connect/disconnect cycle).
+      const existing = hocuspocus.documents.get(docName);
+      if (existing) {
+        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
+        return;
+      }
+
+      // No in-memory doc → require an on-disk file before opening a
+      // connection. `openDirectConnection` on a missing path materializes
+      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
+      // suppressed for (PR #362's design). The persistence layer's
+      // phantom-doc guard blocks the eventual 0-byte file write, but any
+      // later code path that populates the lingering Y.Doc with content
+      // (a mis-routed agent write, the rename spine pulling it in via a
+      // stale backlink edge) would then land a phantom file because
+      // `reconciledBase` was never set. 404 here closes that whole class.
+      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+      if (!existsSync(filePath)) {
+        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
+        return;
+      }
+
       // Read via a transient DirectConnection rather than sessionManager.getSession —
       // this endpoint has no agent identity, and creating a cached session would
       // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
@@ -1807,10 +2350,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // getDocExtension() returns the registered on-disk extension for the
-        // docName (or `.md` by default when nothing is yet recorded). Surfacing
-        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
-        // faithfully instead of hard-coding `.md`.
+        // Surfacing the registered on-disk extension lets the sidebar render
+        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
         const docExt = getDocExtension(docName);
 
         documents.push({
@@ -2280,8 +2821,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // existing FM intact.
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+          // FM lives in the YAML region of Y.Text directly (D8); body-only
+          // payloads to applyAgentMarkdownWrite preserve the existing FM
+          // because the helper reads `existingFm` from Y.Text.
           const { body: newBody } = stripFrontmatter(newFull);
-          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            newBody,
+            'replace',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -2466,7 +3017,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        undone = applyAgentUndo(session, scope);
+        // Pass embedResolver so the post-undo body re-parse maps
+        // `![[photo.png]]` → resolved src on PM image nodes — matching
+        // applyAgentMarkdownWrite's composition contract so the XmlFragment
+        // shape stays equivalent to a fresh load of the same body.
+        undone = applyAgentUndo(
+          session,
+          scope,
+          options.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+            : undefined,
+        );
         // FR-5 / D42: record attribution for the undo write so the shadow-repo
         // L2 drain fans it out under this session's writer-id. Skip when the
         // UM stack was empty — a no-op undo has no mutation to attribute.
@@ -3150,20 +3711,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const {
-      agentId: rollbackAgentId,
-      agentName: rollbackAgentName,
-      colorSeed: rollbackColorSeed,
-      clientName: rollbackClientName,
-      clientVersion: rollbackClientVersion,
-      label: rollbackLabel,
-    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+    const bodyObj = body as Record<string, unknown>;
+    const actor = extractActorIdentity(bodyObj, getPrincipal);
+    if (actor.kind === 'invalid-summary') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
 
-    const {
-      docName: rawDocName,
-      commitSha: rawSha,
-      versionTag: rawVersionTag,
-    } = body as Record<string, unknown>;
+    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
     const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
@@ -3174,25 +3729,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
       json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
-    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
-    // defaults would attribute every human Restore to Claude. Only when the
-    // caller explicitly sends `agentId` do we attribute + record a summary.
-    //
-    // Validation runs unconditionally (independent of `hasAgentId`) so a
-    // malformed `summary: 42` returns 400 even when identity is absent — this
-    // surfaces MCP-client identity-passthrough regressions loudly instead of
-    // silently dropping the summary on the floor. The attribution semantics
-    // (D22) are unchanged: `recordContributor` still only fires when
-    // `hasAgentId` is true.
-    const bodyObj = body as Record<string, unknown>;
-    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-    const normalizedSummary = normalizeSummary(bodyObj.summary);
-    if (normalizedSummary.kind === 'invalid') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
     }
 
@@ -3234,8 +3770,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
+      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
+      // body parse only needs the body half — `frontmatter` is no longer
+      // mirrored into a separate metaMap slot.
       const { body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parseWithFallback(mdBody);
+      const rollbackParseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
@@ -3264,48 +3806,71 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Letting `onStoreDocument` fire naturally writes disk AND updates the
       // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // D22 LOCKED: attribute + record summary ONLY when caller supplied
-      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
-      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
-      // applies when agent-supplied summary was absent; the default goes through
-      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
-      //
-      // When the default is used and it happens to truncate (rare for rollback
-      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
-      // path symmetric with `handleRename` where defaults frequently overflow
-      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
-      // the response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" message would misattribute
-      // blame to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior.
+      // Default summary `"Restored to <sha-short>"` applies for the agent path
+      // when no agent-supplied summary was given; the default goes through
+      // `normalizeSummary` so the 80-char cap covers it. When the default
+      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
+      // chars, but symmetric with `handleRenamePath` where defaults frequently
+      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
+      // `hint` from the response so the truncation message doesn't misattribute
+      // blame to the caller. The principal path records the contributor with
+      // the rollback subject but does NOT generate a default summary bullet —
+      // the rollback subject already drives the timeline display.
       let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const shaShort = commitSha.slice(0, 8);
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Restored to ${shaShort}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          docName,
-          rollbackAgentId,
-          rollbackAgentName,
-          rollbackColorSeed,
-          formatRollbackSubject(docName, commitSha),
-          buildAgentActor({
-            clientName: rollbackClientName,
-            clientVersion: rollbackClientVersion,
-            label: rollbackLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+      switch (actor.kind) {
+        case 'agent': {
+          const shaShort = commitSha.slice(0, 8);
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Restored to ${shaShort}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          countNormalizedSummary(actor.summary, false);
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { docName, commitSha: commitSha.slice(0, 8) },
+            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
+      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
       // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
       // restored version + attribution appear in the timeline within ~100ms
@@ -3336,12 +3901,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      // D22: only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (no agentId) must not
-      // trigger a cross-client push-nav as if Claude-1 did the rollback.
-      if (hasAgentId) {
-        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-          agentName: rollbackAgentName,
+      // Only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (principal or anonymous)
+      // must not trigger a cross-client push-nav as if an agent did the
+      // rollback.
+      if (actor.kind === 'agent') {
+        agentFocusBroadcaster?.setFocus(actor.writerId, {
+          agentName: actor.displayName,
           currentDoc: docName,
           writeKind: 'rollback-apply',
           ts: Date.now(),
@@ -3356,7 +3922,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : 'Failed to roll back document';
       json(res, 500, { ok: false, error: message });
     }
   }
@@ -3417,7 +3983,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * enumerates the same docName set as `/api/documents` plus per-
    * client Lamport op counts (random clientID, no wall-clock).
    * Single-user-loopback deployment model is documented in
-   * `standalone.ts` near the principalAuthExtension; hosted/multi-
+   * `server-factory.ts` near the principalAuthExtension; hosted/multi-
    * tenant deployments must wrap this entire `/api/*` class with
    * authentication and per-caller scoping.
    */
@@ -3781,14 +4347,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const {
-        agentId: createPageAgentId,
-        agentName: createPageAgentName,
-        colorSeed: createPageColorSeed,
-        clientName: createPageClientName,
-        clientVersion: createPageClientVersion,
-        label: createPageLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      // Identity boundary (D22 LOCKED): only attribute when the caller
+      // explicitly supplies agentId. UI-driven creates fall through to the
+      // loaded principal (if any) or anonymous — never to a synthetic
+      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
+      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -3830,18 +4397,38 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
-      recordContributor(
-        docName,
-        createPageAgentId,
-        createPageAgentName,
-        createPageColorSeed,
-        undefined,
-        buildAgentActor({
-          clientName: createPageClientName,
-          clientVersion: createPageClientVersion,
-          label: createPageLabel,
-        }),
-      );
+      // Synchronously bump the content filter's sibling-asset dirCount so any
+      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
+      // rule. The file watcher's `create` event will also increment later,
+      // which would double-count — so we also `registerWrite` to mark this
+      // as a self-write, and the watcher skips its own `incrementMdDir` on
+      // self-writes. See file-watcher.ts for the paired logic.
+      if (contentFilter) {
+        contentFilter.incrementMdDir(dirname(docName));
+      }
+      registerWrite(fullPath, contentHash(initialContent));
+      switch (actor.kind) {
+        case 'agent':
+        case 'principal':
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            undefined,
+            actor.actor,
+          );
+          break;
+        case 'anonymous':
+          // UI-driven create with no loaded principal — no contributor recorded.
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
+      }
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -3899,172 +4486,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleRename(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const {
-        agentId: renameAgentId,
-        agentName: renameAgentName,
-        colorSeed: renameColorSeed,
-        clientName: renameClientName,
-        clientVersion: renameClientVersion,
-        label: renameLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { docName, newDocName } = body as Record<string, unknown>;
-      if (typeof docName !== 'string' || typeof newDocName !== 'string') {
-        json(res, 400, { ok: false, error: 'docName and newDocName are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(docName) || !isValidRelativeContentPath(newDocName)) {
-        json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
-        return;
-      }
-      if (
-        isSystemDoc(docName) ||
-        isSystemDoc(newDocName) ||
-        isConfigDoc(docName) ||
-        isConfigDoc(newDocName)
-      ) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      if (docName === newDocName) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index unavailable' });
-        return;
-      }
-
-      // D22 LOCKED 1-way door: only attribute when the caller explicitly
-      // supplies agentId. Any future UI-driven rename (no agentId) stays
-      // anonymous as today — even though the rename handler has no existing
-      // UI call site, adding the guard up front keeps the pattern uniform
-      // with `handleRollback` and prevents `extractAgentIdentity` defaults
-      // from silently attributing future UI paths to Claude.
-      //
-      // Validation runs unconditionally (independent of `hasAgentId`) so a
-      // malformed `summary: 42` returns 400 even when identity is absent —
-      // this surfaces MCP-client identity-passthrough regressions loudly
-      // instead of silently dropping the summary on the floor. The
-      // attribution semantics (D22) are unchanged.
-      const bodyObj = body as Record<string, unknown>;
-      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-      const normalizedSummary = normalizeSummary(bodyObj.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
-      // Handles the case where the client sends an explicit extension that
-      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
-      // the file is already `foo.md`) — `docName !== newDocName` textually
-      // but the on-disk paths resolve to the same file. Treat as no-op,
-      // mirroring the extension-less `docName === newDocName` short-circuit
-      // above.
-      if (sourcePath === destinationPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: 'Document does not exist' });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const result = await _performManagedRename(docName, newDocName);
-
-      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
-      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
-      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
-      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
-      // avoid "Claude renamed X → Y" noise on every inbound doc.
-      //
-      // When the default "Renamed X → Y" template overflows the 80-char cap
-      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
-      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
-      // response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" hint would misattribute blame
-      // to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior,
-      // not server-template width.
-      let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          newDocName as string,
-          renameAgentId,
-          renameAgentName,
-          renameColorSeed,
-          formatRenameSubject(docName as string, newDocName as string),
-          buildAgentActor({
-            clientName: renameClientName,
-            clientVersion: renameClientVersion,
-            label: renameLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
-        // pendingContributors entry into its own L2 shadow commit. Parallels
-        // the `flushDocToGit(...)` call in `handleRollback` above; uses
-        // `flushDocToGit(newDocName, ...)` because the source doc may no
-        // longer be open after `_performManagedRename` closed it.
-        flushDocToGit(newDocName as string, 'rename');
-      }
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename]', e);
-      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
-    }
-  }
-
   async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4093,8 +4514,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { kind, fromPath, toPath } = body as Record<string, unknown>;
+      const bodyObj = body as Record<string, unknown>;
+      const actor = extractActorIdentity(bodyObj, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const { kind, fromPath, toPath } = bodyObj;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
         return;
@@ -4107,115 +4533,163 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
         return;
       }
-      if (fromPath === toPath) {
-        json(res, 200, { ok: true, renamed: [] });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
-      const destinationPath = resolveContentEntryPath(contentDir, kind, toPath);
-
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const sourceStat = statSync(sourcePath);
       if (
-        (kind === 'file' && !sourceStat.isFile()) ||
-        (kind === 'folder' && !sourceStat.isDirectory())
+        kind === 'file' &&
+        (isSystemDoc(fromPath) ||
+          isSystemDoc(toPath) ||
+          isConfigDoc(fromPath) ||
+          isConfigDoc(toPath))
       ) {
-        json(res, 400, { ok: false, error: `Source path is not a ${kind}` });
+        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
+        return;
+      }
+      // Reject paths whose first segment is `.open-knowledge` — that directory
+      // holds per-machine OK runtime state (server.lock, principal.json, cache,
+      // etc.) and is symmetric with the `__system__` carve-out above. The
+      // `AGENTS.md` file inside `.open-knowledge/` is a tracked content file
+      // by design, but a rename TO or FROM this directory would clobber OK
+      // bookkeeping.
+      if (
+        fromPath === '.open-knowledge' ||
+        fromPath.startsWith('.open-knowledge/') ||
+        toPath === '.open-knowledge' ||
+        toPath.startsWith('.open-knowledge/')
+      ) {
+        json(res, 400, { ok: false, error: '.open-knowledge is a reserved directory' });
+        return;
+      }
+      if (fromPath === toPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
+      // a case-only move would no-op or behave unpredictably; reject explicitly.
+      if (fromPath.toLowerCase() === toPath.toLowerCase()) {
+        json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;
       }
 
-      const affectedDocNames = listAffectedDocNames(getFileIndex(), kind, fromPath);
-      const renamed: RenamedDocMapping[] =
-        kind === 'file'
-          ? [{ fromDocName: fromPath, toDocName: toPath }]
-          : affectedDocNames.map((docName) => ({
-              fromDocName: docName,
-              toDocName: remapDocNameForRename(docName, kind, fromPath, toPath),
-            }));
-
-      const liveContents = await captureAndCloseDocuments(
-        renamed.map(({ fromDocName }) => fromDocName),
-      );
-
-      const applyRename = async (): Promise<void> => {
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, liveContents);
-      };
-
+      // Register the source's actual on-disk extension before downstream
+      // checks so admission and existsSync probes both see the right value
+      // when the file watcher hasn't yet observed the source (boot race).
       if (kind === 'file') {
-        const recoveryJournal = createManagedRenameRecoveryJournal({
-          sourceDocName: fromPath,
-          destinationDocName: toPath,
-          snapshots: buildManagedRenameSnapshots(
-            renamed.map(({ fromDocName }) => fromDocName),
-            liveContents,
-          ),
-        });
-        await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
-      } else {
-        await applyRename();
+        probeAndRegisterSourceFileExtension(contentDir, fromPath);
+      }
 
-        const fileIndex = getFileIndex();
-        for (const { fromDocName, toDocName } of renamed) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
-              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
-              oldDocName: fromDocName,
-              newDocName: toDocName,
-              content:
-                liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
-            },
-            fileIndex as Map<string, FileIndexEntry>,
-          );
+      if (contentFilter) {
+        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
+        // a destination like `bar.mdx` is checked verbatim instead of as
+        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
+        const excluded =
+          kind === 'file'
+            ? contentFilter.isExcluded(
+                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+              )
+            : contentFilter.isDirExcluded(toPath);
+        if (excluded) {
+          json(res, 400, {
+            ok: false,
+            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+          });
+          return;
         }
+      }
 
-        if (backlinkIndex) {
-          for (const { fromDocName, toDocName } of renamed) {
-            backlinkIndex.renameDocument(
-              fromDocName,
+      let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
+      try {
+        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+      } catch (err) {
+        if (err instanceof ManagedRenameCollisionError) {
+          json(res, 409, {
+            ok: false,
+            error: err.message,
+            colliding: err.colliding,
+          });
+          return;
+        }
+        throw err;
+      }
+
+      if (result.renamed.length === 0) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+
+      let summaryResponse: SummaryResponse | undefined;
+      switch (actor.kind) {
+        case 'agent': {
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
               toDocName,
-              liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
             );
           }
-
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(
-              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
-              err,
-            );
-          });
-          signalChannel?.('backlinks');
-          signalChannel?.('graph');
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
         }
-
-        signalChannel?.('files');
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          countNormalizedSummary(actor.summary, false);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
+      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
 
-      json(res, 200, { ok: true, renamed });
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rename-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to rename path' });
+      const { status, error } = toManagedRenamePublicError(e);
+      json(res, status, { ok: false, error });
     }
   }
 
@@ -4362,39 +4836,73 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Shared upload mechanics for image / video / audio endpoints. The three
-   * handlers differ only in their per-endpoint MIME allowlist + whether SVG
-   * fallback applies (image only — video and audio are binary formats with
-   * detectable magic bytes). Keeping a single source of truth for the
-   * security-critical path validation, magic-byte sniffing, and atomic
-   * write — every per-endpoint copy of this 100-line body would otherwise
-   * need the same audit + bug-fix cadence.
-   */
-  async function uploadMediaCore(
-    req: IncomingMessage,
-    res: ServerResponse,
-    allowlist: Set<string>,
-    options: { allowSvgFallback: boolean },
-  ): Promise<void> {
-    let uploadResult: UploadResult | undefined;
-    try {
-      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message === 'Payload too large') {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-      } else if (message === 'No file received') {
-        json(res, 400, { ok: false, error: 'No file received' });
-      } else {
-        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
-      }
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
 
-    const { filename, buffer, parentDocName } = uploadResult;
+    let uploadResult: UploadResult | undefined;
+    try {
+      uploadResult = await readUploadBody(req, contentDir);
+    } catch (e) {
+      // All body-parse failures land as UploadWriteError with a typed reason.
+      // Tempfile cleanup is handled inside readUploadBody's error path.
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'malformed-upload') {
+          json(res, 400, { ok: false, error: 'malformed-upload' });
+          return;
+        }
+        if (e.reason === 'storage-full') {
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      return;
+    }
+
+    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
+
+    // Identity extracted from query params (multipart body precludes JSON).
+    // Capture agentId / agentName so structured upload logs carry
+    // attribution — mirrors precedent #24/#25 and lets operators trace
+    // unexpected file-creation events back to the originating agent
+    // during incident investigation. Both fields follow bounded shapes
+    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
+    // remain cardinality-safe for log indexing.
+    const { agentId, agentName } = extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+
+    // Belt-and-braces cleanup: if anything below this point errors or
+    // early-returns, the tempfile must go away. Every early-return path
+    // below that does NOT consume tempPath via linkTempToFinal* runs this.
+    const cleanupTempfile = () => {
+      if (existsSync(tempPath)) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep reaps stragglers
+        }
+      }
+    };
+
+    if (byteLength === 0) {
+      cleanupTempfile();
+      json(res, 400, { ok: false, error: 'No file received' });
+      return;
+    }
 
     if (!parentDocName) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'parentDocName is required' });
       return;
     }
@@ -4405,15 +4913,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
 
     const resolvedContentDir = resolve(contentDir);
-    const destDir = resolve(resolvedContentDir, dirname(parentDocName));
+    const destDir = resolveUploadDestDir(
+      parentDocName,
+      DEFAULT_ATTACHMENT_FOLDER_PATH,
+      resolvedContentDir,
+    );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
+    }
+    // mkdir -p the destination — bare-name / nested attachmentFolderPath
+    // values produce directories that may not exist at first upload.
+    try {
+      mkdirSync(destDir, { recursive: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        cleanupTempfile();
+        log.error({ err, destDir }, '[upload] failed to create attachment directory');
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
     }
 
     // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
@@ -4426,6 +4953,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         realContentDir = resolvedContentDir;
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
@@ -4434,102 +4962,178 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (code === 'ENOENT') {
         // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
     }
 
-    // Magic bytes check — ignore the client-supplied mimeType entirely
-    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    // D-M LOCKED accept-all: every file is accepted — there's no user-
+    // facing byte cap post-streaming (disk fullness surfaces as 507
+    // instead). The magic-byte sniff is only consulted to (a) preserve
+    // the SVG `<img>`-only routing for NFR-3 security and (b) recover
+    // an extension when the upload arrived with a generic clipboard
+    // filename. Non-sniffable bytes are accepted under the client-
+    // supplied filename.
+    //
+    // Post-streaming-refactor the sniff reads from tempPath via
+    // fileTypeFromFile which only pulls the minimum-required bytes.
+    const fileTypeResult = await fileTypeFromFile(tempPath);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes). Only the image
-    // endpoint accepts SVG, so the fallback is gated by the option.
-    if (!detectedMime && options.allowSvgFallback) {
-      const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
-      if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+    // file-type can't detect SVG (text-based, no magic bytes) — check manually.
+    // STOP: this fallback is LOAD-BEARING for NFR-3 — SVG must render via
+    // <img>, never inline DOM. Do not remove without a compensating guard.
+    if (!detectedMime) {
+      const head = readTempFileHead(tempPath, 256);
+      // Strip a leading UTF-8 BOM (U+FEFF) before the pattern match.
+      // `trimStart()` removes ECMAScript whitespace but not the BOM, so a
+      // file starting with `\xEF\xBB\xBF<svg ...>` would otherwise evade the
+      // head check the comment above documents as the SVG-disguised-as-PNG
+      // sniff fallback.
+      const headText = head.toString('utf-8').replace(/^﻿/, '').trimStart();
+      if (
+        headText.startsWith('<svg') ||
+        (headText.startsWith('<?xml') && headText.includes('<svg'))
+      ) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !allowlist.has(detectedMime)) {
-      json(res, 400, {
-        ok: false,
-        error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
-      });
-      return;
+
+    // Same-dir sha256 dedup. Bounded scan over destDir, skipped entirely
+    // when DEFAULT_DEDUP_MODE === 'off'. The dedup test happens BEFORE
+    // filename synthesis so a duplicate paste preserves the existing
+    // on-disk basename instead of producing a fresh pasted-<ts>.png stub.
+    // Server returns { deduped: true } so the client surfaces a toast.
+    //
+    // The hash + size come from the streaming pipeline (no buffer). On a
+    // dedup hit the tempfile is unlinked and we short-circuit without
+    // touching the destDir inode — `linkTempToFinalWithCollisionRetry`
+    // never runs.
+    if (DEFAULT_DEDUP_MODE === 'same-dir') {
+      const existing = await findDuplicateAsset(destDir, sha, byteLength);
+      if (existing) {
+        cleanupTempfile();
+        const relPath = relative(contentDir, resolve(destDir, existing));
+        log.info(
+          {
+            event: 'upload',
+            endpoint: req.url ?? '/api/upload',
+            agentId,
+            agentName,
+            dedup: true,
+            mime: detectedMime ?? null,
+            size: byteLength,
+            destPath: relPath,
+            httpStatus: 200,
+          },
+          '[upload] dedup hit',
+        );
+        // Include the contentDir-relative `path` in the response so the
+        // client honors non-default `attachmentFolderPath`. Without this
+        // the client assumes the asset is co-located with the parent doc
+        // and emits a broken relative ref when operators configure
+        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
+        // or similar.
+        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
+        return;
+      }
     }
 
-    // D8: detect clipboard paste (generic/empty filename) → timestamp stem
+    // D8 / GENERIC_PASTE_NAMES: clipboard paste arrives with synthetic names
+    // ("image.png", "Clipboard 2024-04-21 14:23:45"). Replace with a
+    // timestamp stem so the disk filename is human-meaningful.
     let finalFilename: string;
-    if (!filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename)) {
+    const isGenericPaste = !filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename);
+    if (isGenericPaste) {
       const now = new Date();
       const ts = now
         .toISOString()
         .replace(/[-:T]/g, '')
         .slice(0, 14)
         .replace(/(\d{8})(\d{6})/, '$1-$2');
-      finalFilename = `pasted-${ts}.${detectedExt}`;
+      // Prefer the sniffed extension when present; otherwise try the
+      // client-supplied extname, finally fall back to .bin.
+      const fallbackExt = filename ? extname(filename).slice(1) : '';
+      const ext = detectedExt ?? fallbackExt ?? '';
+      finalFilename = ext === '' ? `pasted-${ts}` : `pasted-${ts}.${ext}`;
     } else {
       finalFilename = sanitizeFilename(filename);
     }
 
-    mkdirSync(destDir, { recursive: true });
-
     try {
-      const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
+      const destFilename = linkTempToFinalWithCollisionRetry(tempPath, destDir, finalFilename);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
-      // Server-absolute, POSIX-normalized path. Doc-relative bare filename
-      // resolves wrong under hash routing for subdir docs: page URL
-      // `/#/showcase/02-image` has base `localhost:5173/`, so a bare
-      // `foo.png` in <img src> fetches `/foo.png` while the file is at
-      // `/showcase/foo.png`. The leading slash anchors the resolution to
-      // the server root regardless of the doc's location in the tree.
-      const src = `/${relPath.split(sep).join('/')}`;
-      console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src });
+      log.info(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          dedup: false,
+          mime: detectedMime ?? null,
+          size: byteLength,
+          // `destPath` is the contentDir-relative asset path. High-
+          // cardinality by nature — a vault with 10K assets produces
+          // 10K distinct values. Fine as a log field consumed by text-
+          // search / by-incident filtering; NEVER promote it to a
+          // metric label (Prometheus / Datadog will blow up memory on
+          // per-asset label explosion). Keep the nested-context shape
+          // below if you later route these through an aggregator so
+          // auto-label-extraction honors the sub-object convention.
+          destPath: relPath,
+          httpStatus: 200,
+        },
+        '[upload] write ok',
+      );
+      // Major-1: same rationale as the dedup branch above — client needs
+      // the contentDir-relative path to emit correct refs under any
+      // attachmentFolderPath value.
+      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
+      // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
+      // on throw; no extra cleanupTempfile() call needed here.
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
-      json(res, 500, { ok: false, error: 'Failed to save file' });
+      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      log.error(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          filename: finalFilename,
+          size: byteLength,
+          reason,
+          message,
+          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+        },
+        '[upload] write failed',
+      );
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'storage-full') {
+          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
+          // retry makes no sense until the operator frees space.
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        if (e.reason === 'collision-exhaustion') {
+          // Exhausted 100 collision-suffix candidates in one directory —
+          // practically unreachable absent an adversarial workload, but
+          // surfacing the reason helps operators diagnose a pathological
+          // filename that's dodging sanitize.
+          json(res, 500, { ok: false, error: 'collision-exhaustion' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      json(res, 500, { ok: false, error: 'storage-error' });
     }
-  }
-
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_MIME_TYPES, { allowSvgFallback: true });
-  }
-
-  async function handleUploadVideo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_VIDEO_MIME_TYPES_SET, { allowSvgFallback: false });
-  }
-
-  async function handleUploadAudio(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_AUDIO_MIME_TYPES_SET, { allowSvgFallback: false });
   }
 
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
@@ -5750,12 +6354,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
-    '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload-image': handleUploadImage,
-    '/api/upload-video': handleUploadVideo,
-    '/api/upload-audio': handleUploadAudio,
+    '/api/upload': handleUploadImage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
@@ -5798,6 +6399,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     routes['/api/test-reset'] = handleTestReset;
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
+
+  // DNS-rebinding defense: routes that mutate local filesystem / CRDT /
+  // vault state. A DNS-rebound cross-origin page could otherwise POST to
+  // these endpoints and write to the user's content dir. Read-only
+  // endpoints (document/pages/backlinks/…) stay accessible so the editor
+  // UI can bootstrap against the collab server; mutations require a
+  // loopback Host header. /api/workspace enforces this inline already.
+  const MUTATING_ROUTES: ReadonlySet<string> = new Set([
+    '/api/upload',
+    '/api/create-page',
+    '/api/rename-path',
+    '/api/delete-path',
+    '/api/agent-write',
+    '/api/agent-write-md',
+    '/api/agent-patch',
+    '/api/save-version',
+    '/api/rollback',
+    '/api/sync/trigger',
+    '/api/sync/set-enabled',
+    '/api/sync/resolve-conflict',
+    '/api/sync/abort-merge',
+    '/api/test-reset',
+    '/api/test-rescan-backlinks',
+  ]);
+  // Every `/api/local-op/*` endpoint mutates local filesystem state or
+  // issues network requests on behalf of the user — clone/open/auth
+  // flows all fit. Prefix-match so new local-op handlers are protected
+  // by default.
+  const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
 
   return {
     priority: 100, // Higher priority — API routes run before static file serving
@@ -5850,8 +6480,38 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
+      // DNS-rebinding defense for state-mutating endpoints. The
+      // `isLoopbackAddress` TCP-peer check and `isAllowedWorkspaceHostHeader`
+      // Host-header check together block the standard rebinding pattern
+      // (attacker-owned hostname whose DNS resolves to 127.0.0.1 after an
+      // initial attacker-serves-JS response — the TCP peer is loopback,
+      // but the Host header names the attacker domain). The same mitigation
+      // already gates `/api/workspace`; without it, a rebinding page could
+      // POST /api/upload + /api/agent-write, mutating the local vault.
+      //
+      // Test-harness note: Node's production socket always has
+      // `remoteAddress` set by the kernel; the only path that reaches
+      // this check without a socket is a mocked `IncomingMessage` built
+      // from `Readable.from(...)`. Those mocks bypass the HTTP listener
+      // entirely and can't be reached by a real remote attacker, so a
+      // missing socket is treated as test-context and skips the check.
+      // The Host-header gate still fires (tests set `host: 'localhost'`),
+      // so the protection remains meaningful for any production path.
+      if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
+        const peerAddress = request.socket?.remoteAddress;
+        if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
+          json(response, 403, { ok: false, error: 'loopback-required' });
+          return;
+        }
+        if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
+          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
+          return;
+        }
+      }
+
       // Only /api/* gets a server span. Non-API routes (static file serving,
-      // Hocuspocus's own paths) fall through silently.
+      // Hocuspocus's own paths) fall through silently. (Route dispatch
+      // happens inside the OTel active-span block below.)
       if (!url.startsWith('/api/')) return;
 
       // Extract incoming trace context (W3C traceparent header) so this server

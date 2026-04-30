@@ -13,16 +13,23 @@
  *
  * IDB database names follow the canonical Yjs-ecosystem pattern of
  * "DB-per-tenant, named synchronously" (AFFiNE, tldraw, Liveblocks).
- * Format: `ok-ydoc:${branch}:${docName}` — branch is the tenant key,
- * docName is the resource within. Different branches → different IDBs
- * by construction, eliminating cross-branch ghost-item bleed without
- * relying on a synchronous `localStorage` + IDB co-eviction assumption.
+ * Format: `ok-ydoc:${branch}:${serverInstanceId}:${docName}` — branch
+ * is the tenant key, `serverInstanceId` scopes the cache to the live
+ * server epoch, and `docName` is the resource within. Different
+ * branches → different IDBs by construction; different server epochs
+ * → different IDBs by construction, so stale CRDT items from a prior
+ * server instance can never be hydrated into a provider that will
+ * sync with the current server.
  *
  * `UNKNOWN_BRANCH_SENTINEL` is the placeholder used when the pool has
  * not yet observed a branch (cold-boot tab with no persisted
  * `lastObservedBranch`). The IDB at the sentinel name will be empty
  * (never written to in production); auth-token mismatch on first
  * connect drives the recycle to the correct branch-prefixed name.
+ *
+ * `serverInstanceId` is required and has no sentinel: a non-empty
+ * value MUST be supplied. Callers that don't yet know the live server
+ * epoch must defer construction of this primitive until they do.
  *
  * Origin filtering (no write-back loop) is inherent to upstream
  * `y-indexeddb`: its `_storeUpdate` listener short-circuits when the
@@ -85,14 +92,16 @@ export interface ClientPersistenceProvider {
 
 /**
  * Construction shape for `createClientPersistence`. Object-literal form
- * (rather than positional `(branch, docName, doc)`) protects against
- * the confusable-string-arg-swap class of bugs — `branch` and `docName`
- * are both `string` and a swap would compile cleanly while silently
- * producing the wrong IDB name (`ok-ydoc:${docName}:${branch}`), which
- * would make the cross-branch defense ineffective.
+ * (rather than positional `(branch, serverInstanceId, docName, doc)`)
+ * protects against the confusable-string-arg-swap class of bugs — the
+ * three string fields are otherwise indistinguishable to the type
+ * system, and a swap would compile cleanly while silently producing
+ * the wrong IDB name and defeating the cross-branch / cross-epoch
+ * defense.
  */
 interface CreateClientPersistenceArgs {
   readonly branch: string;
+  readonly serverInstanceId: string;
   readonly docName: string;
   readonly doc: Y.Doc;
 }
@@ -102,8 +111,13 @@ class ClientPersistenceImpl implements ClientPersistenceProvider {
   private readonly _dbName: string;
   readonly whenSynced: Promise<this>;
 
-  constructor({ branch, docName, doc }: CreateClientPersistenceArgs) {
-    this._dbName = `ok-ydoc:${branch}:${docName}`;
+  constructor({ branch, serverInstanceId, docName, doc }: CreateClientPersistenceArgs) {
+    if (typeof serverInstanceId !== 'string' || serverInstanceId.length === 0) {
+      throw new Error(
+        'createClientPersistence: serverInstanceId is required and must be non-empty',
+      );
+    }
+    this._dbName = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
     this._idb = new IndexeddbPersistence(this._dbName, doc);
     this.whenSynced = this._idb.whenSynced.then(() => this);
   }

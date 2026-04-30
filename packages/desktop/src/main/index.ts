@@ -38,6 +38,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   session,
   shell,
@@ -46,6 +47,9 @@ import {
 import type { RecentProject } from '../shared/ipc-channels.ts';
 import { createHandler } from '../shared/ipc-handler.ts';
 import { sendToRenderer } from '../shared/ipc-send.ts';
+import { openAssetSafely, revealAssetSafely } from './asset-allowlist.ts';
+import { popAssetMenu } from './asset-menu.ts';
+import { attachAssetSafetyNet } from './asset-safety-net.ts';
 import { bootAutoUpdater, type StartAutoUpdaterHandle } from './auto-updater.ts';
 import {
   createBrokenSymlinkRepairHandler,
@@ -385,6 +389,24 @@ function openNavigator() {
 async function openProject(projectPath: string, pendingDeepLinkDoc?: string) {
   ensureWindowManager();
   const ctx = await wm.createProjectWindow({ projectPath, pendingDeepLinkDoc });
+  // SPEC 2026-04-23 amendment FR-A7 / D-A10 — defense-in-depth for asset
+  // clicks that escape the renderer dispatcher (drop-time `<a target="_blank">`,
+  // pasted raw `<a href>`, future plugin content). Two-handler intercept
+  // on the editor's webContents routes localhost asset URLs to the same
+  // `openAssetSafely` gate that the `ok:shell:open-asset` IPC uses —
+  // containment + blocklist enforced uniformly regardless of entry point.
+  attachAssetSafetyNet(ctx.window.webContents, {
+    editorOrigin: ctx.apiOrigin,
+    openAsset: (relPath) =>
+      openAssetSafely(
+        {
+          projectPath: ctx.projectPath,
+          platform: process.platform,
+          openPath: (canonical) => shell.openPath(canonical),
+        },
+        relPath,
+      ),
+  });
   appState = addRecentProject(appState, ctx.projectPath, ctx.projectName);
   saveAppState(appState);
   // Keep File → Open Recent current. Menu rebuild is cheap (<1ms) and
@@ -699,6 +721,104 @@ function registerIpcHandlers() {
         mkdir: (path) => fsPromises.mkdir(path, { recursive: true }).then(() => undefined),
       },
       line,
+    );
+    return undefined;
+  });
+
+  // Asset-open dispatch (2026-04-23 amendment FR-A6). Threads the caller
+  // window's ProjectContext.projectPath so containment checks scope to the
+  // project that owns the click — different windows (editor + navigator)
+  // don't see each other's roots. Windows without a ProjectContext resolve
+  // as no-op refusal (`path-escape`): a click from such a window has no
+  // legitimate asset scope.
+  handle('ok:shell:open-asset', async (event, relPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    if (!callerProjectPath) {
+      return { ok: false, reason: 'path-escape' } as const;
+    }
+    return openAssetSafely(
+      {
+        projectPath: callerProjectPath,
+        platform: process.platform,
+        openPath: (canonical) => shell.openPath(canonical),
+      },
+      relPath,
+    );
+  });
+
+  handle('ok:shell:reveal-asset', async (event, relPath) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    const callerProjectPath =
+      callerWin && wm
+        ? wm.getContextForBrowserWindow(callerWin as unknown as BrowserWindowLike)?.projectPath
+        : undefined;
+    if (!callerProjectPath) {
+      return { ok: false, reason: 'path-escape' } as const;
+    }
+    return revealAssetSafely(
+      {
+        projectPath: callerProjectPath,
+        platform: process.platform,
+        showItemInFolder: (canonical) => shell.showItemInFolder(canonical),
+      },
+      relPath,
+    );
+  });
+
+  // Native right-click context menu (SPEC 2026-04-23 amendment FR-A8).
+  // Renderer plugin resolves the clicked on-disk reference (asset chip,
+  // wiki-link chip, or image) and invokes this with {relPath, title,
+  // kind}. Main builds the menu via `Menu.buildFromTemplate` and pops
+  // it on the caller window — gesture-attested (D11) because main
+  // observes the click directly (the renderer plugin merely forwards
+  // the intent; the actual popup is sourced in main). Actions route
+  // through the same `openAssetSafely` / `revealAssetSafely` gates as
+  // the left-click flow.
+  handle('ok:shell:show-asset-menu', async (event, params) => {
+    const callerWin = BrowserWindow.fromWebContents(event.sender);
+    if (!callerWin || !wm) return undefined;
+    const projectPath = wm.getContextForBrowserWindow(
+      callerWin as unknown as BrowserWindowLike,
+    )?.projectPath;
+    if (!projectPath) return undefined;
+    popAssetMenu(
+      {
+        Menu,
+        window: callerWin,
+      },
+      {
+        kind: params.kind,
+        platform: process.platform,
+        actions: {
+          reveal: async () => {
+            await revealAssetSafely(
+              {
+                projectPath,
+                platform: process.platform,
+                showItemInFolder: (canonical) => shell.showItemInFolder(canonical),
+              },
+              params.relPath,
+            );
+          },
+          openInDefault: async () => {
+            await openAssetSafely(
+              {
+                projectPath,
+                platform: process.platform,
+                openPath: (canonical) => shell.openPath(canonical),
+              },
+              params.relPath,
+            );
+          },
+          copyLink: () => {
+            clipboard.writeText(params.relPath);
+          },
+        },
+      },
     );
     return undefined;
   });

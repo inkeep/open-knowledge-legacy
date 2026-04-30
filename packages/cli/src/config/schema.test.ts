@@ -218,3 +218,29 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('ConfigSchema (upload surface removed per 2026-04-24 amendment)', () => {
+  test('legacy upload.* keys parse cleanly without throwing', () => {
+    // The `upload.*` user-facing config surface was removed entirely in the
+    // 2026-04-24 amendment (zero user-facing upload config; all values are
+    // module-level constants in `@inkeep/open-knowledge-core`). Legacy
+    // configs still carrying any `upload.*` shape parse cleanly because the
+    // schema is `z.looseObject` (post-#356 config-edit-paths) — unknown
+    // keys are preserved on the parsed result rather than stripped, but
+    // they are not consumed by any code that reads the schema. The
+    // `loader.ts` deprecation WARN surfaces them at load time so users
+    // notice the dead config. The input is typed as `unknown` rather than
+    // the Zod-inferred shape because the point of the test is to exercise
+    // legacy-key acceptance.
+    const legacyInput: unknown = {
+      upload: {
+        attachmentFolderPath: 'attachments',
+        emitFormat: 'markdown-image',
+        maxBytes: 104857600,
+        dedup: { mode: 'off', ui: 'silent' },
+        wikiEmbedExtensions: ['png', 'pdf'],
+      },
+    };
+    expect(() => ConfigSchema.parse(legacyInput)).not.toThrow();
+  });
+});

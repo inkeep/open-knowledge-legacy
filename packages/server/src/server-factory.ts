@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
+  type BasenameIndex,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
+  createBasenameIndex,
   type Principal,
   prependFrontmatter,
   stripFrontmatter,
@@ -19,6 +21,7 @@ import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentPresenceBroadcaster } from './agent-presence.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { seedBasenameIndex } from './asset-walk.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isConfigDoc, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
@@ -29,8 +32,14 @@ import {
 import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
-import { applyExternalChange } from './external-change.ts';
-import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
+import { applyDiskContentToDoc, applyExternalChange } from './external-change.ts';
+import {
+  assertNeverDiskEvent,
+  contentHash,
+  type DiskEvent,
+  startWatcher,
+  type WatcherHandle,
+} from './file-watcher.ts';
 import {
   type HeadWatcherHandle,
   readBranchFromHead,
@@ -83,6 +92,7 @@ import {
 import { assertCompatibleStateManifest } from './state-manifest.ts';
 import { SyncEngine } from './sync-engine.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
+import { cleanupOrphanUploadTempfiles } from './upload-streaming.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -174,14 +184,19 @@ export interface ServerInstance {
   agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
   /**
+   * In-memory basename → paths index used by the mdast→PM wiki-embed
+   * handler. Seeded at boot from disk; updated live via the asset arms
+   * of handleDiskEvent.
+   */
+  basenameIndex: BasenameIndex;
+  /**
    * Random UUID generated once per `createServer()` call. Advertised to
    * clients via `GET /api/server-info` + the `__system__` CC1 `server-info`
    * channel. Clients cache the last-observed ID and include it in the
    * `expectedServerInstanceId` field of their auth token on every connect —
    * `onAuthenticate` rejects on mismatch, forcing a clean client recycle
    * before Yjs sync can merge stale-client state with a post-restart
-   * server Y.Doc. Part of the CRDT server-restart recovery defense (see
-   * `reports/crdt-server-restart-recovery/REPORT.md`).
+   * server Y.Doc. Part of the CRDT server-restart recovery defense.
    */
   readonly serverInstanceId: string;
   destroy: () => Promise<void>;
@@ -274,17 +289,16 @@ export function createServer(options: ServerOptions): ServerInstance {
     capabilities: ['http', 'ws'],
   });
 
-  // Durable state-manifest gate (specs/2026-04-24-cross-install-version-handshake
-  // §6.2 + D14). Runs AFTER lock acquisition so two cold-starting binaries
-  // serialize through the lock first, then the loser fails fast on
-  // ProcessLockCollisionError before reaching the manifest check. Runs BEFORE
-  // any shadow-repo or persistence side effect so an incompatible cold start
-  // refuses to boot before any durable mutation.
+  // Durable state-manifest gate. Runs AFTER lock acquisition so two
+  // cold-starting binaries serialize through the lock first, then the loser
+  // fails fast on ProcessLockCollisionError before reaching the manifest
+  // check. Runs BEFORE any shadow-repo or persistence side effect so an
+  // incompatible cold start refuses to boot before any durable mutation.
   //
   // Skipped when the caller passes `skipStateManifestCheck: true` — used by
   // the integration test harness, which allocates a fresh tmpdir per test
   // (no pre-existing state to gate on; writes would just generate noise
-  // across thousands of throwaway content dirs). Resolves SPEC Q3 under D14.
+  // across thousands of throwaway content dirs).
   //
   // On throw, release the lock before propagating so other processes can
   // proceed (matches the cleanup path below for synchronous-init failures).
@@ -299,6 +313,20 @@ export function createServer(options: ServerOptions): ServerInstance {
       throw err;
     }
   }
+
+  // In-memory basename index for asset embed resolution. Populated from disk
+  // at boot, kept in sync via the asset-event arms of handleDiskEvent. Plain
+  // Map under the hood; rebuilds are cheap so no disk persistence.
+  const basenameIndex: BasenameIndex = createBasenameIndex();
+
+  // `![[photo.png]]` embed refs resolve via the basename index. Shared by
+  // persistence (onLoadDocument), server Observer B (Y.Text → XmlFragment),
+  // the agent-write path, and external-change (disk → CRDT), so wherever
+  // markdown is parsed into the Y.Doc the embed's PM src/href reflects the
+  // current vault state. Returns null on unknown basename — the PM dispatch
+  // falls back to the literal target (broken-ref placeholder).
+  const resolveEmbed = (basename: string, sourcePath: string): string | null =>
+    basenameIndex.resolveEmbed(basename, sourcePath);
 
   // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
@@ -343,6 +371,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       configHomedirOverride,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      resolveEmbed,
       getPrincipal: () => loadedPrincipal,
       // Emit CC1 ch:'session-activity' after any agent writer commits so
       // Activity Panel clients get live invalidations (FR-P25, D-P11).
@@ -545,6 +574,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       hocuspocus,
       sessionManager,
       contentDir,
+      contentFilter,
       serverInstanceId,
       getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
@@ -567,6 +597,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
       projectDir,
+      resolveEmbed,
       getPrincipal: () => loadedPrincipal,
       forceUnloadDocument,
     });
@@ -579,6 +610,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         shadowRef,
         contentRoot,
         getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+        resolveEmbed,
       }),
     );
   } catch (err) {
@@ -628,11 +660,109 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
   const applyToDoc = (docName: string, content: string): void =>
-    applyExternalChange(hocuspocus, docName, content);
+    applyExternalChange(hocuspocus, docName, content, resolveEmbed);
 
-  /** Helper to extract docName from any DiskEvent variant. */
-  function diskEventDocName(event: DiskEvent): string {
-    return event.kind === 'rename' ? event.newDocName : event.docName;
+  /**
+   * Re-render any open doc whose source contains `[[<assetBasename>]]` —
+   * fallback re-resolution when an asset is created or deleted outside of a
+   * cross-branch git operation. Without this, an open doc's PM image `src`
+   * stays frozen at the parse-time resolution: asset events update
+   * `basenameIndex` correctly, but documents whose markdown is byte-identical
+   * pre/post-event have no other re-render trigger.
+   *
+   * Why a substring scan instead of a reverse index: this fires only on
+   * asset create/delete (rare relative to text edits) and handles both
+   * `![[name.ext]]` (image embed) and `[[name.ext]]` (wiki-link with
+   * resolved href) shapes via the same `[[<name>]]` substring. A reverse
+   * index would buy throughput we don't need.
+   *
+   * Why Y.Text source instead of disk: the Y.Text already includes the user's
+   * pending edits within the persistence-debounce window. Reading disk content
+   * here would diff a stale tree against the live XmlFragment via
+   * `updateYFragment` — silently reverting unsaved edits. The pure CRDT helper
+   * `applyDiskContentToDoc` re-parses with the new resolveEmbed but doesn't
+   * call `recordContributor` or `setReconciledBase` (no actual disk write
+   * happened — only the embed resolution changed).
+   *
+   * Idempotent: `updateYFragment` diffs the computed PM tree against the live
+   * XmlFragment and only writes changed positions; re-parsing the same source
+   * with the same basenameIndex is a no-op on the Y.Doc.
+   */
+  const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    const needle = `[[${assetBasename}]]`;
+    for (const [docName] of hocuspocus.documents) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+      const document = hocuspocus.documents.get(docName);
+      if (!document) continue;
+      const source = document.getText('source').toString();
+      if (!source.includes(needle)) continue;
+      try {
+        applyDiskContentToDoc(document, source, resolveEmbed, docName);
+      } catch (err) {
+        log.error(
+          { err, docName, assetBasename },
+          `[asset-event] failed to re-render ${docName} for asset basename ${assetBasename}`,
+        );
+      }
+    }
+  };
+
+  /**
+   * Schedule a deduplicated rerender for an asset basename. Multiple events
+   * arriving in the same parcel-watcher batch (e.g. `asset-delete photo.png`
+   * + `asset-create assets/photo.png` from a single `mv`) collapse into ONE
+   * rerender pass per unique basename — eliminating the broken-ref flicker
+   * during the inter-event window and halving the parse cost on N-asset
+   * folder moves.
+   *
+   * `setImmediate` runs in Node's check phase, AFTER the current macrotask's
+   * for-loop over batched events completes (microtask drains between awaits
+   * leave the loop intact). All asset events in a single parcel callback
+   * therefore land in the same pending Set before the deferred render fires.
+   */
+  let pendingAssetRerenderBasenames: Set<string> | null = null;
+  const scheduleAssetRerender = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    if (pendingAssetRerenderBasenames === null) {
+      pendingAssetRerenderBasenames = new Set();
+      setImmediate(() => {
+        // Snapshot + reset BEFORE the try-block: these three lines are
+        // provably non-throwing (variable read, assignment, null check) and
+        // hoisting `toRender` out of the try makes it visible to the catch
+        // for log context.
+        const toRender = pendingAssetRerenderBasenames;
+        pendingAssetRerenderBasenames = null;
+        if (!toRender) return;
+        // Top-level catch — `setImmediate` runs outside the file-watcher's
+        // handleDiskEvent try-catch scope. The per-doc body inside
+        // `rerenderDocsReferencingAssetBasename` already guards each
+        // `applyDiskContentToDoc` call, but Set iteration + the inner
+        // function's scaffolding are technically reachable here. An uncaught
+        // throw would crash the server with no actionable log; logging the
+        // basenames in scope at crash-time keeps any future regression
+        // immediately diagnosable without timestamp correlation.
+        try {
+          for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
+        } catch (err) {
+          log.error({ err, basenames: [...toRender] }, '[asset-event] dedup rerender pass crashed');
+        }
+      });
+    }
+    pendingAssetRerenderBasenames.add(assetBasename);
+  };
+
+  /** Helper to extract a logging label from any DiskEvent variant. */
+  function diskEventLabel(event: DiskEvent): string {
+    switch (event.kind) {
+      case 'rename':
+        return event.newDocName;
+      case 'asset-create':
+      case 'asset-delete':
+        return event.relativePath;
+      default:
+        return event.docName;
+    }
   }
 
   /** Reconciliation-aware dispatch for all DiskEvent types. */
@@ -873,11 +1003,36 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.info({ docName }, `[reconcile] conflict markers detected: ${docName}`);
           break;
         }
+
+        // SPEC §6 FR-6 + D-H Option A: asset events update the basename
+        // index and fire CC1 'files' only. They do NOT touch backlinkIndex
+        // (markdown-only). They DO trigger a fallback re-render of any open
+        // doc that references the changed basename via `[[name.ext]]` (see
+        // `rerenderDocsReferencingAssetBasename`) — without this, a doc
+        // whose markdown is unchanged across the asset move (e.g. the user
+        // organizes files into `assets/` while the doc still says
+        // `![[photo.png]]`) keeps its parse-time-resolved `src` and the
+        // rendered preview goes stale.
+        case 'asset-create': {
+          basenameIndex.add(event.relativePath);
+          signalChannel('files');
+          scheduleAssetRerender(basename(event.relativePath));
+          break;
+        }
+        case 'asset-delete': {
+          basenameIndex.remove(event.relativePath);
+          signalChannel('files');
+          scheduleAssetRerender(basename(event.relativePath));
+          break;
+        }
+        default:
+          assertNeverDiskEvent(event);
       }
     } catch (err) {
+      const label = diskEventLabel(event);
       log.error(
-        { err, kind: event.kind, docName: diskEventDocName(event) },
-        `[reconcile] failed to handle ${event.kind} for ${diskEventDocName(event)}`,
+        { err, kind: event.kind, label },
+        `[reconcile] failed to handle ${event.kind} for ${label}`,
       );
     }
   }
@@ -1409,18 +1564,50 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       const recovery = recoverPendingManagedRename(contentDir);
       if (recovery.recovered && recovery.journal) {
+        const fromPath =
+          recovery.journal.version === 2
+            ? recovery.journal.fromPath
+            : recovery.journal.sourceDocName;
+        const toPath =
+          recovery.journal.version === 2
+            ? recovery.journal.toPath
+            : recovery.journal.destinationDocName;
         log.warn(
           {
-            sourceDocName: recovery.journal.sourceDocName,
-            destinationDocName: recovery.journal.destinationDocName,
+            journalVersion: recovery.journal.version,
+            fromPath,
+            toPath,
             restoredDocNames: recovery.restoredDocNames,
           },
-          `[managed-rename] recovered pending rename ${recovery.journal.sourceDocName} -> ${recovery.journal.destinationDocName}`,
+          `[managed-rename] recovered pending rename ${fromPath} -> ${toPath}`,
         );
       }
     } catch (err) {
       log.error({ err }, '[server] managed rename recovery failed');
       degraded.push('managed-rename-recovery');
+    }
+
+    // SPEC §6 FR-2 / streaming-upload-refactor D5: reap orphaned tempfiles
+    // from .open-knowledge/tmp/ older than the 24h grace window. Adversarial
+    // or buggy clients that abort mid-upload leave a tempfile behind; the
+    // in-request cleanup handles the common path but a SIGKILL between
+    // pipeline completion and rename/unlink leaks the inode. Boot sweep is
+    // the correctness backstop.
+    try {
+      const sweep = cleanupOrphanUploadTempfiles(contentDir);
+      if (sweep.deleted > 0 || sweep.errors > 0) {
+        log.info(
+          {
+            scanned: sweep.scanned,
+            deleted: sweep.deleted,
+            errors: sweep.errors,
+          },
+          `[upload-tempfile-sweep] swept ${sweep.deleted} orphan tempfile(s)`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, '[server] upload-tempfile sweep failed');
+      degraded.push('upload-tempfile-sweep');
     }
 
     // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
@@ -1473,7 +1660,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
     // it match LKG, and returns 'no-op' before mutating Y.Text.
     const configPathByDoc = new Map<string, string>([
-      [CONFIG_DOC_NAME_WORKSPACE, resolveConfigPath('workspace', projectDir)],
+      [CONFIG_DOC_NAME_PROJECT, resolveConfigPath('project', projectDir)],
       [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
     ]);
     for (const configDocName of CONFIG_DOC_NAMES) {
@@ -1532,6 +1719,48 @@ export function createServer(options: ServerOptions): ServerInstance {
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
       });
+      // SPEC §6 FR-3b: seed the basename index from disk once the
+      // watcher's startup walk has finished. The watcher's fileIndex is
+      // markdown-only, so we walk the contentDir directly for assets.
+      //
+      // Per-entry skip accumulator: reviewer flagged that the outer-throw
+      // guard below is unreachable in practice — bare catch blocks
+      // inside `seedBasenameIndex` previously swallowed EACCES / EMFILE
+      // silently, truncating the walk without logging. `onSkip` now
+      // fires for each non-ENOENT failure; a non-zero count pushes
+      // `basename-index-partial` into `degraded[]` so the Electron
+      // utility's degraded banner + ops dashboards see the signal.
+      let seedSkipCount = 0;
+      try {
+        seedBasenameIndex({
+          contentDir,
+          contentFilter,
+          basenameIndex,
+          onSkip: (reason, code, path) => {
+            seedSkipCount++;
+            log.warn(
+              { reason, code, path },
+              `[basename-index] skipped entry during seed (${reason}${code ? ` ${code}` : ''})`,
+            );
+          },
+        });
+        if (seedSkipCount > 0) {
+          log.warn(
+            { count: seedSkipCount },
+            `[basename-index] startup seed completed with ${seedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve`,
+          );
+          degraded.push('basename-index-partial');
+        }
+      } catch (err) {
+        log.error({ err }, '[basename-index] startup seed failed');
+        // An empty basename index means every `![[file.png]]` resolution
+        // returns null after boot — equivalent to the vault silently
+        // losing every wiki-embed. Surface via `degraded[]` so the
+        // Electron utility's `UtilityDegradedMessage` IPC can render a
+        // banner and operators know to investigate rather than hunting
+        // a rendering regression.
+        degraded.push('basename-index');
+      }
     } catch (err) {
       log.error({ err }, '[server] disk bridge watcher failed to start');
       degraded.push('file-watcher');
@@ -1601,8 +1830,6 @@ export function createServer(options: ServerOptions): ServerInstance {
           const bufferedCount = eventBuffer.length;
           const newBranch = info.newBranch ?? 'main';
 
-          setBatchInProgress(false);
-
           log.info(
             {
               kind: info.batchKind,
@@ -1614,8 +1841,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           );
 
           if (info.batchKind === 'within-branch') {
+            setBatchInProgress(false);
             // Pull, merge, rebase on same branch — reconcile buffered events
             await drainEventBuffer();
+            await persistence.flushDeferredStores('within-branch');
           } else {
             // Cross-branch or detached-head — discard buffered events (wrong branch state)
             incrementBranchSwitch();
@@ -1624,6 +1853,68 @@ export function createServer(options: ServerOptions): ServerInstance {
             // Switch reconciledBase scope to target branch
             switchReconciledBaseScope(newBranch);
             backlinkIndex.switchBranch(newBranch);
+
+            // Rebuild `ContentFilter`'s sibling-asset refcount BEFORE the
+            // basenameIndex reseed. ContentFilter's `dirCount` is normally
+            // maintained incrementally via `incrementMdDir` /
+            // `decrementMdDir` calls fired by the file watcher's create /
+            // delete events, but the cross-branch path discarded those
+            // events above (`eventBuffer.splice`). Without a rebuild, the
+            // refcount holds the previous branch's directory shape and
+            // legitimate sibling-asset pairs on the new branch
+            // (`assets/cover.md` next to `assets/photo.png`) are rejected
+            // by `seedBasenameIndex`'s admission check, leaving the asset
+            // unresolved.
+            contentFilter.rebuildDirCount();
+
+            // Reseed `basenameIndex` BEFORE the doc-reset loop. The reset
+            // calls `applyToDoc` → `applyExternalChange` → mdast→PM with
+            // `resolveEmbed`, which resolves `![[photo.png]]` against the
+            // basename index. With the previous (stale) branch's paths
+            // still in the index, the PM image `src` carries the
+            // pre-switch resolution until the next user edit — disk
+            // markdown round-trips fine, but the rendered preview is
+            // wrong.
+            //
+            // Asset DiskEvents from the switch itself are discarded
+            // (`eventBuffer.splice` above) and `basenameIndex` is a flat
+            // Map without branch scope, so the explicit walk is the only
+            // mechanism by which post-switch paths enter the index.
+            // Mirror backlinkIndex's branch-scoped reset: drop the index,
+            // walk the new branch's disk, re-seed.
+            //
+            // `onSkip` wiring is symmetric with the boot path — a mid-
+            // session permission flip (EACCES), fd exhaustion (EMFILE),
+            // or root-scope read failure during the reseed walk surfaces
+            // the same `basename-index-partial` degraded indicator the
+            // boot path uses.
+            try {
+              let reseedSkipCount = 0;
+              basenameIndex.clear();
+              seedBasenameIndex({
+                contentDir,
+                contentFilter,
+                basenameIndex,
+                onSkip: (reason, code, path) => {
+                  reseedSkipCount++;
+                  log.warn(
+                    { reason, code, path, branch: newBranch },
+                    `[basename-index] skipped entry during branch-switch reseed (${reason}${code ? ` ${code}` : ''})`,
+                  );
+                },
+              });
+              if (reseedSkipCount > 0) {
+                log.warn(
+                  { count: reseedSkipCount, branch: newBranch },
+                  `[basename-index] branch-switch reseed completed with ${reseedSkipCount} skipped entries — embeds under inaccessible subtrees will not resolve on this branch`,
+                );
+                if (!degraded.includes('basename-index-partial')) {
+                  degraded.push('basename-index-partial');
+                }
+              }
+            } catch (err) {
+              log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
+            }
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
@@ -1781,6 +2072,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             // state transitions (Y.Doc reset, backlink rebuild, WIP restore,
             // detached-ref cleanup) so a client's recycle-triggered reconnect
             // synchronizes against the new branch's fully-settled state.
+            setBatchInProgress(false);
+            await persistence.flushDeferredStores('discard-stale');
             cc1Broadcaster?.emitBranchSwitched(newBranch);
           }
 
@@ -1834,7 +2127,14 @@ export function createServer(options: ServerOptions): ServerInstance {
         contentRoot,
         credentialArgs: syncCredentialArgs,
         cc1Broadcaster,
-        setBatchInProgress,
+        setBatchInProgress: (value) => {
+          setBatchInProgress(value);
+          if (!value) {
+            void persistence.flushDeferredStores('within-branch').catch((err) => {
+              log.error({ err }, '[persistence] deferred store drain failed after sync batch');
+            });
+          }
+        },
         onStateChange: (state) => {
           log.info({ state }, `[sync] state → ${state}`);
         },
@@ -1855,6 +2155,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     agentFocusBroadcaster,
     agentPresenceBroadcaster,
     contentFilter,
+    basenameIndex,
     serverInstanceId,
     destroy,
     ready,

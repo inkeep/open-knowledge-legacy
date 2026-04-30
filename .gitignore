@@ -36,6 +36,12 @@ tmp/
 .claude/scheduled_tasks.lock
 .worktrees/
 
+# Manual-QA scratch namespace at repo root — disposable session content
+# written by /qa runs via the OK MCP into the default content dir
+/qa-*.md
+/drag-*.md
+/test-mcp-sanity.md
+
 # Vercel CLI link state — per-machine; auto-created by `vercel` / `vercel link`
 .vercel/
 

@@ -172,12 +172,12 @@ function readCurrent(ytext: Y.Text, scope: WriteScope): Config {
  * The `scope` parameter is informational — it does NOT enforce scope-as-
  * constraint (the Settings pane filters fields per `getFieldMeta(field).scope`).
  * Callers should ensure `provider` is connected to a config doc matching
- * `scope` (`__config__/workspace` for `'workspace'`, `__user__/config.yml`
+ * `scope` (`__config__/project` for `'project'`, `__user__/config.yml`
  * for `'user'`).
  */
 export function bindConfigDoc(
   provider: ConfigDocProvider,
-  scope: 'workspace' | 'user',
+  scope: 'project' | 'user',
   options: BindConfigDocOptions = {},
 ): ConfigBinding {
   return withConfigSpanSync(
@@ -189,7 +189,7 @@ export function bindConfigDoc(
 
 function bindConfigDocInner(
   provider: ConfigDocProvider,
-  scope: 'workspace' | 'user',
+  scope: 'project' | 'user',
   options: BindConfigDocOptions,
 ): ConfigBinding {
   const { ytextKey = DEFAULT_YTEXT_KEY } = options;

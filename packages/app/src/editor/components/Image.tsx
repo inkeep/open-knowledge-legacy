@@ -2,10 +2,12 @@
  * Image — DIY renderer for the lowercase `img` canonical (CB-v2-MF lowercase
  * media pivot).
  *
- * Renders the descriptor's 12-prop surface — 4 common (src + alt + width +
- * height) + 8 advanced (srcset + sizes + loading + title + decoding +
+ * Renders the descriptor's 12-prop surface — 2 common (src + alt) + 10
+ * advanced (width + height + srcset + sizes + loading + title + decoding +
  * fetchpriority + crossorigin + referrerpolicy) — wrapped in
- * `react-medium-image-zoom`'s `Zoom` always-on (no descriptor prop). When
+ * `react-medium-image-zoom`'s `Zoom` always-on (no descriptor prop). Pixel
+ * `width` / `height` are layout-shift specialists; most authors lay images
+ * out via CSS or container width and don't pin pixel dimensions. When
  * Frame v2 lands as a compositional wrapper, `<Frame zoom={false}>` will be
  * the opt-out path; today there is no opt-out.
  *

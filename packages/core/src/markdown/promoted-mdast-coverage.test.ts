@@ -42,9 +42,11 @@ type AnyHandlerMap = Record<string, any>;
 
 function toMarkdownHasHandler(type: PromotedMdastType): boolean {
   if ((toMarkdownHandlers as AnyHandlerMap)[type]) return true;
-  // wikiLink's to-markdown handler lives on a different export — the
-  // `wikiLinkToMarkdown` plugin extension registered via `remarkWikiLink`.
+  // wiki-link-micromark.ts exports both wikiLink + wikiLinkEmbed handlers
+  // via its `wikiLinkToMarkdown` plugin extension (registered through
+  // `remarkWikiLink`) — they live outside `toMarkdownHandlers`.
   if (type === 'wikiLink' && wikiLinkToMarkdown.handlers.wikiLink) return true;
+  if (type === 'wikiLinkEmbed' && wikiLinkToMarkdown.handlers.wikiLinkEmbed) return true;
   return false;
 }
 
@@ -58,6 +60,14 @@ function toHastHasHandler(type: PromotedMdastType): boolean {
 // either crash the pipeline or leave the node as a text passthrough.
 const parseFixtures: Record<PromotedMdastType, { md: string; expectedPmType: string }> = {
   wikiLink: { md: '[[TargetPage]]', expectedPmType: 'wikiLink' },
+  // wikiLinkEmbed mdast → PM dispatches by target extension. An image
+  // extension produces a `jsxComponent` PM node carrying the
+  // `WikiEmbedImage` compat descriptor (renders through the canonical
+  // `<img>` React component; serializes back to `wikiLinkEmbed` mdast).
+  // Server-side mdast→PM never emits the `wikiLinkEmbed` PM node — that
+  // node type is client-insert-only (transient, produced by `pickInsertShape`
+  // at drop time).
+  wikiLinkEmbed: { md: '![[photo.png]]', expectedPmType: 'jsxComponent' },
   mdxJsxFlowElement: { md: '<MyComponent/>', expectedPmType: 'jsxComponent' },
   mdxJsxTextElement: { md: 'hello <Inline/> world', expectedPmType: 'jsxInline' },
   // rawMdxFallback is produced by parseWithFallback on crash-class MDX; a
@@ -142,6 +152,12 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         data: { target: 'Page', anchor: null, alias: null },
         children: [{ type: 'text', value: 'Label' }],
       },
+      wikiLinkEmbed: {
+        type: 'wikiLinkEmbed',
+        value: 'photo.png',
+        data: { target: 'photo.png', anchor: null, alias: null },
+        children: [{ type: 'text', value: 'photo.png' }],
+      },
       mdxJsxFlowElement: {
         type: 'mdxJsxFlowElement',
         name: 'X',
@@ -193,6 +209,12 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
         data: { target: 'Page', anchor: null, alias: null },
         children: [{ type: 'text', value: 'Page' }],
       },
+      wikiLinkEmbed: {
+        type: 'wikiLinkEmbed',
+        value: 'photo.png',
+        data: { target: 'photo.png', anchor: null, alias: null },
+        children: [{ type: 'text', value: 'photo.png' }],
+      },
       mdxJsxFlowElement: {
         type: 'mdxJsxFlowElement',
         name: 'X',
@@ -218,6 +240,8 @@ describe('PROMOTED_MDAST_TYPES — three-edge handler parity', () => {
       let handler: unknown;
       if (type === 'wikiLink') {
         handler = wikiLinkToMarkdown.handlers.wikiLink;
+      } else if (type === 'wikiLinkEmbed') {
+        handler = wikiLinkToMarkdown.handlers.wikiLinkEmbed;
       } else {
         handler = (toMarkdownHandlers as AnyHandlerMap)[type];
       }

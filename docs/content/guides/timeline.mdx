@@ -18,11 +18,30 @@ Each row shows an author, a relative timestamp (e.g. "3 min ago"), and a kind-sp
 
 ## Agent summaries
 
-Agents writing through MCP (`write_document`, `edit_document`, `rename_document`, `rollback_to_version`) can attach a short `summary` describing the intent of the edit. Summaries appear as bulleted text under the author line on the WIP row — one bullet per summarized write, oldest first, capped at 80 characters each. The first bullet is always visible; additional bullets collapse behind a "Show N more" expander.
+Agents writing through MCP (`write_document`, `edit_document`, `rename_document`, `rename_folder`, `rollback_to_version`) can attach a short `summary` describing the intent of the edit. Summaries appear as bulleted text under the author line on the WIP row — one bullet per summarized write, oldest first, capped at 80 characters each. The first bullet is always visible; additional bullets collapse behind a "Show N more" expander.
 
 The **doc list** on the row (e.g. `foo.md · bar.md`) is still shown as ground truth: it lists every document the commit touched, regardless of whether each got a summary. Bullets enrich that list — they don't replace it.
 
-Legacy commits, WYSIWYG edits, auto-saves, and rollbacks driven by the in-editor Restore icon have no bullets. For rename and rollback calls made through MCP, the server fills in a default summary — `Renamed <from> → <to>` or `Restored to <sha-short>` — so those rows are self-describing even when the agent didn't provide one.
+Legacy commits, WYSIWYG edits, and auto-saves have no bullets. For rename and rollback calls made through MCP, the server fills in a default summary — `Renamed <from> → <to>` or `Restored to <sha-short>` — so those rows are self-describing even when the agent didn't provide one. A `rename_folder` call applies one folder-level summary to every affected doc; per-doc summaries would force the agent to fabricate N descriptions for one user intent.
+
+## Rename rows
+
+Renames produce a `rename:` row on every affected document's timeline. For a single-file rename, one row appears under `<old-path> -> <new-path>`. For a folder rename, the folder is rewritten as one atomic operation and every doc inside gets its own `rename:` row keyed to its specific `<old-doc-path> -> <new-doc-path>` move — that's how folder rename history shows up on the affected docs' timelines.
+
+**Side-effect docs stay anonymous.** When a rename rewrites inbound wiki-links and markdown links in N linking docs, those linking docs' own timelines do NOT receive a contributor entry attributed to the renaming actor. Renames are scoped to "I moved one thing"; the cascading link rewrites are mechanical side effects that should not inflate the actor's timeline footprint across the knowledge base.
+
+## Who shows up on a rename row
+
+| Triggered by                            | Contributor on the renamed doc's row                    |
+| --------------------------------------- | ------------------------------------------------------- |
+| UI drag-rename in FileTree              | the server-loaded principal (e.g. "Miles")              |
+| UI Restore button                       | the server-loaded principal                             |
+| MCP `rename_document` / `rename_folder` | the calling agent (e.g. "Claude")                       |
+| MCP `rollback_to_version`               | the calling agent                                       |
+| File-watcher external `mv`              | `file-system` writer (anonymous in the row author chip) |
+| `git pull` upstream import              | `git-upstream` writer                                   |
+
+The principal identity is loaded server-side from `<contentDir>/.open-knowledge/principal.json` at boot. UI clients do not send principal identity in the request body — the server is the only source of principal truth. If no principal is loaded (server-bootstrap failure) and no agent identity is supplied, the row stays anonymous.
 
 ## Inspecting changes
 

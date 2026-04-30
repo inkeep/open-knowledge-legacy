@@ -120,6 +120,7 @@ export const KNOWN_MDAST_TYPES: ReadonlySet<string> = new Set([
   'mdxTextExpression',
   // Our wiki-link-micromark.ts extension
   'wikiLink',
+  'wikiLinkEmbed',
   // Handler-registered catch-all types in index.ts (future remark-math compat)
   'math',
   'inlineMath',

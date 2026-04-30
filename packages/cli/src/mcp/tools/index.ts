@@ -87,6 +87,10 @@ import {
   DESCRIPTION as RENAME_DOCUMENT_DESCRIPTION,
   register as registerRenameDocument,
 } from './rename-document.ts';
+import {
+  DESCRIPTION as RENAME_FOLDER_DESCRIPTION,
+  register as registerRenameFolder,
+} from './rename-folder.ts';
 import { DESCRIPTION as RESEARCH_DESCRIPTION, register as registerResearch } from './research.ts';
 import {
   DESCRIPTION as ROLLBACK_DESCRIPTION,
@@ -123,6 +127,7 @@ const _TOOL_DESCRIPTIONS = {
   consolidate: CONSOLIDATE_DESCRIPTION,
   read_document: READ_DOCUMENT_DESCRIPTION,
   rename_document: RENAME_DOCUMENT_DESCRIPTION,
+  rename_folder: RENAME_FOLDER_DESCRIPTION,
   search: SEARCH_DESCRIPTION,
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
@@ -242,6 +247,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('rename_document'),
+    identityRef: opts.identityRef,
+  });
+  registerRenameFolder(registrationServer, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: named('rename_folder'),
     identityRef: opts.identityRef,
   });
   registerGetHistory(registrationServer, {
