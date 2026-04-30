@@ -727,22 +727,25 @@ export function createServer(options: ServerOptions): ServerInstance {
     if (pendingAssetRerenderBasenames === null) {
       pendingAssetRerenderBasenames = new Set();
       setImmediate(() => {
+        // Snapshot + reset BEFORE the try-block: these three lines are
+        // provably non-throwing (variable read, assignment, null check) and
+        // hoisting `toRender` out of the try makes it visible to the catch
+        // for log context.
+        const toRender = pendingAssetRerenderBasenames;
+        pendingAssetRerenderBasenames = null;
+        if (!toRender) return;
         // Top-level catch — `setImmediate` runs outside the file-watcher's
         // handleDiskEvent try-catch scope. The per-doc body inside
         // `rerenderDocsReferencingAssetBasename` already guards each
-        // `applyDiskContentToDoc` call, but the iteration itself
-        // (`hocuspocus.documents` Map iteration, `getText('source')`,
-        // `String.prototype.includes`) is essentially infallible — yet an
-        // uncaught throw here would crash the server with no actionable
-        // log. Log + swallow as defense-in-depth.
+        // `applyDiskContentToDoc` call, but Set iteration + the inner
+        // function's scaffolding are technically reachable here. An uncaught
+        // throw would crash the server with no actionable log; logging the
+        // basenames in scope at crash-time keeps any future regression
+        // immediately diagnosable without timestamp correlation.
         try {
-          const toRender = pendingAssetRerenderBasenames;
-          pendingAssetRerenderBasenames = null;
-          if (!toRender) return;
           for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
         } catch (err) {
-          pendingAssetRerenderBasenames = null;
-          log.error({ err }, '[asset-event] dedup rerender pass crashed');
+          log.error({ err, basenames: [...toRender] }, '[asset-event] dedup rerender pass crashed');
         }
       });
     }
