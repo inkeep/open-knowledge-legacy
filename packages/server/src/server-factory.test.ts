@@ -873,8 +873,9 @@ describe('createServer() managed rename recovery', () => {
     writeManagedRenameJournal(
       tmpDir,
       createManagedRenameRecoveryJournal({
-        sourceDocName: 'alpha',
-        destinationDocName: 'beta',
+        fromPath: 'alpha',
+        toPath: 'beta',
+        affectedDocs: [{ from: 'alpha', to: 'beta' }],
         snapshots: [
           { docName: 'alpha', content: '# Alpha\n' },
           { docName: 'referrer', content: 'See [[alpha]].\n' },

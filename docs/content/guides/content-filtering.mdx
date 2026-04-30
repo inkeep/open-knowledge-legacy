@@ -2,7 +2,6 @@
 title: Content filtering
 description: How Open Knowledge uses .gitignore and config patterns to control which files enter the document system.
 ---
-
 Open Knowledge respects your `.gitignore` files and combines them with config-based patterns to determine which files belong in the document system. Exclusion always supersedes inclusion.
 
 ## How it works
@@ -20,7 +19,7 @@ These are gated by `content.include` patterns (default: `["**/*.md"]`) -- only f
 
 Set `content.include` in `.open-knowledge/config.yml` to control which files enter the document system. The default is `["**/*.md"]` -- only markdown files.
 
-```yaml title=".open-knowledge/config.yml"
+```yaml
 content:
   include:
     - "**/*.md"
@@ -41,7 +40,7 @@ Open Knowledge loads the root `.gitignore` at the project directory, then walks 
 
 `content.exclude` in `.open-knowledge/config.yml` adds patterns on top of gitignore rules. These patterns are relative to the content directory.
 
-```yaml title=".open-knowledge/config.yml"
+```yaml
 content:
   exclude:
     - "drafts/**"
@@ -63,7 +62,7 @@ Given a project with:
 .gitignore contains: node_modules/, dist/, *.log
 ```
 
-```yaml title=".open-knowledge/config.yml"
+```yaml
 content:
   include:
     - "**/*.md"
@@ -73,13 +72,13 @@ content:
 
 The results:
 
-| File | Result | Reason |
-|------|--------|--------|
-| `docs/setup.md` | Included | Matches `**/*.md`, not excluded |
-| `node_modules/pkg/README.md` | Excluded | Gitignored |
-| `drafts/wip.md` | Excluded | Config exclude |
-| `src/index.ts` | Excluded | Does not match `**/*.md` |
-| `dist/README.md` | Excluded | Gitignored |
+| File                         | Result   | Reason                          |
+| ---------------------------- | -------- | ------------------------------- |
+| `docs/setup.md`              | Included | Matches `**/*.md`, not excluded |
+| `node_modules/pkg/README.md` | Excluded | Gitignored                      |
+| `drafts/wip.md`              | Excluded | Config exclude                  |
+| `src/index.ts`               | Excluded | Does not match `**/*.md`        |
+| `dist/README.md`             | Excluded | Gitignored                      |
 
 ## Previewing content scope
 
@@ -92,6 +91,16 @@ npx @inkeep/open-knowledge preview
 This is read-only -- it doesn't write anything or start a server. It uses the same `ContentFilter` as the file watcher, so the output matches what the editor sidebar will show.
 
 Works before `init` (uses schema defaults) and after config edits.
+
+## Admission on rename
+
+The same `ContentFilter` that gates the file watcher also gates rename-time admission, so a file or folder cannot be moved INTO a path the filter would otherwise reject:
+
+- `POST /api/rename-path { kind: 'file' }` — rejects with 400 if the destination doc would be excluded by `content.include` / `content.exclude`.
+- `POST /api/rename-path { kind: 'folder' }` — rejects with 400 if the destination folder is excluded as a directory.
+- MCP `rename_document` / `rename_folder` — surface the 400 to the agent before any file moves on disk.
+
+Reordering exclude rules to filter out a tree that already contains documents does not retroactively delete those documents — they remain readable through the editor and MCP tools — but they cannot be moved INTO the excluded tree.
 
 ## Performance
 

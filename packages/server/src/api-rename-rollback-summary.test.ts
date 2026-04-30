@@ -1,15 +1,15 @@
 /**
- * US-004 — D22 agentId-guarded attribution for rename + rollback.
- *
- * Rename and rollback handlers differ from the three agent-write endpoints
- * because their primary callers include UI-driven paths (EditorPane.tsx's
- * Restore button) that MUST stay anonymous. The D22 LOCKED 1-way door is
- * that these handlers only call `recordContributor` when the body carries
- * an explicit `agentId`. These tests lock that invariant in.
+ * Rename and rollback attribution: agentId-guarded routing for the
+ * `handleRenamePath` and `handleRollback` handlers. Their primary callers
+ * include UI-driven paths (FileTree drag-rename, EditorPane Restore button)
+ * that previously stayed anonymous when no agent identity was supplied —
+ * these tests pin that invariant alongside the post-consolidation behavior
+ * where an absent `agentId` falls back to the server-loaded principal.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -22,9 +22,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
+import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { clearContributors, formatContributors } from './contributor-tracker.ts';
+import { _resetDocExtensionsForTests } from './doc-extensions.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
@@ -83,9 +85,9 @@ function buildBacklinkIndex(contentDir: string): BacklinkIndex {
 }
 
 /** Captures calls to the `flushGitCommit` hook so the leak-fix regression
- *  test can assert that handleRename / handleRollback drain pending
+ *  test can assert that handleRenamePath / handleRollback drain pending
  *  contributors into their own L2 commit instead of leaking into the next
- *  unrelated write's commit (BUG-1 from /qa Phase 7, fixed on feat/agent-write-summaries). */
+ *  unrelated write's commit. */
 type FlushGitCommitSpy = {
   readonly calls: ReadonlyArray<number>;
   fn: () => Promise<void>;
@@ -105,6 +107,8 @@ async function callApi(
   body: unknown,
   backlinkIndex?: BacklinkIndex,
   flushGitCommit?: () => Promise<void>,
+  getPrincipal?: () => Principal | null,
+  contentFilter?: Parameters<typeof createApiExtension>[0]['contentFilter'],
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {
@@ -130,6 +134,8 @@ async function callApi(
     getFileIndex: () => buildFileIndex(contentDir),
     backlinkIndex: backlinkIndex ?? buildBacklinkIndex(contentDir),
     ...(flushGitCommit ? { flushGitCommit } : {}),
+    ...(getPrincipal ? { getPrincipal } : {}),
+    ...(contentFilter ? { contentFilter } : {}),
   });
   const req = makeReq(url, 'POST', body);
   const { res, captured } = makeRes();
@@ -147,19 +153,21 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rename-rollback-summary-'));
   clearContributors();
   resetMetrics();
+  _resetDocExtensionsForTests();
 });
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('handleRename — D22 agentId-guarded attribution', () => {
+describe('handleRenamePath (kind: file) — agentId-guarded attribution', () => {
   test('no agentId (UI-shape body) → rename succeeds with ZERO contributor entries', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'notes',
-      newDocName: 'renamed-notes',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
     });
 
     expect(response.status).toBe(200);
@@ -174,9 +182,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'notes',
-      newDocName: 'renamed-notes',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
       agentId: 'claude-1',
       agentName: 'Claude',
     });
@@ -200,9 +209,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
   test('with agentId + provided summary → uses provided summary (not default)', async () => {
     writeFileSync(join(tmpDir, 'old.md'), '# Old\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'old',
-      newDocName: 'new',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'old',
+      toPath: 'new',
       agentId: 'claude-1',
       agentName: 'Claude',
       summary: 'Aligned naming with module layout',
@@ -218,16 +228,17 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
   test('with agentId, wrong-type summary → 400, no rename side-effects, no counters', async () => {
     writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'src',
-      newDocName: 'dst',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'src',
+      toPath: 'dst',
       agentId: 'claude-1',
       summary: { not: 'a string' },
     });
 
     expect(response.status).toBe(400);
     expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
-    // File must NOT have been renamed (guard runs before _performManagedRename)
+    // File must NOT have been renamed (guard runs before the spine fires)
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
     expect(getMetrics().agentWriteCalls).toBe(0);
     expect(formatContributors()).toBe('');
@@ -237,9 +248,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     writeFileSync(join(tmpDir, 'x.md'), '# X\n', 'utf-8');
 
     const long = 'w'.repeat(100);
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'x',
-      newDocName: 'y',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'x',
+      toPath: 'y',
       agentId: 'claude-1',
       summary: long,
     });
@@ -261,9 +273,10 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     const long = 'a'.repeat(50);
     writeFileSync(join(tmpDir, `${long}.md`), '# Long\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: long,
-      newDocName: `${long}-v2`,
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: long,
+      toPath: `${long}-v2`,
       agentId: 'claude-1',
       agentName: 'Claude',
     });
@@ -281,19 +294,19 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(getMetrics().summariesProvided).toBe(1);
   });
 
-  test('no agentId + wrong-type summary → 400 (validation runs unconditionally; D22 attribution still skipped)', async () => {
+  test('no agentId + wrong-type summary → 400 (validation runs unconditionally; attribution still skipped)', async () => {
     // Defensive validation: even though the rename has no UI call site today,
     // we want any future MCP-client identity-passthrough regression to surface
-    // as a loud 400 rather than a silent attribution drop. The D22 contract
-    // (no agentId → no attribution) is unchanged — this test asserts that
-    // type-checking the summary happens before that branch even runs, so a
-    // malformed summary body never accidentally lands as a 200 with the
-    // summary silently ignored.
+    // as a loud 400 rather than a silent attribution drop. Type-checking the
+    // summary happens before the actor branch even runs, so a malformed
+    // summary body never accidentally lands as a 200 with the summary
+    // silently ignored.
     writeFileSync(join(tmpDir, 'src.md'), '# Src\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'src',
-      newDocName: 'dst',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'src',
+      toPath: 'dst',
       summary: 42,
     });
 
@@ -301,27 +314,30 @@ describe('handleRename — D22 agentId-guarded attribution', () => {
     expect(JSON.parse(response.body)).toEqual({ ok: false, error: 'summary must be a string' });
     // File must NOT have been renamed — validation runs before the rename.
     expect(readFileSync(join(tmpDir, 'src.md'), 'utf-8')).toBe('# Src\n');
-    // D22: no attribution side-effects either (no agentId means no contributor
-    // entry would have been recorded even on the success path).
+    // No attribution side-effects either (no agentId AND no principal in
+    // this harness means no contributor entry would have been recorded
+    // even on the success path).
     expect(formatContributors()).toBe('');
     expect(getMetrics().agentWriteCalls).toBe(0);
   });
 });
 
-describe('handleRollback — D22 agentId-guarded attribution (regression gate)', () => {
+describe('handleRollback — agentId-guarded attribution (regression gate)', () => {
   // handleRollback's full path requires a shadow-repo + open Y.Doc which is
   // out of reach in this fast unit-test harness. The critical invariant is
-  // the D22 guard: no-agentId request MUST produce zero contributor entries
-  // and zero counter increments. That guard fires at the body-parse stage
-  // before any shadow or Y.Doc touch, so we can exercise it by asserting
-  // the handler's early-return shape AND by posting a body that WOULD
-  // otherwise flow through to the shadow-repo error path.
+  // the agentId guard: a request without identity AND without a loaded
+  // principal MUST produce zero contributor entries and zero counter
+  // increments. That guard fires at the body-parse stage before any shadow
+  // or Y.Doc touch, so we can exercise it by asserting the handler's
+  // early-return shape AND by posting a body that WOULD otherwise flow
+  // through to the shadow-repo error path.
 
   test('no agentId → body parses and short-circuits the attribution branch', async () => {
     // This hits the shadow-repo "not configured" 400 path, but critically
     // DOES NOT fire any contributor recording or counter work along the way.
-    // If D22 regressed (e.g. `extractAgentIdentity` ran unconditionally),
-    // the `claude-1/Claude` defaults would be recorded here.
+    // If the attribution guard regressed (e.g. `extractAgentIdentity` ran
+    // unconditionally), the `claude-1/Claude` defaults would be recorded
+    // here.
     const response = await callApi(tmpDir, '/api/rollback', {
       docName: 'test-doc',
       commitSha: 'a'.repeat(40),
@@ -356,17 +372,17 @@ describe('handleRollback — D22 agentId-guarded attribution (regression gate)',
   });
 });
 
-describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
+describe('leak-fix regression', () => {
   // Prior to the fix: handleRollback called `setReconciledBase(docName, markdown)`
   // BEFORE `onStoreDocument` fired, which tripped persistence's
   // "skip write when serialized === currentBase" guard and dropped the L1 disk
   // write (and thus its `scheduleGitCommit()` call). The pending contributor
   // entry from `recordContributor(...)` then stayed in `pendingContributors`
   // until the next UNRELATED write's onStoreDocument fired — polluting that
-  // commit's `ok-contributors:` line with stale "Restored to <sha>" bullets
-  // and stale docs. handleRename had a parallel leak because
-  // `_performManagedRename` does sync fs writes that bypass Hocuspocus's
-  // onStoreDocument entirely, and the handler did not explicitly flush L2.
+  // commit's `ok-contributors:` line with stale "Restored to <sha>" bullets.
+  // handleRenamePath has a parallel exposure because
+  // `_performManagedRenameForDocs` does sync fs writes that bypass
+  // Hocuspocus's onStoreDocument entirely.
   //
   // Fix: both handlers now call `flushDocToGit(<docName>, <label>)` after
   // `recordContributor`. That helper forces the per-doc L1 debouncer
@@ -374,16 +390,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
   // `flushGitCommit?.()` to drain any pending L2 timer synchronously —
   // ensuring the rename/rollback's own commit carries its own attribution.
 
-  test('handleRename with agentId triggers flushGitCommit after recordContributor', async () => {
+  test('handleRenamePath (file) with agentId triggers flushGitCommit after recordContributor', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
         agentId: 'claude-1',
         agentName: 'Claude',
       },
@@ -400,16 +417,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     expect(spy.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('handleRename WITHOUT agentId does NOT trigger flushGitCommit (no attribution → no flush needed)', async () => {
+  test('handleRenamePath (file) WITHOUT agentId does NOT trigger flushGitCommit (no attribution → no flush needed)', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
       },
       undefined,
       spy.fn,
@@ -424,16 +442,17 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
     expect(spy.calls.length).toBe(0);
   });
 
-  test('handleRename WITH wrong-type summary does NOT trigger flushGitCommit (early-return 400)', async () => {
+  test('handleRenamePath (file) WITH wrong-type summary does NOT trigger flushGitCommit (early-return 400)', async () => {
     writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
     const spy = createFlushGitCommitSpy();
 
     const response = await callApi(
       tmpDir,
-      '/api/rename',
+      '/api/rename-path',
       {
-        docName: 'notes',
-        newDocName: 'renamed-notes',
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
         agentId: 'claude-1',
         summary: 42,
       },
@@ -448,16 +467,18 @@ describe('leak-fix regression (BUG-1 from /qa Phase 7)', () => {
   });
 });
 
-describe('handleRename — extension change via explicit .md/.mdx in newDocName', () => {
-  test('same-base rename with .mdx in newDocName physically changes extension on disk', async () => {
-    // Gap B: without this, the rename handler re-appends the source's existing
-    // extension (via getDocExtension) regardless of what the user typed in
-    // newDocName, so `foo.md → foo.mdx` was a silent no-op end-to-end.
+describe('handleRenamePath (kind: file) — extension change via explicit .md/.mdx in toPath', () => {
+  test('same-base rename with .mdx in toPath physically changes extension on disk', async () => {
+    // Inherited from #373: `resolveContentEntryPath` honors an explicit
+    // supported extension on the destination path, so `toPath: "foo.mdx"`
+    // physically renames `foo.md → foo.mdx`. The consolidated endpoint
+    // preserves the same behavior for `kind: 'file'`.
     writeFileSync(join(tmpDir, 'foo.md'), '# Foo\n\nOriginal .md content.\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'foo',
-      newDocName: 'foo.mdx',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'foo',
+      toPath: 'foo.mdx',
     });
 
     expect(response.status).toBe(200);
@@ -470,9 +491,10 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
   test('name-and-ext change: rename bar.md → baz.mdx physically moves and renames', async () => {
     writeFileSync(join(tmpDir, 'bar.md'), '# Bar\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'bar',
-      newDocName: 'baz.mdx',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'bar',
+      toPath: 'baz.mdx',
     });
 
     expect(response.status).toBe(200);
@@ -480,16 +502,16 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
     expect(existsSync(join(tmpDir, 'bar.md'))).toBe(false);
   });
 
-  test('extension-less newDocName preserves source extension (backward compat)', async () => {
-    // The existing call-site contract: newDocName without an extension relies
-    // on getDocExtension() to re-derive the source's extension. Guards against
-    // a regression where adding explicit-extension handling breaks the
-    // pre-existing behavior.
+  test('extension-less toPath preserves source extension (backward compat)', async () => {
+    // Extension-less destinations rely on getDocExtension() to re-derive
+    // the source's extension. Guards against a regression where the
+    // explicit-extension handling above breaks the pre-existing behavior.
     writeFileSync(join(tmpDir, 'qux.md'), '# Qux\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'qux',
-      newDocName: 'renamed-qux',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'qux',
+      toPath: 'renamed-qux',
     });
 
     expect(response.status).toBe(200);
@@ -500,18 +522,344 @@ describe('handleRename — extension change via explicit .md/.mdx in newDocName'
 
   test('explicit extension matching the source (foo → foo.md when foo.md exists) is a no-op', async () => {
     // Edge case when the client preserves the typed extension and the user
-    // typed the same name as the source. Without the sourcePath===destination
-    // short-circuit this returns 409 Destination already exists.
+    // typed the same name as the source. Both the textual `fromPath === toPath`
+    // short-circuit and the on-disk `sourcePath === destinationPath` short-circuit
+    // must return 200 with renamed:[] rather than 409 Destination already exists.
     writeFileSync(join(tmpDir, 'stable.md'), '# Stable\n', 'utf-8');
 
-    const response = await callApi(tmpDir, '/api/rename', {
-      docName: 'stable',
-      newDocName: 'stable.md',
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'stable',
+      toPath: 'stable.md',
     });
 
     expect(response.status).toBe(200);
     const parsed = JSON.parse(response.body);
     expect(parsed.renamed).toEqual([]);
     expect(existsSync(join(tmpDir, 'stable.md'))).toBe(true);
+  });
+});
+
+const fixturePrincipal: Principal = {
+  id: 'principal-rename-fixture-9999',
+  display_name: 'Miles',
+  display_email: 'miles@example.test',
+  source: 'git-config',
+  created_at: '2026-04-29T10:00:00.000Z',
+};
+
+describe('handleRenamePath — actor identity routing', () => {
+  test('UI-driven file rename (no agentId) with principal loaded → principal contributor', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed-notes' },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`"id":"${fixturePrincipal.id}"`);
+    expect(lines[0]).toContain('"docs":["renamed-notes"]');
+  });
+
+  test('UI-driven file rename (no agentId) with NO principal loaded → no contributor (anonymous)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+    });
+
+    expect(response.status).toBe(200);
+    expect(formatContributors()).toBe('');
+  });
+
+  test('agent file rename + principal loaded → agent contributor (agent wins)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      {
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: 'renamed-notes',
+        agentId: 'claude-1',
+        agentName: 'Claude',
+      },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"id":"agent-claude-1"');
+  });
+
+  test('file rename via consolidated endpoint rewrites inbound wiki-links (FR2/FR10)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+    });
+
+    expect(response.status).toBe(200);
+    expect(readFileSync(join(tmpDir, 'journal.md'), 'utf-8')).toContain('[[renamed-notes]]');
+    const parsed = JSON.parse(response.body);
+    expect(parsed.rewrittenDocs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ docName: 'journal' })]),
+    );
+  });
+
+  test('case-only rename returns 400', async () => {
+    writeFileSync(join(tmpDir, 'Notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'Notes',
+      toPath: 'notes',
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Case-only renames are not supported',
+    });
+  });
+
+  test('non-string summary returns 400 before rename', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+      summary: 42,
+    });
+
+    expect(response.status).toBe(400);
+    expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+  });
+
+  test('agent file rename with default summary "Renamed X → Y" lands on contributor entry', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'renamed-notes',
+      agentId: 'claude-1',
+      agentName: 'Claude',
+    });
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    expect(body).toContain('"summaries":["Renamed notes → renamed-notes"]');
+  });
+
+  test('side-effect docs (backlink rewrites) stay anonymous (D-A2/NG8)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(tmpDir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed-notes' },
+      undefined,
+      undefined,
+      () => fixturePrincipal,
+    );
+
+    expect(response.status).toBe(200);
+    const body = formatContributors();
+    const lines = body.split('\n').filter((l) => l.startsWith('ok-contributors:'));
+    // Exactly one contributor entry — the renamed doc, NOT the rewritten journal.md
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('"docs":["renamed-notes"]');
+    expect(lines[0]).not.toContain('journal');
+  });
+});
+
+describe('handleRenamePath — folder rename via consolidated endpoint', () => {
+  test('folder rename rewrites inbound wiki-links across affected docs (FR3)', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+      writeFileSync(join(setupDir, 'articles', 'login.md'), '# Login\n', 'utf-8');
+      writeFileSync(
+        join(setupDir, 'index.md'),
+        '# Index\n\nSee [[articles/auth]] and [[articles/login]].\n',
+        'utf-8',
+      );
+
+      const response = await callApi(setupDir, '/api/rename-path', {
+        kind: 'folder',
+        fromPath: 'articles',
+        toPath: 'essays',
+      });
+
+      expect(response.status).toBe(200);
+      const indexContent = readFileSync(join(setupDir, 'index.md'), 'utf-8');
+      expect(indexContent).toContain('[[essays/auth]]');
+      expect(indexContent).toContain('[[essays/login]]');
+      expect(indexContent).not.toContain('[[articles/');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
+  });
+
+  test('folder rename to nested non-existent destination parent succeeds (auto-create)', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+
+      const response = await callApi(setupDir, '/api/rename-path', {
+        kind: 'folder',
+        fromPath: 'articles',
+        toPath: '2026/essays',
+      });
+
+      expect(response.status).toBe(200);
+      expect(readFileSync(join(setupDir, '2026/essays/auth.md'), 'utf-8')).toBe('# Auth\n');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
+  });
+
+  test('UI folder rename (no agentId) with principal records principal contributor per affected doc', async () => {
+    const setupDir = mkdtempSync(join(tmpdir(), 'ok-folder-rename-'));
+    try {
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(join(setupDir, 'articles'), { recursive: true });
+      writeFileSync(join(setupDir, 'articles', 'auth.md'), '# Auth\n', 'utf-8');
+      writeFileSync(join(setupDir, 'articles', 'login.md'), '# Login\n', 'utf-8');
+
+      const response = await callApi(
+        setupDir,
+        '/api/rename-path',
+        { kind: 'folder', fromPath: 'articles', toPath: 'essays' },
+        undefined,
+        undefined,
+        () => fixturePrincipal,
+      );
+
+      expect(response.status).toBe(200);
+      const body = formatContributors();
+      expect(body).toContain(`"id":"${fixturePrincipal.id}"`);
+      expect(body).toContain('essays/auth');
+      expect(body).toContain('essays/login');
+    } finally {
+      rmSync(setupDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('handleRenamePath — content-filter admission (FR11)', () => {
+  function makeFilter(opts: {
+    excludedFiles?: string[];
+    excludedDirs?: string[];
+  }): Parameters<typeof createApiExtension>[0]['contentFilter'] {
+    const excludedFiles = new Set(opts.excludedFiles ?? []);
+    const excludedDirs = new Set(opts.excludedDirs ?? []);
+    return {
+      isExcluded: (relativePath: string) => excludedFiles.has(relativePath),
+      isDirExcluded: (relativePath: string) => excludedDirs.has(relativePath),
+      getWatcherIgnoreGlobs: () => [],
+      incrementMdDir: () => {},
+      decrementMdDir: () => {},
+    };
+  }
+
+  test('file rename to excluded destination → 400 with admission error; source untouched', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'drafts/private' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedFiles: ['drafts/private.md'] }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Destination document is excluded by the workspace content config',
+    });
+    expect(readFileSync(join(tmpDir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+  });
+
+  test('folder rename to excluded destination → 400 with admission error; source untouched', async () => {
+    const folder = join(tmpDir, 'articles');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'auth.md'), '# Auth\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'folder', fromPath: 'articles', toPath: 'archive/old' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedDirs: ['archive/old'] }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({
+      ok: false,
+      error: 'Destination folder is excluded by the workspace content config',
+    });
+    expect(readFileSync(join(folder, 'auth.md'), 'utf-8')).toBe('# Auth\n');
+  });
+
+  test('rename to admitted destination passes content-filter check (no false positive)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(
+      tmpDir,
+      '/api/rename-path',
+      { kind: 'file', fromPath: 'notes', toPath: 'renamed' },
+      undefined,
+      undefined,
+      undefined,
+      makeFilter({ excludedFiles: ['drafts/private.md'] }),
+    );
+
+    expect(response.status).toBe(200);
+    const parsed = JSON.parse(response.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed' }]);
+  });
+
+  test('contentFilter omitted → admission check is a no-op (back-compat)', async () => {
+    writeFileSync(join(tmpDir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const response = await callApi(tmpDir, '/api/rename-path', {
+      kind: 'file',
+      fromPath: 'notes',
+      toPath: 'drafts/private',
+    });
+
+    expect(response.status).toBe(200);
   });
 });

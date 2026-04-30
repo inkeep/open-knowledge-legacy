@@ -83,7 +83,8 @@ export function EditorHeader({
   onSetIdentity,
   onOpenConflictResolver,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, activeTarget, closeDocument } = useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, closeAndClearForRename } =
+    useDocumentContext();
   const { pageMeta } = usePageList();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
@@ -225,10 +226,10 @@ export function EditorHeader({
     setRenameError(null);
 
     try {
-      const res = await fetch('/api/rename', {
+      const res = await fetch('/api/rename-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: docName, newDocName }),
+        body: JSON.stringify({ kind: 'file', fromPath: docName, toPath: newDocName }),
       });
 
       // Post-await cancel check: if the user navigated while the fetch was in
@@ -283,7 +284,19 @@ export function EditorHeader({
       const renamed = raw.renamed;
       const nextActiveDocName = remapActiveDocName(docName, renamed);
 
-      for (const entry of renamed) closeDocument(entry.fromDocName);
+      // Wipe IDB for both ends of every rename pair before navigation. The
+      // `to` clear catches the move-back-to-previous-name case where the
+      // destination already had IDB rows from an earlier session — opening
+      // into that stale IDB would hydrate the new Y.Doc with foreign-
+      // clientID content and union-merge with the server's freshly-loaded
+      // body, appending the stale content. See provider-pool's
+      // `closeAndClearPersistence` for the bug-class detail.
+      await Promise.all(
+        renamed.flatMap((entry) => [
+          closeAndClearForRename(entry.fromDocName),
+          closeAndClearForRename(entry.toDocName),
+        ]),
+      );
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
       setIsRenaming(false);
