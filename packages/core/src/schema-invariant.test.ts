@@ -200,7 +200,8 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     nodeType: 'image',
     kind: 'attr-removed',
     attrName: 'sourceForm',
-    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    specRef:
+      'inline-image kill — three rendered:false attrs on PM `image` schema (`sourceForm`/`target`/`anchor`) removed when inline-position embeds collapsed onto the link-mark chip path; no parser/serializer reads or emits these attrs after the cut',
     regressionTestRef:
       'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },
@@ -208,7 +209,8 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     nodeType: 'image',
     kind: 'attr-removed',
     attrName: 'target',
-    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    specRef:
+      'inline-image kill — three rendered:false attrs on PM `image` schema (`sourceForm`/`target`/`anchor`) removed when inline-position embeds collapsed onto the link-mark chip path; no parser/serializer reads or emits these attrs after the cut',
     regressionTestRef:
       'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },
@@ -216,7 +218,8 @@ const ALLOWED_NARROWINGS: AllowedNarrowing[] = [
     nodeType: 'image',
     kind: 'attr-removed',
     attrName: 'anchor',
-    specRef: 'plans/go-ahead-and-do-recursive-planet.md (2026-04-29 inline-image kill)',
+    specRef:
+      'inline-image kill — three rendered:false attrs on PM `image` schema (`sourceForm`/`target`/`anchor`) removed when inline-position embeds collapsed onto the link-mark chip path; no parser/serializer reads or emits these attrs after the cut',
     regressionTestRef:
       'packages/core/src/markdown/handlers.test.ts (inline-position chip-path test) + packages/app/tests/integration/y-tiptap-schema-throw-substitution.test.ts (R13 substitution on schema throw)',
   },

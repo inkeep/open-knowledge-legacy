@@ -173,8 +173,8 @@ interface InsertShape {
  * fragments the editor between drop-time and reload-time PM trees — a
  * prop-edit on a freshly dropped node would round-trip differently than a
  * prop-edit on the same node after reload. The test in
- * `media-drop-shape-invariant.test.ts` (in `packages/core`) pins both
- * directions.
+ * `media-drop-shape-invariant.test.ts` (co-located here in
+ * `packages/app/src/editor/image-upload/`) pins both directions.
  *
  * `props` carries only the user-visible inputs that distinguish a fresh
  * drop — `src` for everything, `alt: ""` for `<img>` (HTML accessibility
