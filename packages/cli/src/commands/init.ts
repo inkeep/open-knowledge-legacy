@@ -30,7 +30,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
-import { accent, info, success, warning } from '../ui/colors.ts';
+import { accent, error, info, success, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -901,7 +901,9 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
           lines.push(`  ${labelWithScope}${pad}${displayPath}  config root missing; skipped`);
           break;
         case 'failed':
-          lines.push(`  ${labelWithScope}${pad}${displayPath}  FAILED: ${editor.error}`);
+          lines.push(
+            `  ${labelWithScope}${pad}${displayPath}  ${error('FAILED')}: ${editor.error}`,
+          );
           break;
         case 'skipped-flag':
           break;
@@ -946,10 +948,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push(accent('User-global skill:'));
     switch (result.skillInstall) {
       case 'installed':
-        lines.push(`  open-knowledge  ${success('installed')} to detected agent hosts via \`npx skills\``);
+        lines.push(
+          `  open-knowledge  ${success('installed to detected agent hosts')} via \`npx skills\``,
+        );
         break;
       case 'skip-current':
-        lines.push(`  open-knowledge  ${success('already installed')} at current version`);
+        lines.push(`  open-knowledge  ${success('already installed at current version')}`);
         break;
       case 'failed':
         lines.push(
@@ -995,7 +999,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       .map((e) => e.label);
 
     lines.push('');
-    lines.push(success(accent('Next steps:')));
+    lines.push(`${success('✓')} ${accent('Next steps:')}`);
     lines.push(`  1. Open your editor (${info(configuredLabels.join(' / '))})`);
     lines.push('  2. Approve the MCP server when prompted');
     lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
