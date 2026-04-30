@@ -5,10 +5,13 @@
  * panel migrated to direct CRDT writes via `bindFrontmatterDoc`. This file
  * is preserved to make the future re-enable diff small: the next change
  * should swap `httpPost` for a server-side CRDT path (open a
- * `DirectConnection`, call `setFrontmatterProperty` per key inside
- * `dc.document.transact(fn, session.formOrigin)`, similar to
- * `applyAgentMarkdownWrite` for body content) and re-add the `register(...)`
- * call in `index.ts`.
+ * `DirectConnection` and apply per-key writes inside one
+ * `dc.document.transact(fn, origin)` block, similar to how
+ * `applyAgentMarkdownWrite` in `packages/server/src/agent-sessions.ts` runs
+ * under the per-session `session.origin`) and re-add the `register(...)`
+ * call in `index.ts`. A non-paired form-write origin will need to be
+ * reintroduced if the new path requires a separate writer-ID — it was
+ * removed alongside this tool.
  *
  * The registration in `index.ts` is commented out, so this tool is not
  * advertised over MCP today.

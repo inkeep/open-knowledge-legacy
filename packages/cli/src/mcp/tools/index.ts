@@ -37,10 +37,14 @@ import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exe
 // `frontmatter_patch` is parked: its HTTP transport `/api/frontmatter-patch`
 // was removed when the property panel migrated to direct CRDT writes via
 // `bindFrontmatterDoc`. The MCP path needs a server-side CRDT migration of
-// its own (open a DirectConnection, call `setFrontmatterProperty` per key
-// inside `dc.document.transact(fn, session.formOrigin)`) before it can be
-// re-enabled. Imports are commented out so registration can be parked
-// without a knip orphan-file warning on the unused module.
+// its own (open a DirectConnection and apply per-key writes inside one
+// `dc.document.transact(fn, origin)` block, similar to how
+// `applyAgentMarkdownWrite` in `packages/server/src/agent-sessions.ts` runs
+// under the per-session `session.origin`) before it can be re-enabled.
+// A non-paired form-write origin will need to be reintroduced if the new
+// path requires a separate writer-ID — it was removed alongside this tool.
+// Imports are commented out so registration can be parked without a knip
+// orphan-file warning on the unused module.
 // import {
 //   DESCRIPTION as FRONTMATTER_PATCH_DESCRIPTION,
 //   register as registerFrontmatterPatch,
