@@ -36,7 +36,7 @@ import type { SlashCommandItem } from './items';
  * ListOrdered, PanelTop, Square, SquareMousePointer, Table) plus the
  * dangling `GitGraph` import (Mermaid was cut 2026-04-21 per the manifest
  * header). New descriptors in the 5-pack each add exactly one icon: Callout
- * → MessageSquareWarning, Image → ZoomIn, Video → Film, Audio → Volume2,
+ * → MessageSquareWarning, Image → Image, Video → SquarePlay, Audio → Volume2,
  * Accordion → ChevronRight. `Box` is the wildcard fallback for the `'*'`
  * descriptor.
  */

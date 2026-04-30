@@ -688,7 +688,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     hasChildren: false,
     isSelfClosing: true,
     props: commonMarkImageProps,
-    icon: 'ZoomIn',
+    icon: 'Image',
     category: 'media',
     displayName: 'CommonMark Image',
     description:

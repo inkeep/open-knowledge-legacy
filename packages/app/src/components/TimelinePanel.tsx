@@ -844,36 +844,40 @@ export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: Tim
 
   const hasNoCheckpoints = !entries.some((e) => e.type === 'checkpoint');
 
+  const hasEntries = !loading && !error && entries.length > 0;
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-end gap-1 px-2 py-1.5">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToggleGroup
-              type="single"
-              value={diffLayout}
-              onValueChange={(v) => {
-                if (v) onDiffLayoutChange(v as DiffLayout);
-              }}
-              aria-label="Diff layout"
-              variant="segmented"
-              size="sm"
-              spacing={1}
-              className="bg-muted dark:bg-background p-0.5 rounded-md shrink-0"
-            >
-              <ToggleGroupItem value="unified" aria-label="Unified diff" className="size-6 px-0">
-                <Rows2 className="size-3.5" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="split" aria-label="Split diff" className="size-6 px-0">
-                <Columns2 className="size-3.5" />
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </TooltipTrigger>
-          <TooltipContent>
-            {diffLayout === 'unified' ? 'Unified diff' : 'Split diff'}
-          </TooltipContent>
-        </Tooltip>
-      </div>
+      {hasEntries && (
+        <div className="flex items-center justify-end gap-1 px-2 py-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroup
+                type="single"
+                value={diffLayout}
+                onValueChange={(v) => {
+                  if (v) onDiffLayoutChange(v as DiffLayout);
+                }}
+                aria-label="Diff layout"
+                variant="segmented"
+                size="sm"
+                spacing={1}
+                className="bg-muted dark:bg-background p-0.5 rounded-md shrink-0"
+              >
+                <ToggleGroupItem value="unified" aria-label="Unified diff" className="size-6 px-0">
+                  <Rows2 className="size-3.5" />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="split" aria-label="Split diff" className="size-6 px-0">
+                  <Columns2 className="size-3.5" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </TooltipTrigger>
+            <TooltipContent>
+              {diffLayout === 'unified' ? 'Unified diff' : 'Split diff'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
       {/* Scrollable entry list */}
       <div className="flex-1 overflow-y-auto subtle-scrollbar">
         {/* Loading skeleton */}
