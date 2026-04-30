@@ -209,6 +209,7 @@ ui.lock
 # Sync watermarks + per-machine principal identity
 sync-state.json
 principal.json
+state.json
 
 # MCP spawn diagnostics
 last-spawn-error.log

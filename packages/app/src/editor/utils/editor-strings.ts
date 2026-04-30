@@ -49,7 +49,11 @@ export const DOCUMENT_ROOT_LABEL = 'Document';
 
 /**
  * Humanize a camelCase / snake_case prop name for the PropPanel UI.
- * `emptyChildName` → `Empty Child Name`, `default_value` → `Default Value`.
+ * Splits on `_` / `-` and on camelCase word boundaries; capitalizes only the
+ * first character of the result. `emptyChildName` → `Empty Child Name`
+ * (every word begins with a capital because the camelCase regex inserts
+ * spaces *before* existing capitals). `default_value` → `Default value`
+ * (snake/kebab inputs keep the rest of the words lowercase).
  * Identifiers stay camelCase in the generated markdown attr; only the label
  * is transformed.
  */
