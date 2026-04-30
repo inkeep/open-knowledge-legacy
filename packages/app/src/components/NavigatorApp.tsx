@@ -20,6 +20,8 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { AuthModal } from './AuthModal';
+import { CloneDialog } from './CloneDialog';
 import { GithubIcon } from './icons/github';
 import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
@@ -41,6 +43,9 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,16 +82,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const runWithErrorState = (fn: () => Promise<void>, fallback: string) =>
     runWithErrorStatePure(fn, fallback, setError);
 
-  const onClone = () =>
-    runWithErrorState(async () => {
-      // M4/M5 wires the full Device-Flow CloneDialog; for M1 we just open the
-      // folder picker so the user can pick a clone target — actual `git clone`
-      // delegation lands in M4 alongside the Device-Flow auth surface.
-      const target = await bridge.dialog.openFolder();
-      if (!target) return;
-      // TODO M4: pipe target + git URL into clone-from-github CloneDialog
-      await openProject(bridge, target);
-    }, 'Failed to clone from GitHub.');
+  const onClone = () => setCloneDialogOpen(true);
 
   const onOpenFolder = () =>
     runWithErrorState(async () => {
@@ -194,6 +190,39 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           `mcpConsentStore` snapshot, renders nothing until main fires
           `ok:mcp-wiring:show`. Mounted identically in App.tsx (D-M6-R10). */}
       <McpConsentDialog />
+
+      <CloneDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        onSignIn={() => {
+          setCloneDialogOpen(false);
+          setReturnToCloneAfterAuth(true);
+          setAuthModalOpen(true);
+        }}
+        onCloneComplete={({ dir }) => {
+          // Navigator stays open; spawn the cloned project in a new editor
+          // window. The default `window.location.href` redirect would
+          // navigate the launcher itself away — wrong for the Electron
+          // multi-window flow. Server includes `dir` (absolute, expanded)
+          // in the `complete` event for exactly this caller path.
+          if (!dir) return;
+          void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
+        }}
+      />
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={(next) => {
+          setAuthModalOpen(next);
+          if (!next) setReturnToCloneAfterAuth(false);
+        }}
+        onSuccess={() => {
+          setAuthModalOpen(false);
+          if (returnToCloneAfterAuth) {
+            setReturnToCloneAfterAuth(false);
+            setCloneDialogOpen(true);
+          }
+        }}
+      />
     </div>
   );
 }

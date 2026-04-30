@@ -5139,7 +5139,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const result = await startServerAtDirAndGetPort(cloneCompleteDir);
             if (!res.writableEnded) {
               if ('port' in result) {
-                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
+                // `dir` is the absolute, tilde-expanded path to the cloned
+                // repo. Web clients ignore it and redirect via `port`; the
+                // Electron Navigator uses it to spawn a new editor window
+                // instead of navigating the launcher to a dev-server URL.
+                res.write(
+                  `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
+                );
               } else {
                 res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
               }

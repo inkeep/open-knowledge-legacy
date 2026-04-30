@@ -40,6 +40,10 @@ interface CloneProgressEvent {
 interface CloneCompleteEvent {
   type: 'complete';
   port: number;
+  /** Absolute, tilde-expanded path to the cloned repo. Used by hosts that
+   *  spawn a separate window/process at the cloned dir (Electron Navigator)
+   *  instead of redirecting the current page to the new server's port. */
+  dir?: string;
 }
 
 interface CloneErrorEvent {
@@ -94,9 +98,16 @@ interface CloneDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called when "Sign in to GitHub" is clicked. */
   onSignIn?: () => void;
+  /**
+   * Called when the clone completes successfully. When provided, the dialog
+   * does NOT redirect via `window.location.href` — the caller takes over
+   * navigation. Used by the Electron Navigator to spawn a new editor window
+   * at `dir` instead of navigating the launcher itself to the new dev port.
+   */
+  onCloneComplete?: (info: { port: number; dir?: string }) => void;
 }
 
-export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) {
+export function CloneDialog({ open, onOpenChange, onSignIn, onCloneComplete }: CloneDialogProps) {
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
@@ -240,8 +251,13 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
               onOpenChange(false);
               setCloning(false);
               setAbortController(null);
-              // Redirect to the new server's port
-              window.location.href = `http://localhost:${event.port}`;
+              if (onCloneComplete) {
+                // Caller (e.g. Electron Navigator) takes over navigation.
+                onCloneComplete({ port: event.port, dir: event.dir });
+              } else {
+                // Web fallback: redirect this page to the new server's port.
+                window.location.href = `http://localhost:${event.port}`;
+              }
               return;
             } else if (event.type === 'error') {
               toast.error(`Clone failed: ${event.message}`, { id: toastId });
