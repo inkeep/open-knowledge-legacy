@@ -25,7 +25,7 @@ export const DESCRIPTION = [
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   'Use `offset` when you need to patch an exact occurrence; omit it to preserve first-match behavior.',
   '',
-  '**Body-only.** Frontmatter-intersecting find/replace calls are rejected with HTTP 400 — use the `frontmatter_patch` tool to modify frontmatter properties.',
+  '**Body-only.** Frontmatter-intersecting find/replace calls are rejected with HTTP 400. Frontmatter editing via MCP is currently unavailable — to change frontmatter, use `write_document` with `position: "replace"` and a payload that includes the new YAML block.',
   '',
   '**When rewriting prose, add `[[wiki-links]]` aggressively.** If the replacement mentions other documents or entities that should have their own page, link them as `[[Page Name]]`. Over-linking is the goal; underlinked documents lose their value in backlink-driven navigation.',
   '',

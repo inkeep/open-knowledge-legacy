@@ -79,6 +79,9 @@ export default {
       ],
       ignoreFiles: [
         'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts
+        // Parked tool — registration commented out in src/mcp/tools/index.ts
+        // until a server-side CRDT path replaces /api/frontmatter-patch.
+        'src/mcp/tools/frontmatter-patch.ts',
       ],
     },
     'packages/desktop': {

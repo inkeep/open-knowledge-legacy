@@ -17,12 +17,7 @@
  * V0-14 applyAgentUndo path; captureTransaction excludes it from the UM stack
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
-import type {
-  DirectConnection,
-  Document,
-  Hocuspocus,
-  LocalTransactionOrigin,
-} from '@hocuspocus/server';
+import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import {
   applyFastDiff,
   prependFrontmatter,
@@ -325,15 +320,6 @@ interface SessionRecord {
   origin: PairedWriteOrigin;
   /** Per-session undo write origin — V0-14 (US-009, D4). Paired so Observer A/B short-circuit. */
   undoOrigin: PairedWriteOrigin;
-  /**
-   * Per-session form-write origin. NOT paired — single-root writer (touches
-   * only `Y.Map('metadata')`); Observer A must fire normally to recompose
-   * YAML+body and propagate to Y.Text. Reserved for future server-side form
-   * paths (e.g. an MCP-driven DirectConnection write); browser form writes
-   * now go through `bindFrontmatterDoc` (`@inkeep/open-knowledge-core/bridge`)
-   * directly under `FORM_WRITE_ORIGIN`, not via per-session bookkeeping.
-   */
-  formOrigin: LocalTransactionOrigin;
   /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
   um: Y.UndoManager;
   agentId: string;
@@ -399,40 +385,6 @@ function createUndoOrigin(sessionId: string, agentType?: string): PairedWriteOri
   if (agentType !== undefined) context.agent_type = agentType;
   Object.freeze(context);
   const origin: PairedWriteOrigin = {
-    source: 'local',
-    skipStoreHooks: false,
-    context,
-  };
-  Object.freeze(origin);
-  return origin;
-}
-
-/**
- * Per-session form-write origin. Single-root writer (touches only metaMap),
- * so this origin is intentionally NOT paired — Observer A fires normally and
- * recomposes YAML+body to Y.Text. Object-identity-unique per call; deep-frozen.
- *
- * `isPairedWriteOrigin(formOrigin)` returns `false` by construction (no
- * `context.paired: true`). Adding the marker would short-circuit Observer A
- * and leave Y.Text stale (form writes don't touch XmlFragment).
- */
-function createFormWriteOrigin(
-  sessionId: string,
-  agentType?: string,
-  principalId?: string,
-  displayName?: string,
-  colorSeed?: string,
-): LocalTransactionOrigin {
-  const context: Record<string, unknown> & { origin: string } = {
-    origin: 'form-write',
-    session_id: sessionId,
-  };
-  if (agentType !== undefined) context.agent_type = agentType;
-  if (principalId !== undefined) context.principal = principalId;
-  if (displayName !== undefined) context.display_name = displayName;
-  if (colorSeed !== undefined) context.color_seed = colorSeed;
-  Object.freeze(context);
-  const origin: LocalTransactionOrigin = {
     source: 'local',
     skipStoreHooks: false,
     context,
@@ -553,14 +505,6 @@ export class AgentSessionManager {
     );
     // US-008: per-session undo origin — V0-14 placeholder, excluded from UM stack
     const undoOrigin = createUndoOrigin(rawSessionId, agentType);
-    // Per-session non-paired form-write origin — single-root metaMap writer.
-    const formOrigin = createFormWriteOrigin(
-      rawSessionId,
-      agentType,
-      identity?.principalId,
-      identity?.displayName,
-      identity?.colorSeed,
-    );
 
     // D32: thread session context to openDirectConnection so Hocuspocus
     // extensions (e.g. onAuthenticate) can resolve the session's identity.
@@ -624,7 +568,7 @@ export class AgentSessionManager {
 
     log.info({ docName, agentId }, `[agent-session] Created session for: ${docName} / ${agentId}`);
 
-    return { dc, origin, undoOrigin, formOrigin, um, agentId, docName };
+    return { dc, origin, undoOrigin, um, agentId, docName };
   }
 
   /** Check if a session exists without creating one. */

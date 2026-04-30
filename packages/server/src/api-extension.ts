@@ -2171,7 +2171,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, {
           ok: false,
           error:
-            'Frontmatter edits are not supported via edit_document; use the frontmatter_patch tool instead',
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
         });
         return;
       }
@@ -2331,7 +2331,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, {
           ok: false,
           error:
-            'Frontmatter edits are not supported via edit_document; use the frontmatter_patch tool instead',
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
         });
         return;
       }

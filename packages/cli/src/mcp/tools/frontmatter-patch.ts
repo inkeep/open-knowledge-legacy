@@ -1,15 +1,17 @@
 /**
- * `frontmatter_patch` MCP tool — typed per-key frontmatter writes via JSON
- * Merge Patch (RFC 7396).
+ * `frontmatter_patch` MCP tool — PARKED.
  *
- * Sends the patch to Hocuspocus via POST /api/frontmatter-patch. The handler
- * applies updates atomically under a non-paired per-session form-write origin;
- * Observer A recomposes YAML+body and propagates to Y.Text after the
- * transaction settles.
+ * The `/api/frontmatter-patch` HTTP transport was removed when the property
+ * panel migrated to direct CRDT writes via `bindFrontmatterDoc`. This file
+ * is preserved to make the future re-enable diff small: the next change
+ * should swap `httpPost` for a server-side CRDT path (open a
+ * `DirectConnection`, call `setFrontmatterProperty` per key inside
+ * `dc.document.transact(fn, session.formOrigin)`, similar to
+ * `applyAgentMarkdownWrite` for body content) and re-add the `register(...)`
+ * call in `index.ts`.
  *
- * Replaces FM-touching `agent-patch` calls (US-006 forbids them after a
- * 30-day deprecation window) — `edit_document` remains the surface for body
- * edits.
+ * The registration in `index.ts` is commented out, so this tool is not
+ * advertised over MCP today.
  */
 import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';

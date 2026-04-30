@@ -34,10 +34,17 @@ import {
   register as registerEditDocument,
 } from './edit-document.ts';
 import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exec.ts';
-import {
-  DESCRIPTION as FRONTMATTER_PATCH_DESCRIPTION,
-  register as registerFrontmatterPatch,
-} from './frontmatter-patch.ts';
+// `frontmatter_patch` is parked: its HTTP transport `/api/frontmatter-patch`
+// was removed when the property panel migrated to direct CRDT writes via
+// `bindFrontmatterDoc`. The MCP path needs a server-side CRDT migration of
+// its own (open a DirectConnection, call `setFrontmatterProperty` per key
+// inside `dc.document.transact(fn, session.formOrigin)`) before it can be
+// re-enabled. Imports are commented out so registration can be parked
+// without a knip orphan-file warning on the unused module.
+// import {
+//   DESCRIPTION as FRONTMATTER_PATCH_DESCRIPTION,
+//   register as registerFrontmatterPatch,
+// } from './frontmatter-patch.ts';
 import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
@@ -116,7 +123,7 @@ const _TOOL_DESCRIPTIONS = {
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
-  frontmatter_patch: FRONTMATTER_PATCH_DESCRIPTION,
+  // frontmatter_patch parked — see import block above.
   get_history: GET_HISTORY_DESCRIPTION,
   save_version: SAVE_VERSION_DESCRIPTION,
   rollback_to_version: ROLLBACK_DESCRIPTION,
@@ -225,12 +232,8 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('edit_document'),
     identityRef: opts.identityRef,
   });
-  registerFrontmatterPatch(registrationServer, {
-    serverUrl: opts.serverUrl,
-    config: opts.config,
-    resolveCwd: named('frontmatter_patch'),
-    identityRef: opts.identityRef,
-  });
+  // frontmatter_patch is parked — see import block at top of file.
+  // Re-enable once a server-side CRDT path replaces /api/frontmatter-patch.
   registerRenameDocument(registrationServer, {
     serverUrl: opts.serverUrl,
     config: opts.config,

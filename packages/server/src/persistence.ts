@@ -841,12 +841,26 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // No-op for the revert origin itself (loop guard) and for unchanged
       // metaMap state. The disk-write path proceeds in all cases — after
       // a revert, the post-revert state is the one that lands on disk.
-      validateAndRevertFrontmatterIfBad(
-        document,
-        documentName,
-        lastTransactionOrigin,
-        frontmatterL3Ctx,
-      );
+      //
+      // The call is guarded so a hook failure (Y.Doc lifecycle race during
+      // the revert transact, a throwing `onFrontmatterRejected` callback, or
+      // any other unexpected exception) cannot abort the disk write for this
+      // document. Aborting onStoreDocument would leave the user's edits
+      // unflushed in memory; a server crash before the next debounce would
+      // lose them.
+      try {
+        validateAndRevertFrontmatterIfBad(
+          document,
+          documentName,
+          lastTransactionOrigin,
+          frontmatterL3Ctx,
+        );
+      } catch (e) {
+        log.error(
+          { err: e, docName: documentName },
+          '[persistence] L3 frontmatter hook threw — proceeding with disk write',
+        );
+      }
       ensureHistograms();
       const started = Date.now();
       return withSpan(

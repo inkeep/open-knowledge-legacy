@@ -28,12 +28,17 @@ function getDoc(conn: Conn): Y.Doc {
   return doc;
 }
 
-function makeServer(contentDir: string, projectDir: string): Hocuspocus {
+function makeServer(
+  contentDir: string,
+  projectDir: string,
+  opts: { onFrontmatterRejected?: () => never } = {},
+): Hocuspocus {
   const { extension } = createPersistenceExtension({
     contentDir,
     projectDir,
     contentRoot: 'content',
     gitEnabled: false,
+    onFrontmatterRejected: opts.onFrontmatterRejected,
   });
   // debounce 0 so onStoreDocument fires immediately when we call flushPendingStores.
   return new Hocuspocus({ quiet: true, extensions: [extension], debounce: 0, maxDebounce: 0 });
@@ -161,6 +166,48 @@ describe('US-002 — onStoreDocument canonical FM via composeFrontmatterForStore
     expect(onDisk).toContain('title: Updated');
     expect(onDisk).not.toContain('title: Original');
     expect(onDisk.startsWith('---\n')).toBe(true);
+  });
+
+  test('throwing onFrontmatterRejected does not abort disk write', async () => {
+    // Regression: the L3 frontmatter hook used to be unguarded, so a throw
+    // from the `onFrontmatterRejected` callback (or any other failure inside
+    // the hook) would propagate out of `onStoreDocument` and abort the disk
+    // write. The user's edits would stay in memory until the next debounce —
+    // a server crash before then would lose them. The hook is now wrapped in
+    // a try/catch at the call site so the disk-write path proceeds.
+    const filePath = join(contentDir, 'guarded.md');
+    writeFileSync(filePath, '---\ntitle: Original\n---\n# Body\n');
+    const hp = makeServer(contentDir, projectDir, {
+      onFrontmatterRejected: () => {
+        throw new Error('intentional rejection-callback failure');
+      },
+    });
+
+    const conn = await hp.openDirectConnection('guarded');
+    const doc = getDoc(conn);
+
+    // Land an invalid-shape frontmatter entry alongside a body change so the
+    // L3 hook fires the (throwing) rejection callback. The disk-write path
+    // must still complete.
+    doc.transact((tx) => {
+      // Bypass the typed setter so the hook sees an invalid value.
+      doc.getMap('metadata').set('count', { nested: 'object' } as unknown as number);
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('body still saved')]);
+      xmlFragment.insert(0, [paragraph]);
+      void tx;
+    });
+
+    await hp.flushPendingStores();
+    await new Promise((r) => setTimeout(r, 50));
+
+    await conn.disconnect();
+    deleteReconciledBase('guarded');
+
+    // Disk write completed despite the throwing hook.
+    const onDisk = readFileSync(filePath, 'utf-8');
+    expect(onDisk).toContain('body still saved');
   });
 
   test('no-op load preserves legacy mirror verbatim (comment + style preservation path)', async () => {

@@ -368,7 +368,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
       const parsed = JSON.parse(response.body);
       expect(parsed.ok).toBe(false);
       expect(parsed.error).toContain('Frontmatter edits are not supported');
-      expect(parsed.error).toContain('frontmatter_patch');
+      expect(parsed.error).toContain('write_document');
 
       // Doc must be untouched — FM unchanged and body unchanged.
       expect(metaMap.get('frontmatter')).toBe(existingFm);

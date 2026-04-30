@@ -105,9 +105,7 @@ describe('frontmatter-telemetry', () => {
   });
 
   test('recordFrontmatterEditSurface increments counter with bounded source label', async () => {
-    recordFrontmatterEditSurface('form');
-    recordFrontmatterEditSurface('form');
-    recordFrontmatterEditSurface('mcp-patch');
+    recordFrontmatterEditSurface('mcp-write');
     recordFrontmatterEditSurface('mcp-write');
     recordFrontmatterEditSurface('file-watcher');
     recordFrontmatterEditSurface('source-mode');
@@ -120,9 +118,7 @@ describe('frontmatter-telemetry', () => {
       const source = String(p.attributes.source);
       bySource.set(source, (bySource.get(source) ?? 0) + p.value);
     }
-    expect(bySource.get('form')).toBe(2);
-    expect(bySource.get('mcp-patch')).toBe(1);
-    expect(bySource.get('mcp-write')).toBe(1);
+    expect(bySource.get('mcp-write')).toBe(2);
     expect(bySource.get('file-watcher')).toBe(1);
     expect(bySource.get('source-mode')).toBe(1);
     // Verify cardinality is bounded — only the `source` label, no others

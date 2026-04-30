@@ -215,3 +215,75 @@ describe('bindFrontmatterDoc — dispose()', () => {
     expect(() => binding.dispose()).not.toThrow();
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// AC-Q4: multi-client concurrent same-key writes converge to last-wins.
+//
+// Simulates two clients independently writing different values to the
+// same key, then exchanging Y.js updates peer-to-peer. The new CRDT-direct
+// path adds a `FORM_WRITE_ORIGIN` and an L3 server-side hook that runs on
+// every store. This test pins the underlying Y.Map LWW guarantee through
+// the binding's public API: post-merge, both docs see the same value, and
+// it is one of the two written values (not a corrupted state).
+// ────────────────────────────────────────────────────────────────────────
+describe('bindFrontmatterDoc — concurrent same-key convergence (AC-Q4)', () => {
+  test('two clients write the same key concurrently → both converge to the same value', () => {
+    const providerA = makeProvider();
+    const providerB = makeProvider();
+    const bindingA = bindFrontmatterDoc(providerA);
+    const bindingB = bindFrontmatterDoc(providerB);
+
+    // Establish a shared baseline: both clients have the same starting state.
+    const baseline = Y.encodeStateAsUpdate(providerA.document);
+    Y.applyUpdate(providerB.document, baseline);
+
+    // Concurrent writes to the SAME key, on disjoint docs (no sync yet).
+    bindingA.patch({ status: 'draft' });
+    bindingB.patch({ status: 'published' });
+
+    // Pre-merge: each client sees its own write.
+    expect(bindingA.current()).toEqual({ status: 'draft' });
+    expect(bindingB.current()).toEqual({ status: 'published' });
+
+    // Exchange updates peer-to-peer (mirrors what a Hocuspocus relay would do).
+    const updateA = Y.encodeStateAsUpdate(providerA.document);
+    const updateB = Y.encodeStateAsUpdate(providerB.document);
+    Y.applyUpdate(providerA.document, updateB);
+    Y.applyUpdate(providerB.document, updateA);
+
+    // Convergence: both clients agree on the same final value (LWW per key).
+    const finalA = bindingA.current();
+    const finalB = bindingB.current();
+    expect(finalA).toEqual(finalB);
+    expect(finalA.status).toBeDefined();
+    // The winning value is one of the two — Y.Map LWW guarantees neither
+    // corruption nor loss of the underlying contract.
+    expect(['draft', 'published']).toContain(finalA.status);
+
+    bindingA.dispose();
+    bindingB.dispose();
+  });
+
+  test('two clients write different keys concurrently → both keys present after merge', () => {
+    const providerA = makeProvider();
+    const providerB = makeProvider();
+    const bindingA = bindFrontmatterDoc(providerA);
+    const bindingB = bindFrontmatterDoc(providerB);
+
+    const baseline = Y.encodeStateAsUpdate(providerA.document);
+    Y.applyUpdate(providerB.document, baseline);
+
+    bindingA.patch({ title: 'Hello' });
+    bindingB.patch({ tags: ['alpha', 'beta'] });
+
+    Y.applyUpdate(providerA.document, Y.encodeStateAsUpdate(providerB.document));
+    Y.applyUpdate(providerB.document, Y.encodeStateAsUpdate(providerA.document));
+
+    // Field-level CRDT merge: both writes survive.
+    expect(bindingA.current()).toEqual({ title: 'Hello', tags: ['alpha', 'beta'] });
+    expect(bindingB.current()).toEqual({ title: 'Hello', tags: ['alpha', 'beta'] });
+
+    bindingA.dispose();
+    bindingB.dispose();
+  });
+});

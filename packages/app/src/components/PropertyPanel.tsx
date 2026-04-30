@@ -75,12 +75,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
    * land in `Y.Map('metadata')` under `FORM_WRITE_ORIGIN` and propagate to
    * the server via Hocuspocus.
    *
-   * The async signature is preserved for compatibility with callers that
-   * assumed the network round-trip — there is no `await` here, but keeping
-   * the Promise<PatchResult> return type avoids touching every callsite.
-   * Returning `Promise.resolve(...)` is fine because the binding's transact
-   * is fully synchronous.
-   *
    * Server-side L3 rejections (rare — would only fire if a non-form writer
    * inserts an invalid value into metaMap) arrive asynchronously via
    * `subscribeToFrontmatterValidationRejected`. Those errors are folded
@@ -88,19 +82,18 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
    */
   function commitPatch(patch: FrontmatterPatch): PatchResult {
     if (!binding) {
-      return { ok: false, status: 0, error: 'Connecting…' };
+      return { ok: false, error: 'Connecting…' };
     }
     const result = binding.patch(patch);
-    if (result.ok) return { ok: true, status: 200 };
+    if (result.ok) return { ok: true };
     if (result.error.code === 'WRITE_ERROR') {
       console.warn('[PropertyPanel] binding write error:', result.error.detail);
-      return { ok: false, status: 0, error: result.error.detail };
+      return { ok: false, error: result.error.detail };
     }
     const fieldErrors = fieldErrorsFromError(result.error);
     const firstIssue = result.error.issues[0]?.message ?? 'Invalid patch payload';
     return {
       ok: false,
-      status: 400,
       error: firstIssue,
       fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined,
     };
@@ -117,7 +110,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
 
   function setErrorForKeys(result: PatchResult, keys: readonly string[]) {
     if (result.ok) return;
-    const generic = result.error ?? `HTTP ${result.status || 'network'}`;
+    const generic = result.error ?? 'Failed to update property';
     const fieldErrors = result.fieldErrors ?? {};
     setErrors((prev) => {
       const next = { ...prev };
@@ -148,13 +141,13 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   }
 
   function renameProperty(oldKey: string, newKey: string): PatchResult {
-    if (oldKey === newKey) return { ok: true, status: 200 };
+    if (oldKey === newKey) return { ok: true };
     if (Object.hasOwn(map, newKey)) {
-      return { ok: false, status: 0, error: `Property "${newKey}" already exists` };
+      return { ok: false, error: `Property "${newKey}" already exists` };
     }
     const value = map[oldKey];
     if (value === undefined) {
-      return { ok: false, status: 0, error: `Property "${oldKey}" not found` };
+      return { ok: false, error: `Property "${oldKey}" not found` };
     }
     return commitPatch({ [oldKey]: null, [newKey]: value });
   }
@@ -247,17 +240,13 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     setAdding((prev) => (prev ? { ...prev, name, error: null } : prev));
   }
 
-  async function commitAdd() {
+  function commitAdd() {
     if (!adding) return;
     const trimmed = adding.name.trim();
     if (!trimmed) {
       setAdding({ ...adding, error: 'Name is required' });
       return;
     }
-    // 'frontmatter' is the reserved legacy single-string slot key
-    // (LEGACY_FRONTMATTER_KEY). Distinct error message from a real name
-    // collision so the user isn't confused by an "already exists" error
-    // for a name they don't see in the panel.
     if (trimmed === 'frontmatter') {
       setAdding({ ...adding, error: '"frontmatter" is a reserved property name' });
       return;
@@ -272,8 +261,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       return;
     }
     const fieldError = result.fieldErrors?.[trimmed];
-    const generic = result.error ?? `HTTP ${result.status || 'network error'}`;
-    setAdding({ ...adding, error: fieldError ?? `Failed to add property (${generic})` });
+    const generic = result.error ?? 'Failed to add property';
+    setAdding({ ...adding, error: fieldError ?? generic });
   }
 
   function cancelAdd() {
@@ -292,7 +281,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     setRenaming(null);
   }
 
-  async function commitRename() {
+  function commitRename() {
     if (!renaming) return;
     const trimmed = renaming.draft.trim();
     if (!trimmed) {
@@ -325,8 +314,7 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       return;
     }
     const fieldError = result.fieldErrors?.[trimmed] ?? result.fieldErrors?.[renaming.key];
-    const message =
-      fieldError ?? result.error ?? `Failed to rename (HTTP ${result.status || 'network error'})`;
+    const message = fieldError ?? result.error ?? 'Failed to rename property';
     setRenaming({ ...renaming, error: message });
   }
 
@@ -407,7 +395,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
 
 interface PatchResult {
   ok: boolean;
-  status: number;
   error?: string;
   fieldErrors?: Record<string, string>;
 }
