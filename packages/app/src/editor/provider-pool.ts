@@ -1188,9 +1188,18 @@ export class ProviderPool {
       // point came from IDB hydration of a prior session whose server is,
       // by definition, a different instance — preserving it would
       // duplicate content. The 50–500 ms cold-connect-then-immediate-
-      // mismatch window can lose keystrokes; accepted trade-off (SPEC §6).
+      // mismatch window can lose keystrokes; accepted trade-off.
       const baseline = poolEntry.lastDiskAckedSV ?? poolEntry.lastServerSyncedSV;
-      if (baseline === null) continue;
+      if (baseline === null) {
+        console.warn(
+          JSON.stringify({
+            event: 'ok-buffer-replay-skipped-no-baseline',
+            docName,
+            reason: 'no-disk-ack-or-server-sync-vector',
+          }),
+        );
+        continue;
+      }
       const unsynced = computeUnsyncedUpdate(poolEntry.provider.document, baseline);
       if (unsynced.byteLength > MAX_BUFFER_BYTES) {
         // Drop the buffer for this doc; the post-recycle replay would

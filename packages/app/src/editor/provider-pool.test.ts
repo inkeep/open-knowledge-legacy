@@ -7,7 +7,7 @@
  * the pool's LRU logic, Map management, and eviction ordering are all
  * exercised without needing a running Hocuspocus server.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
@@ -2108,47 +2108,63 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
   // mid-drain duplication).
 
   test('handleServerInstanceMismatch uses lastDiskAckedSV when present', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const docName = uniqueDocName('pp-baseline');
-    const entry = pool.open(docName);
-    if (!entry) throw new Error('expected entry');
-    pool.setActive(docName);
-    entry.observerCleanup = () => {};
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      const docName = uniqueDocName('pp-baseline');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+      entry.observerCleanup = () => {};
 
-    // Two-phase baseline construction. Phase A's content is "already on
-    // disk + already in server memory" (both watermarks would advance
-    // past it under normal flow). Phase B is "in-memory-only" (server
-    // hasn't received the disk-ack yet).
-    const Y = await import('yjs');
-    const cp = await import('./client-persistence');
-    entry.provider.document.getText('source').insert(0, 'AAA');
-    const svAfterAAA = cp.captureStateVector(entry.provider.document);
-    entry.provider.document.getText('source').insert(3, 'BBB');
-    const svAfterAAABBB = cp.captureStateVector(entry.provider.document);
-    entry.provider.document.getText('source').insert(6, 'CCC');
+      // Two-phase baseline construction. Phase A's content is "already on
+      // disk + already in server memory" (both watermarks would advance
+      // past it under normal flow). Phase B is "in-memory-only" (server
+      // hasn't received the disk-ack yet).
+      const Y = await import('yjs');
+      const cp = await import('./client-persistence');
+      entry.provider.document.getText('source').insert(0, 'AAA');
+      const svAfterAAA = cp.captureStateVector(entry.provider.document);
+      entry.provider.document.getText('source').insert(3, 'BBB');
+      const svAfterAAABBB = cp.captureStateVector(entry.provider.document);
+      entry.provider.document.getText('source').insert(6, 'CCC');
 
-    // Set both SVs explicitly. lastDiskAckedSV (more conservative —
-    // server has durably persisted only 'AAA') must win as baseline.
-    entry.lastDiskAckedSV = svAfterAAA;
-    entry.lastServerSyncedSV = svAfterAAABBB;
+      // Set both SVs explicitly. lastDiskAckedSV (more conservative —
+      // server has durably persisted only 'AAA') must win as baseline.
+      entry.lastDiskAckedSV = svAfterAAA;
+      entry.lastServerSyncedSV = svAfterAAABBB;
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(100);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(100);
 
-    const buffered = pool.__test_getBufferedUpdate(docName);
-    if (!buffered) throw new Error('expected buffered update for active doc');
+      const noBaselineSkipped = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-buffer-replay-skipped-no-baseline';
+        } catch {
+          return false;
+        }
+      }).length;
 
-    // The buffered update MUST equal the unsynced-from-disk-ack delta
-    // (covering 'BBB' + 'CCC'), NOT the unsynced-from-server-synced
-    // delta (covering only 'CCC'). Compare byte-identity to encodeStateAsUpdate
-    // computed independently — proves which baseline was used.
-    const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
-    expect(buffered).toEqual(expected);
+      const buffered = pool.__test_getBufferedUpdate(docName);
+      if (!buffered) throw new Error('expected buffered update for active doc');
 
-    // Sanity: the alternative baseline produces a DIFFERENT (shorter) update.
-    const wrong = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAABBB);
-    expect(buffered.byteLength).toBeGreaterThan(wrong.byteLength);
+      expect(noBaselineSkipped).toBe(0);
+
+      // The buffered update MUST equal the unsynced-from-disk-ack delta
+      // (covering 'BBB' + 'CCC'), NOT the unsynced-from-server-synced
+      // delta (covering only 'CCC'). Compare byte-identity to encodeStateAsUpdate
+      // computed independently — proves which baseline was used.
+      const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
+      expect(buffered).toEqual(expected);
+
+      // Sanity: the alternative baseline produces a DIFFERENT (shorter) update.
+      const wrong = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAABBB);
+      expect(buffered.byteLength).toBeGreaterThan(wrong.byteLength);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('handleServerInstanceMismatch falls back to lastServerSyncedSV when lastDiskAckedSV is null', async () => {
@@ -2182,25 +2198,48 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     expect(buffered).toEqual(expected);
   });
 
-  test('handleServerInstanceMismatch skips entries with both watermarks null', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const docName = uniqueDocName('pp-baseline');
-    const entry = pool.open(docName);
-    if (!entry) throw new Error('expected entry');
-    pool.setActive(docName);
+  test('handleServerInstanceMismatch skips buffer replay when both watermark SVs are null', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      const docName = uniqueDocName('pp-baseline');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
 
-    entry.provider.document.getText('source').insert(0, 'unacked content');
-    expect(entry.lastServerSyncedSV).toBeNull();
-    expect(entry.lastDiskAckedSV).toBeNull();
+      entry.provider.document.getText('source').insert(0, 'unacked content');
+      expect(entry.lastServerSyncedSV).toBeNull();
+      expect(entry.lastDiskAckedSV).toBeNull();
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(100);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(100);
 
-    // No baseline → drop unsynced state. The 50–500 ms cold-connect-then-
-    // immediate-mismatch window can lose keystrokes; accepted trade-off
-    // (SPEC §6).
-    expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
+      // No trusted baseline → no in-memory replay buffer; clearData + recycle still run downstream.
+      expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
+
+      const noBaselineCalls = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-buffer-replay-skipped-no-baseline';
+        } catch {
+          return false;
+        }
+      });
+      expect(noBaselineCalls.length).toBe(1);
+      const firstArg = noBaselineCalls[0]?.[0];
+      expect(typeof firstArg).toBe('string');
+      const payload = JSON.parse(firstArg) as {
+        event: string;
+        docName: string;
+        reason: string;
+      };
+      expect(payload.event).toBe('ok-buffer-replay-skipped-no-baseline');
+      expect(payload.docName).toBe(docName);
+      expect(payload.reason).toBe('no-disk-ack-or-server-sync-vector');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
