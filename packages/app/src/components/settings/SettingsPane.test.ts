@@ -81,4 +81,17 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).not.toContain('IndexeddbPersistence');
     expect(SRC).not.toContain('createClientPersistence');
   });
+
+  test('uses the shadcn Form primitive (FormField / FormControl / FormMessage)', () => {
+    expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/form['"]/);
+    // Ensure the imported names land on the JSX (FormField is the harness
+    // entry point; FormMessage owns the data-field-error attribute).
+    expect(SRC).toMatch(/<FormField\b/);
+    expect(SRC).toMatch(/<FormMessage\b/);
+  });
+
+  test('consumes the useConfigForm harness hook', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/use-config-form['"]/);
+    expect(SRC).toContain('useConfigForm(');
+  });
 });

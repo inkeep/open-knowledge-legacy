@@ -17,6 +17,8 @@
  */
 
 import { describe, expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   Config,
   ConfigBindingPatchResult,
@@ -251,5 +253,37 @@ describe('useConfigForm module shape', () => {
     expect(typeof mod.applyExternalUpdate).toBe('function');
     expect(typeof mod.runCommit).toBe('function');
     expect(typeof mod.pickFirstIssueForPath).toBe('function');
+  });
+});
+
+// Source-level guards: the hook invokes useForm with binding.current() as
+// the seed and runs without a resolver (D64 LOCKED). The repo's no-DOM
+// unit-test convention means we can't render the hook; the guard ensures
+// the structural contract holds. Behavioral coverage of useForm itself
+// belongs to RHF's own tests + Settings-pane Playwright E2E.
+const HOOK_SRC = readFileSync(
+  join(new URL('.', import.meta.url).pathname, 'use-config-form.ts'),
+  'utf8',
+);
+
+describe('useConfigForm source-level guards', () => {
+  const SRC = HOOK_SRC;
+
+  test('initializes useForm with binding.current() as defaultValues + no resolver', () => {
+    expect(SRC).toContain('useForm');
+    expect(SRC).toContain('defaultValues: binding.current()');
+    // D64 LOCKED: no zodResolver, no resolver: prop on useForm.
+    expect(SRC).not.toContain('zodResolver');
+    expect(SRC).not.toMatch(/resolver:\s/);
+  });
+
+  test('subscribes to binding and bridges to form via applyExternalUpdate', () => {
+    expect(SRC).toContain('binding.subscribe');
+    expect(SRC).toContain('applyExternalUpdate');
+  });
+
+  test('does not instantiate client-side IndexeddbPersistence (D59)', () => {
+    expect(SRC).not.toContain('IndexeddbPersistence');
+    expect(SRC).not.toContain('createClientPersistence');
   });
 });
