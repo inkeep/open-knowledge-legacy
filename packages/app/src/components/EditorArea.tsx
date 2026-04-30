@@ -1,6 +1,7 @@
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
+import { AssetPreview } from '@/components/AssetPreview';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
@@ -141,6 +142,10 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
 
   if (activeTarget?.kind === 'folder') {
     return <FolderOverview folderPath={activeTarget.folderPath} />;
+  }
+
+  if (activeTarget?.kind === 'asset') {
+    return <AssetPreview assetPath={activeTarget.assetPath} mediaKind={activeTarget.mediaKind} />;
   }
 
   if (!activeProvider || !activeDocName) {

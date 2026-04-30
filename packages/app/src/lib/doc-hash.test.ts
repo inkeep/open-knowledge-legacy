@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { docNameFromHash, hashFromDocName } from './doc-hash';
+import { assetPathFromHash, docNameFromHash, hashFromAssetPath, hashFromDocName } from './doc-hash';
 
 describe('docNameFromHash', () => {
   test('returns null for empty hash', () => {
@@ -62,5 +62,17 @@ describe('hashFromDocName', () => {
 
   test('null anchor produces no query', () => {
     expect(hashFromDocName('doc', null)).toBe('#/doc');
+  });
+});
+
+describe('asset hash helpers', () => {
+  test('round-trips nested asset paths', () => {
+    const hash = hashFromAssetPath('docs/My Photo.png');
+    expect(hash).toBe('#/__asset__/docs/My%20Photo.png');
+    expect(assetPathFromHash(hash)).toBe('docs/My Photo.png');
+  });
+
+  test('asset hashes do not parse as doc hashes', () => {
+    expect(docNameFromHash(hashFromAssetPath('docs/photo.png'))).toBeNull();
   });
 });

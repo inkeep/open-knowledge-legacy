@@ -21,6 +21,12 @@ export type ResolvedNavigationTarget =
       folderPath: string;
     }
   | {
+      kind: 'asset';
+      target: string;
+      assetPath: string;
+      mediaKind: 'image' | 'video';
+    }
+  | {
       kind: 'missing';
       target: string;
     };
@@ -135,6 +141,7 @@ export function docNameForNavigationTarget(target: ResolvedNavigationTarget): st
       return target.docName;
     case 'missing':
       return target.target;
+    case 'asset':
     case 'folder':
       return null;
   }

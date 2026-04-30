@@ -1,6 +1,7 @@
 /** Shared data model and navigation helpers for the file sidebar. */
 
-export interface DocEntry {
+export interface DocumentEntry {
+  kind?: 'document';
   docName: string;
   /**
    * On-disk extension — `.md` (default) or `.mdx`. Surfaced by `/api/documents`
@@ -16,6 +17,27 @@ export interface DocEntry {
   isSymlink?: boolean;
   canonicalDocName?: string | null;
   targetPath?: string | null;
+}
+
+interface AssetEntry {
+  kind: 'asset';
+  path: string;
+  assetExt: string;
+  mediaKind: 'image' | 'video';
+  size: number;
+  modified: string;
+  referencedBy?: string[];
+}
+
+export type FileEntry = DocumentEntry | AssetEntry;
+export type DocEntry = DocumentEntry;
+
+export function isAssetEntry(entry: FileEntry): entry is AssetEntry {
+  return entry.kind === 'asset';
+}
+
+export function isDocumentEntry(entry: FileEntry): entry is DocumentEntry {
+  return !isAssetEntry(entry);
 }
 
 export function computeAncestors(docName: string | null): string[] {

@@ -66,6 +66,11 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import {
+  collectReferencedAssets,
+  mediaKindForAssetPath,
+  toContentRelativePath,
+} from './asset-references.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -255,6 +260,16 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
+const ASSET_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.mp4': 'video/mp4',
+};
+
+function assetContentType(path: string): string | null {
+  return ASSET_CONTENT_TYPES[extname(path).toLowerCase()] ?? null;
+}
 
 // F9: unicode-preserving. Permits any Unicode letter, number, or combining
 // mark, plus pictographic emoji and the punctuation whitelist (., -, _, space).
@@ -2112,8 +2127,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Read from the watcher's in-memory file index (instant, no filesystem scan)
       const index = getFileIndex();
       const documents: {
+        kind?: 'document' | 'asset';
         docName: string;
         docExt: string;
+        path?: string;
+        assetExt?: string;
+        mediaKind?: 'image' | 'video';
+        referencedBy?: string[];
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -2132,6 +2152,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const docExt = getDocExtension(docName);
 
         documents.push({
+          kind: 'document',
           docName,
           docExt,
           size: entry.size,
@@ -2146,6 +2167,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
+            kind: 'document',
             docName: alias,
             docExt,
             size: entry.size,
@@ -2155,6 +2177,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             targetPath: targetRelPath,
           });
         }
+      }
+
+      const assets = collectReferencedAssets({
+        contentDir,
+        fileIndex: index,
+        readMarkdown: (path) => {
+          try {
+            return readFileSync(path, 'utf-8');
+          } catch {
+            return null;
+          }
+        },
+      });
+      for (const asset of assets) {
+        if (dir && !asset.path.startsWith(`${dir}/`) && asset.path !== dir) continue;
+        documents.push({
+          kind: 'asset',
+          docName: asset.path,
+          docExt: asset.assetExt,
+          path: asset.path,
+          assetExt: asset.assetExt,
+          mediaKind: asset.mediaKind,
+          referencedBy: asset.referencedBy,
+          size: asset.size,
+          modified: asset.modified,
+          isSymlink: false,
+          canonicalDocName: null,
+          targetPath: null,
+        });
       }
 
       documents.sort((a, b) => a.docName.localeCompare(b.docName));
@@ -3910,6 +3961,58 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       pathSeparator: sep,
       symlinkResolved,
     });
+  }
+
+  async function handleAsset(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const assetPath = url.searchParams.get('path');
+      if (!assetPath || assetPath.includes('\0')) {
+        json(res, 400, { ok: false, error: 'Missing asset path' });
+        return;
+      }
+      const contentType = assetContentType(assetPath);
+      if (!contentType || !mediaKindForAssetPath(assetPath)) {
+        json(res, 415, { ok: false, error: 'Unsupported asset type' });
+        return;
+      }
+      const requestedPath = resolve(contentDir, assetPath);
+      let canonicalPath: string;
+      try {
+        canonicalPath = realpathSync(requestedPath);
+      } catch {
+        json(res, 404, { ok: false, error: 'Asset not found' });
+        return;
+      }
+      if (!isWithinContentDir(canonicalPath, contentDir)) {
+        json(res, 400, { ok: false, error: 'Invalid asset path' });
+        return;
+      }
+      const stat = statSync(canonicalPath);
+      if (!stat.isFile()) {
+        json(res, 404, { ok: false, error: 'Asset not found' });
+        return;
+      }
+      const relativePath = toContentRelativePath(contentDir, canonicalPath);
+      if (relativePath !== assetPath.split('\\').join('/')) {
+        json(res, 400, { ok: false, error: 'Invalid asset path' });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': String(stat.size),
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      });
+      createReadStream(canonicalPath).pipe(res);
+    } catch (err) {
+      console.error('[asset]', err);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
   }
 
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
@@ -6221,6 +6324,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/server-info': handleServerInfo,
     '/api/principal': handlePrincipal,
     '/api/rescue': handleRescueList,
+    '/api/asset': handleAsset,
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
     '/api/sync/trigger': handleSyncTrigger,

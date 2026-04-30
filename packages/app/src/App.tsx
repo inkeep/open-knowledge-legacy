@@ -17,7 +17,7 @@ import {
   useDocumentTransition,
 } from '@/editor/DocumentContext';
 import { ConfigProvider } from '@/lib/config-provider';
-import { docNameFromHash } from '@/lib/doc-hash';
+import { assetPathFromHash, docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
@@ -40,6 +40,19 @@ function NavigationHandler() {
     onHashChange();
 
     function onHashChange() {
+      const assetPath = assetPathFromHash(window.location.hash);
+      if (assetPath) {
+        const lower = assetPath.toLowerCase();
+        const mediaKind = lower.endsWith('.mp4') ? 'video' : 'image';
+        mark('ok/nav/hash-change', { docName: null, kind: 'asset' });
+        openTargetTransition({
+          kind: 'asset',
+          target: assetPath,
+          assetPath,
+          mediaKind,
+        });
+        return;
+      }
       const docName = docNameFromHash(window.location.hash);
       if (!docName) {
         mark('ok/nav/hash-change', { docName: null, kind: 'clear' });

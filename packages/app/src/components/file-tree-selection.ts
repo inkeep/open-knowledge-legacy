@@ -33,6 +33,7 @@ export function resolveFileTreeSelection(
         navigationPath: activeTarget.folderPath,
       };
     case 'missing':
+    case 'asset':
       return {
         selectedFilePath: null,
         selectedFolderPath: null,

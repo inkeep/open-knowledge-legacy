@@ -8,6 +8,7 @@ import {
   createTreePlaceholder,
   docNameToTreePath,
   documentsToTreePaths,
+  fileEntryToTreePath,
   folderPathToTreeDirectoryPath,
   relativePathForTreeItem,
   treeDirectoryPathToFolderPath,
@@ -164,5 +165,18 @@ describe('file-tree-adapter', () => {
         { docName: 'docs/legacy', docExt: '.md', size: 0, modified: '' },
       ]),
     ).toEqual(['README.md', 'docs/guide.mdx', 'docs/legacy.md']);
+  });
+
+  test('fileEntryToTreePath preserves referenced asset paths', () => {
+    expect(
+      fileEntryToTreePath({
+        kind: 'asset',
+        path: 'docs/photo.png',
+        assetExt: '.png',
+        mediaKind: 'image',
+        size: 0,
+        modified: '',
+      }),
+    ).toBe('docs/photo.png');
   });
 });
