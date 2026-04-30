@@ -203,7 +203,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       seedRequiredFixtureFiles(contentDir);
       const baseURL = `http://localhost:${port}`;
 
-      const proc = spawn('bun', ['run', 'dev'], {
+      // `--silent` suppresses bun's own banner + post-exit diagnostics
+      // (e.g. `error: script "dev" exited with code 143` when teardown
+      // SIGTERMs the dev server). The underlying script's stderr still
+      // passes through, so real Vite errors continue to surface.
+      const proc = spawn('bun', ['run', '--silent', 'dev'], {
         cwd: APP_PACKAGE_ROOT,
         env: {
           ...process.env,
