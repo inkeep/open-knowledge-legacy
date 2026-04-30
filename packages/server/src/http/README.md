@@ -1,6 +1,6 @@
 # HTTP API discipline
 
-Canonical pattern guide for handlers in `packages/server/src/api-extension.ts`. Every HTTP route follows this shape — drift is gated by `error-envelope-coverage.test.ts` (FR17 allowlist meta-test) and `attribution-sweep-coverage.test.ts` (precedent #24 ordering check on mutating handlers).
+Canonical pattern guide for handlers in `packages/server/src/api-extension.ts`. Every HTTP route follows this shape — drift is gated by `error-envelope-coverage.test.ts` (FR17 fail-on-any-occurrence meta-test) and `attribution-sweep-coverage.test.ts` (precedent #24 ordering check on mutating handlers).
 
 ## RFC 9457 Problem Details on errors
 
@@ -70,7 +70,7 @@ The helper:
 4. Increments the `ok.api.error.count{type, handler}` OTel counter (D37).
 5. Emits a Pino `log.error()` line with the same `instance` UUID, plus `event: 'api.error'`, `type`, `status`, `handler`, `detail`, optional `err` cause chain.
 
-Inline `json(res, NNN, { ok: false, error: '...' })` calls are not permitted. The allowlist meta-test catches regressions; PR1 ships with all 56 unmigrated handlers in the allowlist; each cluster PR shrinks it; the final PR retires the allowlist.
+Inline `json(res, NNN, { ok: false, error: '...' })` calls are not permitted, and inline `json(res, NNN, { ok: true, ... })` success wrappers are not permitted either (D22 drops the `ok: true` wrapper from success bodies). `error-envelope-coverage.test.ts` runs in fail-on-any-occurrence mode: it AST-scans `api-extension.ts` for both inline patterns and fails the build with file:line + handler name on any match. The migration shipped in stacked cluster PRs (US-004 through US-013) under an allowlist that shrank per cluster; US-014 retired the allowlist. New handlers go through `withValidation(...) + errorResponse(...)` from day one.
 
 ## `withValidation(...)` is the only sanctioned request-body validator
 
