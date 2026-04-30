@@ -56,7 +56,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "bun --conditions=development test"
+    "test": "node scripts/run-tests.mjs"
   },
   "devDependencies": {
     "@types/picomatch": "^4.0.3",
