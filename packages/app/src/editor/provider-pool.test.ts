@@ -1016,15 +1016,11 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
 
-      const replaced = pool.getActive();
-      if (!replaced) throw new Error('expected replaced entry');
-      const resolved = replaced.provider.configuration.token;
-      if (typeof resolved === 'string') {
-        const parsed = parseHocuspocusAuthToken(resolved);
-        expect(parsed?.expectedServerInstanceId).toBeUndefined();
-      }
+      const next = pool.open('doc2');
+      if (!next) throw new Error('expected next entry');
+      const parsed = parseHocuspocusAuthToken(next.provider.configuration.token as string);
+      expect(parsed?.expectedServerInstanceId).toBeUndefined();
     });
 
     test('null storage — pool runs without persistence', () => {
