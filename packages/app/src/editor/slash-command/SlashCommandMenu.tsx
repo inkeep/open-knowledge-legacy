@@ -75,6 +75,11 @@ export function SlashCommandMenu({
 
   const selectedItem =
     selectedIndex >= 0 && selectedIndex < items.length ? items[selectedIndex] : null;
+  // Reserve preview-panel width whenever ANY item in the current filtered set
+  // has a preview, so navigating between preview/no-preview items doesn't
+  // oscillate the popup width (and floating-ui's computePosition doesn't shift
+  // the popup horizontally on every selection change).
+  const hasAnyPreview = items.some((item) => item.preview);
 
   return (
     <div className="flex items-start gap-2">
@@ -137,18 +142,24 @@ export function SlashCommandMenu({
           </div>
         ))}
       </div>
-      {selectedItem?.preview ? (
+      {hasAnyPreview ? (
         <aside
           aria-hidden="true"
           onMouseDown={preventFocusSteal}
-          className="w-64 rounded-lg border bg-popover p-2 shadow-md"
+          className={`w-64 rounded-lg border bg-popover p-2 shadow-md ${
+            selectedItem?.preview ? '' : 'invisible'
+          }`}
         >
-          <div className="mb-2 flex aspect-5/3 items-center justify-center overflow-hidden rounded-md bg-muted/40 p-3 *:max-h-full *:max-w-full [&_img]:size-full [&_img]:rounded-md [&_img]:object-contain">
-            {selectedItem.preview.render()}
-          </div>
-          <p className="px-1 pb-1 text-xs text-muted-foreground">
-            {selectedItem.preview.description}
-          </p>
+          {selectedItem?.preview ? (
+            <>
+              <div className="mb-2 flex aspect-5/3 items-center justify-center overflow-hidden rounded-md bg-muted/40 p-3 *:max-h-full *:max-w-full [&_img]:size-full [&_img]:rounded-md [&_img]:object-contain">
+                {selectedItem.preview.render()}
+              </div>
+              <p className="px-1 pb-1 text-xs text-muted-foreground">
+                {selectedItem.preview.description}
+              </p>
+            </>
+          ) : null}
         </aside>
       ) : null}
     </div>
