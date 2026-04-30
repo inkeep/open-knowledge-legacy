@@ -938,7 +938,18 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           render-order, which isn't a stable guarantee — explicit bump makes
           it deterministic. */}
       {hasEditableProps && (
-        <PopoverContent side="right" align="start" sideOffset={8} className="w-64 p-3 z-[60]">
+        // Placeholder mode anchors the popover via PopoverAnchor on the full-
+        // width pill, so the right-of-the-gear placement that suits a
+        // configured component reads as off-center and disconnected. Drop the
+        // popover under the pill, centered horizontally, with a small negative
+        // sideOffset so the top of the popover overlaps the bottom of the
+        // pill — Notion-style continuation between affordance and form.
+        <PopoverContent
+          side={showPlaceholder ? 'bottom' : 'right'}
+          align={showPlaceholder ? 'center' : 'start'}
+          sideOffset={showPlaceholder ? -4 : 8}
+          className="w-64 p-3 z-[60]"
+        >
           <div className="text-xs font-medium text-muted-foreground mb-2">
             {descriptor.displayName ?? descriptor.name} Properties
           </div>
