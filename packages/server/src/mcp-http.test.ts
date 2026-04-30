@@ -348,11 +348,11 @@ test('active MCP session cap refuses new sessions before allocation', async () =
 
 test('inactive MCP sessions expire and return 404 on later use', async () => {
   const config: Config = ConfigSchema.parse({});
-  const harness = await bootHandler(config, { sessionTtlMs: 25 });
+  const harness = await bootHandler(config, { sessionTtlMs: 250 });
   openHarnesses.push(harness);
 
   const session = await openMcpSession(harness.port);
-  await wait(50);
+  await wait(350);
 
   const expired = await fetch(`http://localhost:${harness.port}/mcp`, {
     method: 'POST',
