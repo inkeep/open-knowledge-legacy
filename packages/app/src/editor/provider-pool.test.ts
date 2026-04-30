@@ -1136,7 +1136,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   // before the recycled state is asserted.
 
   test("reason 'server-instance-mismatch' recycles every pool entry", async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
 
     const e1 = pool.open('doc1');
@@ -1164,7 +1164,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test("reason 'server-instance-mismatch' clears the stale current instance claim", async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
@@ -1189,7 +1189,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('other reasons do not trigger recycle', () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
@@ -1205,7 +1205,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('second mismatch event is a no-op after cache is cleared (idempotence)', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
@@ -1226,7 +1226,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
   test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
     __resetSyncPromiseCache();
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry?.persistence) throw new Error('expected entry');
