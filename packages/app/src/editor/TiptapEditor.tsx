@@ -229,6 +229,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               editorCtorStartTimes.set(editor, ctorStart);
             },
             onCreate: ({ editor }) => {
+              // Attach the live editor view to the clipboard HTML serializer
+              // so the live-DOM walker can call view.nodeDOM(pos) +
+              // getComputedStyle. Pre-attach calls fall through to the
+              // markdown→HTML pipeline; the walker is a no-op without a view.
+              clipboard.html.setView(editor.view);
               const start = editorCtorStartTimes.get(editor);
               editorCtorStartTimes.delete(editor);
               if (start == null) return;
@@ -253,7 +258,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
                 return node.content as any;
               },
               clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
-              clipboardSerializer: clipboard.html,
+              clipboardSerializer: clipboard.html.serializer,
               handlePaste: (view, event) => clipboard.paste(view, event),
             },
             extensions: [

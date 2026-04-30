@@ -8,21 +8,21 @@
  *     markdown via MarkdownManager.serialize.
  *
  *   - `clipboardSerializer.serializeFragment(fragment) → DocumentFragment` —
- *     emits text/html. Serializes to markdown first (for cross-view
- *     symmetry — same mdast tree as Source copy produces), then markdown
- *     → HTML via our shared mdast-to-html pipeline. Returns the content
- *     directly (no wrapper element): PM's `serializeForClipboard`
- *     (`prosemirror-view/src/clipboard.ts:32-34`) sets `data-pm-slice`
- *     on the first element of whatever we return and computes the
- *     `openStart openEnd context` value from the slice itself — PM's
- *     value is authoritative and overwrites any we'd set manually. A
- *     hand-written wrapper is dead code. Native paste back into any
- *     PM-based editor (Linear, Outline, BlockNote, Milkdown, another
- *     OK tab) detects the attribute via `querySelector("[data-pm-slice]")`
- *     and routes through PM's own parseFromClipboard.
+ *     emits text/html. Walker-first: when an EditorView has been attached
+ *     via `setView()`, the live-DOM walker captures whatever React
+ *     rendered + whatever CSS resolved (the React render IS the cross-app
+ *     HTML shape for the v1 5-pack and 3 compat descriptors). Without an
+ *     attached view (first render before `onCreate` fires, or unit-test
+ *     mounts with no view), falls through to the markdown→HTML pipeline.
+ *     Either way, returns the content directly (no wrapper element): PM's
+ *     `serializeForClipboard` (`prosemirror-view/src/clipboard.ts:32-34`)
+ *     sets `data-pm-slice` on the first element of whatever we return and
+ *     computes the `openStart openEnd context` value from the slice
+ *     itself — PM's value is authoritative.
  *
- * Error-path discipline (FR-11):
+ * Error-path discipline:
  *   - text serializer throw → fall through to PM's default textBetween.
+ *   - HTML walker throw → fall through to the markdown→HTML pipeline.
  *   - HTML serializer throw → return empty DocumentFragment so PM's
  *     default DOMSerializer runs. No silent data drop.
  */
@@ -33,9 +33,22 @@ import type { JSONContent } from '@tiptap/core';
 import type { Fragment, Schema, Slice } from '@tiptap/pm/model';
 import { DOMSerializer, Slice as SliceCtor } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
+import { walkLiveDomToInlineStyledFragment } from './clipboard-walker.ts';
 
 interface WysiwygSerializerDeps {
   mdManager: MarkdownManager;
+}
+
+/**
+ * The HTML serializer factory returns this shape so the caller (TiptapEditor)
+ * can attach the live `EditorView` after `editor.on('create')` fires. PM's
+ * `clipboardSerializer` is set at editor construction — earlier than `view`
+ * is available — so we hand back the serializer plus a setter the host calls
+ * once the view is mounted.
+ */
+interface ClipboardHtmlSerializerHandle {
+  serializer: DOMSerializer;
+  setView: (view: EditorView) => void;
 }
 
 /**
@@ -65,15 +78,24 @@ export function createClipboardTextSerializer(deps: WysiwygSerializerDeps) {
  * Subclass `DOMSerializer` so the return value satisfies PM's
  * `clipboardSerializer?: DOMSerializer` type. PM only calls
  * `serializeFragment`; the `nodes` / `marks` tables are unused. We pass
- * empty stubs to the parent constructor and override serializeFragment
- * with our markdown → HTML path.
+ * empty stubs to the parent constructor and override serializeFragment.
+ *
+ * The walker path requires a live `EditorView` to call `view.nodeDOM(pos)`
+ * + `getComputedStyle(el)`. The view is attached lazily after
+ * `editor.on('create')` fires; pre-attach calls fall through to the
+ * markdown→HTML pipeline.
  */
 class MdastClipboardSerializer extends DOMSerializer {
   private readonly mdManager: MarkdownManager;
+  private view: EditorView | null = null;
 
   constructor(mdManager: MarkdownManager) {
     super({}, {});
     this.mdManager = mdManager;
+  }
+
+  setView(view: EditorView): void {
+    this.view = view;
   }
 
   override serializeFragment(
@@ -82,6 +104,23 @@ class MdastClipboardSerializer extends DOMSerializer {
     target?: HTMLElement | DocumentFragment,
   ): HTMLElement | DocumentFragment {
     try {
+      const view = this.view;
+      // Walker-first when a view is attached AND there's an active selection
+      // (the walker reads `view.state.selection`). If walker yields a
+      // non-empty fragment, use it; otherwise fall through to the markdown
+      // pipeline so empty selections (e.g. drag-out) still produce content.
+      if (view && view.state.selection.from !== view.state.selection.to) {
+        const slice = view.state.selection.content();
+        const walked = walkLiveDomToInlineStyledFragment(slice, view);
+        if (walked.childNodes.length > 0) {
+          if (target) {
+            for (const child of Array.from(walked.childNodes)) target.appendChild(child);
+            return target;
+          }
+          return walked;
+        }
+      }
+      // Fall-through: markdown→HTML pipeline.
       const schema = fragment.firstChild?.type.schema;
       if (!schema) return target ?? document.createDocumentFragment();
       const html = renderFragmentToHtml(fragment, schema, this.mdManager);
@@ -98,8 +137,14 @@ class MdastClipboardSerializer extends DOMSerializer {
   }
 }
 
-export function createClipboardHtmlSerializer(deps: WysiwygSerializerDeps): DOMSerializer {
-  return new MdastClipboardSerializer(deps.mdManager);
+export function createClipboardHtmlSerializer(
+  deps: WysiwygSerializerDeps,
+): ClipboardHtmlSerializerHandle {
+  const serializer = new MdastClipboardSerializer(deps.mdManager);
+  return {
+    serializer,
+    setView: (view) => serializer.setView(view),
+  };
 }
 
 function sliceToMarkdown(slice: Slice, schema: Schema, mdManager: MarkdownManager): string {

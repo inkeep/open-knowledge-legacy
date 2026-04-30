@@ -6,6 +6,7 @@
  */
 
 import type { Node as PmNode } from '@tiptap/pm/model';
+import type { Nodes as HastNodes } from 'hast';
 import type { Nodes as MdastNodes } from 'mdast';
 import type { ComponentRegistry } from './index.ts';
 
@@ -184,6 +185,36 @@ interface JsxComponentMetaBase {
    * for CommonMarkImage, html-block for HtmlDetailsAccordion).
    */
   serialize: (node: PmNode, ctx: SerializeContext) => MdastNodes;
+  /**
+   * OPTIONAL override for cross-app text/html outbound emission.
+   *
+   * The default outbound mechanism is the live-DOM walker (whatever the
+   * descriptor's React component rendered + whatever CSS resolved). For v1's
+   * 5-pack and 3 compat descriptors no override is needed — the React render
+   * IS the cross-app shape.
+   *
+   * Declare this only when the descriptor has hidden state the walker can't
+   * see — e.g. a Tabs descriptor whose inactive tab panels are never mounted,
+   * or a Canvas descriptor whose bitmap state lives outside the DOM. Returns
+   * `null` to fall back to the walker default. The optional `liveDom` arg is
+   * the same Element the walker would clone, so overrides can decorate the
+   * walker output rather than rebuilding from scratch.
+   */
+  toClipboardHast?: (
+    node: PmNode,
+    ctx: ClipboardHastContext,
+    liveDom?: Element,
+  ) => HastNodes | null;
+}
+
+/**
+ * Context threaded into a descriptor's `toClipboardHast` override. Mirrors
+ * the shape of `SerializeContext` but for the hast emission tier.
+ */
+interface ClipboardHastContext {
+  registry: Pick<ComponentRegistry, 'getOrWildcard'>;
+  /** Descriptor name dispatch context — same as `node.attrs.componentName`. */
+  descriptorName: string;
 }
 
 /**

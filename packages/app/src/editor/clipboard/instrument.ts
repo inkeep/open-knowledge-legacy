@@ -54,7 +54,14 @@ type ClipboardEventName =
   | 'clipboard-source-detected'
   | 'clipboard-html-conversion-failed'
   | 'clipboard-serialize-failed'
-  | 'clipboard-chunked-insert-failed';
+  | 'clipboard-chunked-insert-failed'
+  // Reserved: emitted by `descriptor.toClipboardHast` override invocations
+  // when the first descriptor with hidden state declares one. v1's 5-pack
+  // + 3 compat descriptors all use the walker default (Layer 2), which is
+  // intentionally NOT instrumented (would explode telemetry volume on
+  // every copy). The helper that emits this event lands with the first
+  // override; the name is registered here so dashboards know it exists.
+  | 'clipboard-toclipboard-hast';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
