@@ -26,23 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
-
-/**
- * Humanize a camelCase / snake_case prop name for the PropPanel UI.
- * `emptyChildName` → `Empty Child Name`, `default_value` → `Default Value`.
- * Identifiers stay camelCase in the generated markdown attr; only the label
- * is transformed.
- */
-function humanizePropName(name: string): string {
-  if (!name) return name;
-  const spaced = name
-    // snake_case and kebab-case → space
-    .replace(/[_-]+/g, ' ')
-    // camelCase and consecutive-capitals boundaries (emptyChildName → empty Child Name; ARIALabel → ARIA Label)
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
+import { humanizePropName } from '@/editor/utils/editor-strings.ts';
 
 /**
  * Per-descriptor localStorage key for persisting the Advanced section's
