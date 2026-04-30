@@ -61,12 +61,12 @@ type ClipboardEventName =
   // intentionally NOT instrumented (would explode telemetry volume on
   // every copy). The helper that emits this event lands with the first
   // override; the name is registered here so dashboards know it exists.
-  | 'clipboard-toclipboard-hast'
+  | 'clipboard-hast-override-invoked'
   // Emitted when the live-DOM walker hits `view.nodeDOM(pos) === null`
   // and falls back to the per-descriptor static palette. Expected only
   // for Activity-hidden subtrees; presence in normal copy operations
   // signals a real bug per the walker STOP_IF rule.
-  | 'clipboard-walker-fallback-palette'
+  | 'clipboard-walker-fallback-fired'
   // Emitted when the live-DOM walker drops or rewrites a value at the
   // FR-20 escape boundary — unsafe URL scheme on `href`/`src`/`srcset`/...,
   // dangerous `on*` event-handler attribute, unsafe `url(javascript:...)` /
@@ -243,7 +243,7 @@ export function logSerializeFail(info: SerializeFailInfo): void {
 export function logWalkerFallback(info: { descriptor: string; view: ClipboardView }): void {
   console.warn(
     JSON.stringify({
-      event: 'clipboard-walker-fallback-palette' satisfies ClipboardEventName,
+      event: 'clipboard-walker-fallback-fired' satisfies ClipboardEventName,
       descriptor: info.descriptor,
       view: info.view,
     }),
@@ -269,10 +269,15 @@ type WalkerUrlBlockedReason =
  * sanitizers (`sanitize-url.ts:emitPropDroppedEvent`) emit on the same
  * cadence, so attack-surface visibility is symmetric across the codebase.
  */
-export function logWalkerUrlBlocked(info: { attr: string; reason: WalkerUrlBlockedReason }): void {
+export function logWalkerUrlBlocked(info: {
+  attr: string;
+  reason: WalkerUrlBlockedReason;
+  view: ClipboardView;
+}): void {
   console.warn(
     JSON.stringify({
       event: 'clipboard-walker-url-blocked' satisfies ClipboardEventName,
+      view: info.view,
       attr: info.attr,
       reason: info.reason,
     }),

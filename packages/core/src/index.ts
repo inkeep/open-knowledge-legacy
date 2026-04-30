@@ -176,7 +176,7 @@ export {
 } from './markdown/html-to-mdast.ts';
 export { MarkdownManager } from './markdown/index.ts';
 export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
-export { isSafeUrl, SAFE_URL_SCHEME_RE } from './markdown/safe-url.ts';
+export { isSafeUrl, SAFE_URL_SCHEME_RE, SAFE_URL_SCHEMES } from './markdown/safe-url.ts';
 export {
   getParseHealth,
   incrementBlockFallback,

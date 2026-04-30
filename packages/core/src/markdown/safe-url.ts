@@ -23,14 +23,30 @@
  */
 
 /**
- * Schemes that pass the allowlist, plus path-prefix delimiters that
- * indicate a relative URL (no scheme component at all). Pinned to the
- * scheme set used by `URL_SCHEME_ALLOWLIST` in
- * `packages/app/src/editor/utils/sanitize-url.ts:58` so the JSX-prop
- * sanitizer and the markdown / clipboard sanitizers share a single
- * allowlist by intent.
+ * The canonical set of safe URL schemes — protocol prefix WITHOUT the
+ * trailing colon (so consumers can compose either form). All three
+ * sanitizers in the repo derive from this single array:
+ *
+ * - `SAFE_URL_SCHEME_RE` below — the regex form used by `isSafeUrl` and
+ *   the clipboard walker's `isSafeWalkerUrl`.
+ * - `URL_SCHEME_ALLOWLIST` in `packages/app/src/editor/utils/sanitize-url.ts`
+ *   — the Set form used by the JSX-prop render-layer sanitizer; derived
+ *   directly from `SAFE_URL_SCHEMES.map(s => \`${s}:\`)` so adding /
+ *   removing a scheme HERE updates all three sites by construction.
  */
-export const SAFE_URL_SCHEME_RE = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
+export const SAFE_URL_SCHEMES = ['https', 'http', 'mailto', 'tel', 'ftp', 'sms'] as const;
+
+const SCHEME_ALT = SAFE_URL_SCHEMES.map((s) => `${s}:`).join('|');
+// Path-prefix delimiters that indicate a relative URL (no scheme component).
+const PATH_PREFIX_ALT = '\\/|#|\\?|\\.\\/|\\.\\.\\/';
+
+/**
+ * Allowlist regex: head-anchored match against the scheme set above OR a
+ * relative-URL path prefix. Case-insensitive — browsers normalize scheme
+ * to lowercase per WHATWG URL §3.1, so `JAVASCRIPT:alert(1)` must hit the
+ * same rejection path as `javascript:alert(1)`.
+ */
+export const SAFE_URL_SCHEME_RE = new RegExp(`^(?:${SCHEME_ALT}|${PATH_PREFIX_ALT})`, 'i');
 
 /**
  * Return whether a URL string is safe to emit to an outbound HTML attribute

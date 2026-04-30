@@ -53,9 +53,14 @@
  *   past the rate limit and produces visible aggregate counters).
  */
 
-import { incrementJsxPropDropped } from '@inkeep/open-knowledge-core';
+import { incrementJsxPropDropped, SAFE_URL_SCHEMES } from '@inkeep/open-knowledge-core';
 
-const URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'tel:', 'ftp:', 'sms:']);
+// Derived from the canonical `SAFE_URL_SCHEMES` array so the JSX-prop
+// sanitizer, the markdown pipeline (`isSafeUrl`), and the clipboard
+// walker (`isSafeWalkerUrl`) all classify URL schemes from a single
+// source. Adding / removing a scheme in `SAFE_URL_SCHEMES` updates all
+// three sites by construction.
+const URL_SCHEME_ALLOWLIST = new Set(SAFE_URL_SCHEMES.map((s) => `${s}:`));
 
 /**
  * Per-prop-name warn-emit rate limit window. 10 warns per minute per

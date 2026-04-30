@@ -423,14 +423,18 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
       // React strips `on*` from JSX before render, but the walker is a
       // re-emit boundary to untrusted destinations — defense-in-depth.
       clone.removeAttribute(attr.name);
-      logWalkerUrlBlocked({ attr: 'on*', reason: 'event-handler' });
+      logWalkerUrlBlocked({ attr: 'on*', reason: 'event-handler', view: 'wysiwyg' });
       continue;
     }
     if (attr.name === 'style') {
       const safeStyle = sanitizeStyleAttrValue(attr.value);
       if (safeStyle === '') {
         clone.removeAttribute('style');
-        logWalkerUrlBlocked({ attr: 'style', reason: 'unsafe-url-or-expression' });
+        logWalkerUrlBlocked({
+          attr: 'style',
+          reason: 'unsafe-url-or-expression',
+          view: 'wysiwyg',
+        });
       } else if (safeStyle !== attr.value) {
         clone.setAttribute('style', safeStyle);
       }
@@ -449,6 +453,7 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
         logWalkerUrlBlocked({
           attr: attr.name,
           reason: attr.name === 'srcset' ? 'srcset-candidate' : 'scheme',
+          view: 'wysiwyg',
         });
       }
       continue;
@@ -462,7 +467,7 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
       const sanitized = sanitizeEmbeddedUrlValue(attr.value, { reportNoChange: true });
       if (sanitized !== null) {
         clone.setAttribute(attr.name, sanitized);
-        logWalkerUrlBlocked({ attr: attr.name, reason: 'embedded-url' });
+        logWalkerUrlBlocked({ attr: attr.name, reason: 'embedded-url', view: 'wysiwyg' });
       }
     }
   }
