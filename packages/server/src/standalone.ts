@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
@@ -662,6 +662,47 @@ export function createServer(options: ServerOptions): ServerInstance {
   const applyToDoc = (docName: string, content: string): void =>
     applyExternalChange(hocuspocus, docName, content, resolveEmbed);
 
+  /**
+   * Re-render any open doc whose source contains `[[<assetBasename>]]` —
+   * fallback re-resolution when an asset is created or deleted outside of a
+   * cross-branch git operation. Without this, an open doc's PM image `src`
+   * stays frozen at the parse-time resolution: asset events update
+   * `basenameIndex` correctly, but documents whose markdown is byte-identical
+   * pre/post-event have no other re-render trigger.
+   *
+   * Why a substring scan instead of a reverse index: this fires only on
+   * asset create/delete (rare relative to text edits) and handles both
+   * `![[name.ext]]` (image embed) and `[[name.ext]]` (wiki-link with
+   * resolved href) shapes via the same `[[<name>]]` substring. A reverse
+   * index would buy throughput we don't need.
+   *
+   * Idempotent: `updateYFragment` (inside `applyExternalChange`) diffs the
+   * computed PM tree against the live XmlFragment and only writes changed
+   * positions; re-applying the same content is a no-op on the Y.Doc.
+   */
+  const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    const needle = `[[${assetBasename}]]`;
+    for (const [docName] of hocuspocus.documents) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+      const document = hocuspocus.documents.get(docName);
+      if (!document) continue;
+      const source = document.getText('source').toString();
+      if (!source.includes(needle)) continue;
+      try {
+        const filePath = safeContentPath(docName, contentDir);
+        if (!existsSync(filePath)) continue;
+        const diskContent = readFileSync(filePath, 'utf-8');
+        applyToDoc(docName, diskContent);
+      } catch (err) {
+        log.error(
+          { err, docName, assetBasename },
+          `[asset-event] failed to re-render ${docName} for asset basename ${assetBasename}`,
+        );
+      }
+    }
+  };
+
   /** Helper to extract a logging label from any DiskEvent variant. */
   function diskEventLabel(event: DiskEvent): string {
     switch (event.kind) {
@@ -916,16 +957,23 @@ export function createServer(options: ServerOptions): ServerInstance {
 
         // SPEC §6 FR-6 + D-H Option A: asset events update the basename
         // index and fire CC1 'files' only. They do NOT touch backlinkIndex
-        // (markdown-only) and do NOT touch hocuspocus.documents (assets
-        // aren't CRDT documents).
+        // (markdown-only). They DO trigger a fallback re-render of any open
+        // doc that references the changed basename via `[[name.ext]]` (see
+        // `rerenderDocsReferencingAssetBasename`) — without this, a doc
+        // whose markdown is unchanged across the asset move (e.g. the user
+        // organizes files into `assets/` while the doc still says
+        // `![[photo.png]]`) keeps its parse-time-resolved `src` and the
+        // rendered preview goes stale.
         case 'asset-create': {
           basenameIndex.add(event.relativePath);
           signalChannel('files');
+          rerenderDocsReferencingAssetBasename(basename(event.relativePath));
           break;
         }
         case 'asset-delete': {
           basenameIndex.remove(event.relativePath);
           signalChannel('files');
+          rerenderDocsReferencingAssetBasename(basename(event.relativePath));
           break;
         }
         default:
