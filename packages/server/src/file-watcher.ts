@@ -655,8 +655,11 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
 /**
  * Process a batch of raw file events through the classification + self-write
  * detection pipeline. Shared by both @parcel/watcher and chokidar backends.
+ *
+ * Exported for unit-level coverage of the md-before-asset ordering invariant
+ * — see the same-batch-create test in `file-watcher.test.ts`.
  */
-async function handleRawEvents(
+export async function handleRawEvents(
   rawEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }>,
   contentDir: string,
   contentFilter: ContentFilter | undefined,
@@ -668,26 +671,23 @@ async function handleRawEvents(
   const assetEvents = rawEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
   if (mdEvents.length === 0 && assetEvents.length === 0) return;
 
-  // SPEC §6 FR-6: emit asset events independently. Skip content reading
-  // (binary), reconciliation, and rename-via-hash detection — basename
-  // index is idempotent on add/remove/rename so a Finder rename surfacing
-  // as delete+create produces the correct end state.
-  for (const raw of assetEvents) {
-    if (contentFilter) {
-      const relPath = relative(contentDir, raw.path);
-      if (contentFilter.isExcluded(relPath)) continue;
-    }
-    const relativePath = relative(contentDir, raw.path);
-    const event: DiskEvent =
-      raw.type === 'delete'
-        ? { kind: 'asset-delete', path: raw.path, relativePath }
-        : { kind: 'asset-create', path: raw.path, relativePath };
-    await onDiskEvent(event);
-  }
-
-  if (mdEvents.length === 0) return;
-
-  const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap);
+  // Process md events FIRST so the content filter's `dirCount` is current
+  // when asset events run `isExcluded()`. Same-batch atomic creates like
+  // `mkdir foo && cp note.md foo/ && cp pic.png foo/` arrive in a single
+  // watcher callback — @parcel/watcher's FSEvents backend coalesces with
+  // `latency=0.001` (1ms; FSEventsBackend.cc), and the chokidar fallback
+  // pools into a 50ms `BATCH_WINDOW_MS`. Both windows easily span a quick
+  // mkdir+cp+cp sequence. With assets-first ordering the asset event
+  // hits `isExcluded()` while dirCount is still 0; assets that admit
+  // only via the sibling-asset rule (extension in ASSET_EXTENSIONS +
+  // dirCount > 0) get silently dropped from basenameIndex until next
+  // server restart. Md-first puts `incrementMdDir` (below, `create`
+  // branch) ahead of the asset loop, lifting dirCount from 0 → 1 before
+  // the asset is filtered. The watcher API path is unaffected — self-
+  // writes already call `incrementMdDir` synchronously at the write
+  // site (see `!isSelf` guard below).
+  const diskEvents =
+    mdEvents.length > 0 ? await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap) : [];
 
   for (const event of diskEvents) {
     let isSelf = false;
@@ -780,6 +780,25 @@ async function handleRawEvents(
       },
       async () => onDiskEvent(event),
     );
+  }
+
+  // SPEC §6 FR-6: emit asset events independently. Skip content reading
+  // (binary), reconciliation, and rename-via-hash detection — basename
+  // index is idempotent on add/remove/rename so a Finder rename surfacing
+  // as delete+create produces the correct end state. Runs AFTER the md
+  // loop so dirCount reflects same-batch md creates (see ordering note
+  // at the top of the function).
+  for (const raw of assetEvents) {
+    if (contentFilter) {
+      const relPath = relative(contentDir, raw.path);
+      if (contentFilter.isExcluded(relPath)) continue;
+    }
+    const relativePath = relative(contentDir, raw.path);
+    const event: DiskEvent =
+      raw.type === 'delete'
+        ? { kind: 'asset-delete', path: raw.path, relativePath }
+        : { kind: 'asset-create', path: raw.path, relativePath };
+    await onDiskEvent(event);
   }
 }
 

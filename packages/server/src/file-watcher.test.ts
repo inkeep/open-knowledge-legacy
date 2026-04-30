@@ -4,10 +4,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createContentFilter } from './content-filter.ts';
+import type { DiskEvent } from './file-watcher';
 import {
   classifyEvents,
   contentHash,
   evictStaleTrackerEntries,
+  handleRawEvents,
   isSelfWrite,
   lastKnownHash,
   pathToDocName,
@@ -583,6 +585,72 @@ describe('file-watcher ContentFilter refcount hooks', () => {
     // After rename: old-dir loses its .md, new-dir gains one
     expect(filter.isExcluded('old-dir/img.png')).toBe(true);
     expect(filter.isExcluded('new-dir/img.png')).toBe(false);
+  });
+
+  test('same-batch md+asset create in a brand-new directory: asset is dispatched (md-first ordering)', async () => {
+    // Reproduces the cycle-47/48 file-watcher race the bot flagged. Sequence:
+    //   `mkdir foo && cp note.md foo/ && cp pic.png foo/`
+    // arrives in a single watcher batch — @parcel/watcher's FSEvents
+    // backend coalesces with `latency=0.001` (1ms; FSEventsBackend.cc),
+    // and the chokidar fallback batches in `BATCH_WINDOW_MS=50`. Both
+    // windows easily span a quick mkdir+cp+cp burst.
+    //
+    // With assets-first ordering (the pre-fix shape) the asset hits
+    // `isExcluded()` while the new dir's `dirCount` is still 0; the
+    // sibling-asset rule (extension in ASSET_EXTENSIONS + dirCount > 0)
+    // fails closed and the asset never makes it to `onDiskEvent` — i.e.
+    // never lands in basenameIndex until the next server restart.
+    //
+    // This test runs `handleRawEvents` directly with a one-batch pair.
+    // Md-first ordering must dispatch BOTH events. Mutation: revert the
+    // ordering swap → only the md create event reaches the collector.
+    // Create filter FIRST while disk is empty — `createContentFilter`
+    // scans the tree at construction and would see the .md if it
+    // already existed, prefilling dirCount and masking the bug.
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      // No explicit asset include — admission depends entirely on the
+      // sibling-asset fallback rule, which is the path the bug lives on.
+      includePatterns: ['**/*.md'],
+      excludePatterns: [],
+    });
+
+    // Pre-condition: dirCount for `fresh/` is 0 → asset is excluded.
+    expect(filter.isExcluded('fresh/pic.png')).toBe(true);
+
+    // Now create the files — simulating the same-batch fs activity
+    // the watcher about to surface.
+    const newDir = resolve(contentDir, 'fresh');
+    mkdirSync(newDir);
+    const mdPath = resolve(newDir, 'note.md');
+    const assetPath = resolve(newDir, 'pic.png');
+    writeFileSync(mdPath, '# Note\n');
+    writeFileSync(assetPath, 'fake-png-bytes');
+
+    const collected: DiskEvent[] = [];
+    await handleRawEvents(
+      [
+        { type: 'create', path: mdPath },
+        { type: 'create', path: assetPath },
+      ],
+      contentDir,
+      filter,
+      new Map(),
+      async (e) => {
+        collected.push(e);
+      },
+    );
+
+    const kinds = collected.map((e) => e.kind).sort();
+    expect(kinds).toEqual(['asset-create', 'create']);
+    const asset = collected.find((e) => e.kind === 'asset-create');
+    expect(asset?.kind).toBe('asset-create');
+    if (asset?.kind === 'asset-create') {
+      expect(asset.relativePath).toBe('fresh/pic.png');
+    }
+    // dirCount is now 1 — assets in `fresh/` admit on subsequent checks too.
+    expect(filter.isExcluded('fresh/pic.png')).toBe(false);
   });
 });
 
