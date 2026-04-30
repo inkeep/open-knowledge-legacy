@@ -266,3 +266,82 @@ test('PLACEHOLDER-CONTAINER-EXCLUDED: slash-inserting /callout does NOT show pla
   });
   await expect(page.locator('[data-descriptor-placeholder]')).toHaveCount(0);
 });
+
+test('PLACEHOLDER-CHROME-VISIBLE: chrome bar (gear, delete) renders alongside the placeholder pill', async ({
+  page,
+  api,
+}) => {
+  // Regression for the "gear should be persistent in placeholder mode" polish.
+  // Before: chrome bar was gated by `{!showPlaceholder && ...}` — placeholder
+  // mode hid every chrome control. After: chrome bar always renders, so the
+  // gear-hint UX (driven by `data-needs-config`) applies to fresh slash inserts
+  // the same way it applies to a configured `<img alt="">`.
+  const docName = `placeholder-chrome-visible-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('[data-descriptor-placeholder]')).toBeVisible({
+    timeout: PROP_PANEL_TIMEOUT,
+  });
+
+  // Close the auto-opened panel so the chrome bar's gear button isn't hidden by
+  // the popover overlay during the assertion.
+  await page.keyboard.press('Escape');
+
+  // Chrome bar exists inside the same wrapper as the placeholder.
+  const wrapper = page.locator('[data-jsx-component]').first();
+  await expect(wrapper.locator('.jsx-component-chrome')).toBeAttached();
+  await expect(wrapper.locator('button[aria-label*="properties"]')).toBeAttached();
+  await expect(wrapper.locator('button[aria-label*="Delete"]')).toBeAttached();
+});
+
+test('PLACEHOLDER-DOM-SHAPE: placeholder is a div (not button) and is full-width', async ({
+  page,
+  api,
+}) => {
+  // Regression for the drag-reorder fix. A native `<button>` element captures
+  // mousedown for activation and breaks the wrapper's HTML5 drag-handle
+  // (`data-drag-handle="" draggable="true"`). Switching to `<div role="button">`
+  // lets mousedown propagate to the wrapper so drag works through the pill the
+  // same way it works through a configured <img>. We assert the structural fix
+  // here (tagName + role + w-full) rather than simulating real HTML5 drag,
+  // which is unreliable in headless Chromium.
+  const docName = `placeholder-dom-shape-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  const placeholder = page.locator('[data-descriptor-placeholder]');
+  await expect(placeholder).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
+
+  const shape = await placeholder.evaluate((el) => {
+    const wrapper = el.closest('[data-jsx-component]');
+    return {
+      tagName: el.tagName,
+      role: el.getAttribute('role'),
+      placeholderWidth: el.getBoundingClientRect().width,
+      // `.tiptap` is the ProseMirror editor root — descriptor wrappers
+      // size relative to its content area.
+      editorWidth: wrapper?.parentElement?.getBoundingClientRect().width ?? 0,
+    };
+  });
+
+  expect(shape.tagName).toBe('DIV');
+  expect(shape.role).toBe('button');
+  // Full-width: pill spans the same width as the wrapper's parent (the editor
+  // content column). A small tolerance handles sub-pixel rounding.
+  expect(shape.placeholderWidth).toBeGreaterThanOrEqual(shape.editorWidth - 2);
+});

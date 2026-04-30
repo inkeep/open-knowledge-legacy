@@ -6,19 +6,28 @@
  *
  * Click bubbles up; the parent's `handleBodyClick` short-circuits when
  * `showPlaceholder` is true so the same click does not double-fire setNodeSelection.
+ *
+ * Root element is a `<div role="button">`, NOT a native `<button>`. Native
+ * buttons capture mousedown for activation, which prevents the wrapper's
+ * HTML5 drag (`data-drag-handle="" draggable="true"`) from initiating drag-
+ * to-reorder. A non-button div lets mousedown propagate to the wrapper so
+ * drag works through the pill the same way it works through a configured
+ * `<img>` / `<video>`. Keyboard activation is handled by the wrapper's
+ * `handleKeyDown` (Enter/Space when selected), so no per-element keyboard
+ * wiring is needed here.
  */
 import type { LucideIcon } from 'lucide-react';
 import type * as React from 'react';
 import { cn } from '@/lib/utils';
 
-interface DescriptorPlaceholderProps extends Omit<React.ComponentProps<'button'>, 'onClick'> {
+interface DescriptorPlaceholderProps extends Omit<React.ComponentProps<'div'>, 'onClick'> {
   label: string;
   Icon: LucideIcon;
   onClick: () => void;
   selected?: boolean;
 }
 
-export default function DescriptorPlaceholder({
+export function DescriptorPlaceholder({
   label,
   Icon,
   onClick,
@@ -27,19 +36,27 @@ export default function DescriptorPlaceholder({
   ...rest
 }: DescriptorPlaceholderProps) {
   return (
-    <button
+    // biome-ignore lint/a11y/useSemanticElements: native <button> intercepts mousedown and breaks the wrapper's HTML5 drag-to-reorder. The wrapper's handleKeyDown also covers Enter/Space activation when selected; the local onKeyDown below provides a self-contained a11y story.
+    <div
       {...rest}
-      type="button"
+      role="button"
+      tabIndex={-1}
       data-descriptor-placeholder=""
       data-selected={selected ? 'true' : undefined}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={cn(
-        'flex items-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer',
+        'flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer',
         className,
       )}
     >
       <Icon size={16} aria-hidden="true" />
       <span>{label}</span>
-    </button>
+    </div>
   );
 }

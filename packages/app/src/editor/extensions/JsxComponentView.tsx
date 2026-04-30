@@ -54,7 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../components/ui/popover.tsx';
-import DescriptorPlaceholder from '../components/DescriptorPlaceholder.tsx';
+import { DescriptorPlaceholder } from '../components/DescriptorPlaceholder.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../hooks/use-block-selection.ts';
@@ -726,15 +726,20 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         onClick={handleBodyClick}
         onKeyDown={handleKeyDown}
       >
-        {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] */}
-        {!showPlaceholder && (
-          // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView
-          <div
-            className="jsx-component-chrome"
-            contentEditable={false}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {/* Move up/down — only for children inside containers; hidden at boundaries.
+        {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] — rendered for every
+          configured component AND placeholder mode. Placeholder mode keeps the
+          chrome (gear, move arrows, delete) visible because the same data-needs-config
+          gear-hint UX should apply to fresh slash-inserted blocks the same way it
+          does to any other unconfigured-prop block. The placeholder pill provides
+          an additional click-to-open affordance via PopoverAnchor; the gear remains
+          the canonical PopoverTrigger. */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
+        <div
+          className="jsx-component-chrome"
+          contentEditable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Move up/down — only for children inside containers; hidden at boundaries.
             `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
             node's position is out-of-bounds because a concurrent remote peer edit
             (or an in-flight Observer B re-parse) shifted it between render and
@@ -743,118 +748,118 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             `ComponentErrorBoundary`, which would mis-attribute the click-time
             race as a `jsx-render-failure` and auto-convert this component to
             rawMdxFallback. Pattern mirrors the `isChildOfComponent` probe at L213. */}
-            {canMoveUp && (
-              <button
-                type="button"
-                className="jsx-chrome-btn"
-                aria-label="Move up"
-                onClick={() => {
-                  try {
-                    if (typeof pos !== 'number') return;
-                    const $p = editor.state.doc.resolve(pos);
-                    const idx = $p.index($p.depth);
-                    if (idx === 0) return;
-                    const parent = $p.node($p.depth);
-                    const prev = parent.child(idx - 1);
-                    const from = pos - prev.nodeSize;
-                    const to = pos + node.nodeSize;
-                    const tr = editor.state.tr;
-                    const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                    const pre = editor.state.doc.slice(from, pos);
-                    tr.replaceWith(from, to, cur.content.append(pre.content));
-                    editor.view.dispatch(tr.scrollIntoView());
-                  } catch (err) {
-                    if (!(err instanceof RangeError)) throw err;
-                    incrementJsxMoveFailed('up');
-                    console.warn(
-                      JSON.stringify({
-                        event: 'jsx-component-move-failed',
-                        direction: 'up',
-                        component: descriptor.name,
-                        rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
-                        reason: err.message.slice(0, 500),
-                      }),
-                    );
-                  }
-                }}
-              >
-                <ArrowUp size={12} />
-              </button>
-            )}
-
-            {canMoveDown && (
-              <button
-                type="button"
-                className="jsx-chrome-btn"
-                aria-label="Move down"
-                onClick={() => {
-                  try {
-                    if (typeof pos !== 'number') return;
-                    const $p = editor.state.doc.resolve(pos);
-                    const idx = $p.index($p.depth);
-                    const parent = $p.node($p.depth);
-                    if (idx >= parent.childCount - 1) return;
-                    const next = parent.child(idx + 1);
-                    const from = pos;
-                    const to = pos + node.nodeSize + next.nodeSize;
-                    const tr = editor.state.tr;
-                    const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                    const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
-                    tr.replaceWith(from, to, nxt.content.append(cur.content));
-                    editor.view.dispatch(tr.scrollIntoView());
-                  } catch (err) {
-                    if (!(err instanceof RangeError)) throw err;
-                    incrementJsxMoveFailed('down');
-                    console.warn(
-                      JSON.stringify({
-                        event: 'jsx-component-move-failed',
-                        direction: 'down',
-                        component: descriptor.name,
-                        rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
-                        reason: err.message.slice(0, 500),
-                      }),
-                    );
-                  }
-                }}
-              >
-                <ArrowDown size={12} />
-              </button>
-            )}
-
-            {/* Delete — positioned between move arrows and settings so the
-            settings gear stays anchored at the right edge of the chrome bar
-            (consistent "destructive action mid, config action far-right"
-            pattern regardless of whether the component has editable props). */}
+          {canMoveUp && (
             <button
               type="button"
-              className="jsx-chrome-btn jsx-chrome-btn--delete"
-              aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
+              className="jsx-chrome-btn"
+              aria-label="Move up"
               onClick={() => {
-                if (typeof pos === 'number') {
-                  editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+                try {
+                  if (typeof pos !== 'number') return;
+                  const $p = editor.state.doc.resolve(pos);
+                  const idx = $p.index($p.depth);
+                  if (idx === 0) return;
+                  const parent = $p.node($p.depth);
+                  const prev = parent.child(idx - 1);
+                  const from = pos - prev.nodeSize;
+                  const to = pos + node.nodeSize;
+                  const tr = editor.state.tr;
+                  const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                  const pre = editor.state.doc.slice(from, pos);
+                  tr.replaceWith(from, to, cur.content.append(pre.content));
+                  editor.view.dispatch(tr.scrollIntoView());
+                } catch (err) {
+                  if (!(err instanceof RangeError)) throw err;
+                  incrementJsxMoveFailed('up');
+                  console.warn(
+                    JSON.stringify({
+                      event: 'jsx-component-move-failed',
+                      direction: 'up',
+                      component: descriptor.name,
+                      rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                      reason: err.message.slice(0, 500),
+                    }),
+                  );
                 }
               }}
             >
-              <Trash2 size={12} />
+              <ArrowUp size={12} />
             </button>
+          )}
 
-            {/* Settings — opens the controlled PropPanel popover hoisted above
-            NodeViewWrapper. `<PopoverTrigger asChild>` here is the
-            normal-mode anchor; in placeholder mode the chrome is hidden and
-            `<PopoverAnchor>` around the placeholder takes over. */}
-            {hasEditableProps && (
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="jsx-chrome-btn"
-                  aria-label={`${descriptor.displayName ?? descriptor.name} properties`}
-                >
-                  <Settings2 size={12} />
-                </button>
-              </PopoverTrigger>
-            )}
-          </div>
-        )}
+          {canMoveDown && (
+            <button
+              type="button"
+              className="jsx-chrome-btn"
+              aria-label="Move down"
+              onClick={() => {
+                try {
+                  if (typeof pos !== 'number') return;
+                  const $p = editor.state.doc.resolve(pos);
+                  const idx = $p.index($p.depth);
+                  const parent = $p.node($p.depth);
+                  if (idx >= parent.childCount - 1) return;
+                  const next = parent.child(idx + 1);
+                  const from = pos;
+                  const to = pos + node.nodeSize + next.nodeSize;
+                  const tr = editor.state.tr;
+                  const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                  const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+                  tr.replaceWith(from, to, nxt.content.append(cur.content));
+                  editor.view.dispatch(tr.scrollIntoView());
+                } catch (err) {
+                  if (!(err instanceof RangeError)) throw err;
+                  incrementJsxMoveFailed('down');
+                  console.warn(
+                    JSON.stringify({
+                      event: 'jsx-component-move-failed',
+                      direction: 'down',
+                      component: descriptor.name,
+                      rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                      reason: err.message.slice(0, 500),
+                    }),
+                  );
+                }
+              }}
+            >
+              <ArrowDown size={12} />
+            </button>
+          )}
+
+          {/* Delete — positioned between move arrows and settings so the
+            settings gear stays anchored at the right edge of the chrome bar
+            (consistent "destructive action mid, config action far-right"
+            pattern regardless of whether the component has editable props). */}
+          <button
+            type="button"
+            className="jsx-chrome-btn jsx-chrome-btn--delete"
+            aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
+            onClick={() => {
+              if (typeof pos === 'number') {
+                editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+              }
+            }}
+          >
+            <Trash2 size={12} />
+          </button>
+
+          {/* Settings — opens the controlled PropPanel popover hoisted above
+            NodeViewWrapper. `<PopoverTrigger asChild>` is the canonical click-to-
+            open path. In placeholder mode the popover is positioned via the
+            `<PopoverAnchor>` wrapping the placeholder pill (Anchor takes precedence
+            over Trigger for placement); both paths flip the same popoverOpen state. */}
+          {hasEditableProps && (
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="jsx-chrome-btn"
+                aria-label={`${descriptor.displayName ?? descriptor.name} properties`}
+              >
+                <Settings2 size={12} />
+              </button>
+            </PopoverTrigger>
+          )}
+        </div>
 
         {/* Live React component — renders exactly like production.
           Self-closing / no-children components get contentEditable={false} so

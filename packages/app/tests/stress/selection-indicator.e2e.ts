@@ -334,6 +334,12 @@ test('S9: three-axis composition — dragging dominates over selected + needs-co
   const card = page.locator('.jsx-component-wrapper[data-component-type="img"]').first();
   await expect(card).toHaveAttribute('data-needs-config', 'true', { timeout: 5_000 });
 
+  // Predicate-split canary: with a valid src, the placeholder must NOT render
+  // even though `data-needs-config` fires for the empty alt. Guards against
+  // a future refactor widening `shouldRenderPlaceholder` to fire on any empty
+  // required string prop — the exact failure mode the predicate split prevents.
+  await expect(page.locator('[data-descriptor-placeholder]')).toHaveCount(0);
+
   // Select + start drag.
   await selectFirstJsxComponent(page, 'img');
   await expect(card).toHaveAttribute('data-selected', 'true');

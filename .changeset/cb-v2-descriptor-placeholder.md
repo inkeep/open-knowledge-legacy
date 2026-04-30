@@ -33,6 +33,19 @@ is empty (`src === ''` for the media trio). Container descriptors
 (`hasChildren: true` — `Callout`, `Accordion`) keep their existing
 empty-state UX through `emptyChildName` and never show the pill.
 
+The pill spans the full doc-body width and sits above the regular
+hover-revealed chrome bar (gear, move-up / move-down, delete). The
+chrome stays visible in placeholder mode for parity with how the
+chrome's gear-hint UX already surfaces on any other unconfigured
+component (e.g. `<img alt="">`) — there is no special-cased hide.
+
+To keep the wrapper's HTML5 drag-to-reorder working through the pill,
+the placeholder is rendered as `<div role="button">` rather than a
+native `<button>`; native buttons capture mousedown for activation and
+prevent the wrapper's drag from initiating. Keyboard activation is
+covered by both the wrapper's existing `handleKeyDown` (Enter/Space
+when selected) and a local `onKeyDown` on the pill.
+
 This is a pure render-time addition. Storage shape, MDX serialization,
 and on-disk round-trip are unchanged — a fresh slash-inserted block
 still serializes to `<img src="" />` and round-trips byte-identically.
