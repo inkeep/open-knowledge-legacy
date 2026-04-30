@@ -105,9 +105,19 @@ function tryNativeHtmlPrimitive(node: MdxJsxFlowElement | MdxJsxTextElement): El
   // one up in property-information's table and emits the canonical lowercase
   // HTML attribute (`autoplay`, `playsinline`, `crossorigin`) at serialize
   // time, so we don't pre-translate here.
+  //
+  // Defense-in-depth: skip `on*` event-handler attributes. The downstream
+  // `rehypeSanitizeUrls` plugin only filters URL-scheme attributes (`href`,
+  // `src`, `action`); it does not strip event handlers. An MDX document
+  // with `<img onerror="alert(1)" src="x.png" />` would otherwise emit the
+  // `onerror` attribute into clipboard HTML. Most paste destinations strip
+  // event handlers themselves, but the gap is real — mirror the walker's
+  // `isDangerousEventHandlerAttr` guard at this seam too.
   const properties: Properties = {};
   for (const attr of node.attributes) {
     if (attr.type !== 'mdxJsxAttribute') return null;
+    const lowerName = attr.name.toLowerCase();
+    if (lowerName.length >= 3 && lowerName.startsWith('on')) continue;
     if (attr.value === null) {
       properties[attr.name] = true;
     } else if (typeof attr.value === 'string') {

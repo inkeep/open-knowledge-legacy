@@ -13,7 +13,7 @@
  */
 
 import type { Node as PmNode } from '@tiptap/pm/model';
-import { isSafeWalkerUrl } from './clipboard-walker.ts';
+import { isSafeWalkerUrl } from './clipboard-sanitize.ts';
 
 /**
  * Callout type → cross-app tone mapping. Exported so the registry-coverage

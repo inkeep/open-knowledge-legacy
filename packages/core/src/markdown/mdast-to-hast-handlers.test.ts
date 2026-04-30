@@ -189,6 +189,52 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
     expect(out).not.toContain('<pre class="mdx-component">');
   });
 
+  test('img flow element strips on* event handler attributes (FR-20 defense-in-depth)', () => {
+    // Downstream `rehypeSanitizeUrls` only filters URL-scheme attributes.
+    // `tryNativeHtmlPrimitive` mirrors the walker's `isDangerousEventHandlerAttr`
+    // guard so adversarial MDX with `<img onerror="alert(1)" src="x.png" />`
+    // never lands an `onerror` attribute in clipboard HTML, regardless of
+    // whether the destination strips event handlers itself.
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'onerror', value: 'alert(1)' },
+        { type: 'mdxJsxAttribute', name: 'onload', value: 'fetch("//evil")' },
+        { type: 'mdxJsxAttribute', name: 'onclick', value: 'doom()' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img onerror="alert(1)" onload="fetch(...)" src="x.png" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/img\.png"[^>]*>/);
+    // Event-handler attributes must NOT appear in the output.
+    expect(out).not.toContain('onerror');
+    expect(out).not.toContain('onload');
+    expect(out).not.toContain('onclick');
+    expect(out).not.toContain('alert(1)');
+  });
+
+  test('img flow element preserves `on*`-prefixed safe attributes when length < 3 or non-handler', () => {
+    // Length discriminator avoids matching the bare `on` attribute name —
+    // event handlers like `onfoo` are at least 3 chars. No standard HTML
+    // attribute has the bare name `on`, so this is a theoretical guard.
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'on', value: 'unusual' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="x.png" on="unusual" />' },
+    };
+    const out = html(wrap(node));
+    // The bare `on` attribute is preserved (length-3 boundary excludes it).
+    expect(out).toMatch(/\bon="unusual"/);
+  });
+
   test('inline <img> via mdxJsxTextElement also emits native <img> (not <span class="mdx-inline">)', () => {
     const node: MdxJsxTextElement = {
       type: 'mdxJsxTextElement',
