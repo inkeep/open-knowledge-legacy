@@ -25,10 +25,10 @@ export default {
     // the typed IPC wrappers. Knip doesn't follow the full discriminated
     // union back to the string literals on each channel.
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
-    // Clone-from-GitHub dialog. Currently unmounted while NavigatorApp's
-    // M4 device-flow integration is the only intended consumer (TODO at
-    // NavigatorApp.tsx:87). Kept in-tree as the canonical clone surface so
-    // M4 wiring is a one-line import rather than a re-implementation.
+    // Clone-from-GitHub dialog. Currently unmounted — NavigatorApp is the
+    // only intended consumer (desktop clone flow, not yet wired). Kept
+    // in-tree as the canonical clone surface so future wiring is a
+    // one-line import rather than a re-implementation.
     'packages/app/src/components/CloneDialog.tsx': ['files'],
     // MDX docs pages — rendered by the Fumadocs site's file-system route
     // discovery. They're referenced from `docs/content/overview.mdx`
