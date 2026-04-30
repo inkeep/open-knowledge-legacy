@@ -435,14 +435,8 @@ test('PLACEHOLDER-CLOSE-RETURNS-DOM-FOCUS: typing after Escape lands keystrokes 
 }) => {
   // Companion to PLACEHOLDER-CLOSE-ADVANCES-CARET: that test asserts PM
   // selection state advances; this test asserts DOM focus actually returns
-  // to the editor body so subsequent keystrokes don't vanish.
-  //
-  // Without `onCloseAutoFocus={(e) => { e.preventDefault(); editor.view.focus(); }}`
-  // on PopoverContent, Radix's FocusScope unmount runs `setTimeout(focus, 0)`
-  // pointing at `previouslyFocusedElement` captured at popover-mount — usually
-  // the gear button or a now-detached slash-menu element. Keystrokes after
-  // Escape land there and silently vanish, breaking the Notion-style
-  // "fill prop → Escape → continue typing" loop.
+  // to the editor body so subsequent keystrokes don't vanish. Mechanism:
+  // `onCloseAutoFocus` override on `<PopoverContent>` (see JsxComponentView).
   const docName = `placeholder-close-focus-${Math.random().toString(36).slice(2, 10)}`;
   await api.createPage(`${docName}.md`);
   await page.goto(`/#/${docName}`);
@@ -462,7 +456,8 @@ test('PLACEHOLDER-CLOSE-RETURNS-DOM-FOCUS: typing after Escape lands keystrokes 
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-prop-panel]')).toBeHidden({ timeout: PROP_PANEL_TIMEOUT });
 
-  // Two rAFs absorb Radix's setTimeout(0) focus restore + our rAF caret-advance.
+  // Two rAFs settle the onCloseAutoFocus setTimeout(0) tick (editor.view.focus())
+  // + the handleOpenChange rAF (PM selection advance).
   await page.evaluate(
     () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
   );
