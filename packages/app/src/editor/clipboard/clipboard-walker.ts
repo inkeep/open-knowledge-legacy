@@ -33,7 +33,7 @@
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
-import { logWalkerFallback } from './instrument.ts';
+import { logWalkerFallback, logWalkerUrlBlocked } from './instrument.ts';
 
 /**
  * CSS properties copied inline from the live element to the clone. Curated for
@@ -109,22 +109,26 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * URL-scheme attributes stripped of dangerous values during the walk. The
- * pre-walker mdast-to-hast pipeline ran `rehypeSanitizeUrls` downstream of
- * the markdown→HTML chain; the walker bypasses that pipeline and copies the
- * live DOM verbatim. Without this filter, an attacker-controlled
+ * URL-scheme attributes filtered through the allowlist below. The pre-walker
+ * mdast-to-hast pipeline ran `rehypeSanitizeUrls` downstream of the
+ * markdown→HTML chain; the walker bypasses that pipeline and copies the live
+ * DOM verbatim. Without this filter, an attacker-controlled
  * `<a href="javascript:...">` (e.g., from a markdown autolink that survived
  * upstream parsing) would land in the cross-app clipboard payload.
  *
- * The pattern matches the schemes that resource fetchers (browsers, Slack,
- * Notion, Gmail) treat as code-execution surfaces: `javascript:`, `data:` for
- * non-image MIME types, `vbscript:`, `file:`, and the Chromium / Firefox
- * extension URI schemes. `mailto:` / `tel:` / `sms:` and standard
- * `http(s):` / `ftp(s):` / relative URLs are explicitly safe and pass through.
+ * Allowlist semantics (parity with `isSafeUrl` in
+ * `packages/core/src/markdown/mdast-to-html.ts:56-62` and
+ * `URL_SCHEME_ALLOWLIST` in `packages/app/src/editor/utils/sanitize-url.ts:58`):
+ * `http(s):`, `mailto:`, `tel:`, `ftp:`, `sms:`, plus relative URL forms
+ * (`/`, `#`, `?`, `./`, `../`) pass through. Everything else — including
+ * `javascript:` / `vbscript:` / `file:` / browser-extension schemes / all
+ * `data:` URIs / novel / future schemes — is rejected. Allowlist posture
+ * eliminates the leading-whitespace bypass (browsers strip leading ASCII
+ * whitespace per WHATWG URL §4 preprocessing; we trim before classifying)
+ * and the "novel scheme fail-open" class.
  */
-const DANGEROUS_URL_SCHEME_HEAD_RE =
-  /^(?:javascript|vbscript|file|chrome-extension|moz-extension):|^data:(?!image\/)/i;
-const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
+const SAFE_URL_SCHEME_RE = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
+export const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
   'href',
   'src',
   'srcset',
@@ -136,17 +140,33 @@ const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
 /**
  * Human-readable attributes that may carry an embedded URL — internal-link's
  * `aria-label="Link: <href>"` is the canonical OK shape. The walker scrubs
- * any dangerous-scheme URL appearing inside these values; safe schemes pass
- * through unchanged. Defined as a non-anchored alternation so we can scrub
- * `Link: javascript:alert(1)` without dropping the wrapping label text.
+ * any unsafe-scheme URL appearing inside these values; safe schemes pass
+ * through unchanged. Substitution preserves the wrapping label
+ * ("Link: [blocked]") rather than dropping the attribute, so assistive tech
+ * still surfaces the descriptor's role.
  */
-const DANGEROUS_URL_SCHEME_EMBEDDED_RE =
-  /\b(?:javascript|vbscript|file|chrome-extension|moz-extension):[^\s"<]*|\bdata:(?!image\/)[^\s"<]*/gi;
-const URL_BEARING_TEXT_ATTRS: ReadonlySet<string> = new Set([
+// Match scheme-style tokens with at least one non-whitespace character
+// AFTER the colon — `Link:` (no body) does NOT match, so wrapping label
+// prefixes survive the substitution. RFC 3986 scheme grammar:
+// `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`.
+const URL_LIKE_TOKEN_RE = /[a-zA-Z][a-zA-Z0-9+.-]*:[^\s"'<>]+/g;
+export const URL_BEARING_TEXT_ATTRS: ReadonlySet<string> = new Set([
   'aria-label',
   'aria-description',
   'title',
 ]);
+
+/**
+ * Dangerous CSS-in-`style` patterns. The pre-walker pipeline ran
+ * `sanitizeStyleString` on JSX-component props, but mark-rendered DOM
+ * (TipTap built-ins, raw HTML inline) bypasses that gate. Walker mirrors
+ * the same coarse denylist (DOMPurify CSS-hook parity) at the FR-20
+ * boundary: `url(javascript:...)` / `url(data:...)` payloads in
+ * `background-image` / `content` / `list-style-image` / `cursor`, plus
+ * legacy IE `expression(...)`.
+ */
+const DANGEROUS_STYLE_URL_RE = /url\s*\(\s*['"]?\s*(?:javascript|vbscript|data)\s*:/i;
+const DANGEROUS_STYLE_EXPRESSION_RE = /\bexpression\s*\(/i;
 
 /**
  * Marker the descriptor sets on a subtree to opt out of clipboard capture.
@@ -212,6 +232,120 @@ export function stripBlocklistedClasses(
   return kept || null;
 }
 
+/**
+ * Allowlist URL classifier — accepts `http(s):` / `mailto:` / `tel:` /
+ * `ftp:` / `sms:` and any relative URL form (bare filenames, root-relative
+ * paths, fragments, queries); rejects everything else. Trims leading and
+ * trailing ASCII whitespace per WHATWG URL preprocessing so a leading-space
+ * bypass (`" javascript:..."`) cannot evade the regex.
+ *
+ * Relative-URL detection mirrors `sanitizeUrlValue` in
+ * `packages/app/src/editor/utils/sanitize-url.ts:195-224`: a value is
+ * relative when it has no colon, OR when a `/`, `?`, or `#` appears before
+ * the first colon (`one.png`, `path/file.jpg`, `?q=1`, `#hash` all pass).
+ *
+ * Empty / whitespace-only values are treated as benign no-op hrefs and
+ * pass through.
+ */
+export function isSafeWalkerUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed === '') return true;
+  if (SAFE_URL_SCHEME_RE.test(trimmed)) return true;
+  // No allowlisted scheme matched. If the value has no scheme at all
+  // (no colon, or path/query/fragment separator before any colon), it's a
+  // relative URL — safe by construction.
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx === -1) return true;
+  const slashIdx = trimmed.indexOf('/');
+  const questionIdx = trimmed.indexOf('?');
+  const hashIdx = trimmed.indexOf('#');
+  const firstSep = Math.min(
+    slashIdx === -1 ? Number.POSITIVE_INFINITY : slashIdx,
+    questionIdx === -1 ? Number.POSITIVE_INFINITY : questionIdx,
+    hashIdx === -1 ? Number.POSITIVE_INFINITY : hashIdx,
+  );
+  return colonIdx > firstSep;
+}
+
+/**
+ * Per-candidate `srcset` validator. WHATWG HTML §4.8.4.3.2 defines
+ * `srcset` as a comma-separated list of image-candidate strings, each with
+ * a URL plus optional density / width descriptor. A head-anchored regex on
+ * the entire attribute value misses dangerous URLs after the first comma
+ * (`safe.jpg 1x, javascript:alert(1) 2x`).
+ *
+ * Returns `true` only if every non-empty candidate's URL is safe. Empty
+ * candidates (between consecutive commas) are skipped.
+ */
+export function isSrcsetSafe(srcset: string): boolean {
+  const candidates = srcset.split(',');
+  for (const raw of candidates) {
+    const candidate = raw.trim();
+    if (candidate === '') continue;
+    const url = candidate.split(/\s+/)[0] ?? '';
+    if (!isSafeWalkerUrl(url)) return false;
+  }
+  return true;
+}
+
+/**
+ * Substitute unsafe-scheme URLs inside a human-readable attribute value
+ * (aria-label / aria-description / title) with `[blocked]`. Wrapping
+ * label text is preserved so screen readers still surface the descriptor's
+ * role ("Link: [blocked]").
+ *
+ * Returns the rewritten string when something was substituted. With
+ * `reportNoChange: true`, returns `null` when the input is already safe so
+ * the caller can avoid an unnecessary `setAttribute` write.
+ */
+export function sanitizeEmbeddedUrlValue(value: string): string;
+export function sanitizeEmbeddedUrlValue(
+  value: string,
+  options: { reportNoChange: true },
+): string | null;
+export function sanitizeEmbeddedUrlValue(
+  value: string,
+  options?: { reportNoChange: boolean },
+): string | null {
+  let changed = false;
+  const sanitized = value.replace(URL_LIKE_TOKEN_RE, (token) => {
+    if (isSafeWalkerUrl(token)) return token;
+    changed = true;
+    return '[blocked]';
+  });
+  if (options?.reportNoChange && !changed) return null;
+  return sanitized;
+}
+
+/**
+ * Match DOM event-handler attributes (`onclick`, `onerror`, `onload`, etc.).
+ * Mirrors `isDangerousPropName`'s `on*` rule at sanitize-url.ts:175-180,
+ * but operates on attribute names (already lowercased by the DOM API on
+ * `Attr.name`). Length discriminator avoids matching the bare `on` prefix.
+ */
+export function isDangerousEventHandlerAttr(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.length >= 3 && lower.startsWith('on');
+}
+
+/**
+ * Coarse CSS-in-style filter. Drops the entire value when it carries a
+ * `url(javascript:...)` / `url(vbscript:...)` / `url(data:...)` payload or
+ * a legacy IE `expression(...)` call. Returns the input unchanged when
+ * safe, or `''` when unsafe.
+ *
+ * Mirrors `sanitizeStyleString` in sanitize-url.ts but operates on the
+ * walker's `style` attribute boundary. We do not parse CSS — DOMPurify
+ * uses the same denylist shape because the false-positive class on
+ * legitimate inline styles is empty (no benign use of `expression(...)`
+ * or `url(javascript:...)` exists in modern web content).
+ */
+export function sanitizeStyleAttrValue(value: string): string {
+  if (DANGEROUS_STYLE_URL_RE.test(value)) return '';
+  if (DANGEROUS_STYLE_EXPRESSION_RE.test(value)) return '';
+  return value;
+}
+
 export function walkLiveDomToInlineStyledFragment(
   _slice: Slice,
   view: EditorView,
@@ -267,20 +401,47 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
     else clone.removeAttribute('class');
   }
 
-  // Strip blocklisted attributes + sanitize URL-scheme attributes.
   // FR-20 escape contract: the pre-walker pipeline ran rehypeSanitizeUrls
   // downstream of mdast-to-hast; the walker bypasses that pipeline so the
-  // filter has to live here.
+  // filter has to live here. Allowlist parity with `isSafeUrl` (mdast-to-html.ts)
+  // and `URL_SCHEME_ALLOWLIST` (sanitize-url.ts) — see helpers above.
   for (const attr of Array.from(clone.attributes)) {
     if (ATTR_BLOCKLIST.has(attr.name)) {
       clone.removeAttribute(attr.name);
       continue;
     }
-    if (URL_SCHEME_ATTRS.has(attr.name) && DANGEROUS_URL_SCHEME_HEAD_RE.test(attr.value)) {
-      // Drop the attribute rather than substitute `about:blank` — destinations
-      // that strip the resulting unsafe-removed anchor surface clean text
-      // instead of a clickable trap.
+    if (isDangerousEventHandlerAttr(attr.name)) {
+      // React strips `on*` from JSX before render, but the walker is a
+      // re-emit boundary to untrusted destinations — defense-in-depth.
       clone.removeAttribute(attr.name);
+      logWalkerUrlBlocked({ attr: 'on*', reason: 'event-handler' });
+      continue;
+    }
+    if (attr.name === 'style') {
+      const safeStyle = sanitizeStyleAttrValue(attr.value);
+      if (safeStyle === '') {
+        clone.removeAttribute('style');
+        logWalkerUrlBlocked({ attr: 'style', reason: 'unsafe-url-or-expression' });
+      } else if (safeStyle !== attr.value) {
+        clone.setAttribute('style', safeStyle);
+      }
+      continue;
+    }
+    if (URL_SCHEME_ATTRS.has(attr.name)) {
+      const valueIsSafe =
+        attr.name === 'srcset' ? isSrcsetSafe(attr.value) : isSafeWalkerUrl(attr.value);
+      if (!valueIsSafe) {
+        // Drop the attribute rather than substitute `about:blank` — destinations
+        // that strip the resulting unsafe-removed anchor surface clean text
+        // instead of a clickable trap. For `srcset`, drop the entire attribute
+        // when ANY candidate is unsafe (conservative; matches the walker's
+        // existing remove-rather-than-rewrite policy).
+        clone.removeAttribute(attr.name);
+        logWalkerUrlBlocked({
+          attr: attr.name,
+          reason: attr.name === 'srcset' ? 'srcset-candidate' : 'scheme',
+        });
+      }
       continue;
     }
     if (URL_BEARING_TEXT_ATTRS.has(attr.name)) {
@@ -289,8 +450,11 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
       // in cross-app HTML. Replace the URL portion with `[blocked]` so
       // assistive tech sees clean text and the surrounding label stays
       // informative ("Link: [blocked]" vs. silent attribute drop).
-      const sanitized = attr.value.replace(DANGEROUS_URL_SCHEME_EMBEDDED_RE, '[blocked]');
-      if (sanitized !== attr.value) clone.setAttribute(attr.name, sanitized);
+      const sanitized = sanitizeEmbeddedUrlValue(attr.value, { reportNoChange: true });
+      if (sanitized !== null) {
+        clone.setAttribute(attr.name, sanitized);
+        logWalkerUrlBlocked({ attr: attr.name, reason: 'embedded-url' });
+      }
     }
   }
 

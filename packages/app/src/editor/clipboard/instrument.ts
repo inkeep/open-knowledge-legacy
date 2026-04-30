@@ -66,7 +66,15 @@ type ClipboardEventName =
   // and falls back to the per-descriptor static palette. Expected only
   // for Activity-hidden subtrees; presence in normal copy operations
   // signals a real bug per the walker STOP_IF rule.
-  | 'clipboard-walker-fallback-palette';
+  | 'clipboard-walker-fallback-palette'
+  // Emitted when the live-DOM walker drops or rewrites a value at the
+  // FR-20 escape boundary — unsafe URL scheme on `href`/`src`/`srcset`/...,
+  // dangerous `on*` event-handler attribute, unsafe `url(javascript:...)` /
+  // `expression(...)` payload in `style`, or an embedded unsafe URL inside
+  // `aria-label`/`title` that was substituted with `[blocked]`. Cardinality
+  // bounded: `attr` is one of the URL_SCHEME_ATTRS / URL_BEARING_TEXT_ATTRS
+  // members or the literal `style` / `on*`; `reason` is a fixed taxonomy.
+  | 'clipboard-walker-url-blocked';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
@@ -238,6 +246,35 @@ export function logWalkerFallback(info: { descriptor: string; view: ClipboardVie
       event: 'clipboard-walker-fallback-palette' satisfies ClipboardEventName,
       descriptor: info.descriptor,
       view: info.view,
+    }),
+  );
+}
+
+/**
+ * Reasons the walker rejected an attribute or value at the FR-20 escape
+ * boundary. Bounded enum so log-aggregator dashboards can render a static
+ * schema; `attr` is constrained at the call site to URL_SCHEME_ATTRS /
+ * URL_BEARING_TEXT_ATTRS members or the literal `style` / `on*`.
+ */
+type WalkerUrlBlockedReason =
+  | 'scheme'
+  | 'srcset-candidate'
+  | 'embedded-url'
+  | 'event-handler'
+  | 'unsafe-url-or-expression';
+
+/**
+ * Emit when the walker drops or rewrites a value at the FR-20 escape
+ * boundary. Defense-in-depth at the cross-app re-emit layer — sibling
+ * sanitizers (`sanitize-url.ts:emitPropDroppedEvent`) emit on the same
+ * cadence, so attack-surface visibility is symmetric across the codebase.
+ */
+export function logWalkerUrlBlocked(info: { attr: string; reason: WalkerUrlBlockedReason }): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-url-blocked' satisfies ClipboardEventName,
+      attr: info.attr,
+      reason: info.reason,
     }),
   );
 }
