@@ -31,11 +31,6 @@
       "cache": true,
       "inputs": ["src/**/*.ts", "src/**/*.tsx"]
     },
-    "@inkeep/open-knowledge#test": {
-      "dependsOn": ["build", "^build"],
-      "cache": true,
-      "inputs": ["src/**/*.ts", "scripts/**/*.mjs"]
-    },
     "test:integration": {
       "dependsOn": ["^build"],
       "cache": true,
