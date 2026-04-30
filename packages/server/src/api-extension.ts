@@ -117,6 +117,8 @@ import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
+  type DocExtension,
+  forgetDocExtension,
   getDocExtension,
   isSupportedDocFile,
   registerDocExtension,
@@ -1577,12 +1579,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             throw new ManagedRenameSourceTypeMismatchError(kind);
           }
 
+          // Downstream code (safeContentPath, setReconciledBase,
+          // backlinkIndex, file index, applyRenameMap) keys on extension-less
+          // docNames; folder rename naturally produces them via the file
+          // index, but file rename receives `fromPath`/`toPath` with the
+          // user-supplied extension. Strip here so the rename map matches
+          // currentDocName in applyRenameMap (otherwise pass 1's image-ref
+          // recompute is silently skipped) and syncRenamedDocsToDisk doesn't
+          // double-extension via getDocExtension fallback.
           const affectedDocNames =
-            kind === 'file' ? [fromPath] : listAffectedDocNames(getFileIndex(), kind, fromPath);
+            kind === 'file'
+              ? [stripDocExtension(fromPath)]
+              : listAffectedDocNames(getFileIndex(), kind, fromPath);
           const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map(
             (docName) => ({
               from: docName,
-              to: kind === 'file' ? toPath : remapDocNameForRename(docName, kind, fromPath, toPath),
+              to:
+                kind === 'file'
+                  ? stripDocExtension(toPath)
+                  : remapDocNameForRename(docName, kind, fromPath, toPath),
             }),
           );
           span.setAttribute('rename.affected_docs', affectedDocs.length);
@@ -1689,6 +1704,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             if (!renamedWithGit) {
               tracedMkdirSync(dirname(rootDestinationPath), { recursive: true });
               tracedRenameSync(rootSourcePath, rootDestinationPath);
+            }
+
+            // Pre-register destination extensions so loop 2's
+            // `resolveContentEntryPath` and `safeContentPath` produce the
+            // correct on-disk paths. For an extension-change rename
+            // (`foo.md` → `foo.mdx`), inheriting from the source's recorded
+            // extension would point at the no-longer-extant `.md` path; for
+            // a same-extension cross-folder rename, the destination docName
+            // has no recorded extension yet and would default to `.md`,
+            // miscomputing `.mdx` source paths. Forget the source mapping
+            // so a renamed-then-recreated source doesn't inherit a stale
+            // extension. The file watcher would converge to the same state
+            // asynchronously — this just makes loop 2 see it synchronously.
+            const explicitDestExt: DocExtension | null =
+              kind === 'file' && isSupportedDocFile(toPath)
+                ? (extname(toPath).toLowerCase() as DocExtension)
+                : null;
+            for (const { from, to } of affectedDocs) {
+              const sourceExt = getDocExtension(from);
+              forgetDocExtension(from);
+              registerDocExtension(to, explicitDestExt ?? sourceExt);
             }
 
             const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));

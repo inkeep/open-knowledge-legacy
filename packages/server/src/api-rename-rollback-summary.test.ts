@@ -26,6 +26,7 @@ import type { Principal } from '@inkeep/open-knowledge-core';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { clearContributors, formatContributors } from './contributor-tracker.ts';
+import { _resetDocExtensionsForTests } from './doc-extensions.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics, resetMetrics } from './metrics.ts';
 
@@ -152,6 +153,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'ok-rename-rollback-summary-'));
   clearContributors();
   resetMetrics();
+  _resetDocExtensionsForTests();
 });
 
 afterEach(() => {
