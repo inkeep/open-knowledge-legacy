@@ -10,7 +10,7 @@
  *   - `mcp.tools.search.maxResults`
  *
  * **No `scope` parameter.** The server picks the write target via the ladder:
- *   `inspectConfig(path).workspace
+ *   `inspectConfig(path).project
  *      ?? inspectConfig(path).user
  *      ?? fieldRegistry.get(field).defaultScope
  *      ?? 'user'`
@@ -46,9 +46,9 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Set fields in the Open Knowledge config (workspace + user-global YAML).',
+  '[Operates on disk; no running OK server required] Set fields in the Open Knowledge config (project + user-global YAML).',
   '',
-  'Pass a deep-partial patch over the agent-settable allowlist. The server picks the write target (workspace vs user) automatically based on where the path is already set + per-field default scope.',
+  'Pass a deep-partial patch over the agent-settable allowlist. The server picks the write target (project vs user) automatically based on where the path is already set + per-field default scope.',
   '',
   '**Allowlist** (only these paths are agent-settable):',
   '- `content.include` — globs of files to include in the wiki',
@@ -61,7 +61,7 @@ export const DESCRIPTION = [
   '',
   '**Patch semantics:** RFC 7396 spirit (TypeScript-only — no wire format). Top-level keys present are written; absent keys are unchanged; `null` clears a field; nested objects merge recursively; arrays replace wholesale.',
   '',
-  '**Mixed scope:** if leaves in a single patch resolve to different scopes (e.g., one workspace-only field + one user-only field), the call fails with `MIXED_SCOPE` — retry per-scope.',
+  '**Mixed scope:** if leaves in a single patch resolve to different scopes (e.g., one project-only field + one user-only field), the call fails with `MIXED_SCOPE` — retry per-scope.',
   '',
   '**Parameters:**',
   '- `patch` — Deep-partial config patch over the allowlist (see above).',
@@ -94,7 +94,7 @@ const InputSchema = {
 const SuccessOutputSchema = z.object({
   ok: z.literal(true),
   applied: z.array(z.string()),
-  scope: z.enum(['user', 'workspace']),
+  scope: z.enum(['user', 'project']),
   path: z.string(),
   current: z.record(z.string(), z.unknown()),
 });
@@ -160,10 +160,10 @@ function annotateLeaves(leaves: ReadonlyArray<readonly (string | number)[]>): Le
  */
 function inferScopeForLeaf(
   _path: (string | number)[],
-  presence: { user: boolean; workspace: boolean } | undefined,
+  presence: { user: boolean; project: boolean } | undefined,
   defaultScope: WriteScope | undefined,
 ): WriteScope {
-  if (presence?.workspace) return 'workspace';
+  if (presence?.project) return 'project';
   if (presence?.user) return 'user';
   return defaultScope ?? 'user';
 }

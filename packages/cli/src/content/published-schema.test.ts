@@ -28,9 +28,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(here, '..', '..', 'dist');
 const PUBLISHED_SCHEMA_PATH = resolve(DIST, 'config-schema.json');
 const VERSIONED_DIR = resolve(DIST, 'schemas', 'v0');
-const VERSIONED_WORKSPACE_PATH = resolve(VERSIONED_DIR, 'config.workspace.schema.json');
+const VERSIONED_PROJECT_PATH = resolve(VERSIONED_DIR, 'config.project.schema.json');
 const VERSIONED_USER_PATH = resolve(VERSIONED_DIR, 'config.user.schema.json');
-const ALIAS_WORKSPACE_PATH = resolve(DIST, 'config.workspace.schema.json');
+const ALIAS_PROJECT_PATH = resolve(DIST, 'config.project.schema.json');
 const ALIAS_USER_PATH = resolve(DIST, 'config.user.schema.json');
 
 describe('published dist/config-schema.json', () => {
@@ -42,7 +42,7 @@ describe('published dist/config-schema.json', () => {
     // `ok init` and writeConfigPatch's lazy first-write point YAML magic
     // comments at these paths. Bumping CONFIG_SCHEMA_MAJOR adds a new v<N>
     // dir; old majors stay published forever.
-    expect(existsSync(VERSIONED_WORKSPACE_PATH)).toBe(true);
+    expect(existsSync(VERSIONED_PROJECT_PATH)).toBe(true);
     expect(existsSync(VERSIONED_USER_PATH)).toBe(true);
   });
 
@@ -50,23 +50,23 @@ describe('published dist/config-schema.json', () => {
     // Earlier scaffolds wrote URLs to dist root rather than the versioned
     // dir. We keep the root files forever so those YAMLs never lose
     // autocomplete.
-    expect(existsSync(ALIAS_WORKSPACE_PATH)).toBe(true);
+    expect(existsSync(ALIAS_PROJECT_PATH)).toBe(true);
     expect(existsSync(ALIAS_USER_PATH)).toBe(true);
   });
 
   test('per-scope artifacts disjointly cover scope-specific fields', () => {
-    const workspace = JSON.parse(readFileSync(VERSIONED_WORKSPACE_PATH, 'utf-8')) as {
+    const project = JSON.parse(readFileSync(VERSIONED_PROJECT_PATH, 'utf-8')) as {
       properties?: Record<string, unknown>;
     };
     const user = JSON.parse(readFileSync(VERSIONED_USER_PATH, 'utf-8')) as {
       properties?: Record<string, unknown>;
     };
-    // workspace-only top-level sections
-    expect(workspace.properties).toHaveProperty('content');
+    // project-only top-level sections
+    expect(project.properties).toHaveProperty('content');
     expect(user.properties).not.toHaveProperty('content');
     // user-only top-level sections
     expect(user.properties).toHaveProperty('appearance');
-    expect(workspace.properties).not.toHaveProperty('appearance');
+    expect(project.properties).not.toHaveProperty('appearance');
   });
 
   test('artifact is JSON-parsable + declares draft-07', () => {

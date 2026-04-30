@@ -18,7 +18,7 @@ export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
 export const ConfigSchema = z.looseObject({
-  // `content.*` is WORKSPACE-scope. `dir` / `include` / `exclude` define
+  // `content.*` is PROJECT-scope. `dir` / `include` / `exclude` define
   // which files are part of *this* project's knowledge graph; a user-global
   // override doesn't make sense (each project has its own files, and a
   // user-level glob would either be ignored or actively wrong when working
@@ -31,26 +31,26 @@ export const ConfigSchema = z.looseObject({
       dir: z
         .string()
         .register(fieldRegistry, {
-          scope: 'workspace',
+          scope: 'project',
           agentSettable: false,
-          defaultScope: 'workspace',
+          defaultScope: 'project',
         })
         .default('.'),
       include: z
         .array(z.string())
         .min(1)
         .register(fieldRegistry, {
-          scope: 'workspace',
+          scope: 'project',
           agentSettable: true,
-          defaultScope: 'workspace',
+          defaultScope: 'project',
         })
         .default(['**/*.md', '**/*.mdx']),
       exclude: z
         .array(z.string())
         .register(fieldRegistry, {
-          scope: 'workspace',
+          scope: 'project',
           agentSettable: true,
-          defaultScope: 'workspace',
+          defaultScope: 'project',
         })
         .default([]),
     })
@@ -94,13 +94,13 @@ export const ConfigSchema = z.looseObject({
     .default({ host: 'localhost', openOnAgentEdit: false }),
   preview: z
     .looseObject({
-      // `scope: 'workspace'` (strict): per spec §9.5.4, `baseUrl` at user-global
+      // `scope: 'project'` (strict): per spec §9.5.4, `baseUrl` at user-global
       // scope is the only ❌-marked placement (each project has its own deployed
       // wiki URL). The Settings pane disables this field on the user tab; the
       // loader rejects it with a source-located error if hand-set in user YAML.
       baseUrl: z
         .url()
-        .register(fieldRegistry, { scope: 'workspace', agentSettable: false })
+        .register(fieldRegistry, { scope: 'project', agentSettable: false })
         .optional(),
     })
     .default({}),
@@ -109,7 +109,7 @@ export const ConfigSchema = z.looseObject({
     .register(fieldRegistry, {
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     })
     .default([]),
   mcp: z
@@ -171,12 +171,12 @@ export const ConfigSchema = z.looseObject({
   // `appearance.*` canonicalizes the value into config.yml.
   //
   // Both are USER-scope: theme is a personal preference, not a project-
-  // shared setting. A workspace `appearance.theme` would force every
+  // shared setting. A project `appearance.theme` would force every
   // collaborator into the project owner's mode, which is a misuse
   // pattern and not what users expect from the chrome toggle. The
   // Settings pane hides these fields on the "This project" tab via
   // `isFieldVisibleAtScope`; SchemaStore validation flags them in
-  // workspace YAML; chrome toggle always writes via `userBinding.patch()`.
+  // project YAML; chrome toggle always writes via `userBinding.patch()`.
   appearance: z
     .looseObject({
       theme: z

@@ -21,11 +21,11 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: false,
-      workspace: false,
+      project: false,
     });
   });
 
-  test('reports `workspace: true` when the path is set in workspace YAML', () => {
+  test('reports `project: true` when the path is set in project YAML', () => {
     const { cwd, home } = makeTempProject();
     writeFileSync(
       join(cwd, '.open-knowledge', 'config.yml'),
@@ -37,7 +37,7 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: false,
-      workspace: true,
+      project: true,
     });
   });
 
@@ -50,7 +50,7 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('appearance.theme')).toEqual({
       user: true,
-      workspace: false,
+      project: false,
     });
   });
 
@@ -70,7 +70,7 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: true,
-      workspace: true,
+      project: true,
     });
   });
 
@@ -91,15 +91,15 @@ describe('inspectConfigPaths', () => {
     );
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: false,
-      workspace: true,
+      project: true,
     });
     expect(result.get('appearance.theme')).toEqual({
       user: true,
-      workspace: false,
+      project: false,
     });
     expect(result.get('nonexistent.path')).toEqual({
       user: false,
-      workspace: false,
+      project: false,
     });
   });
 
@@ -112,7 +112,7 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: false,
-      workspace: false,
+      project: false,
     });
   });
 
@@ -125,7 +125,7 @@ describe('inspectConfigPaths', () => {
     });
     expect(result.get('mcp.tools.search.maxResults')).toEqual({
       user: false,
-      workspace: false,
+      project: false,
     });
   });
 
@@ -136,7 +136,7 @@ describe('inspectConfigPaths', () => {
       cwd,
       homedirOverride: home,
     });
-    expect(result.get('appearance.theme')?.workspace).toBe(true);
+    expect(result.get('appearance.theme')?.project).toBe(true);
   });
 
   test('handles array-leaf folders[]', () => {
@@ -146,6 +146,6 @@ describe('inspectConfigPaths', () => {
       'folders:\n  - match: specs/**\n    frontmatter:\n      description: Specs\n',
     );
     const result = inspectConfigPaths([['folders']], { cwd, homedirOverride: home });
-    expect(result.get('folders')?.workspace).toBe(true);
+    expect(result.get('folders')?.project).toBe(true);
   });
 });

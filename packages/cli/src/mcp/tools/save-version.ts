@@ -6,7 +6,7 @@
  * The resulting checkpoint ref can later be found via `get_history`.
  *
  * previewUrl is always `null` per FR-2.1 / US-011: save_version operates on the
- * whole workspace (all documents), not a single docName, and the UI has no
+ * whole project (all documents), not a single docName, and the UI has no
  * checkpoint-level URL shape. Emitting null keeps the 21-tool contract uniform
  * without misleading agents into a nonexistent per-doc preview.
  */

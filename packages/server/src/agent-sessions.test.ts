@@ -154,7 +154,7 @@ describe('getSession — composite key (docName + agentId)', () => {
     // sessions on them would attempt to attach the markdown bridge and
     // corrupt YAML. The short-circuit at AgentSessionManager.getSession
     // is the load-bearing gate.
-    await expect(manager.getSession('__config__/workspace', 'agent-alice')).rejects.toThrow(
+    await expect(manager.getSession('__config__/project', 'agent-alice')).rejects.toThrow(
       /reserved doc/i,
     );
     await expect(manager.getSession('__user__/config.yml', 'agent-alice')).rejects.toThrow(

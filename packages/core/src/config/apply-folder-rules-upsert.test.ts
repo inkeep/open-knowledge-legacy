@@ -212,7 +212,7 @@ describe('applyFolderRulesUpsert — scope', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected success');
       expect(result.path).toBe(join(home, '.open-knowledge', 'config.yml'));
-      // workspace config not written
+      // project config not written
       expect(existsSync(configPath())).toBe(false);
     } finally {
       if (existsSync(home)) rmSync(home, { recursive: true, force: true });

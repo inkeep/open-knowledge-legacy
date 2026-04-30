@@ -10,8 +10,8 @@ import {
   CC1ConfigValidationRejectedPayloadSchema,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
   SYSTEM_DOC_NAME,
 } from '@inkeep/open-knowledge-core';
@@ -32,7 +32,7 @@ describe('isSystemDoc', () => {
 
   test('returns false for config doc names', () => {
     // Predicates are disjoint by design — every callsite ORs them, never trades them.
-    expect(isSystemDoc(CONFIG_DOC_NAME_WORKSPACE)).toBe(false);
+    expect(isSystemDoc(CONFIG_DOC_NAME_PROJECT)).toBe(false);
     expect(isSystemDoc(CONFIG_DOC_NAME_USER)).toBe(false);
   });
 
@@ -46,9 +46,9 @@ describe('isSystemDoc', () => {
 });
 
 describe('isConfigDoc', () => {
-  test('returns true for the well-known workspace config doc', () => {
-    expect(isConfigDoc('__config__/workspace')).toBe(true);
-    expect(isConfigDoc(CONFIG_DOC_NAME_WORKSPACE)).toBe(true);
+  test('returns true for the well-known project config doc', () => {
+    expect(isConfigDoc('__config__/project')).toBe(true);
+    expect(isConfigDoc(CONFIG_DOC_NAME_PROJECT)).toBe(true);
   });
 
   test('returns true for the well-known user-global config doc', () => {
@@ -65,16 +65,16 @@ describe('isConfigDoc', () => {
   test('membership is exact — lookalikes do NOT match', () => {
     // STOP rule: the admission set is a public contract per spec §16.
     // Substring matches and prefix variants are deliberately rejected.
-    expect(isConfigDoc('__config__/workspace.md')).toBe(false);
+    expect(isConfigDoc('__config__/project.md')).toBe(false);
     expect(isConfigDoc('__config__/user')).toBe(false);
     expect(isConfigDoc('__config__/')).toBe(false);
     expect(isConfigDoc('__user__/config.yml.md')).toBe(false);
     expect(isConfigDoc('__user__/auth.yml')).toBe(false);
-    expect(isConfigDoc('a__config__/workspace')).toBe(false);
+    expect(isConfigDoc('a__config__/project')).toBe(false);
   });
 
   test('CONFIG_DOC_NAMES contains exactly the two well-known names', () => {
-    expect([...CONFIG_DOC_NAMES].sort()).toEqual(['__config__/workspace', '__user__/config.yml']);
+    expect([...CONFIG_DOC_NAMES].sort()).toEqual(['__config__/project', '__user__/config.yml']);
   });
 });
 
@@ -390,7 +390,7 @@ describe('CC1Broadcaster', () => {
   });
 
   test('emitConfigValidationRejected publishes payload with docName, error, seq=1', () => {
-    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
       code: 'YAML_PARSE',
       detail: 'unexpected token at line 5',
     });
@@ -399,7 +399,7 @@ describe('CC1Broadcaster', () => {
     expect(payload.v).toBe(1);
     expect(payload.ch).toBe(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED);
     expect(payload.seq).toBe(1);
-    expect(payload.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(payload.docName).toBe(CONFIG_DOC_NAME_PROJECT);
     expect(payload.error.code).toBe('YAML_PARSE');
   });
 
@@ -419,7 +419,7 @@ describe('CC1Broadcaster', () => {
   });
 
   test('emitConfigValidationRejected seq increments monotonically', () => {
-    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
       code: 'UNKNOWN',
       message: 'one',
     });
@@ -427,7 +427,7 @@ describe('CC1Broadcaster', () => {
       code: 'UNKNOWN',
       message: 'two',
     });
-    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
       code: 'UNKNOWN',
       message: 'three',
     });
@@ -440,7 +440,7 @@ describe('CC1Broadcaster', () => {
 
   test('emitConfigValidationRejected graceful no-op when __system__ document missing', () => {
     mockHocuspocus.documents.clear();
-    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
       code: 'YAML_PARSE',
       detail: 'oops',
     });
@@ -448,7 +448,7 @@ describe('CC1Broadcaster', () => {
   });
 
   test('emitConfigValidationRejected serializes SCHEMA_INVALID issues array intact', () => {
-    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_WORKSPACE, {
+    broadcaster.emitConfigValidationRejected(CONFIG_DOC_NAME_PROJECT, {
       code: 'SCHEMA_INVALID',
       issues: [
         {

@@ -56,7 +56,7 @@ afterAll(() => {
   testServer.stop();
 });
 
-describe('save_version — previewUrl emission (workspace-level: always null)', () => {
+describe('save_version — previewUrl emission (project-level: always null)', () => {
   test('emits previewUrl: null alongside checkpointRef', async () => {
     const { server, getTool } = createFakeServer();
     register(server, ConfigSchema.parse({}), baseUrl, async () => '/tmp/project');

@@ -255,7 +255,7 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 Two well-known synthetic docs back the in-app Settings pane and live-refresh of external edits:
 
-- `__config__/workspace` ↔ `<contentDir>/.open-knowledge/config.yml`
+- `__config__/project` ↔ `<contentDir>/.open-knowledge/config.yml`
 - `__user__/config.yml` ↔ `~/.open-knowledge/config.yml`
 
 Both are admitted at boot via `hocuspocus.openDirectConnection()` and are **Y.Text-only** — there is no Y.XmlFragment, no markdown bridge, no TipTap binding. The Settings pane wires its `HocuspocusProvider` directly at the Y.Text and renders a Zod-walker form on top.

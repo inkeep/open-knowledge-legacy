@@ -1,7 +1,7 @@
 /**
  * `get_config` MCP tool — fs-direct read of the effective merged config.
  *
- * Reads via `loadConfig` (defaults → user → workspace + ENV applied). No
+ * Reads via `loadConfig` (defaults → user → project + ENV applied). No
  * allowlist gating on read — agents can inspect any field. Read-only,
  * idempotent.
  *
@@ -24,7 +24,7 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
-  '[Operates on disk; no running OK server required] Read the effective merged Open Knowledge config (defaults → user → workspace).',
+  '[Operates on disk; no running OK server required] Read the effective merged Open Knowledge config (defaults → user → project).',
   '',
   'Use this when you need to inspect the config mid-session — e.g., after a write that may have changed disk state, or to re-confirm the value of a field before composing a `set_config` patch.',
   '',
