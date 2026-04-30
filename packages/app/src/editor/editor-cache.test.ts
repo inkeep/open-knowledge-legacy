@@ -809,6 +809,37 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(undoManager.restore).toBeUndefined();
   });
 
+  test('evictTiptapEditor capture-before-destroy ordering: state inaccessible AFTER destroy still clears restore', () => {
+    // Symmetric to the parkTiptapEditor ordering test — the evict path has
+    // the same inline-duplicated capture-before-destroy pattern. A localized
+    // refactor that moves readEditorUndoManager after editor.destroy() on
+    // the evict path would not be caught by the park-only ordering test.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      Object.defineProperty(h.editor, 'state', {
+        get() {
+          throw new Error('state after destroy — TipTap throwing proxy');
+        },
+        configurable: true,
+      });
+    };
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
   test('evictTiptapEditor cleanup is resilient when editor.destroy() throws', () => {
     // The evict path has its own inline cleanup (duplicated, not extracted) +
     // emits ok/cache/evict-failed telemetry on editor.destroy() throws. This
@@ -905,8 +936,10 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
   });
 
   test('no-op when undoManager cannot be located (e.g. editor without y-undo plugin)', () => {
-    // CM6-only editors, or any editor without the y-undo plugin loaded, have
-    // no undoManager to clean up. The cache must skip the cleanup silently.
+    // TipTap editors without the y-undo plugin loaded (e.g. non-collaborative
+    // configurations) have no undoManager to clean up; the cache must skip
+    // the cleanup silently. (CM6 editors don't take this path at all —
+    // parkCmEditor/evictCmEditor never call readEditorUndoManager.)
     const h = makeTiptapHarness('doc-a');
     // No state attached → stubbed yUndoPluginKey.getState falls through to the
     // real getState, which returns null for non-PM-state inputs.
