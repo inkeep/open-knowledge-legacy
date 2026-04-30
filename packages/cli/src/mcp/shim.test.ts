@@ -2,8 +2,64 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { ServerLockMetadata } from '@inkeep/open-knowledge-server';
-import { parseSpawnTimeoutEnv, resolveMcpHttpUrl, resolveMcpKeepaliveWsUrl } from './shim.ts';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import {
+  bridgeStdioToHttpMcp,
+  parseSpawnTimeoutEnv,
+  resolveMcpHttpUrl,
+  resolveMcpKeepaliveWsUrl,
+  startMcpShim,
+} from './shim.ts';
+
+// ---------------------------------------------------------------------------
+// Fake transport helpers for bridge unit tests
+// ---------------------------------------------------------------------------
+
+interface FakeTransport {
+  onerror: ((err: Error) => void) | undefined;
+  onclose: (() => void) | undefined;
+  onmessage: ((msg: JSONRPCMessage) => void) | undefined;
+  setProtocolVersion: ((v: string) => void) | undefined;
+  start(): Promise<void>;
+  close(): Promise<void>;
+  send(msg: JSONRPCMessage): Promise<void>;
+}
+
+function makeFakeTransport(
+  overrides: {
+    send?: (msg: JSONRPCMessage) => Promise<void>;
+    start?: () => Promise<void>;
+    close?: () => Promise<void>;
+  } = {},
+): FakeTransport {
+  return {
+    onerror: undefined,
+    onclose: undefined,
+    onmessage: undefined,
+    setProtocolVersion: undefined,
+    async start() {
+      await overrides.start?.();
+    },
+    async close() {
+      await overrides.close?.();
+    },
+    async send(msg: JSONRPCMessage) {
+      await overrides.send?.(msg);
+    },
+  };
+}
+
+function makeStderr(): { write: (s: string) => void; output: () => string } {
+  const parts: string[] = [];
+  return {
+    write: (s: string) => {
+      parts.push(s);
+    },
+    output: () => parts.join(''),
+  };
+}
 
 const liveLock: ServerLockMetadata = {
   pid: 1234,
@@ -248,5 +304,132 @@ describe('MCP stdio shim server resolution', () => {
         'http://localhost:5123/mcp',
       ),
     ).toBe('ws://localhost:5123');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bridgeStdioToHttpMcp — error path unit tests
+// ---------------------------------------------------------------------------
+
+describe('bridgeStdioToHttpMcp error paths', () => {
+  test('notification-forward failure logs to stderr and leaves bridge alive', async () => {
+    const stderr = makeStderr();
+    let httpSendCalled = false;
+
+    const fakeHttp = makeFakeTransport({
+      send: async () => {
+        httpSendCalled = true;
+        throw new Error('connection refused');
+      },
+    });
+    const fakeStdio = makeFakeTransport({
+      // Should NOT be called for notifications (no id → no error response).
+      send: async () => {
+        throw new Error('send should not be called for a notification');
+      },
+    });
+
+    const bridge = await bridgeStdioToHttpMcp('http://localhost:9999/mcp', {
+      stderr: stderr as unknown as NodeJS.WritableStream,
+      createStdioTransport: () => fakeStdio,
+      createHttpTransport: () => fakeHttp,
+    });
+
+    // Fire a notification (no `id` field).
+    fakeStdio.onmessage?.({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    } as JSONRPCMessage);
+
+    // Let the forward queue settle.
+    await wait(20);
+
+    expect(httpSendCalled).toBe(true);
+    expect(stderr.output()).toContain('failed to forward stdio notification');
+    expect(stderr.output()).toContain('connection refused');
+
+    await bridge.close();
+  });
+
+  test('double-fault: http.send throws and stdio error-response send also throws — logs both', async () => {
+    const stderr = makeStderr();
+
+    const fakeHttp = makeFakeTransport({
+      send: async () => {
+        throw new Error('http send failed');
+      },
+    });
+    const fakeStdio = makeFakeTransport({
+      send: async () => {
+        throw new Error('stdio send failed');
+      },
+    });
+
+    const bridge = await bridgeStdioToHttpMcp('http://localhost:9999/mcp', {
+      stderr: stderr as unknown as NodeJS.WritableStream,
+      createStdioTransport: () => fakeStdio,
+      createHttpTransport: () => fakeHttp,
+    });
+
+    // Fire a request (has `id` → expects an error-response write back on failure).
+    fakeStdio.onmessage?.({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'tools/list',
+      params: {},
+    } as JSONRPCMessage);
+
+    await wait(20);
+
+    const out = stderr.output();
+    expect(out).toContain('failed to write stdio error response');
+    expect(out).toContain('stdio send failed');
+
+    await bridge.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startMcpShim lifecycle — keepalive cleanup on bridge start failure
+// ---------------------------------------------------------------------------
+
+describe('startMcpShim lifecycle', () => {
+  let tmp: string;
+  let lockDir: string;
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(resolve(tmpdir(), 'ok-mcp-shim-lifecycle-'));
+    lockDir = resolve(tmp, '.open-knowledge');
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  test('bridge start failure closes keepalive before rethrowing', async () => {
+    let keepaliveClosed = false;
+    const bridgeError = new Error('bridge startup failed');
+
+    await expect(
+      startMcpShim({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        readLock: () => liveLock,
+        isAlive: () => true,
+        stderr: { write: () => {} } as unknown as NodeJS.WritableStream,
+        startKeepalive: (() => ({
+          close: () => {
+            keepaliveClosed = true;
+          },
+          isConnected: () => false,
+        })) as unknown as typeof import('./keepalive.ts').startKeepalive,
+        bridgeFn: async () => {
+          throw bridgeError;
+        },
+      }),
+    ).rejects.toBe(bridgeError);
+
+    expect(keepaliveClosed).toBe(true);
   });
 });

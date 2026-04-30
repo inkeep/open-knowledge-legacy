@@ -40,6 +40,47 @@ import { startKeepalive as defaultStartKeepalive } from './keepalive.ts';
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const SPAWN_ERROR_LOG = 'last-spawn-error.log';
+// 120 s: generous headroom for slow tools (research/consolidate), yet finite so a
+// hung server doesn't hold the entire bridge indefinitely.
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Minimal structural subset of the MCP SDK `Transport` interface used by the
+ * bridge loop. Satisfied by both `StdioServerTransport` and
+ * `StreamableHTTPClientTransport`; also implemented by test fakes.
+ */
+interface ShimTransport {
+  onerror: ((err: Error) => void) | undefined;
+  onclose: (() => void) | undefined;
+  onmessage: ((msg: JSONRPCMessage) => void) | undefined;
+  setProtocolVersion?: (version: string) => void;
+  start(): Promise<void>;
+  close(): Promise<void>;
+  send(msg: JSONRPCMessage): Promise<void>;
+}
+
+/**
+ * Wrap the global `fetch` so POST/DELETE requests time out after `timeoutMs`.
+ * GET is intentionally exempted: the SSE receive channel is a long-lived
+ * server-sent-events stream whose lifetime is the session, not a single RPC.
+ * Timing that out would trigger reconnect storms on every idle interval.
+ */
+function makeFetchWithTimeout(
+  timeoutMs: number,
+): (url: string | URL, init?: RequestInit) => Promise<Response> {
+  return (url, init) => {
+    if ((init?.method ?? 'GET').toUpperCase() === 'GET') {
+      return globalThis.fetch(url as URL, init);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const signal =
+      init?.signal instanceof AbortSignal
+        ? AbortSignal.any([init.signal, controller.signal])
+        : controller.signal;
+    return globalThis.fetch(url as URL, { ...init, signal }).finally(() => clearTimeout(timer));
+  };
+}
 
 /**
  * Read `OK_MCP_SPAWN_TIMEOUT_MS` from the environment. Returns the parsed
@@ -76,12 +117,35 @@ interface StartMcpShimOptions extends ResolveMcpHttpUrlOptions {
   stderr?: NodeJS.WritableStream;
   startKeepalive?: typeof defaultStartKeepalive;
   createConnectionId?: () => string;
+  /** Override the bridge function — for testing only. */
+  bridgeFn?: (
+    endpointUrl: string,
+    opts?: BridgeStdioToHttpMcpOptions,
+  ) => Promise<{ close: () => Promise<void> }>;
 }
 
 interface BridgeStdioToHttpMcpOptions {
   stderr?: NodeJS.WritableStream;
   stdin?: Readable;
   stdout?: Writable;
+  /**
+   * Per-POST/DELETE request timeout in milliseconds. GET (SSE receive channel)
+   * is exempted. Defaults to `DEFAULT_REQUEST_TIMEOUT_MS` (120 s).
+   */
+  requestTimeoutMs?: number;
+  /**
+   * Called once when the bridge closes (either side). Fires before the
+   * transport `.close()` awaits so process-exit paths run promptly.
+   * Callers use this to detect unexpected server-side closure.
+   */
+  onclose?: () => void;
+  /** Override the stdio transport — for testing only. */
+  createStdioTransport?: (
+    stdin: Readable | undefined,
+    stdout: Writable | undefined,
+  ) => ShimTransport;
+  /** Override the HTTP transport — for testing only. */
+  createHttpTransport?: (url: URL) => ShimTransport;
 }
 
 function formatHost(host: string): string {
@@ -262,13 +326,28 @@ export async function bridgeStdioToHttpMcp(
   opts: BridgeStdioToHttpMcpOptions = {},
 ): Promise<{ close: () => Promise<void> }> {
   const stderr = opts.stderr ?? process.stderr;
-  const stdio = new StdioServerTransport(opts.stdin, opts.stdout);
-  const http = new StreamableHTTPClientTransport(new URL(endpointUrl));
+  const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+  // `as unknown as ShimTransport`: the SDK's generic `onmessage` signature is
+  // structurally compatible at runtime but TypeScript's strict function types
+  // can't verify the generic↔concrete assignment statically.
+  const stdio: ShimTransport = opts.createStdioTransport
+    ? opts.createStdioTransport(opts.stdin, opts.stdout)
+    : (new StdioServerTransport(opts.stdin, opts.stdout) as unknown as ShimTransport);
+
+  const http: ShimTransport = opts.createHttpTransport
+    ? opts.createHttpTransport(new URL(endpointUrl))
+    : (new StreamableHTTPClientTransport(new URL(endpointUrl), {
+        fetch: makeFetchWithTimeout(requestTimeoutMs),
+      }) as unknown as ShimTransport);
+
   let closed = false;
 
   const closeBoth = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    // Fire before the transport awaits so process-exit callers run promptly.
+    opts.onclose?.();
     await Promise.allSettled([stdio.close(), http.close()]);
   };
 
@@ -315,7 +394,7 @@ export async function bridgeStdioToHttpMcp(
 
   http.onmessage = (message) => {
     const protocolVersion = maybeProtocolVersion(message);
-    if (protocolVersion) http.setProtocolVersion(protocolVersion);
+    if (protocolVersion) http.setProtocolVersion?.(protocolVersion);
     void stdio.send(message).catch((err) => {
       stderr.write(
         `[mcp-shim] failed to write stdio response: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -336,23 +415,43 @@ export async function bridgeStdioToHttpMcp(
 
 export async function startMcpShim(opts: StartMcpShimOptions): Promise<void> {
   const stderr = opts.stderr ?? process.stderr;
+  const bridgeFn = opts.bridgeFn ?? bridgeStdioToHttpMcp;
   const endpointUrl = await resolveMcpHttpUrl(opts);
   const connectionId = opts.createConnectionId?.() ?? randomUUID();
+
+  // `shuttingDown` is set before `bridge.close()` in the SIGINT/SIGTERM
+  // handler so the `onclose` callback can distinguish a deliberate shutdown
+  // (already exiting via `.finally`) from an unexpected server-side closure
+  // (keepalive should stop and the process should exit).
+  let shuttingDown = false;
+
   const keepalive = (opts.startKeepalive ?? defaultStartKeepalive)({
     connectionId,
     resolveWsUrl: async () => resolveMcpKeepaliveWsUrl(opts, endpointUrl),
     log: (msg) => stderr.write(`[mcp-shim] keepalive: ${msg}\n`),
   });
   stderr.write(`[mcp-shim] proxying stdio to ${endpointUrl}\n`);
-  let bridge: Awaited<ReturnType<typeof bridgeStdioToHttpMcp>>;
+  let bridge: Awaited<ReturnType<typeof bridgeFn>>;
   try {
-    bridge = await bridgeStdioToHttpMcp(endpointUrl, { stderr });
+    bridge = await bridgeFn(endpointUrl, {
+      stderr,
+      onclose: () => {
+        // Server died or restarted. Stop keepalive so its reconnect timer
+        // doesn't keep the event loop alive while the HTTP bridge is dead,
+        // then exit so the next `ok mcp` invocation resolves the new port.
+        if (!shuttingDown) {
+          keepalive.close();
+          process.exit(0);
+        }
+      },
+    });
   } catch (err) {
     keepalive.close();
     throw err;
   }
 
   const shutdown = (): void => {
+    shuttingDown = true;
     keepalive.close();
     void bridge.close().finally(() => {
       process.exit(0);

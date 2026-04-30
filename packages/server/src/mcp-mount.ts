@@ -47,6 +47,8 @@ const MCP_CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers':
     'Content-Type, Authorization, traceparent, tracestate, baggage, mcp-session-id, mcp-protocol-version',
+  // 24 h preflight cache — prevents a round-trip OPTIONS on every sequential tool call.
+  'Access-Control-Max-Age': '86400',
 };
 
 export interface MountMcpAndApiOptions {
