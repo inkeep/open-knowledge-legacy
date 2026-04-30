@@ -7,6 +7,7 @@ import {
   type InstallState,
   ProblemDetailsSchema,
   RenamePathSuccessSchema,
+  WorkspaceSuccessSchema,
 } from '@inkeep/open-knowledge-core';
 import {
   type ContextMenuItem,
@@ -659,17 +660,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       .then(async (res) => {
         const data = await res.json().catch(() => null);
         if (!active) return;
-        if (
-          res.ok &&
-          data?.ok &&
-          typeof data.contentDir === 'string' &&
-          (data.pathSeparator === '/' || data.pathSeparator === '\\')
-        ) {
-          setWorkspace({
-            contentDir: data.contentDir,
-            pathSeparator: data.pathSeparator,
-          });
-        }
+        if (!res.ok) return;
+        const parsed = WorkspaceSuccessSchema.safeParse(data);
+        if (!parsed.success) return;
+        setWorkspace({
+          contentDir: parsed.data.contentDir,
+          pathSeparator: parsed.data.pathSeparator,
+        });
       })
       .catch((err) => {
         console.warn('[FileTree] /api/workspace fetch failed:', err);

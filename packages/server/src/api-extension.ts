@@ -53,7 +53,10 @@ import {
   prependFrontmatter,
   readFmMap,
   RenamePathRequestSchema,
+  type RescueEntryFlat,
+  type RescueEntryTimeline,
   RollbackRequestSchema,
+  SaveVersionRequestSchema,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
   UploadRequestSchema,
@@ -3366,257 +3369,274 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
+  const handleSaveVersion = withValidation(
+    SaveVersionRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
+        // Thread agent identity FIRST so the attribution-sweep ordering check
+        // is satisfied: any errorResponse below this point is post-identity.
+        // Shadow availability + writer-id validation are semantic checks that
+        // would otherwise route through `openknowledge-service` attribution.
+        const saveVersionBody = body as unknown as Record<string, unknown>;
+        const {
+          rawAgentId: svRawAgentId,
+          agentId: svAgentId,
+          agentName: svAgentName,
+          clientName: svClientName,
+        } = extractAgentIdentity(saveVersionBody);
 
-      // Parse optional writers + message + principal from body
-      const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
-      let writers: WriterIdentity[] = [];
-      let userMessage: string | undefined;
-      let saveVersionBody: Record<string, unknown> = {};
-      let principalName: string | undefined;
-      let principalEmail: string | undefined;
-      if (rawBody.length > 0) {
-        let body: Record<string, unknown>;
-        try {
-          body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
-        } catch {
-          json(res, 400, { ok: false, error: 'Invalid JSON' });
+        const shadow = shadowRef?.current;
+        if (!shadow) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:shadow-not-configured',
+            'Shadow repo not configured.',
+            { handler: 'save-version' },
+          );
           return;
         }
-        saveVersionBody = body;
+
+        // Parse optional writers + message + principal from already-validated body.
+        const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+        let writers: WriterIdentity[] = [];
+        let userMessage: string | undefined;
+        let principalName: string | undefined;
+        let principalEmail: string | undefined;
+
         if (typeof body.message === 'string' && body.message.trim()) {
           userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
         if (Array.isArray(body.writers)) {
-          writers = (body.writers as Array<Record<string, string>>).map((w) => {
-            const id = w.id ?? 'unknown';
-            if (!SAFE_ID_RE.test(id)) {
-              throw new Error(`Invalid writer id: ${id}`);
-            }
-            return {
-              id,
-              name: (w.name ?? 'unknown').replace(/[\r\n]/g, ''),
-              email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
-            };
-          });
-        }
-        // Optional principal identity: { name: string, email: string } (US-020, D12)
-        const p = body.principal;
-        if (p && typeof p === 'object' && !Array.isArray(p)) {
-          const pr = p as Record<string, unknown>;
-          if (typeof pr.name === 'string' && pr.name.trim()) {
-            principalName = sanitizeGitIdentity(pr.name.trim());
-          }
-          if (typeof pr.email === 'string' && pr.email.trim()) {
-            principalEmail = sanitizeGitIdentity(pr.email.trim());
-          }
-        }
-      }
-
-      // Thread agent identity — extends writers[] with calling agent (D42).
-      const {
-        rawAgentId: svRawAgentId,
-        agentId: svAgentId,
-        agentName: svAgentName,
-        clientName: svClientName,
-      } = extractAgentIdentity(saveVersionBody);
-      if (writers.length === 0) {
-        if (svRawAgentId !== undefined) {
-          const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
-          writers = [
-            { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
-          ];
-        } else {
-          writers = [SERVICE_WRITER];
-        }
-      }
-
-      const resolvedContentRoot = contentRoot ?? '.';
-      const result = await saveVersion(shadow, resolvedContentRoot, writers);
-
-      console.log(`[history] checkpoint ${result.checkpointRef}`);
-
-      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
-      // swapContributors() atomically captures all agent writes since the last checkpoint.
-      const contributorSnapshot = swapContributors();
-
-      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
-      let versionTag: string | undefined;
-      if (projectDir) {
-        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
-        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
-        let parentGitAvailable = false;
-        try {
-          const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
-          await checkPg.revparse(['--git-dir']);
-          parentGitAvailable = true;
-        } catch (e) {
-          console.warn(
-            `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-        if (parentGitAvailable) {
           try {
-            versionTag = await withParentLock(async () => {
-              const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-              // Count existing ok/v* tags to derive N
-              const existing = await pg.tags(['--list', 'ok/v*']);
-              const n = existing.all.length + 1;
-              const tag = `ok/v${n}`;
-
-              // Author identity: principal from body > git config > openknowledge fallback
-              let authorName = 'openknowledge';
-              let authorEmail = 'noreply@openknowledge.local';
-              if (principalName && principalEmail) {
-                authorName = principalName;
-                authorEmail = principalEmail;
-              } else {
-                try {
-                  const gitId = await resolveGitIdentity(projectDir);
-                  if (gitId) {
-                    authorName = gitId.name;
-                    authorEmail = gitId.email;
-                  }
-                } catch {
-                  // no-op — use defaults
-                }
+            writers = body.writers.map((w) => {
+              const id = w.id ?? 'unknown';
+              if (!SAFE_ID_RE.test(id)) {
+                throw new Error(`Invalid writer id: ${id}`);
               }
-
-              // Co-Authored-By trailers for agent/principal session contributors (US-020)
-              const coAuthorLines: string[] = [];
-              for (const entry of contributorSnapshot.values()) {
-                if (
-                  entry.writerId.startsWith('agent-') ||
-                  entry.writerId.startsWith('principal-')
-                ) {
-                  const trailerEmail = `${entry.writerId}@openknowledge.local`;
-                  coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
-                }
-              }
-
-              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
-              const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
-              const commitMsg =
-                coAuthorLines.length > 0
-                  ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
-                  : subjectLine;
-
-              // Stage content changes and create commit (allow-empty so a tag always lands)
-              const gitPathspec = resolvedContentRoot || '.';
-              await pg.add(gitPathspec);
-              await pg
-                .env({
-                  GIT_AUTHOR_NAME: authorName,
-                  GIT_AUTHOR_EMAIL: authorEmail,
-                  GIT_COMMITTER_NAME: authorName,
-                  GIT_COMMITTER_EMAIL: authorEmail,
-                })
-                .commit(commitMsg, ['--allow-empty']);
-              await pg.addTag(tag);
-              console.log(`[checkpoint] parent-git commit + tag ${tag}`);
-              return tag;
+              return {
+                id,
+                name: (w.name ?? 'unknown').replace(/[\r\n]/g, ''),
+                email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
+              };
             });
           } catch (e) {
-            console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              e instanceof Error ? e.message : 'Invalid writer id.',
+              { handler: 'save-version', cause: e },
+            );
+            return;
           }
         }
-      }
+        // Optional principal identity: { name?: string, email?: string } (US-020, D12)
+        if (body.principal) {
+          if (typeof body.principal.name === 'string' && body.principal.name.trim()) {
+            principalName = sanitizeGitIdentity(body.principal.name.trim());
+          }
+          if (typeof body.principal.email === 'string' && body.principal.email.trim()) {
+            principalEmail = sanitizeGitIdentity(body.principal.email.trim());
+          }
+        }
 
-      json(res, 200, {
-        ok: true,
-        checkpointRef: result.checkpointRef,
-        ...(versionTag ? { versionTag } : {}),
-      });
-    } catch (e) {
-      console.error('[save-version]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        if (writers.length === 0) {
+          if (svRawAgentId !== undefined) {
+            const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
+            writers = [
+              { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
+            ];
+          } else {
+            writers = [SERVICE_WRITER];
+          }
+        }
+
+        const resolvedContentRoot = contentRoot ?? '.';
+        const result = await saveVersion(shadow, resolvedContentRoot, writers);
+
+        console.log(`[history] checkpoint ${result.checkpointRef}`);
+
+        // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
+        // swapContributors() atomically captures all agent writes since the last checkpoint.
+        const contributorSnapshot = swapContributors();
+
+        // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
+        let versionTag: string | undefined;
+        if (projectDir) {
+          // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
+          // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
+          let parentGitAvailable = false;
+          try {
+            const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+            await checkPg.revparse(['--git-dir']);
+            parentGitAvailable = true;
+          } catch (e) {
+            console.warn(
+              `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          if (parentGitAvailable) {
+            try {
+              versionTag = await withParentLock(async () => {
+                const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+                // Count existing ok/v* tags to derive N
+                const existing = await pg.tags(['--list', 'ok/v*']);
+                const n = existing.all.length + 1;
+                const tag = `ok/v${n}`;
+
+                // Author identity: principal from body > git config > openknowledge fallback
+                let authorName = 'openknowledge';
+                let authorEmail = 'noreply@openknowledge.local';
+                if (principalName && principalEmail) {
+                  authorName = principalName;
+                  authorEmail = principalEmail;
+                } else {
+                  try {
+                    const gitId = await resolveGitIdentity(projectDir);
+                    if (gitId) {
+                      authorName = gitId.name;
+                      authorEmail = gitId.email;
+                    }
+                  } catch {
+                    // no-op — use defaults
+                  }
+                }
+
+                // Co-Authored-By trailers for agent/principal session contributors (US-020)
+                const coAuthorLines: string[] = [];
+                for (const entry of contributorSnapshot.values()) {
+                  if (
+                    entry.writerId.startsWith('agent-') ||
+                    entry.writerId.startsWith('principal-')
+                  ) {
+                    const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                    coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+                  }
+                }
+
+                // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+                const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+                const commitMsg =
+                  coAuthorLines.length > 0
+                    ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                    : subjectLine;
+
+                // Stage content changes and create commit (allow-empty so a tag always lands)
+                const gitPathspec = resolvedContentRoot || '.';
+                await pg.add(gitPathspec);
+                await pg
+                  .env({
+                    GIT_AUTHOR_NAME: authorName,
+                    GIT_AUTHOR_EMAIL: authorEmail,
+                    GIT_COMMITTER_NAME: authorName,
+                    GIT_COMMITTER_EMAIL: authorEmail,
+                  })
+                  .commit(commitMsg, ['--allow-empty']);
+                await pg.addTag(tag);
+                console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+                return tag;
+              });
+            } catch (e) {
+              console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+            }
+          }
+        }
+
+        json(res, 200, {
+          checkpointRef: result.checkpointRef,
+          ...(versionTag ? { versionTag } : {}),
+        });
+      } catch (e) {
+        console.error('[save-version]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'save-version',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'save-version', method: 'POST' },
+  );
 
   // ── GET /api/history ─────────────────────────────────────────────────────
-  async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleHistory = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:shadow-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'history' },
+        );
+        return;
+      }
 
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? '';
+      const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
+      if (!docName) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          'docName query parameter is required.',
+          { handler: 'history' },
+        );
+        return;
+      }
 
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const docName = url.searchParams.get('docName') ?? '';
-    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
-    if (!docName) {
-      json(res, 400, { ok: false, error: 'docName query parameter is required' });
-      return;
-    }
+      if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid branch name.', {
+          handler: 'history',
+        });
+        return;
+      }
 
-    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
-      json(res, 400, { ok: false, error: 'Invalid branch name' });
-      return;
-    }
+      const rawLimit = Number(url.searchParams.get('limit') ?? '50');
+      const rawOffset = Number(url.searchParams.get('offset') ?? '0');
+      const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const type = url.searchParams.get('type') ?? undefined;
+      const author = url.searchParams.get('author') ?? undefined;
+      const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
 
-    const rawLimit = Number(url.searchParams.get('limit') ?? '50');
-    const rawOffset = Number(url.searchParams.get('offset') ?? '0');
-    const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
-    const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-    const type = url.searchParams.get('type') ?? undefined;
-    const author = url.searchParams.get('author') ?? undefined;
-    const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
+      const t0 = Date.now();
+      try {
+        const resolvedContentRoot = contentRoot ?? '.';
+        const result = await getDocumentHistory(
+          shadow,
+          {
+            docName,
+            branch,
+            limit,
+            offset,
+            type,
+            author,
+            excludeAuthor,
+          },
+          resolvedContentRoot,
+        );
 
-    const t0 = Date.now();
-    try {
-      const resolvedContentRoot = contentRoot ?? '.';
-      const result = await getDocumentHistory(
-        shadow,
-        {
-          docName,
-          branch,
-          limit,
-          offset,
-          type,
-          author,
-          excludeAuthor,
-        },
-        resolvedContentRoot,
-      );
+        const duration = Date.now() - t0;
+        console.log(
+          `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
+        );
 
-      const duration = Date.now() - t0;
-      console.log(
-        `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
-      );
-
-      json(res, 200, { ok: true, ...result });
-    } catch (e) {
-      console.error('[shadow]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
-    }
-  }
+        json(res, 200, { ...result });
+      } catch (e) {
+        console.error('[shadow]', e);
+        const message = e instanceof Error ? e.message : String(e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+          handler: 'history',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'history', method: 'GET', skipBodyParse: true },
+  );
 
   // ── GET /api/history/:sha ─────────────────────────────────────────────────
   async function handleHistoryVersion(
@@ -3625,14 +3645,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sha: string,
   ): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'history-version',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
 
     const shadow = shadowRef?.current;
     if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      errorResponse(res, 400, 'urn:ok:error:shadow-not-configured', 'Shadow repo not configured.', {
+        handler: 'history-version',
+      });
       return;
     }
 
@@ -3642,7 +3666,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const resolvedContentRoot = contentRoot ?? '.';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+        handler: 'history-version',
+      });
       return;
     }
     const docPath = pathResult.path;
@@ -3650,7 +3676,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
-      json(res, 400, { ok: false, error: 'Invalid commit SHA' });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid commit SHA.', {
+        handler: 'history-version',
+      });
       return;
     }
 
@@ -3658,8 +3686,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+      } catch (catFileErr) {
+        errorResponse(
+          res,
+          404,
+          'urn:ok:error:doc-not-found',
+          'Document did not exist at this version.',
+          { handler: 'history-version', cause: catFileErr },
+        );
         return;
       }
 
@@ -3669,105 +3703,138 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
 
-      json(res, 200, { ok: true, sha, content, timestamp, author });
+      json(res, 200, { sha, content, timestamp, author });
     } catch (e) {
       console.error('[shadow-version]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'history-version',
+        cause: e,
+      });
     }
   }
 
   // ── GET /api/diff ─────────────────────────────────────────────────────────
-  async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
-
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const docName = url.searchParams.get('docName') ?? '';
-    const from = url.searchParams.get('from') ?? '';
-    const to = url.searchParams.get('to') ?? '';
-
-    if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
-      json(res, 400, { ok: false, error: "'to' must be a valid 40-char commit SHA" });
-      return;
-    }
-
-    const resolvedContentRoot = contentRoot ?? '.';
-    const pathResult = safeDocPath(docName, resolvedContentRoot);
-    if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
-      return;
-    }
-    const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
-
-    try {
-      // Get "to" content
-      let toContent: string;
-      try {
-        toContent = await sg.raw('show', `${to}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
+  const handleDiff = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:shadow-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'diff' },
+        );
         return;
       }
 
-      // Get "from" content — either a commit SHA or current Y.Doc text
-      let fromContent: string;
-      if (from && /^[0-9a-f]{40}$/i.test(from)) {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? '';
+      const from = url.searchParams.get('from') ?? '';
+      const to = url.searchParams.get('to') ?? '';
+
+      if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          "'to' must be a valid 40-char commit SHA.",
+          { handler: 'diff' },
+        );
+        return;
+      }
+
+      const resolvedContentRoot = contentRoot ?? '.';
+      const pathResult = safeDocPath(docName, resolvedContentRoot);
+      if ('error' in pathResult) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+          handler: 'diff',
+        });
+        return;
+      }
+      const docPath = pathResult.path;
+      const sg = shadowGit(shadow);
+
+      try {
+        // Get "to" content
+        let toContent: string;
         try {
-          fromContent = await sg.raw('show', `${from}:${docPath}`);
-        } catch {
-          json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
+          toContent = await sg.raw('show', `${to}:${docPath}`);
+        } catch (toErr) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:doc-not-found',
+            'Document did not exist at the target version.',
+            { handler: 'diff', cause: toErr },
+          );
           return;
         }
-      } else {
-        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
-        const doc = hocuspocus.documents.get(docName);
-        if (!doc) {
-          json(res, 409, {
-            ok: false,
-            error: 'Document is not currently open — open it in the editor first',
-          });
-          return;
+
+        // Get "from" content — either a commit SHA or current Y.Doc text
+        let fromContent: string;
+        if (from && /^[0-9a-f]{40}$/i.test(from)) {
+          try {
+            fromContent = await sg.raw('show', `${from}:${docPath}`);
+          } catch (fromErr) {
+            errorResponse(
+              res,
+              404,
+              'urn:ok:error:doc-not-found',
+              'Document did not exist at the source version.',
+              { handler: 'diff', cause: fromErr },
+            );
+            return;
+          }
+        } else {
+          // from omitted — read current Y.Doc content directly (avoids creating an agent session)
+          const doc = hocuspocus.documents.get(docName);
+          if (!doc) {
+            errorResponse(
+              res,
+              409,
+              'urn:ok:error:document-not-open',
+              'Document is not currently open — open it in the editor first.',
+              { handler: 'diff' },
+            );
+            return;
+          }
+          fromContent = doc.getText('source').toString();
         }
-        fromContent = doc.getText('source').toString();
-      }
 
-      // Strip frontmatter from both sides so the diff shows only body changes.
-      // Git content includes frontmatter; Y.Text may or may not depending on
-      // sync state. Stripping both sides normalizes the comparison.
-      const fromBody = stripFrontmatter(fromContent).body;
-      const toBody = stripFrontmatter(toContent).body;
-      const changes = diffLines(fromBody, toBody);
+        // Strip frontmatter from both sides so the diff shows only body changes.
+        // Git content includes frontmatter; Y.Text may or may not depending on
+        // sync state. Stripping both sides normalizes the comparison.
+        const fromBody = stripFrontmatter(fromContent).body;
+        const toBody = stripFrontmatter(toContent).body;
+        const changes = diffLines(fromBody, toBody);
 
-      // Build full-file line array: every line annotated as added/removed/unchanged
-      const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
-      let additions = 0;
-      let deletions = 0;
-      for (const change of changes) {
-        const changeLines = change.value.replace(/\n$/, '').split('\n');
-        const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
-        for (const text of changeLines) {
-          lines.push({ type, text });
+        // Build full-file line array: every line annotated as added/removed/unchanged
+        const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
+        let additions = 0;
+        let deletions = 0;
+        for (const change of changes) {
+          const changeLines = change.value.replace(/\n$/, '').split('\n');
+          const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
+          for (const text of changeLines) {
+            lines.push({ type, text });
+          }
+          if (change.added) additions += changeLines.length;
+          if (change.removed) deletions += changeLines.length;
         }
-        if (change.added) additions += changeLines.length;
-        if (change.removed) deletions += changeLines.length;
-      }
 
-      json(res, 200, { ok: true, lines, additions, deletions });
-    } catch (e) {
-      console.error('[diff]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        json(res, 200, { lines, additions, deletions });
+      } catch (e) {
+        console.error('[diff]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'diff',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'diff', method: 'GET', skipBodyParse: true },
+  );
 
   // ── POST /api/rollback ────────────────────────────────────────────────────
   const handleRollback = withValidation(
@@ -4064,34 +4131,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * tenant deployments must wrap this entire `/api/*` class with
    * authentication and per-caller scoping.
    */
-  async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    const currentBranch = getActiveBranch();
-    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
-    // server) doesn't have a CC1Broadcaster and omits the field. The
-    // schema's `.optional()` keeps the response shape valid in both
-    // cases without a separate "no broadcaster" branch on the client.
-    const currentDiskAckSVs = getDiskAckSVs?.();
-    // `Cache-Control: no-store` matches the disclosure semantics: every
-    // field is per-process / per-moment state. A back/forward-cached
-    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
-    // the recycle baseline-selection on the next mismatch.
-    json(
-      res,
-      200,
-      {
-        ok: true,
-        serverInstanceId,
-        currentBranch,
-        ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
-      },
-      { 'Cache-Control': 'no-store' },
-    );
-  }
+  const handleServerInfo = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        const currentBranch = getActiveBranch();
+        // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
+        // server) doesn't have a CC1Broadcaster and omits the field. The
+        // schema's `.optional()` keeps the response shape valid in both
+        // cases without a separate "no broadcaster" branch on the client.
+        const currentDiskAckSVs = getDiskAckSVs?.();
+        // `Cache-Control: no-store` matches the disclosure semantics: every
+        // field is per-process / per-moment state. A back/forward-cached
+        // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
+        // the recycle baseline-selection on the next mismatch.
+        json(
+          res,
+          200,
+          {
+            serverInstanceId,
+            currentBranch,
+            ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
+          },
+          { 'Cache-Control': 'no-store' },
+        );
+      } catch (e) {
+        console.error('[server-info]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'server-info',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'server-info', method: 'GET', skipBodyParse: true },
+  );
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Loopback + Host-header gate. The principal record discloses operator
@@ -4104,21 +4177,29 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // Authorization runs BEFORE method dispatch so a bad Host never leaks
     // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'principal',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'principal',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'principal',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     const principal = getPrincipal?.() ?? null;
     if (!principal) {
-      json(res, 404, { error: 'Principal not available' });
+      errorResponse(res, 404, 'urn:ok:error:principal-not-available', 'Principal not available.', {
+        handler: 'principal',
+      });
       return;
     }
     json(res, 200, principal);
@@ -4192,15 +4273,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
     // editor app pass; cross-origin rebinding attempts are refused.
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'workspace',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'workspace',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'workspace',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     // Absolute, canonical contentDir so the client can build full filesystem
@@ -4229,7 +4317,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         symlinkResolved = false;
       } else {
         console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
-        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'workspace realpath failed.',
+          { handler: 'workspace', detail: code ?? undefined, cause: err },
+        );
         return;
       }
     }
@@ -4237,7 +4331,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // the shape of `contentDir` (which breaks on Windows + forward-slash paths
     // and on POSIX folders that contain a literal backslash in the name).
     json(res, 200, {
-      ok: true,
       contentDir: resolvedContentDir,
       pathSeparator: sep,
       symlinkResolved,
@@ -4247,77 +4340,76 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-  async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    if (!shadowRef?.current) {
-      json(res, 200, []);
-      return;
-    }
-
-    const now = Date.now();
-    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
-    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
-    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
-    // can treat both as interchangeable unless they need the checkpoint sha.
-    interface RescueRowFlat {
-      docName: string;
-      timestamp: string;
-      size: number;
-      source: 'flat';
-    }
-    interface RescueRowTimeline extends TimelineRescueEntry {
-      source: 'timeline';
-    }
-    const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
-
-    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
-    if (existsSync(rescueDir)) {
+  const handleRescueList = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
       try {
-        const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
-        for (const file of files) {
-          const filePath = resolve(rescueDir, file);
-          const stat = statSync(filePath);
-          const age = now - stat.mtimeMs;
-
-          if (age > RESCUE_MAX_AGE_MS) {
-            try {
-              unlinkSync(filePath);
-            } catch (e) {
-              console.debug('[rescue] cleanup failed (non-critical):', e);
-            }
-            continue;
-          }
-
-          entries.push({
-            docName: stripDocExtension(file),
-            timestamp: stat.mtime.toISOString(),
-            size: stat.size,
-            source: 'flat',
-          });
+        if (!shadowRef?.current) {
+          // No shadow repo configured = no rescue buffers; emit empty list (success).
+          json(res, 200, []);
+          return;
         }
+
+        const now = Date.now();
+        // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
+        // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
+        // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
+        // can treat both as interchangeable unless they need the checkpoint sha.
+        const entries: (RescueEntryFlat | (RescueEntryTimeline & TimelineRescueEntry))[] = [];
+
+        const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
+        if (existsSync(rescueDir)) {
+          try {
+            const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
+            for (const file of files) {
+              const filePath = resolve(rescueDir, file);
+              const stat = statSync(filePath);
+              const age = now - stat.mtimeMs;
+
+              if (age > RESCUE_MAX_AGE_MS) {
+                try {
+                  unlinkSync(filePath);
+                } catch (e) {
+                  console.debug('[rescue] cleanup failed (non-critical):', e);
+                }
+                continue;
+              }
+
+              entries.push({
+                docName: stripDocExtension(file),
+                timestamp: stat.mtime.toISOString(),
+                size: stat.size,
+                source: 'flat',
+              });
+            }
+          } catch (e) {
+            console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+          }
+        }
+
+        // Timeline-ref source — merged in so the unified response surfaces all
+        // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
+        try {
+          const branch = getCurrentBranch?.() ?? 'main';
+          const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+          for (const t of timelineEntries) {
+            entries.push({ ...t, source: 'timeline' });
+          }
+        } catch (e) {
+          console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
+        }
+
+        json(res, 200, entries);
       } catch (e) {
-        console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+        console.error('[rescue]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'rescue-list',
+          cause: e,
+        });
       }
-    }
-
-    // Timeline-ref source — merged in so the unified response surfaces all
-    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
-    try {
-      const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
-      for (const t of timelineEntries) {
-        entries.push({ ...t, source: 'timeline' });
-      }
-    } catch (e) {
-      console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
-    }
-
-    json(res, 200, entries);
-  }
+    },
+    { handler: 'rescue-list', method: 'GET', skipBodyParse: true },
+  );
 
   async function handleRescueGet(
     req: IncomingMessage,
@@ -4325,13 +4417,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     docName: string,
   ): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'rescue-get',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!shadowRef?.current) {
-      res.writeHead(404);
-      res.end('Not found');
+      errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', { handler: 'rescue-get' });
       return;
     }
 
@@ -4341,8 +4434,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
-      res.writeHead(400);
-      res.end('Invalid document name');
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid document name.', {
+        handler: 'rescue-get',
+      });
       return;
     }
     if (existsSync(filePath)) {
@@ -4396,8 +4490,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       console.warn('[rescue] timeline-ref fallback failed:', e);
     }
 
-    res.writeHead(404);
-    res.end('Not found');
+    errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', { handler: 'rescue-get' });
   }
 
   const handleCreatePage = withValidation(

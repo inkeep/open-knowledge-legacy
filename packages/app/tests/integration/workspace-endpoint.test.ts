@@ -46,26 +46,30 @@ describe('GET /api/workspace', () => {
   test('returns canonical contentDir, platform path separator, and symlinkResolved:true', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/workspace`);
     expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/json');
     const body = (await res.json()) as {
-      ok: boolean;
       contentDir: string;
       pathSeparator: string;
       symlinkResolved: boolean;
+      ok?: unknown;
     };
-    expect(body.ok).toBe(true);
+    // D22: success drops the {ok: true} wrapper.
+    expect(body.ok).toBeUndefined();
     expect(body.contentDir).toBe(server.contentDir);
     expect(body.pathSeparator).toBe(sep);
     expect(body.symlinkResolved).toBe(true);
   });
 
-  test('rejects non-GET methods with 405 and error:Method not allowed', async () => {
+  test('rejects non-GET methods with 405 and RFC 9457 method-not-allowed problem', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/workspace`, {
       method: 'POST',
     });
     expect(res.status).toBe(405);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('Method not allowed');
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    expect(res.headers.get('allow')).toBe('GET');
+    const body = (await res.json()) as { type: string; title: string; status: number };
+    expect(body.type).toBe('urn:ok:error:method-not-allowed');
+    expect(body.status).toBe(405);
   });
 
   test('rejects DNS-rebinding Host header with 403 even from loopback peer', async () => {
@@ -77,16 +81,17 @@ describe('GET /api/workspace', () => {
       headers: { Host: 'attacker.example.com' },
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('host-header-not-allowed');
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    const body = (await res.json()) as { type: string; status: number };
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.status).toBe(403);
   });
 
   test('Host-header check fires before method dispatch (no verb fingerprinting)', async () => {
     // An unauthorized caller must see 403 for every verb — if POST-with-bad-Host
     // returned 405, the endpoint would leak "I exist, I expect GET" to cross-
     // origin callers. Both GET and POST from the same bad Host must return the
-    // same 403 response with the same error slug.
+    // same 403 response with the same problem-type token.
     const getRes = await fetch(`http://127.0.0.1:${server.port}/api/workspace`, {
       headers: { Host: 'attacker.example.com' },
     });
@@ -96,10 +101,10 @@ describe('GET /api/workspace', () => {
     });
     expect(getRes.status).toBe(403);
     expect(postRes.status).toBe(403);
-    const getBody = (await getRes.json()) as { error: string };
-    const postBody = (await postRes.json()) as { error: string };
-    expect(getBody.error).toBe('host-header-not-allowed');
-    expect(postBody.error).toBe('host-header-not-allowed');
+    const getBody = (await getRes.json()) as { type: string };
+    const postBody = (await postRes.json()) as { type: string };
+    expect(getBody.type).toBe('urn:ok:error:host-not-allowed');
+    expect(postBody.type).toBe('urn:ok:error:host-not-allowed');
   });
 });
 
@@ -127,12 +132,12 @@ describe('GET /api/workspace — filesystem edge cases', () => {
     const res = await fetch(`http://127.0.0.1:${fsServer.port}/api/workspace`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      ok: boolean;
       contentDir: string;
       pathSeparator: string;
       symlinkResolved: boolean;
+      ok?: unknown;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.symlinkResolved).toBe(false);
     expect(body.contentDir).toBe(fsServer.contentDir);
     expect(body.pathSeparator).toBe(sep);

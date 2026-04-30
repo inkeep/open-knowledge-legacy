@@ -145,15 +145,13 @@ const _invalidSource: PrincipalResponse = {
 void _invalidSource;
 
 const _validServerInfo: ServerInfoResponse = {
-  ok: true,
   serverInstanceId: 'a1b2c3',
 };
 void _validServerInfo;
 
-// `ok: false` must NOT satisfy ServerInfoResponse (literal `true`).
-const _wrongOk: ServerInfoResponse = {
-  // @ts-expect-error -- ok is `z.literal(true)` on this schema.
-  ok: false,
-  serverInstanceId: 'x',
+// Missing serverInstanceId must NOT satisfy ServerInfoResponse (`.min(1)` required).
+// @ts-expect-error -- serverInstanceId is required, missing here.
+const _missingServerInstanceId: ServerInfoResponse = {
+  currentBranch: 'main',
 };
-void _wrongOk;
+void _missingServerInstanceId;

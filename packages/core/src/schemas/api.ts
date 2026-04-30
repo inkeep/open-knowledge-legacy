@@ -50,7 +50,6 @@ import { z } from 'zod';
  */
 export const ServerInfoResponseSchema = z
   .object({
-    ok: z.literal(true),
     serverInstanceId: z.string().min(1),
     currentBranch: z.string().min(1).optional(),
     currentDiskAckSVs: z.record(z.string().min(1), z.string().min(1)).optional(),
@@ -87,10 +86,10 @@ void _ServerInfoResponseSchemaIsStandard;
  * the random-identity fallback; presence remains functional.
  *
  * Note: this schema uses a bare object shape (no `ok: true` discriminator),
- * unlike `ServerInfoResponseSchema`. `handlePrincipal` returns the raw
- * `principal` record directly; `handleMetricsAgentPresence` follows the same
- * pattern. The `ok: true` envelope applies to endpoints that synthesize their
- * own response objects (`handleServerInfo`, `handleWorkspace`).
+ * matching the post-D22 RFC 9457 wire shape — `handleServerInfo` /
+ * `handleWorkspace` / `handlePrincipal` all emit flat `{...data}` objects
+ * with `Content-Type: application/json` (no `ok: true` wrapper); errors
+ * emit `application/problem+json` per `ProblemDetailsSchema`.
  */
 export const PrincipalResponseSchema = z
   .object({
@@ -186,6 +185,17 @@ export const ProblemTypeSchema = z.enum([
   // No new tokens — reuses cluster-C `backlink-index-not-configured`,
   // cluster-B `doc-not-found` (suggest-links target missing), shared
   // `invalid-request` (orphan-mode / docName validation) and `internal-server-error`.
+  // Cluster E: save-version / history / history/<sha> / diff / workspace /
+  // rescue-list / rescue-get / server-info / principal (US-010).
+  // `shadow-not-configured` covers the startup-state where the shadow repo
+  // (history surface) is unavailable; `host-not-allowed` covers the
+  // /api/workspace + /api/principal + /api/metrics/agent-presence DNS-rebinding
+  // gate; `principal-not-available` is the 404 case when local git-config
+  // identity is absent. `not-found` is the rescue-buffer fallback.
+  'urn:ok:error:shadow-not-configured',
+  'urn:ok:error:host-not-allowed',
+  'urn:ok:error:principal-not-available',
+  'urn:ok:error:not-found',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -1161,3 +1171,249 @@ export type SuggestLinksSuccess = z.infer<typeof SuggestLinksSuccessSchema>;
 const _SuggestLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksSuccess> =
   SuggestLinksSuccessSchema;
 void _SuggestLinksSuccessSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster E: save-version / history / history/<sha> / diff / workspace /
+// rescue-list / rescue-get / server-info / principal (US-010)
+// ---------------------------------------------------------------------------
+//
+// Mix of GET-no-body (history, diff, workspace, rescue, server-info, principal)
+// and POST-with-optional-body (save-version) handlers. Save-version is the only
+// one taking a request body (writers, message, principal); the others are
+// query-string-only. Schemas drop the `{ ok: true }` wrapper per D22.
+//
+// `serverInfo` and `principal` schemas live in their canonical locations near
+// the top of this file (the existing schemas are reshaped in lockstep with
+// this story); below are the remaining cluster E success schemas.
+
+/** Optional writer record passed to `POST /api/save-version`. */
+export const SaveVersionWriterSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().optional(),
+    email: z.string().optional(),
+  })
+  .loose();
+export type SaveVersionWriter = z.infer<typeof SaveVersionWriterSchema>;
+const _SaveVersionWriterSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionWriter> =
+  SaveVersionWriterSchema;
+void _SaveVersionWriterSchemaIsStandard;
+
+/** Optional principal identity passed to `POST /api/save-version` (US-020 D12). */
+export const SaveVersionPrincipalSchema = z
+  .object({
+    name: z.string().optional(),
+    email: z.string().optional(),
+  })
+  .loose();
+export type SaveVersionPrincipal = z.infer<typeof SaveVersionPrincipalSchema>;
+const _SaveVersionPrincipalSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionPrincipal> =
+  SaveVersionPrincipalSchema;
+void _SaveVersionPrincipalSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/save-version`. Every field optional — the
+ * common case posts an empty `{}` body and inherits agent / git defaults.
+ *
+ * `message` is a free-form summary clipped to 256 chars + newline-stripped
+ * server-side. `writers` is an explicit override list (the server otherwise
+ * derives it from the calling agent identity). `principal` overrides the
+ * git-config author identity for this checkpoint commit.
+ */
+export const SaveVersionRequestSchema = z
+  .object({
+    message: z.string().optional(),
+    writers: z.array(SaveVersionWriterSchema).optional(),
+    principal: SaveVersionPrincipalSchema.optional(),
+    ...agentIdentityFields,
+  })
+  .loose();
+export type SaveVersionRequest = z.infer<typeof SaveVersionRequestSchema>;
+const _SaveVersionRequestSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionRequest> =
+  SaveVersionRequestSchema;
+void _SaveVersionRequestSchemaIsStandard;
+
+/**
+ * Success response for `POST /api/save-version`. `checkpointRef` is the
+ * shadow-repo checkpoint SHA; `versionTag` is the optional `ok/v<N>` tag in
+ * the parent git repo (omitted when projectDir lacks a git repo per US-021
+ * graceful-availability contract).
+ */
+export const SaveVersionSuccessSchema = z
+  .object({
+    checkpointRef: z.string().min(1),
+    versionTag: z.string().min(1).optional(),
+  })
+  .loose();
+export type SaveVersionSuccess = z.infer<typeof SaveVersionSuccessSchema>;
+const _SaveVersionSuccessSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionSuccess> =
+  SaveVersionSuccessSchema;
+void _SaveVersionSuccessSchemaIsStandard;
+
+/**
+ * Single shadow contributor entry (parsed from a checkpoint commit). Mirrors
+ * the in-process `ShadowContributor` type but exposed through a Zod schema so
+ * the wire shape is gated by the canonical SSOT.
+ */
+export const HistoryShadowContributorSchema = z
+  .object({
+    writerId: z.string().min(1),
+    displayName: z.string().min(1),
+    summary: z.string().optional(),
+    actor: z.unknown().optional(),
+    colorSeed: z.string().optional(),
+  })
+  .loose();
+export type HistoryShadowContributor = z.infer<typeof HistoryShadowContributorSchema>;
+const _HistoryShadowContributorSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  HistoryShadowContributor
+> = HistoryShadowContributorSchema;
+void _HistoryShadowContributorSchemaIsStandard;
+
+/** Single timeline entry returned from `GET /api/history`. */
+export const HistoryEntrySchema = z
+  .object({
+    sha: z.string().min(1),
+    timestamp: z.string().min(1),
+    author: z.string(),
+    authorEmail: z.string(),
+    type: z.enum(['checkpoint', 'wip', 'upstream', 'park']),
+    message: z.string(),
+    contributors: z.array(HistoryShadowContributorSchema),
+    checkpoint: z.unknown().nullable(),
+  })
+  .loose();
+export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
+const _HistoryEntrySchemaIsStandard: StandardSchemaV1<unknown, HistoryEntry> = HistoryEntrySchema;
+void _HistoryEntrySchemaIsStandard;
+
+/**
+ * Success response for `GET /api/history?docName=...&branch=...`. The
+ * `entries` array spans both checkpoint and WIP rows (filterable via the
+ * `type` query parameter); pagination is `limit`-bounded server-side
+ * (max 200 per page).
+ */
+export const HistorySuccessSchema = z
+  .object({
+    entries: z.array(HistoryEntrySchema),
+    total: z.number().int().nonnegative().optional(),
+    truncated: z.boolean().optional(),
+  })
+  .loose();
+export type HistorySuccess = z.infer<typeof HistorySuccessSchema>;
+const _HistorySuccessSchemaIsStandard: StandardSchemaV1<unknown, HistorySuccess> =
+  HistorySuccessSchema;
+void _HistorySuccessSchemaIsStandard;
+
+/**
+ * Success response for `GET /api/history/<sha>?docName=...`. Returns the
+ * historical document content + commit metadata.
+ */
+export const HistoryVersionSuccessSchema = z
+  .object({
+    sha: z.string().regex(/^[0-9a-f]{40}$/i),
+    content: z.string(),
+    timestamp: z.string(),
+    author: z.string(),
+  })
+  .loose();
+export type HistoryVersionSuccess = z.infer<typeof HistoryVersionSuccessSchema>;
+const _HistoryVersionSuccessSchemaIsStandard: StandardSchemaV1<unknown, HistoryVersionSuccess> =
+  HistoryVersionSuccessSchema;
+void _HistoryVersionSuccessSchemaIsStandard;
+
+/** Single line of a `GET /api/diff` response. */
+export const DiffLineSchema = z
+  .object({
+    type: z.enum(['added', 'removed', 'unchanged']),
+    text: z.string(),
+  })
+  .loose();
+export type DiffLine = z.infer<typeof DiffLineSchema>;
+const _DiffLineSchemaIsStandard: StandardSchemaV1<unknown, DiffLine> = DiffLineSchema;
+void _DiffLineSchemaIsStandard;
+
+/**
+ * Success response for `GET /api/diff?docName=...&from=...&to=...`. `from`
+ * may be empty (server reads current Y.Doc text) or a 40-char commit SHA.
+ */
+export const DiffSuccessSchema = z
+  .object({
+    lines: z.array(DiffLineSchema),
+    additions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+  })
+  .loose();
+export type DiffSuccess = z.infer<typeof DiffSuccessSchema>;
+const _DiffSuccessSchemaIsStandard: StandardSchemaV1<unknown, DiffSuccess> = DiffSuccessSchema;
+void _DiffSuccessSchemaIsStandard;
+
+/**
+ * Success response for `GET /api/workspace`. Loopback-only endpoint —
+ * exposes the absolute host filesystem path so the client's "Copy path"
+ * action can build full paths without guessing path-separator semantics.
+ *
+ * `symlinkResolved=false` indicates the contentDir was deleted out from
+ * under the server (ENOENT on realpath); the client receives the unresolved
+ * path and decides whether to act on it.
+ */
+export const WorkspaceSuccessSchema = z
+  .object({
+    contentDir: z.string().min(1),
+    pathSeparator: z.enum(['/', '\\']),
+    symlinkResolved: z.boolean(),
+  })
+  .loose();
+export type WorkspaceSuccess = z.infer<typeof WorkspaceSuccessSchema>;
+const _WorkspaceSuccessSchemaIsStandard: StandardSchemaV1<unknown, WorkspaceSuccess> =
+  WorkspaceSuccessSchema;
+void _WorkspaceSuccessSchemaIsStandard;
+
+/** Single rescue buffer entry — flat-file (shutdown-flush) source. */
+export const RescueEntryFlatSchema = z
+  .object({
+    docName: z.string().min(1),
+    timestamp: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    source: z.literal('flat'),
+  })
+  .loose();
+export type RescueEntryFlat = z.infer<typeof RescueEntryFlatSchema>;
+const _RescueEntryFlatSchemaIsStandard: StandardSchemaV1<unknown, RescueEntryFlat> =
+  RescueEntryFlatSchema;
+void _RescueEntryFlatSchemaIsStandard;
+
+/** Single rescue buffer entry — timeline-ref (saveInMemoryCheckpoint) source. */
+export const RescueEntryTimelineSchema = z
+  .object({
+    docName: z.string().min(1),
+    timestamp: z.string().min(1),
+    source: z.literal('timeline'),
+    sha: z.string().min(1),
+  })
+  .loose();
+export type RescueEntryTimeline = z.infer<typeof RescueEntryTimelineSchema>;
+const _RescueEntryTimelineSchemaIsStandard: StandardSchemaV1<unknown, RescueEntryTimeline> =
+  RescueEntryTimelineSchema;
+void _RescueEntryTimelineSchemaIsStandard;
+
+/**
+ * Success response for `GET /api/rescue` — flat array of rescue buffers
+ * across both flat-file (shutdown-flush) and timeline-ref
+ * (saveInMemoryCheckpoint) sources. The `source` discriminator field tells
+ * the client which artifact class produced the entry. Empty `[]` is valid
+ * (no rescue buffers OR no shadow repo configured).
+ *
+ * Note: `/api/rescue/<docName>` returns raw markdown content with
+ * `Content-Type: text/markdown` (not JSON), so it has no JSON success schema.
+ */
+export const RescueListSuccessSchema = z
+  .array(z.union([RescueEntryFlatSchema, RescueEntryTimelineSchema]))
+  .meta({
+    description: 'Flat array of rescue buffer entries; discriminated via `source`.',
+  });
+export type RescueListSuccess = z.infer<typeof RescueListSuccessSchema>;
+const _RescueListSuccessSchemaIsStandard: StandardSchemaV1<unknown, RescueListSuccess> =
+  RescueListSuccessSchema;
+void _RescueListSuccessSchemaIsStandard;

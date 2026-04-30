@@ -36,9 +36,6 @@ const source = readFileSync(API_EXT_PATH, 'utf8');
 const UNMIGRATED_HANDLERS = new Set([
   'handleAgentActivity',
   'handleAgentBurstDiff',
-  'handleDiff',
-  'handleHistory',
-  'handleHistoryVersion',
   'handleInstalledAgentsRoute',
   'handleLocalOpAuthIdentity',
   'handleLocalOpAuthLogin',
@@ -51,13 +48,8 @@ const UNMIGRATED_HANDLERS = new Set([
   'handleMetricsAgentPresence',
   'handleMetricsParseHealth',
   'handleMetricsReconciliation',
-  'handlePrincipal',
-  'handleRescueGet',
-  'handleRescueList',
-  'handleSaveVersion',
   'handleSeedApply',
   'handleSeedPlan',
-  'handleServerInfo',
   'handleSyncAbortMerge',
   'handleSyncConflictContent',
   'handleSyncConflicts',
@@ -67,7 +59,6 @@ const UNMIGRATED_HANDLERS = new Set([
   'handleSyncTrigger',
   'handleTestRescanBacklinks',
   'handleTestReset',
-  'handleWorkspace',
 ]);
 
 function listAllHandlers(): string[] {
