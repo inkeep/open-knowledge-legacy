@@ -1,10 +1,18 @@
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
+
+// Lazy-load Settings — pulls ToggleGroup + the schema-driven form which add
+// ~330kB gzipped to the main bundle. Settings is opened on demand via Cmd-,
+// so the cold-mount cost is acceptable.
+const SettingsPane = lazy(() =>
+  import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
+);
+
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -14,6 +22,7 @@ import { useDocPanelLayout } from '@/hooks/use-doc-panel-layout';
 import { useDocumentStats } from '@/hooks/use-document-stats';
 import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { ProfilerBoundary } from '@/lib/perf';
+import { useSettingsRoute } from '@/lib/use-settings-route';
 import { EditorActivityPool } from './EditorActivityPool';
 import { EditorFooter } from './EditorFooter';
 import type { EditorMode } from './EditorPane';
@@ -33,6 +42,7 @@ export function EditorArea(props: EditorAreaProps) {
 }
 
 function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAreaProps) {
+  const settingsRoute = useSettingsRoute();
   const {
     activeDocName,
     activeProvider,
@@ -116,6 +126,18 @@ function EditorAreaInner({ editorMode, activeTab, onActiveTabChange }: EditorAre
       setPreviousDocName(prior);
     }
   }, [activeDocName]);
+
+  if (settingsRoute.scope !== null) {
+    return (
+      <Suspense fallback={<EditorSkeleton />}>
+        <SettingsPane
+          scope={settingsRoute.scope}
+          onClose={settingsRoute.close}
+          onScopeChange={settingsRoute.setScope}
+        />
+      </Suspense>
+    );
+  }
 
   if (activeTarget?.kind === 'folder') {
     return <FolderOverview folderPath={activeTarget.folderPath} />;

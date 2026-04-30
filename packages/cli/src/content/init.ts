@@ -1,8 +1,36 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { CACHE_DIR, CONFIG_FILENAME, OK_DIR } from '../constants.ts';
+import { CONFIG_SCHEMA_MAJOR_PATH } from '@inkeep/open-knowledge-core';
+import { CACHE_DIR, CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
-const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+/**
+ * Build the `$schema` URL for a scaffolded workspace `config.yml`.
+ *
+ * Schema versioning is INDEPENDENT of the npm package version. The URL pins
+ * to the schema MAJOR (`v0`, `v1`, …) and uses the npm `@latest` dist-tag
+ * for the package itself — additive changes (new optional fields, new enum
+ * values) reach existing users automatically as soon as unpkg's `@latest`
+ * cache refreshes (typically <1h). Breaking changes bump the schema MAJOR
+ * and emit to a new directory; the old directory keeps shipping for legacy
+ * YAMLs that never re-pin.
+ *
+ * `_version` is retained on the signature for source-compat with callers
+ * pre-versioning; it's no longer used in the URL — the URL pins to schema
+ * major (from `CONFIG_SCHEMA_MAJOR_PATH`) and `@latest` of the package.
+ */
+export function packageVersionMajorMinor(version: string): string {
+  // Default-on-undefined ([major = '0']) doesn't kick in for empty strings —
+  // ''.split('.') returns [''], not []. Coerce empty segments to '0' so a
+  // malformed version still yields a parsable URL slug.
+  const [rawMajor = '0', rawMinor = '0'] = version.split('.');
+  const major = rawMajor.length > 0 ? rawMajor : '0';
+  const minor = rawMinor.length > 0 ? rawMinor : '0';
+  return `${major}.${minor}`;
+}
+
+export function buildConfigYmlContent(_version: string): string {
+  return `# yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@latest/dist/schemas/${CONFIG_SCHEMA_MAJOR_PATH}/config.workspace.schema.json
+# Open Knowledge — workspace configuration
 #
 # This file overrides built-in defaults for this workspace. Every key below
 # is commented out and shows its current default value. Uncomment any key
@@ -52,22 +80,29 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # --- Server ----------------------------------------------------------------
 # HTTP/WebSocket listener for the Hocuspocus server + static React app.
 #
+# host: bind interface for the HTTP server (\`localhost\` for loopback;
+# \`0.0.0.0\` for LAN). Override per-process with the \`HOST\` env var or the
+# \`--host\` CLI flag. Port is per-machine only — set via \`PORT\` env or the
+# \`--port\` CLI flag (no schema field).
+#
 # openOnAgentEdit: when true, the browser opens automatically the first time
 # an agent writes to the knowledge base in this server session. Debounced to
 # one open per boot. Useful for pairing with Claude Code — you see the edit
 # land live. Leave false for headless/CI.
 #
 # server:
-#   port: 3000
 #   host: localhost
 #   openOnAgentEdit: false
 
 
-# --- Persistence -----------------------------------------------------------
-# How aggressively CRDT updates are flushed to disk.
-# persistence:
-#   debounceMs: 2000
-#   maxDebounceMs: 10000
+# --- Appearance ------------------------------------------------------------
+# Theme + default editor mode for new docs. Both default UNSET so the
+# existing localStorage cache (\`ok-theme-v1\` / \`ok-editor-mode-v1\`) keeps
+# powering FOUC-free first paint until you explicitly write here.
+#
+# appearance:
+#   theme: system            # 'light' | 'dark' | 'system'
+#   editorModeDefault: wysiwyg  # 'wysiwyg' | 'source'
 
 
 # --- Folders: per-folder frontmatter defaults -------------------------------
@@ -115,6 +150,7 @@ const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #       description: Canonical knowledge committed after a team decision. Produced by the \`consolidate\` tool with a \`supersedes:\` chain tying back to the research that preceded it.
 #       tags: [article, canonical, layer-consolidate]
 `;
+}
 
 function writeIfMissing(filePath: string, content: string): boolean {
   if (existsSync(filePath)) return false;
@@ -207,7 +243,7 @@ export function initContent(projectDir: string): {
   }
 
   // config.yml: writeIfMissing — user customizations win.
-  if (writeIfMissing(join(okDir, CONFIG_FILENAME), CONFIG_YML_CONTENT)) {
+  if (writeIfMissing(join(okDir, CONFIG_FILENAME), buildConfigYmlContent(PACKAGE_VERSION))) {
     created.push(CONFIG_FILENAME);
   } else {
     skipped.push(CONFIG_FILENAME);
