@@ -1,0 +1,4 @@
+[test]
+# CI can leave native watcher handles alive after Bun reports a clean server suite.
+# Keep assertion failures authoritative, but exit once all known tests finish.
+forceExit = true
