@@ -38,7 +38,7 @@
     "build:assets": "bun run build:app && bun run build:skill-asset && bun run build:notices && bun run build:schema",
     "build": "bun run build:cli && bun run build:assets",
     "postinstall": "node scripts/postinstall.mjs",
-    "test": "bun run build:schema && bun --conditions=development test",
+    "test": "bun run build:schema && node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bash ../../scripts/check-notices-clean.sh && bun run build && bun run test"
   },
