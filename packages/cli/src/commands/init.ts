@@ -1006,8 +1006,12 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     lines.push(`     - ${info('ok seed')}`);
     lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
     lines.push(`     - ${info('mcp__open-knowledge__ingest')}      — capture an external source`);
-    lines.push(`     - ${info('mcp__open-knowledge__research')}    — gather sources and write findings`);
-    lines.push(`     - ${info('mcp__open-knowledge__consolidate')} — promote research to canonical articles`);
+    lines.push(
+      `     - ${info('mcp__open-knowledge__research')}    — gather sources and write findings`,
+    );
+    lines.push(
+      `     - ${info('mcp__open-knowledge__consolidate')} — promote research to canonical articles`,
+    );
   }
 
   return lines.join('\n');
