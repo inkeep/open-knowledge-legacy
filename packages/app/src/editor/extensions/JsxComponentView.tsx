@@ -666,6 +666,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // POSITION forward via `TextSelection.near` — `setTextSelection(pos+nodeSize)`
   // can land on a block boundary (parent is a block container, not a textblock)
   // so typing wraps the keystroke in a new paragraph.
+  //
+  // DOM focus is owned by `onCloseAutoFocus` on `<PopoverContent>` below — this
+  // path runs synchronously inside Radix's `setTimeout(0)` close-tick, beating
+  // the rAF-vs-setTimeout race that otherwise leaves DOM focus on a stale
+  // element (slash-menu, gear button) and made keystrokes after Escape vanish.
   const handleOpenChange = (open: boolean) => {
     setPopoverOpen(open);
     if (open) return;
@@ -681,7 +686,6 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       const $end = editor.state.doc.resolve(Math.min(nodeEnd, editor.state.doc.content.size));
       const nextSel = TextSelection.near($end, 1);
       editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
-      editor.view.focus();
     });
   };
 
@@ -956,6 +960,28 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           align={showPlaceholder ? 'center' : 'start'}
           sideOffset={showPlaceholder ? -4 : 8}
           className="w-64 p-3 z-[60]"
+          // Self-closing leaves (img/video/audio) want the caret back in the
+          // editor body so the user can keep typing — the Notion-style
+          // "fill prop → Escape → continue" loop. Radix's default close-time
+          // focus restore points at `previouslyFocusedElement` captured when
+          // the popover mounted, which is typically the gear button or a
+          // now-detached slash-menu element; keystrokes after Escape land
+          // there and silently vanish until the user clicks back into the
+          // editor. Container components (Callout/Accordion) keep Radix's
+          // default — their content hole already pulls focus naturally.
+          //
+          // Runs inside Radix's setTimeout(0) close-tick, which beats the
+          // rAF-deferred caret-advance in handleOpenChange and any other
+          // racing focus calls. preventDefault on the unmount-auto-focus
+          // event tells FocusScope to skip its own focus() restore.
+          onCloseAutoFocus={
+            descriptor.hasChildren && !descriptor.isSelfClosing
+              ? undefined
+              : (e) => {
+                  e.preventDefault();
+                  editor.view.focus();
+                }
+          }
         >
           <div className="text-xs font-medium text-muted-foreground mb-2">
             {descriptor.displayName ?? descriptor.name} Properties

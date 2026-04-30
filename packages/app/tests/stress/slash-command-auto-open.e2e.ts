@@ -428,3 +428,90 @@ test('PLACEHOLDER-CLOSE-ADVANCES-CARET: PM selection lands past the image after 
   // img's range [imgPos, imgEnd).
   expect(result?.selectionFrom).toBeGreaterThanOrEqual(result?.imgEnd ?? 0);
 });
+
+test('PLACEHOLDER-CLOSE-RETURNS-DOM-FOCUS: typing after Escape lands keystrokes in the editor', async ({
+  page,
+  api,
+}) => {
+  // Companion to PLACEHOLDER-CLOSE-ADVANCES-CARET: that test asserts PM
+  // selection state advances; this test asserts DOM focus actually returns
+  // to the editor body so subsequent keystrokes don't vanish.
+  //
+  // Without `onCloseAutoFocus={(e) => { e.preventDefault(); editor.view.focus(); }}`
+  // on PopoverContent, Radix's FocusScope unmount runs `setTimeout(focus, 0)`
+  // pointing at `previouslyFocusedElement` captured at popover-mount — usually
+  // the gear button or a now-detached slash-menu element. Keystrokes after
+  // Escape land there and silently vanish, breaking the Notion-style
+  // "fill prop → Escape → continue typing" loop.
+  const docName = `placeholder-close-focus-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('[data-prop-panel]')).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
+
+  const srcInput = page.locator('[data-prop-panel] input#prop-src');
+  await srcInput.fill('https://example.com/test.png');
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-prop-panel]')).toBeHidden({ timeout: PROP_PANEL_TIMEOUT });
+
+  // Two rAFs absorb Radix's setTimeout(0) focus restore + our rAF caret-advance.
+  await page.evaluate(
+    () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+  );
+
+  // Sentinel chosen long enough that partial keystrokes are detectable, with
+  // characters PM won't intercept as a shortcut.
+  const SENTINEL = 'keep-typing-canary';
+  await page.keyboard.type(SENTINEL);
+
+  // Two assertions:
+  //   1. activeElement is the editor's contenteditable (DOM focus did return).
+  //   2. The sentinel made it into the PM document AFTER the img.
+  // Asserting both pins the contract: typing is routed to the editor AND the
+  // PM caret position is past the img so the text doesn't insert in the wrong
+  // location.
+  const result = await page.evaluate((sentinel) => {
+    interface PmNode {
+      type: { name: string };
+      nodeSize: number;
+      attrs: { componentName?: string };
+    }
+    interface WindowEditor {
+      state: {
+        doc: PmNode & {
+          textContent: string;
+          descendants: (cb: (n: PmNode, p: number) => boolean | undefined) => void;
+        };
+      };
+      view: { dom: HTMLElement };
+    }
+    const ed = (window as unknown as { __activeEditor?: WindowEditor }).__activeEditor;
+    if (!ed) return null;
+    const focusInEditor = ed.view.dom.contains(document.activeElement);
+    const docText = ed.state.doc.textContent;
+    let imgPos = -1;
+    ed.state.doc.descendants((n, p) => {
+      if (n.type.name === 'jsxComponent' && n.attrs.componentName === 'img' && imgPos === -1) {
+        imgPos = p;
+      }
+    });
+    return {
+      focusInEditor,
+      sentinelInDoc: docText.includes(sentinel),
+      imgFound: imgPos >= 0,
+    };
+  }, SENTINEL);
+
+  expect(result).not.toBeNull();
+  expect(result?.imgFound).toBe(true);
+  expect(result?.focusInEditor).toBe(true);
+  expect(result?.sentinelInDoc).toBe(true);
+});
