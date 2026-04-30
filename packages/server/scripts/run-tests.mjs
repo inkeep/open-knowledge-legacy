@@ -15,8 +15,7 @@ const scheduleExitAfterSummary = () => {
   if (!sawZeroFailures && !sawNonzeroFailures) return;
 
   forcedExitTimer = setTimeout(() => {
-    if (child.exitCode !== null) return;
-    child.kill('SIGTERM');
+    if (child.exitCode === null) child.kill('SIGTERM');
     process.exit(sawZeroFailures && !sawNonzeroFailures ? 0 : 1);
   }, 5000);
 };
