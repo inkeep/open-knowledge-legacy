@@ -163,3 +163,167 @@ describe('rewriteMarkdownLinksForDocumentRename', () => {
     });
   });
 });
+
+describe('rewriteMarkdownLinksForDocumentRename — image refs (FR-7)', () => {
+  // Image refs only rewrite when the SOURCE doc itself moves (sourceDocName
+  // === oldDocName). When a remote doc renames and we're updating links in
+  // OUR doc, our image refs are unrelated and stay verbatim.
+
+  test('cross-dir source-doc move recomputes bare-name image-ref to a `../` path', () => {
+    // 'docs/meeting-notes.md' moves to 'archive/2026/meeting-notes.md'.
+    // The image at 'docs/first-draft.png' stays put; the ref must point
+    // up two levels and back down into docs/.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![first draft](first-draft.png)\n',
+      'docs/meeting-notes',
+      'docs/meeting-notes',
+      'archive/2026/meeting-notes',
+    );
+    expect(result).toEqual({
+      markdown: '![first draft](../../docs/first-draft.png)\n',
+      rewrites: 1,
+    });
+  });
+
+  test('depth-decreasing source-doc move recomputes path with fewer `../`', () => {
+    // 'archive/2026/meeting.md' → 'meeting.md' (root).
+    // Asset at 'archive/2026/photo.png' stays put.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](photo.png)\n',
+      'archive/2026/meeting',
+      'archive/2026/meeting',
+      'meeting',
+    );
+    expect(result).toEqual({
+      markdown: '![alt](archive/2026/photo.png)\n',
+      rewrites: 1,
+    });
+  });
+
+  test('source-doc move into the asset directory shortens to bare name', () => {
+    // 'top-level.md' contains './assets/photo.png'; doc moves into assets/
+    // → ref shortens to bare-name.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](./assets/photo.png)\n',
+      'top-level',
+      'top-level',
+      'assets/top-level',
+    );
+    expect(result.markdown).toContain('photo.png');
+    expect(result.markdown).not.toContain('./assets/photo.png');
+    expect(result.rewrites).toBe(1);
+  });
+
+  test('absolute-path image refs are LEFT UNCHANGED — pre-F8 legacy guard', () => {
+    // SPEC §13 explicit fixture requirement. An absolute path was emitted
+    // by pre-F8 shortestImageRef; rewriting it would silently break.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](/docs/photo.png)\n',
+      'docs/meeting-notes',
+      'docs/meeting-notes',
+      'archive/2026/meeting-notes',
+    );
+    expect(result).toEqual({
+      markdown: '![alt](/docs/photo.png)\n',
+      rewrites: 0,
+    });
+  });
+
+  test('full-URL image refs left unchanged', () => {
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](https://cdn.example.com/photo.png)\n',
+      'docs/meeting-notes',
+      'docs/meeting-notes',
+      'archive/2026/meeting-notes',
+    );
+    expect(result).toEqual({
+      markdown: '![alt](https://cdn.example.com/photo.png)\n',
+      rewrites: 0,
+    });
+  });
+
+  test('protocol-relative image refs left unchanged', () => {
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](//cdn.example.com/photo.png)\n',
+      'docs/meeting-notes',
+      'docs/meeting-notes',
+      'archive/2026/meeting-notes',
+    );
+    expect(result).toEqual({
+      markdown: '![alt](//cdn.example.com/photo.png)\n',
+      rewrites: 0,
+    });
+  });
+
+  test('wiki-embed refs (`![[file]]`) NOT rewritten — D-K refs-only', () => {
+    // The basename index resolves wiki-embeds dynamically, so the ref body
+    // must be byte-identical after the rename.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![[first-draft.png]] and ![[diagram.svg|alt]]\n',
+      'docs/meeting-notes',
+      'docs/meeting-notes',
+      'archive/2026/meeting-notes',
+    );
+    expect(result).toEqual({
+      markdown: '![[first-draft.png]] and ![[diagram.svg|alt]]\n',
+      rewrites: 0,
+    });
+  });
+
+  test('mixed wiki-embed + markdown-image + doc-link in one body — only the latter two rewrite', () => {
+    // P5.1e composite scenario.
+    const md =
+      '# Meeting\n\n![[wiki-embed.png]] and ![plain](md-image.png) and [other doc](./other.md)\n';
+    const result = rewriteMarkdownLinksForDocumentRename(
+      md,
+      'docs/meeting',
+      'docs/meeting',
+      'archive/2026/meeting',
+    );
+    expect(result.rewrites).toBe(1); // only md-image rewrites; doc-link target ('other') doesn't match oldDocName
+    expect(result.markdown).toContain('![[wiki-embed.png]]'); // wiki-embed unchanged
+    expect(result.markdown).toContain('../../docs/md-image.png'); // md-image recomputed
+    expect(result.markdown).toContain('](./other.md)'); // doc-link untouched (target wasn't oldDocName)
+  });
+
+  test('image refs in a doc whose target rename is unrelated stay untouched', () => {
+    // sourceDocName !== oldDocName → no image-ref rewrite. Only doc-to-doc
+    // rewriting happens, and our image-ref is preserved verbatim.
+    // resolveInternalHref on './other.md' with sourceDocName 'docs/meeting'
+    // yields 'docs/other', so oldDocName needs the 'docs/' prefix.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      'Image: ![alt](photo.png) and link [other](./other.md)\n',
+      'docs/meeting',
+      'docs/other',
+      'docs/other-renamed',
+    );
+    expect(result.markdown).toContain('![alt](photo.png)'); // image unchanged
+    expect(result.markdown).toContain('[other](./other-renamed.md)'); // link rewrote
+  });
+
+  test('same-dir source-doc rename (sibling rename) leaves bare-name image-refs alone', () => {
+    // Renaming docs/meeting.md → docs/meeting-v2.md doesn't change dirname,
+    // so a bare-name image ref is still correct.
+    const result = rewriteMarkdownLinksForDocumentRename(
+      '![alt](photo.png)\n',
+      'docs/meeting',
+      'docs/meeting',
+      'docs/meeting-v2',
+    );
+    expect(result).toEqual({
+      markdown: '![alt](photo.png)\n',
+      rewrites: 0,
+    });
+  });
+
+  test('image refs are skipped inside fenced code blocks', () => {
+    const md = ['```md', '![alt](photo.png)', '```', ''].join('\n');
+    const result = rewriteMarkdownLinksForDocumentRename(
+      md,
+      'docs/meeting',
+      'docs/meeting',
+      'archive/meeting',
+    );
+    expect(result).toEqual({ markdown: md, rewrites: 0 });
+  });
+});

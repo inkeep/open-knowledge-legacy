@@ -374,6 +374,9 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
           mount.wss.close((err) => (err ? rejectClose(err) : resolveClose()));
         }),
     );
+    await runStep('httpServer.closeAllConnections', async () => {
+      httpServer.closeAllConnections?.();
+    });
     await runStep(
       'httpServer.close',
       () =>

@@ -383,6 +383,53 @@ describe('ContentFilter', () => {
     });
   });
 
+  describe('reserved config doc names', () => {
+    // US-005: synthetic config-doc admission means the same content-filter
+    // bypass that protects __system__.md must also reject any disk artifact
+    // named after the workspace or user-global config docs. Sidecars or
+    // accidental collisions on those names would otherwise round-trip into
+    // the user's content tree.
+    test('excludes __config__/workspace.md regardless of include patterns', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('__config__/workspace.md')).toBe(true);
+      expect(filter.isExcluded('__config__/workspace.mdx')).toBe(true);
+    });
+
+    test('excludes __user__/config.yml.md regardless of include patterns', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // After stripDocExtension, '__user__/config.yml.md' → '__user__/config.yml'
+      // which is the reserved doc name for the user-global config.
+      expect(filter.isExcluded('__user__/config.yml.md')).toBe(true);
+      expect(filter.isExcluded('__user__/config.yml.mdx')).toBe(true);
+    });
+
+    test('does not exclude unrelated files in __config__/ or __user__/ paths', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Only the exact reserved synthetic names are blocked.
+      expect(filter.isExcluded('__config__/something-else.md')).toBe(false);
+      expect(filter.isExcluded('__user__/notes.md')).toBe(false);
+      expect(filter.isExcluded('config-workspace.md')).toBe(false);
+    });
+  });
+
   describe('contentDir different from projectDir', () => {
     test('filter works when contentDir is a subdirectory of projectDir', () => {
       const contentDir = join(projectDir, 'content');
@@ -549,8 +596,46 @@ describe('ContentFilter', () => {
         excludePatterns: [],
       });
 
+      // Script extensions and arbitrary unknown types stay excluded even when
+      // a sibling .md is present. `.js` is in EXECUTABLE_BLOCKLIST territory;
+      // `.xyz`/`.unknown` cover the novel-extension default-exclude path.
       expect(filter.isExcluded('docs/script.js')).toBe(true);
-      expect(filter.isExcluded('docs/data.json')).toBe(true);
+      expect(filter.isExcluded('docs/arbitrary.xyz')).toBe(true);
+      expect(filter.isExcluded('docs/other.unknown')).toBe(true);
+    });
+
+    test('includes widened user-drop extensions when sibling .md exists (2026-04-24b)', () => {
+      // SPEC §Post-finalization amendment (2026-04-24b) — D-M accept-all
+      // alignment. Prior to this amendment the content filter's step-3
+      // sibling-asset rule gated by a narrow `ASSET_EXTENSIONS` set of
+      // ~18 extensions, causing common user-drop types (.m4v video, .docx
+      // office, .csv tabular, etc.) to fall through to Vite's SPA fallback
+      // as text/html. This test pins the widened set against the filter's
+      // admission behavior — one representative from each user-visible
+      // class (video, audio, office-doc, tabular, text).
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Video (the bug reporter's file type)
+      expect(filter.isExcluded('docs/clip.m4v')).toBe(false);
+      expect(filter.isExcluded('docs/clip.mkv')).toBe(false);
+      // Audio
+      expect(filter.isExcluded('docs/song.flac')).toBe(false);
+      // Office docs
+      expect(filter.isExcluded('docs/spec.docx')).toBe(false);
+      expect(filter.isExcluded('docs/sheet.xlsx')).toBe(false);
+      // Tabular / text
+      expect(filter.isExcluded('docs/data.csv')).toBe(false);
+      expect(filter.isExcluded('docs/notes.txt')).toBe(false);
+      // Data serialization
+      expect(filter.isExcluded('docs/config.json')).toBe(false);
     });
 
     test('exclude takes precedence over sibling-asset rule', () => {

@@ -1,0 +1,20 @@
+# Supply-chain-adjacent paths. Any change to a release workflow, the
+# desktop build/signing pipeline, or other high-blast-radius tooling
+# requires explicit review from the listed owner. Prevents a single-
+# reviewer PR from modifying signing secrets or the publish pipeline.
+#
+# Wildcard fallback is NOT set — most paths continue to land without
+# mandatory CODEOWNERS gating; this file lists only the surfaces where
+# a silent compromise would be high-impact.
+
+# Release & CI pipelines — App-token force-push, npm OIDC trusted
+# publishing, signed-DMG dispatch. Changes here can publish or sign
+# artifacts on behalf of the org.
+/.github/workflows/          @nick-inkeep
+/.github/CODEOWNERS          @nick-inkeep
+
+# Apple Developer ID signing, notarization, DMG build. Secrets flow
+# through electron-builder hooks; a malicious edit here could exfiltrate
+# the signing identity or ship an unsigned bundle.
+/packages/desktop/scripts/   @nick-inkeep
+/packages/desktop/build/     @nick-inkeep

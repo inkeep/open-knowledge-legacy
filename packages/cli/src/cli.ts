@@ -25,6 +25,7 @@ import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { cloneCommand } from './commands/clone.ts';
+import { configCommand } from './commands/config.ts';
 import { initCommand } from './commands/init.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -64,20 +65,16 @@ program
     }
     const { config } = loadConfig(cwd);
 
-    // CLI flags override config
+    // CLI flags override config (host only — `server.port` is no longer a
+    // schema field per D29; port flows from `--port` / `PORT` env directly
+    // into `bootStartServer` at the start command's action site).
     const startOpts =
       thisCommand.args.length === 0 ? opts : (thisCommand.commands[0]?.opts() ?? {});
-    if (startOpts.port !== undefined) {
-      config.server.port = Number(startOpts.port);
-    }
     if (startOpts.host !== undefined) {
       config.server.host = startOpts.host as string;
     }
 
     // ENV overrides
-    if (process.env.PORT) {
-      config.server.port = Number(process.env.PORT);
-    }
     if (process.env.HOST) {
       config.server.host = process.env.HOST;
     }
@@ -117,6 +114,11 @@ program.addCommand(ui);
 program.addCommand(stopCommand(() => resolvedConfig));
 program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
+
+// config command group — inspect + migrate `.open-knowledge/config.yml`
+// (config-edit-paths spec FR-16, FR-26 / D37). Stateless — no resolved config
+// dependency; both subcommands re-load fresh from disk via core helpers.
+program.addCommand(configCommand());
 
 // auth command group — login, status, repos, signout, pat, git-credential
 program.addCommand(authCommand(() => resolvedConfig));

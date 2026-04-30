@@ -2,7 +2,7 @@ import type { Document, Extension } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
 
 export const LIVE_DERIVED_INDEX_DEBOUNCE_MS = 100;
@@ -64,7 +64,7 @@ export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions
 
   return {
     async onChange({ documentName, document, transactionOrigin }) {
-      if (isSystemDoc(documentName)) return;
+      if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
 
       // Disk events already update the derived views directly in the watcher path.
       if (

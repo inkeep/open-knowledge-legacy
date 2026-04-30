@@ -14,11 +14,13 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import type {
+  InstallUserSkillOptions,
+  InstallUserSkillResult,
+} from '@inkeep/open-knowledge-server';
 import {
   detectClaudeDesktopPresence,
   ensureProjectGit,
-  type InstallUserSkillOptions,
-  type InstallUserSkillResult,
   installUserSkill,
   MCP_SERVER_NAME,
   ProjectGitInitError,

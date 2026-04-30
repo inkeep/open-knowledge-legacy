@@ -26,7 +26,7 @@ urls-consulted:
 - `packages/server/package.json` line 21: `"file-type": "^22.0.1"`
 - `bun.lock`: `"file-type@22.0.1"` (exact resolved version)
 - `node_modules/file-type/package.json`: `"version": "22.0.1"`, `"engines": { "node": ">=22" }`, ESM-only (`"type": "module"`)
-- Call site: `packages/server/src/api-extension.ts:38` (`import { fileTypeFromBuffer } from 'file-type'`) used at line 2535
+- Call site: `packages/server/src/api-extension.ts:40` (`import { fileTypeFromBuffer } from 'file-type'`) used at line 3084 (baseline `2ad0177a`; earlier baseline `432a834b` had import at :38 and use site at :2535)
 
 There is also an indirect `file-type@21.x` transitive dep via `just-bash`, but our direct usage resolves to v22.0.1.
 
@@ -56,7 +56,7 @@ Source of truth: `node_modules/file-type/source/supported.js` (`supportedMimeTyp
 | `image/png` | Yes (current) | — | Already in shipped allowlist. |
 | `image/gif` | Yes (current) | — | Already in shipped allowlist. |
 | `image/webp` | Yes (current) | `index.js:1348` | Already in shipped allowlist. |
-| `image/svg+xml` | **No** by magic bytes | `api-extension.ts:2539-2543` | README explicitly excludes SVG. Shipped code already compensates with an extension-fallback branch: if `fileTypeFromBuffer` returns `undefined` and the filename ends in `.svg`, it sets `detectedMime = 'image/svg+xml'`. This is precedent for D-A option B (extension-fallback), already in production. |
+| `image/svg+xml` | **No** by magic bytes | `api-extension.ts:3088-3093` | README explicitly excludes SVG. Shipped code already compensates with an extension-fallback branch: if `fileTypeFromBuffer` returns `undefined` and the filename ends in `.svg`, it sets `detectedMime = 'image/svg+xml'`. This is precedent for D-A option B (extension-fallback), already in production. |
 
 ### Shipped allowlist location
 
@@ -72,7 +72,7 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
 ] as const;
 ```
 
-Consumed as a `Set<string>` at `api-extension.ts:123` and gate-checked at `api-extension.ts:2546`.
+Consumed as a `Set<string>` at `api-extension.ts:168` and gate-checked at `api-extension.ts:3095`.
 
 ## 3. Ambiguous cases — ZIP-based formats
 
@@ -116,7 +116,7 @@ There is one edge-case where a real DOCX/XLSX can fall through to `application/z
 **Option A — Strict magic-byte-only, binary-only allowlist (recommended).**
 - Accept: images (current), PDF, MP4, MP3, WAV, OGG, WebM, ZIP, fonts.
 - Reject: TXT, CSV, MD, JSON, SVG at the magic-byte path.
-- Keep the current SVG extension-fallback branch (api-extension.ts:2539-2543) as a bounded, documented exception — it's already shipping.
+- Keep the current SVG extension-fallback branch (api-extension.ts:3088-3093) as a bounded, documented exception — it's already shipping.
 - Pros: single trust boundary, no path-based spoofing risk for binary types, matches how most production uploaders do it (the gate is "is this really a PDF" not "did the client claim PDF").
 - Cons: no text-file uploads. Given the product (wiki editor), markdown and txt embeds arguably belong in the document pipeline anyway, not as opaque asset attachments.
 
@@ -157,7 +157,7 @@ None of these change the v22 upgrade calculus; they'd be additive once we have a
 
 - File-type v22 README bundled at `/Users/edwingomezcuellar/projects/open-knowledge/node_modules/file-type/readme.md` — §Supported file types (readme.md:390-577), §intro disclaimer (readme.md:9), §Options/mpegOffsetTolerance (readme.md:291-299).
 - Source: `node_modules/file-type/source/supported.js:193-360` (full supported MIME list), `source/index.js:1280-1328` (MP4 dispatch), `source/detectors/zip.js:192-642` (OOXML/iWork/JAR/APK/EPUB peek).
-- Call site: `packages/server/src/api-extension.ts:38,123,2535-2546`.
+- Call site: `packages/server/src/api-extension.ts:40,168,3084-3095` (baseline `2ad0177a`).
 - Shipped allowlist: `packages/core/src/constants/upload.ts:1-9`.
 - Upstream release notes: https://github.com/sindresorhus/file-type/releases (v22.0.0 entry).
 - CSV out-of-scope rationale: https://github.com/sindresorhus/file-type/issues/264#issuecomment-568439196 (linked from readme.md:586).

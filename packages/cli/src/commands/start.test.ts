@@ -330,13 +330,15 @@ describe('spawnOkUi', () => {
 function makeTestConfig(): Config {
   return {
     content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-    server: { port: 0, host: '127.0.0.1', openOnAgentEdit: false },
-    persistence: { debounceMs: 200, maxDebounceMs: 1000 },
+    github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
+    server: { host: '127.0.0.1', openOnAgentEdit: false },
     preview: {},
+    folders: [],
     mcp: {
       tools: { read_document: { historyDepth: 5 }, search: { maxResults: 50 } },
       autoStart: true,
     },
+    appearance: {},
   } as Config;
 }
 

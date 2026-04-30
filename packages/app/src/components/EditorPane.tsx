@@ -9,7 +9,6 @@ import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
-import type { DiffLayout } from './DiffView';
 import { type PanelTab, TABS } from './DocPanel';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -28,7 +27,6 @@ export function EditorPane() {
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
-  const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
   const [saving, setSaving] = useState(false);
   const optInToastShownRef = useRef(false);
@@ -105,9 +103,6 @@ export function EditorPane() {
         onModeChange={handleModeChange}
         onSaveVersion={handleSaveVersion}
         saving={saving}
-        activeTab={activeTab}
-        diffLayout={diffLayout}
-        onDiffLayoutChange={setDiffLayout}
         onSignIn={() => {
           setAuthInitialStep('auth');
           setAuthModalOpen(true);
@@ -119,12 +114,7 @@ export function EditorPane() {
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
         onOpenClone={() => setCloneDialogOpen(true)}
       />
-      <EditorArea
-        editorMode={editorMode}
-        diffLayout={diffLayout}
-        activeTab={activeTab}
-        onActiveTabChange={setActiveTab}
-      />
+      <EditorArea editorMode={editorMode} activeTab={activeTab} onActiveTabChange={setActiveTab} />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
       <AuthModal
         open={authModalOpen}

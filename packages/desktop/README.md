@@ -111,13 +111,16 @@ Agents never set this — they want the full env. Add it to your shell profile i
 
 ## IPC discipline (D14 + D19)
 
-Every renderer↔main call goes through the typed channel map in `src/shared/ipc-channels.ts` (requests) or `src/shared/ipc-events.ts` (events). **Never call `ipcMain.handle` or `ipcRenderer.invoke` directly** — use `createHandler` / `createInvoker`. Biome's GritQL rule `no-loosely-typed-webcontents-ipc` (configured at the repo root, D19) fails lint on violations.
+Every renderer↔main call goes through the typed channel map in `src/shared/ipc-channels.ts` (requests) or `src/shared/ipc-events.ts` (events). **Never call `ipcMain.handle` or `ipcRenderer.invoke` directly** — use `createHandler` / `createInvoker`. Enforcement is a Bun integration test at `tests/integration/no-loosely-typed-webcontents-ipc.test.ts` that greps the source tree for raw electron IPC calls outside an allowlist (Biome 2.4 doesn't yet ship custom lint plugins — the test's header comment documents the fallback). Consult that file's `ALLOWLIST` constant for the authoritative list of permitted wrapper-implementation files.
 
-File-scoped allowlist for direct IPC access (the wrapper implementations themselves):
+File-scoped allowlist for direct IPC access — the wrapper implementations themselves plus channel-contract and top-level bootstrap. Source of truth is the test's `ALLOWLIST` constant:
 
 - `src/shared/ipc-handler.ts`
 - `src/shared/ipc-invoke.ts`
+- `src/shared/ipc-channels.ts`
+- `src/shared/ipc-events.ts`
 - `src/preload/index.ts`
+- `src/main/index.ts`
 
 Subscription methods on the bridge (`onProjectSwitched`, `onMenuAction`, etc.) **must** use the preload-side listener-wrapper pattern — the contextBridge wraps callbacks, so passing the renderer's callback reference directly to `ipcRenderer.removeListener` silently fails ([electron/electron#33328](https://github.com/electron/electron/issues/33328)). The existing bridge in `src/preload/index.ts` is the reference.
 

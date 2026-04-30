@@ -243,6 +243,14 @@ export function buildIdleShutdownHandler(
 interface BootStartServerOptions {
   config: Config;
   cwd: string;
+  /**
+   * Server bind port. Per D29 `server.port` is no longer a schema field —
+   * source ordering at the call site is `--port` flag → `PORT` env → `0`
+   * (kernel-allocated). `0` or `undefined` triggers kernel allocation;
+   * `bootServer` writes the resolved port into `server.lock` for MCP
+   * clients to discover.
+   */
+  port?: number;
   /** Skip auto-init scaffolding of `<cwd>/.open-knowledge/` (tests usually want this). */
   skipAutoInit?: boolean;
   /** Skip the auto-spawn-of-ok-ui-sibling step entirely (does not call `spawnOkUi`). */
@@ -408,11 +416,12 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     contentDir,
     projectDir: cwd,
     contentRoot: config.content.dir,
-    port: config.server.port,
+    port: opts.port,
     host: config.server.host,
     quiet: false,
-    debounce: config.persistence.debounceMs,
-    maxDebounce: config.persistence.maxDebounceMs,
+    // `persistence.{debounceMs, maxDebounceMs}` dropped from ConfigSchema
+    // per D29 — engine has well-considered defaults (2s / 10s) and 99%+
+    // users never tune them. `bootServer`/`createServer` defaults take over.
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
     onAgentWrite,
@@ -507,14 +516,22 @@ export function startCommand(getConfig: () => Config): Command {
       const config = getConfig();
       const cwd = process.cwd();
 
-      if (opts.port !== undefined) config.server.port = Number(opts.port);
       if (opts.host !== undefined) config.server.host = opts.host;
+
+      // Source-of-truth port resolution per D29: CLI flag > PORT env >
+      // `undefined` (bootServer kernel-allocates). `server.port` is no
+      // longer a schema field, so configs cannot pin a port — env+CLI is
+      // the per-machine override path.
+      const portFromCli = opts.port !== undefined ? Number(opts.port) : undefined;
+      const portFromEnv = process.env.PORT ? Number(process.env.PORT) : undefined;
+      const port = portFromCli ?? portFromEnv;
 
       let booted: BootedStartServer;
       try {
         booted = await bootStartServer({
           config,
           cwd,
+          port,
           skipAutoInit: opts.init === false,
         });
       } catch (err) {

@@ -24,9 +24,11 @@ const REQUIRED_HANDLERS = [
   'handleRename',
   'handleRenamePath',
   'handleDeletePath',
+  // Single unified upload handler — `/api/upload` (accept-all by extension).
+  // The per-MIME `handleUploadVideo` / `handleUploadAudio` shape was retired
+  // when this branch superseded #310's pipeline; one handler, one identity
+  // call site.
   'handleUploadImage',
-  'handleUploadVideo',
-  'handleUploadAudio',
 ];
 
 /**

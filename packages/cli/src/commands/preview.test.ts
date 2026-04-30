@@ -13,8 +13,7 @@ function makeConfig(overrides: Partial<Config['content']> = {}): Config {
       include: overrides.include ?? ['**/*.md'],
       exclude: overrides.exclude ?? [],
     },
-    server: { port: 3000, host: 'localhost' },
-    persistence: { debounceMs: 2000, maxDebounceMs: 10000 },
+    server: { host: 'localhost', openOnAgentEdit: false },
   } as Config;
 }
 

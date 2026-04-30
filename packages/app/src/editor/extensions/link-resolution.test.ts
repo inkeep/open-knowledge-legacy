@@ -13,7 +13,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { PageListCacheSnapshot } from '../page-list-cache';
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import { buildPagesBySlugIndex, type PageListCacheSnapshot } from '../page-list-cache';
 import {
   computeLinkResolutionAttrs,
   computeLinkResolutionState,
@@ -25,9 +26,11 @@ function makeCache(opts: {
   pages?: Iterable<string>;
   folderPaths?: Iterable<string>;
 }): PageListCacheSnapshot {
+  const pages = new Set(opts.pages ?? []);
   return {
-    pages: new Set(opts.pages ?? []),
+    pages,
     folderPaths: new Set(opts.folderPaths ?? []),
+    pagesBySlug: buildPagesBySlugIndex(pages, toWikiLinkSlug),
   };
 }
 
@@ -156,6 +159,26 @@ describe('computeLinkResolutionAttrs', () => {
     const mark = makeMarkInfo({ href: './X.md' });
     expect(computeLinkResolutionAttrs(mark, null, 'README')).toEqual({
       'data-resolution-state': 'loading',
+    });
+  });
+
+  test('wikiembed-sourced link → no decoration (skip classification)', () => {
+    // Asset-embed links (`![[foo.pdf]]` → link mark with sourceForm='wikiembed')
+    // must NOT be classified against the pages cache — the cache is markdown-
+    // only, so PDF/video/audio hrefs would always resolve 'unresolved' and
+    // paint the link with broken-link styling.
+    const cache = makeCache({ pages: ['README'] });
+    const mark = makeMarkInfo({ href: 'docs/foo.pdf', sourceForm: 'wikiembed' });
+    expect(computeLinkResolutionAttrs(mark, cache, 'README')).toBeNull();
+  });
+
+  test('plain link mark (sourceForm=null) still gets decoration', () => {
+    // Regression guard: the skip-for-wikiembed rule must NOT affect normal
+    // markdown links `[text](./foo.md)` — those still need resolution state.
+    const cache = makeCache({ pages: ['OTHER'] });
+    const mark = makeMarkInfo({ href: './OTHER.md', sourceForm: null });
+    expect(computeLinkResolutionAttrs(mark, cache, 'README')).toEqual({
+      'data-resolution-state': 'resolved',
     });
   });
 });

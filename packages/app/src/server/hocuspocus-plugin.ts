@@ -15,6 +15,12 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import {
+  ASSET_EXTENSIONS,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+} from '@inkeep/open-knowledge-core';
+import {
+  createAssetServeMiddleware,
   createServer,
   ensureProjectGit,
   handleCollabSocketError,
@@ -420,16 +426,21 @@ export function hocuspocusPlugin(): Plugin {
         next();
       });
 
-      // Use the same filter createServer() passes to the file watcher so
-      // HTTP asset serving and CRDT loading agree on what's excluded.
-      const contentFilter = currentSrv.contentFilter;
-      const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
-      server.middlewares.use((req, res, next) => {
-        const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
-        if (!rel || contentFilter.isExcluded(rel)) return next();
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        contentSirv(req, res, next);
-      });
+      // Asset-serve middleware — sirv + Content-Disposition dispatch +
+      // fail-closed 404 guard. Policy rationale + branch diagram lives
+      // in `asset-serve-middleware.ts`. The factory is extracted as a
+      // pure function so it's unit-testable against fake req/res and
+      // narrow-integration-testable against a real sirv + tmpdir
+      // (mirrors the `api-config-handler.ts` extraction precedent).
+      server.middlewares.use(
+        createAssetServeMiddleware({
+          contentFilter: currentSrv.contentFilter,
+          contentSirv: sirv(CONTENT_DIR, { dev: true, dotfiles: false }),
+          inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+          assetExtensions: ASSET_EXTENSIONS,
+          blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+        }),
+      );
 
       // Close handler is pinned to THIS invocation's `currentSrv` so each
       // configureServer pass destroys the srv it created — Vite restart

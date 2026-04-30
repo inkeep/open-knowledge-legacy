@@ -25,17 +25,18 @@ export default {
     // the typed IPC wrappers. Knip doesn't follow the full discriminated
     // union back to the string literals on each channel.
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
-    // MDX docs page — rendered by the Fumadocs site's file-system route
-    // discovery. It's referenced from `docs/content/overview.mdx` (card grid)
-    // and `docs/content/guides/meta.json` (sidebar order), but knip can't
-    // follow the MDX cross-refs / meta.json include list for the docs
-    // workspace's default entry discovery. M4 (#266) landed this page;
-    // silencing the warning here is the whole-workspace pattern we already
-    // use for the bridge-contract + ipc-events duplicated-by-design files.
+    // MDX docs pages — rendered by the Fumadocs site's file-system route
+    // discovery. They're referenced from `docs/content/overview.mdx`
+    // (card grid) and `docs/content/guides/meta.json` (sidebar order), but
+    // knip can't follow the MDX cross-refs / meta.json include list for
+    // the docs workspace's default entry discovery. Silencing the warning
+    // here is the whole-workspace pattern we already use for the
+    // bridge-contract + ipc-events duplicated-by-design files.
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
     'docs/content/guides/component-blocks.mdx': ['files'],
+    'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
@@ -46,7 +47,12 @@ export default {
     // and co-located test files become unreachable. Each workspace below
     // explicitly adds them to `entry` to restore pre-#320 reachability.
     'packages/app': {
-      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts'],
+      // Co-located src test files (post-#320 dist exports) + standalone
+      // `bun`-driven perf driver (+ its scenario library). Without the perf
+      // entries, knip marks `ProfilerPhase` / `ProfilerRenderEvent` types
+      // "unused" because `tests/perf/*.ts` sits outside the default
+      // `*.{test,e2e}.ts` scan. See `tests/perf/profile.ts` header.
+      entry: ['src/**/*.test.{ts,tsx}', 'tests/**/*.{test,e2e}.ts', 'tests/perf/lib/*.ts'],
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',

@@ -6,18 +6,27 @@ describe('ConfigSchema', () => {
     const config = ConfigSchema.parse({});
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
-    // Default 0 means kernel-allocated — `ok start` advertises the resolved
-    // port via server.lock for MCP discovery.
-    expect(config.server.port).toBe(0);
     expect(config.server.host).toBe('localhost');
-    expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.server.openOnAgentEdit).toBe(false);
     expect(config.mcp.autoStart).toBe(true);
+    expect(config.appearance.theme).toBeUndefined();
+    expect(config.appearance.editorModeDefault).toBeUndefined();
   });
 
-  test('explicit server.port: 3000 still parses (backward compat)', () => {
-    const config = ConfigSchema.parse({ server: { port: 3000 } });
-    expect(config.server.port).toBe(3000);
+  test('stale dropped fields (sync.*, persistence.debounceMs, server.port) pass loose-mode without throwing (D34)', () => {
+    // Per D29 the schema dropped these fields. With z.looseObject (D34) the
+    // loader accepts them; users mid-upgrade aren't broken. The codemod
+    // (`ok config migrate`) is the proactive cleanup path.
+    const result = ConfigSchema.safeParse({
+      sync: { pushIntervalSeconds: 30, autoCommit: true },
+      persistence: { debounceMs: 2000 },
+      server: { port: 3000, host: 'example.dev' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Known fields still resolve normally.
+      expect(result.data.server.host).toBe('example.dev');
+    }
   });
 
   test('mcp.autoStart: false is accepted', () => {
@@ -32,28 +41,43 @@ describe('ConfigSchema', () => {
 
   test('partial override preserves other defaults', () => {
     const config = ConfigSchema.parse({
-      server: { port: 4000 },
+      server: { host: '0.0.0.0' },
     });
-    expect(config.server.port).toBe(4000);
-    expect(config.server.host).toBe('localhost'); // default preserved
+    expect(config.server.host).toBe('0.0.0.0');
+    expect(config.server.openOnAgentEdit).toBe(false); // default preserved
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // other section default preserved
   });
 
-  test('invalid port type produces error', () => {
+  test('invalid host type produces error', () => {
     const result = ConfigSchema.safeParse({
-      server: { port: 'not-a-number' },
+      server: { host: 12345 },
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0].path).toContain('port');
+      expect(result.error.issues[0].path).toContain('host');
     }
   });
 
-  test('port out of range produces error', () => {
-    const result = ConfigSchema.safeParse({
-      server: { port: 99999 },
-    });
+  test('appearance.theme accepts the enum values', () => {
+    for (const theme of ['light', 'dark', 'system'] as const) {
+      const config = ConfigSchema.parse({ appearance: { theme } });
+      expect(config.appearance.theme).toBe(theme);
+    }
+  });
+
+  test('appearance.theme rejects values outside the enum', () => {
+    const result = ConfigSchema.safeParse({ appearance: { theme: 'midnight' } });
     expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toContain('theme');
+    }
+  });
+
+  test('appearance.editorModeDefault accepts wysiwyg | source', () => {
+    for (const mode of ['wysiwyg', 'source'] as const) {
+      const config = ConfigSchema.parse({ appearance: { editorModeDefault: mode } });
+      expect(config.appearance.editorModeDefault).toBe(mode);
+    }
   });
 
   test('custom include patterns override defaults', () => {
@@ -148,7 +172,10 @@ describe('ConfigSchema', () => {
     expect(config.folders[0].frontmatter.tags).toBeUndefined();
   });
 
-  test('folders rule with unknown frontmatter field fails with field-path error', () => {
+  test('folders rule with unknown frontmatter field passes (loose-mode per D34)', () => {
+    // Per D34 every z.object → z.looseObject. Unknown keys pass through and
+    // (when round-tripped via yaml@2 Document layer) are preserved on disk.
+    // Round-trip preservation is verified in `applyFolderRulesUpsert` tests.
     const result = ConfigSchema.safeParse({
       folders: [
         {
@@ -157,16 +184,10 @@ describe('ConfigSchema', () => {
         },
       ],
     });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issue = result.error.issues.find((i) => i.code === 'unrecognized_keys');
-      expect(issue).toBeDefined();
-      expect((issue as { keys: string[] }).keys).toContain('icon');
-      expect(issue?.path.join('.')).toBe('folders.0.frontmatter');
-    }
+    expect(result.success).toBe(true);
   });
 
-  test('folders rule with unknown top-level field fails (strict)', () => {
+  test('folders rule with unknown top-level field passes (loose-mode per D34)', () => {
     const result = ConfigSchema.safeParse({
       folders: [
         {
@@ -176,7 +197,7 @@ describe('ConfigSchema', () => {
         },
       ],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   test('folders rule with empty match string fails', () => {
@@ -195,5 +216,31 @@ describe('ConfigSchema', () => {
       folders: [{ match: 'specs/**' }],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('ConfigSchema (upload surface removed per 2026-04-24 amendment)', () => {
+  test('legacy upload.* keys parse cleanly without throwing', () => {
+    // The `upload.*` user-facing config surface was removed entirely in the
+    // 2026-04-24 amendment (zero user-facing upload config; all values are
+    // module-level constants in `@inkeep/open-knowledge-core`). Legacy
+    // configs still carrying any `upload.*` shape parse cleanly because the
+    // schema is `z.looseObject` (post-#356 config-edit-paths) — unknown
+    // keys are preserved on the parsed result rather than stripped, but
+    // they are not consumed by any code that reads the schema. The
+    // `loader.ts` deprecation WARN surfaces them at load time so users
+    // notice the dead config. The input is typed as `unknown` rather than
+    // the Zod-inferred shape because the point of the test is to exercise
+    // legacy-key acceptance.
+    const legacyInput: unknown = {
+      upload: {
+        attachmentFolderPath: 'attachments',
+        emitFormat: 'markdown-image',
+        maxBytes: 104857600,
+        dedup: { mode: 'off', ui: 'silent' },
+        wikiEmbedExtensions: ['png', 'pdf'],
+      },
+    };
+    expect(() => ConfigSchema.parse(legacyInput)).not.toThrow();
   });
 });
