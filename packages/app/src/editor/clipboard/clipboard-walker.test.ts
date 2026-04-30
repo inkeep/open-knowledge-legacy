@@ -303,11 +303,28 @@ describe('sanitizeEmbeddedUrlValue — text-attr URL substitution', () => {
     expect(sanitizeEmbeddedUrlValue('Some descriptive text')).toBe('Some descriptive text');
   });
 
+  test('passes no-space-after-colon labels through unchanged (label-fidelity)', () => {
+    // Earlier revision matched RFC 3986 scheme grammar broadly, so labels
+    // like "Item:value" got rewritten to "[blocked]" because their shape
+    // looked URL-like. The tightened matcher requires `://` (authority)
+    // OR a known dangerous scheme prefix — these label shapes survive
+    // intact. Aria-labels are read by assistive tech as text, not as
+    // URLs, so leaving novel-scheme tokens unblocked here trades label
+    // fidelity for a small surface that does not navigate.
+    expect(sanitizeEmbeddedUrlValue('Item:value')).toBe('Item:value');
+    expect(sanitizeEmbeddedUrlValue('Status:active')).toBe('Status:active');
+    expect(sanitizeEmbeddedUrlValue('Tag:urgent')).toBe('Tag:urgent');
+    expect(sanitizeEmbeddedUrlValue('Type:warning Severity:high')).toBe(
+      'Type:warning Severity:high',
+    );
+  });
+
   test('returns null when nothing changed (caller can avoid setAttribute call)', () => {
     expect(sanitizeEmbeddedUrlValue('Link', { reportNoChange: true })).toBeNull();
     expect(
       sanitizeEmbeddedUrlValue('Link: https://example.com', { reportNoChange: true }),
     ).toBeNull();
+    expect(sanitizeEmbeddedUrlValue('Item:value', { reportNoChange: true })).toBeNull();
   });
 });
 

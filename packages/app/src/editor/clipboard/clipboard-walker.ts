@@ -30,6 +30,7 @@
  * markers so destinations don't see editor-only state.
  */
 
+import { SAFE_URL_SCHEME_RE } from '@inkeep/open-knowledge-core';
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
@@ -109,25 +110,24 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * URL-scheme attributes filtered through the allowlist below. The pre-walker
- * mdast-to-hast pipeline ran `rehypeSanitizeUrls` downstream of the
- * markdown→HTML chain; the walker bypasses that pipeline and copies the live
- * DOM verbatim. Without this filter, an attacker-controlled
+ * URL-scheme attributes filtered through `SAFE_URL_SCHEME_RE` (imported from
+ * `@inkeep/open-knowledge-core` — single source of truth shared with the
+ * markdown pipeline's `isSafeUrl` and the JSX-prop sanitizer).
+ *
+ * The pre-walker mdast-to-hast pipeline ran `rehypeSanitizeUrls` downstream of
+ * the markdown→HTML chain; the walker bypasses that pipeline and copies the
+ * live DOM verbatim. Without this filter, an attacker-controlled
  * `<a href="javascript:...">` (e.g., from a markdown autolink that survived
  * upstream parsing) would land in the cross-app clipboard payload.
  *
- * Allowlist semantics (parity with `isSafeUrl` in
- * `packages/core/src/markdown/mdast-to-html.ts:56-62` and
- * `URL_SCHEME_ALLOWLIST` in `packages/app/src/editor/utils/sanitize-url.ts:58`):
- * `http(s):`, `mailto:`, `tel:`, `ftp:`, `sms:`, plus relative URL forms
- * (`/`, `#`, `?`, `./`, `../`) pass through. Everything else — including
+ * Allowlist posture (not denylist) eliminates the leading-whitespace bypass
+ * (browsers strip leading ASCII whitespace per WHATWG URL §4 preprocessing;
+ * we trim before classifying) and the novel-scheme fail-open class. Schemes
+ * accepted: `http(s):`, `mailto:`, `tel:`, `ftp:`, `sms:`, plus relative URL
+ * path-prefix forms (`/`, `#`, `?`, `./`, `../`). Everything else — including
  * `javascript:` / `vbscript:` / `file:` / browser-extension schemes / all
- * `data:` URIs / novel / future schemes — is rejected. Allowlist posture
- * eliminates the leading-whitespace bypass (browsers strip leading ASCII
- * whitespace per WHATWG URL §4 preprocessing; we trim before classifying)
- * and the "novel scheme fail-open" class.
+ * `data:` URIs — is rejected.
  */
-const SAFE_URL_SCHEME_RE = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
 export const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
   'href',
   'src',
@@ -145,11 +145,20 @@ export const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
  * ("Link: [blocked]") rather than dropping the attribute, so assistive tech
  * still surfaces the descriptor's role.
  */
-// Match scheme-style tokens with at least one non-whitespace character
-// AFTER the colon — `Link:` (no body) does NOT match, so wrapping label
-// prefixes survive the substitution. RFC 3986 scheme grammar:
-// `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`.
-const URL_LIKE_TOKEN_RE = /[a-zA-Z][a-zA-Z0-9+.-]*:[^\s"'<>]+/g;
+// Match URL-shaped tokens that are unambiguously URLs:
+//   - `<scheme>://...` (authority-bearing — covers https/http/ftp/blob/intent/etc.)
+//   - One of the explicit code-execution schemes that browsers and
+//     destinations may attempt to navigate (no authority component).
+//
+// Intentionally narrower than `isSafeWalkerUrl`'s allowlist (which fail-closes
+// on novel schemes for href/src). Embedded URL scanning runs against
+// human-readable label content (`aria-label` / `title`), which is read by
+// assistive tech as text — it does NOT navigate. The trade is: novel safe
+// schemes in labels (e.g., `Visit magnet:?xt=...`) survive unblocked, in
+// exchange for label fidelity ("Item:value", "Status:active", "Type:warning"
+// no longer get rewritten to `[blocked]`).
+const URL_LIKE_TOKEN_RE =
+  /(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s"'<>]+|(?:javascript|vbscript|data|file|chrome-extension|moz-extension):[^\s"'<>]*)/gi;
 export const URL_BEARING_TEXT_ATTRS: ReadonlySet<string> = new Set([
   'aria-label',
   'aria-description',
