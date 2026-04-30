@@ -228,4 +228,52 @@ describe('batch-gated L1 persistence', () => {
 
     document.destroy();
   });
+
+  test('concurrent discard-stale flush wins over an in-flight within-branch drain', async () => {
+    const firstDocName = 'first-queued';
+    const secondDocName = 'second-stale';
+    const firstPath = join(tmpDir, `${firstDocName}.md`);
+    const secondPath = join(tmpDir, `${secondDocName}.md`);
+    writeFileSync(firstPath, 'first base\n', 'utf-8');
+    writeFileSync(secondPath, 'second base\n', 'utf-8');
+
+    const firstDoc = new Y.Doc();
+    const secondDoc = new Y.Doc();
+    let queuedSecondStore = false;
+    let discardFlush: Promise<void> | undefined;
+
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+      onDiskFlush: (docName) => {
+        if (docName !== firstDocName || queuedSecondStore) return;
+        queuedSecondStore = true;
+
+        setBatchInProgress(true);
+        void storeDocument(persistence, secondDoc, secondDocName);
+        setBatchInProgress(false);
+        discardFlush = persistence.flushDeferredStores('discard-stale');
+      },
+    });
+
+    await loadDocument(persistence, firstDoc, firstDocName);
+    await loadDocument(persistence, secondDoc, secondDocName);
+    firstDoc.transact(() => replaceDocParagraph(firstDoc, 'first queued edit'), BROWSER_ORIGIN);
+    secondDoc.transact(() => replaceDocParagraph(secondDoc, 'second stale edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, firstDoc, firstDocName);
+    setBatchInProgress(false);
+
+    await persistence.flushDeferredStores('within-branch');
+    await discardFlush;
+
+    expect(queuedSecondStore).toBe(true);
+    expect(readFileSync(firstPath, 'utf-8')).toContain('first queued edit');
+    expect(readFileSync(secondPath, 'utf-8')).toBe('second base\n');
+
+    firstDoc.destroy();
+    secondDoc.destroy();
+  });
 });
