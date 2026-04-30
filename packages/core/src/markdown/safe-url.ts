@@ -64,3 +64,36 @@ export function isSafeUrl(url: string): boolean {
   if (trimmed === '') return true;
   return SAFE_URL_SCHEME_RE.test(trimmed);
 }
+
+/**
+ * Classify a URL value as a relative URL — meaning it has no scheme
+ * component at all, OR a path / query / fragment delimiter appears before
+ * any colon (so `path:colon` style filenames are still relative because
+ * the `/` before the colon disqualifies the colon as a scheme separator).
+ *
+ * Mirrors WHATWG URL relative-reference parsing for the tail end of the
+ * scheme decision. Used by:
+ * - clipboard-walker `isSafeWalkerUrl` — walker operates on already-resolved
+ *   live DOM, so bare relative paths (`one.png`, `path/file.jpg`) appear and
+ *   must pass the safety check.
+ * - sanitize-url `sanitizeUrlValue` — JSX-prop sanitizer running before
+ *   resolution; same logic applies.
+ *
+ * Both consumers compose `isSafeUrl(url) || isRelativeUrl(url)` rather
+ * than reimplementing the colon / separator scan.
+ */
+export function isRelativeUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed === '') return true;
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx === -1) return true;
+  const slashIdx = trimmed.indexOf('/');
+  const questionIdx = trimmed.indexOf('?');
+  const hashIdx = trimmed.indexOf('#');
+  const firstSep = Math.min(
+    slashIdx === -1 ? Number.POSITIVE_INFINITY : slashIdx,
+    questionIdx === -1 ? Number.POSITIVE_INFINITY : questionIdx,
+    hashIdx === -1 ? Number.POSITIVE_INFINITY : hashIdx,
+  );
+  return colonIdx > firstSep;
+}

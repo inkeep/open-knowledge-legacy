@@ -200,6 +200,15 @@ interface JsxComponentMetaBase {
    * the same Element the walker would clone, so overrides can decorate the
    * walker output rather than rebuilding from scratch.
    *
+   * **Not yet wired.** v1 ships zero overrides, so the walker has no
+   * dispatch site that reads this property. The first descriptor that
+   * declares an override must also wire the dispatch — call
+   * `descriptor.toClipboardHast?.(node, ctx, liveDom)` from within
+   * `walkLiveDomToInlineStyledFragment` (per the FR-6 two-layer cascade)
+   * BEFORE falling through to the live-DOM clone path, and emit the
+   * `clipboard-hast-override-invoked` telemetry event registered in
+   * `clipboard/instrument.ts`.
+   *
    * @example Tabs override (illustrative — no v1 descriptor uses this).
    * ```ts
    * toClipboardHast(node, ctx, liveDom) {

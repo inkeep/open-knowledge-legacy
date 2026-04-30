@@ -177,4 +177,76 @@ describe('isMarkdown — extended signals (D8 + D18)', () => {
       expect(isMarkdown(prose)).toBe(false);
     });
   });
+
+  describe('threshold boundary — exact N-1 vs N signal counts', () => {
+    // Threshold formula: `min(3, floor(lineCount/5))` with `Math.max(1,
+    // threshold)` floor. For 30 lines: `min(3, 6) = 3`. Boundary anchor
+    // tests verify the exact count where prose tips into "looks like
+    // markdown" — a regression in the formula would silently shift the
+    // false-positive surface.
+    test('30-line prose with exactly 2 signals stays below threshold=3', () => {
+      const lines = Array(28).fill('Plain prose without markdown shape.');
+      const withTwoSignals = [
+        '> quoted reply', // blockquote signal #1
+        ...lines,
+        '`code` reference', // inline-code signal #2
+      ].join('\n');
+      expect(isMarkdown(withTwoSignals)).toBe(false);
+    });
+
+    test('30-line prose with exactly 3 signals hits threshold=3', () => {
+      const lines = Array(27).fill('Plain prose without markdown shape.');
+      const withThreeSignals = [
+        '> quoted reply', // blockquote signal #1
+        ...lines,
+        '`code` reference', // inline-code signal #2
+        'and **bold** word', // paired-emphasis signal #3
+      ].join('\n');
+      expect(isMarkdown(withThreeSignals)).toBe(true);
+    });
+  });
+
+  describe('large-payload sampling — head + tail scan above 256KB', () => {
+    // `sampleForHeuristic` samples first 32KB + last 32KB of payloads
+    // above 256KB so the regex scan stays constant-time regardless of
+    // input size. These tests pin the sampling boundaries:
+    //   - signals in the head ARE detected,
+    //   - signals buried only in the middle are NOT detected (acknowledged
+    //     limitation; documented in the spec),
+    //   - the join newline between head + tail does not synthesize a
+    //     false-positive blockquote at the boundary.
+    test('large payload (>256KB) samples head+tail and detects signals in the head', () => {
+      const head = '# Heading\n\n- bullet item\n\n```\ncode block\n```\n';
+      const filler = 'plain prose line without markdown shape\n'.repeat(7000);
+      // ~290KB total — above the 256KB sampling threshold.
+      expect((head + filler).length).toBeGreaterThan(256 * 1024);
+      expect(isMarkdown(head + filler)).toBe(true);
+    });
+
+    test('large payload with signals only in the middle is not detected (sampling limitation)', () => {
+      const headFiller = 'plain prose line without markdown shape\n'.repeat(4000);
+      const middle = '# Heading\n- bullet\n```\ncode\n```\n';
+      const tailFiller = 'plain prose line without markdown shape\n'.repeat(4000);
+      const payload = headFiller + middle + tailFiller;
+      expect(payload.length).toBeGreaterThan(256 * 1024);
+      // Documented sampling limitation — signals only in the unsampled
+      // middle region (between head 32KB and tail 32KB) don't surface.
+      expect(isMarkdown(payload)).toBe(false);
+    });
+
+    test('boundary newline does not synthesize a blockquote false-positive between head and tail', () => {
+      // Head ends with `>`; tail starts with ` text`. The join `\n` MUST
+      // NOT create `> text` matching `/^> /m` at the boundary. The
+      // head's `>` is mid-content (preceded by `a` chars), so the join
+      // line begins with `a...>` not `> ` and the pattern doesn't form.
+      const head = `${'a'.repeat(32 * 1024 - 1)}>`;
+      const tail = ` text${'a'.repeat(32 * 1024 - 5)}`;
+      const filler = 'b'.repeat(200 * 1024);
+      const payload = head + filler + tail;
+      expect(payload.length).toBeGreaterThan(256 * 1024);
+      // No real markdown signals in either the head or the tail — only
+      // the synthetic boundary token. Should NOT be detected as markdown.
+      expect(isMarkdown(payload)).toBe(false);
+    });
+  });
 });

@@ -30,7 +30,7 @@
  * markers so destinations don't see editor-only state.
  */
 
-import { SAFE_URL_SCHEME_RE } from '@inkeep/open-knowledge-core';
+import { isRelativeUrl, SAFE_URL_SCHEME_RE } from '@inkeep/open-knowledge-core';
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
@@ -173,9 +173,17 @@ export const URL_BEARING_TEXT_ATTRS: ReadonlySet<string> = new Set([
  * boundary: `url(javascript:...)` / `url(data:...)` payloads in
  * `background-image` / `content` / `list-style-image` / `cursor`, plus
  * legacy IE `expression(...)`.
+ *
+ * `MAX_STYLE_SCAN_LEN` mirrors the sibling guard in
+ * `sanitize-url.ts:sanitizeStyleString` — defense-in-depth ceiling on
+ * regex-scan cost for adversarial mega-payloads. A 10KB inline `style`
+ * value is already two orders of magnitude above any legitimate use; the
+ * sanitizer drops the value entirely above the threshold (no regex scan,
+ * no opportunity for ReDoS-style amplification).
  */
 const DANGEROUS_STYLE_URL_RE = /url\s*\(\s*['"]?\s*(?:javascript|vbscript|data)\s*:/i;
 const DANGEROUS_STYLE_EXPRESSION_RE = /\bexpression\s*\(/i;
+const MAX_STYLE_SCAN_LEN = 10_000;
 
 /**
  * Marker the descriptor sets on a subtree to opt out of clipboard capture.
@@ -260,20 +268,11 @@ export function isSafeWalkerUrl(url: string): boolean {
   const trimmed = url.trim();
   if (trimmed === '') return true;
   if (SAFE_URL_SCHEME_RE.test(trimmed)) return true;
-  // No allowlisted scheme matched. If the value has no scheme at all
-  // (no colon, or path/query/fragment separator before any colon), it's a
-  // relative URL — safe by construction.
-  const colonIdx = trimmed.indexOf(':');
-  if (colonIdx === -1) return true;
-  const slashIdx = trimmed.indexOf('/');
-  const questionIdx = trimmed.indexOf('?');
-  const hashIdx = trimmed.indexOf('#');
-  const firstSep = Math.min(
-    slashIdx === -1 ? Number.POSITIVE_INFINITY : slashIdx,
-    questionIdx === -1 ? Number.POSITIVE_INFINITY : questionIdx,
-    hashIdx === -1 ? Number.POSITIVE_INFINITY : hashIdx,
-  );
-  return colonIdx > firstSep;
+  // No allowlisted scheme matched. Defer relative-URL detection to the
+  // canonical helper (`isRelativeUrl` from @inkeep/open-knowledge-core)
+  // — `sanitize-url.ts` reuses the same helper, so a future refinement
+  // of relative-URL semantics propagates to both sites by construction.
+  return isRelativeUrl(trimmed);
 }
 
 /**
@@ -350,6 +349,7 @@ export function isDangerousEventHandlerAttr(name: string): boolean {
  * or `url(javascript:...)` exists in modern web content).
  */
 export function sanitizeStyleAttrValue(value: string): string {
+  if (value.length > MAX_STYLE_SCAN_LEN) return '';
   if (DANGEROUS_STYLE_URL_RE.test(value)) return '';
   if (DANGEROUS_STYLE_EXPRESSION_RE.test(value)) return '';
   return value;

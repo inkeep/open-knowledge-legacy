@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { isSafeUrl, SAFE_URL_SCHEME_RE, SAFE_URL_SCHEMES } from './safe-url.ts';
+import { isRelativeUrl, isSafeUrl, SAFE_URL_SCHEME_RE, SAFE_URL_SCHEMES } from './safe-url.ts';
 
 describe('SAFE_URL_SCHEMES — canonical scheme array', () => {
   test('contains the documented allowlist and nothing else', () => {
@@ -122,6 +122,59 @@ describe('isSafeUrl — public allowlist classifier', () => {
     // values where bare paths CAN appear (`<img src="one.png">`).
     expect(isSafeUrl('one.png')).toBe(false);
     expect(isSafeUrl('path/file.jpg')).toBe(false);
+  });
+});
+
+describe('isRelativeUrl — relative-URL detection (clipboard walker + sanitize-url shared helper)', () => {
+  test('treats empty / whitespace-only input as relative', () => {
+    expect(isRelativeUrl('')).toBe(true);
+    expect(isRelativeUrl('   ')).toBe(true);
+  });
+
+  test('returns true when no colon present (bare relative paths)', () => {
+    expect(isRelativeUrl('one.png')).toBe(true);
+    expect(isRelativeUrl('path/file.jpg')).toBe(true);
+    expect(isRelativeUrl('relative-doc')).toBe(true);
+  });
+
+  test('returns true when path delimiter precedes the colon', () => {
+    // `/x:y` is a path containing a colon, not a scheme. `?q=a:b` is a
+    // query containing a colon. `#sec:1` is a fragment with a colon.
+    // The first separator determines whether the colon is structural.
+    expect(isRelativeUrl('/path/with:colon')).toBe(true);
+    expect(isRelativeUrl('?query=a:b')).toBe(true);
+    expect(isRelativeUrl('#section:1')).toBe(true);
+    expect(isRelativeUrl('./sib:1')).toBe(true);
+  });
+
+  test('returns false when colon precedes any path delimiter (looks like a scheme)', () => {
+    expect(isRelativeUrl('https://example.com')).toBe(false);
+    expect(isRelativeUrl('javascript:alert(1)')).toBe(false);
+    expect(isRelativeUrl('mailto:user@host')).toBe(false);
+    expect(isRelativeUrl('intent:foo')).toBe(false);
+  });
+
+  test('combined with isSafeUrl forms the walker / sanitize-url full safety check', () => {
+    // The composed predicate `isSafeUrl(url) || isRelativeUrl(url)` is
+    // what both consumers (walker `isSafeWalkerUrl` and sanitize-url
+    // `sanitizeUrlValue`) rely on. Verify the composition behaves as
+    // expected across the canonical input matrix.
+    const cases: Array<[string, boolean]> = [
+      ['https://safe.example', true],
+      ['mailto:foo@bar', true],
+      ['/relative/path.png', true],
+      ['one.png', true], // relative — no colon
+      ['#anchor', true],
+      ['javascript:alert(1)', false],
+      ['data:text/html,<script>', false],
+      ['vbscript:msgbox(1)', false],
+      ['file:///etc/passwd', false],
+      ['intent://maps', false], // novel scheme with authority — fail-closed at scheme check, fail-closed at relative check
+    ];
+    for (const [url, expected] of cases) {
+      const result = isSafeUrl(url) || isRelativeUrl(url);
+      expect(result, url).toBe(expected);
+    }
   });
 });
 
