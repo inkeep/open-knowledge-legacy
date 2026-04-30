@@ -135,6 +135,16 @@ const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="tr
   ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
 
+// Pierre's per-extension icon color (specificity 0,1,0 on the inner [data-icon-token]
+// element) wins over the inherited selected-fg color from the parent row, so the
+// markdown icon stays gray when its row is selected. Re-target the inner element on
+// selection so it picks up --trees-selected-fg.
+const FILE_TREE_UNSAFE_CSS = `
+  [data-item-selected='true'] [data-icon-token='markdown'] {
+    color: var(--trees-selected-fg);
+  }
+`;
+
 function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
   return {
     ...themeToTreeStyles({
@@ -158,6 +168,8 @@ function createFileTreeStyle(resolvedTheme: string | undefined): CSSProperties {
     '--trees-border-radius-override': '0.375rem',
     '--trees-selected-fg': 'var(--color-primary)',
     '--truncate-marker-fade-in-duration': '0s', // render ellipsis without delay
+    '--trees-file-icon-color-markdown': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
+    '--trees-fg-muted': 'light-dark(var(--color-gray-400), var(--color-gray-500))',
   } as CSSProperties;
 }
 
@@ -509,6 +521,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       set: 'complete',
       spriteSheet: FILE_TREE_DECORATION_SPRITE_SHEET,
     },
+    unsafeCSS: FILE_TREE_UNSAFE_CSS,
     composition: {
       contextMenu: {
         enabled: true,
