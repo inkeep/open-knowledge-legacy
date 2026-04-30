@@ -55,24 +55,41 @@ const JSX_LOWERCASE_ATTR_RE = /<[a-z]+\s+\w+="[^"]*"/;
 // AND closing tag on the same line (rare in non-markdown prose).
 const HTML_INLINE_RE = /<[a-z]+>[^<\n]*<\/[a-z]+>/;
 
+// Backpressure ceiling for the heuristic. Mirrors `HTML_MAX_BYTES = 5MB`
+// in `html-to-mdast.ts` — text/plain payloads above this size are sampled
+// rather than scanned end-to-end. 13 linear regex tests + `text.split('\n')`
+// on a multi-MB log file would breach the 250ms paste budget; sampling
+// head + tail keeps the heuristic O(constant) without losing detection
+// for the common case (markdown content typically front-loaded with
+// headers / code blocks).
+const HEURISTIC_SAMPLE_THRESHOLD = 256 * 1024;
+const HEURISTIC_SAMPLE_HALF = 32 * 1024;
+
+function sampleForHeuristic(text: string): string {
+  if (text.length <= HEURISTIC_SAMPLE_THRESHOLD) return text;
+  return `${text.slice(0, HEURISTIC_SAMPLE_HALF)}\n${text.slice(-HEURISTIC_SAMPLE_HALF)}`;
+}
+
 export function isMarkdown(text: string): boolean {
   if (!text) return false;
+  const sample = sampleForHeuristic(text);
   let signals = 0;
-  if (FENCE_RE.test(text)) signals++;
-  if (HEADING_RE.test(text)) signals++;
-  if (BULLET_RE.test(text)) signals++;
-  if (NUMBERED_RE.test(text)) signals++;
-  if (INLINE_LINK_RE.test(text)) signals++;
-  if (TABLE_ROW_RE.test(text) && TABLE_SEPARATOR_RE.test(text)) signals++;
-  if (MATH_BLOCK_RE.test(text)) signals++;
-  if (BLOCKQUOTE_RE.test(text)) signals++;
-  if (INLINE_CODE_RE.test(text)) signals++;
-  if (STRONG_STAR_RE.test(text) || STRONG_UNDER_RE.test(text) || STRIKE_RE.test(text)) signals++;
-  if (JSX_CAPITAL_OPEN_RE.test(text)) signals++;
-  if (JSX_LOWERCASE_ATTR_RE.test(text)) signals++;
-  if (HTML_INLINE_RE.test(text)) signals++;
+  if (FENCE_RE.test(sample)) signals++;
+  if (HEADING_RE.test(sample)) signals++;
+  if (BULLET_RE.test(sample)) signals++;
+  if (NUMBERED_RE.test(sample)) signals++;
+  if (INLINE_LINK_RE.test(sample)) signals++;
+  if (TABLE_ROW_RE.test(sample) && TABLE_SEPARATOR_RE.test(sample)) signals++;
+  if (MATH_BLOCK_RE.test(sample)) signals++;
+  if (BLOCKQUOTE_RE.test(sample)) signals++;
+  if (INLINE_CODE_RE.test(sample)) signals++;
+  if (STRONG_STAR_RE.test(sample) || STRONG_UNDER_RE.test(sample) || STRIKE_RE.test(sample))
+    signals++;
+  if (JSX_CAPITAL_OPEN_RE.test(sample)) signals++;
+  if (JSX_LOWERCASE_ATTR_RE.test(sample)) signals++;
+  if (HTML_INLINE_RE.test(sample)) signals++;
 
-  const lineCount = text.split('\n').length;
+  const lineCount = sample.split('\n').length;
   const threshold = Math.min(3, Math.floor(lineCount / 5));
   return signals >= Math.max(1, threshold);
 }

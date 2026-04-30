@@ -200,6 +200,7 @@ export {
   wildcardMeta,
 } from './registry/index.ts';
 export type {
+  ClipboardHastContext,
   JsxComponentMeta,
   PropDef,
   PropDefBase,

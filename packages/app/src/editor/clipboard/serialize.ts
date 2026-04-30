@@ -34,6 +34,7 @@ import type { Fragment, Schema, Slice } from '@tiptap/pm/model';
 import { DOMSerializer, Slice as SliceCtor } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { walkLiveDomToInlineStyledFragment } from './clipboard-walker.ts';
+import { logSerializeFail } from './instrument.ts';
 
 interface WysiwygSerializerDeps {
   mdManager: MarkdownManager;
@@ -61,7 +62,11 @@ export function createClipboardTextSerializer(deps: WysiwygSerializerDeps) {
     try {
       return sliceToMarkdown(slice, view.state.schema, deps.mdManager);
     } catch (err) {
-      console.warn('[clipboard] text serialize fell through — PM default textBetween', err);
+      logSerializeFail({
+        view: 'wysiwyg',
+        kind: 'text',
+        reason: (err as Error)?.message ?? 'unknown',
+      });
       return slice.content.textBetween(0, slice.content.size, '\n\n');
     }
   };
@@ -103,13 +108,14 @@ class MdastClipboardSerializer extends DOMSerializer {
     _options?: { document?: Document },
     target?: HTMLElement | DocumentFragment,
   ): HTMLElement | DocumentFragment {
-    try {
-      const view = this.view;
-      // Walker-first when a view is attached AND there's an active selection
-      // (the walker reads `view.state.selection`). If walker yields a
-      // non-empty fragment, use it; otherwise fall through to the markdown
-      // pipeline so empty selections (e.g. drag-out) still produce content.
-      if (view && view.state.selection.from !== view.state.selection.to) {
+    const view = this.view;
+    // Walker tier (primary). When a view is attached AND there's an active
+    // selection, capture whatever React rendered + whatever CSS resolved.
+    // A walker throw or empty result falls through to the markdown tier
+    // below — distinct try block so operators can distinguish walker bugs
+    // from markdown-pipeline bugs.
+    if (view && view.state.selection.from !== view.state.selection.to) {
+      try {
         const slice = view.state.selection.content();
         const walked = walkLiveDomToInlineStyledFragment(slice, view);
         if (walked.childNodes.length > 0) {
@@ -119,8 +125,18 @@ class MdastClipboardSerializer extends DOMSerializer {
           }
           return walked;
         }
+      } catch (err) {
+        logSerializeFail({
+          view: 'wysiwyg',
+          kind: 'html',
+          reason: `walker:${(err as Error)?.message ?? 'unknown'}`,
+        });
       }
-      // Fall-through: markdown→HTML pipeline.
+    }
+    // Markdown tier (fallback). Used when no view is attached, the selection
+    // is empty (e.g. drag-out), the walker yields an empty fragment, or the
+    // walker tier threw above.
+    try {
       const schema = fragment.firstChild?.type.schema;
       if (!schema) return target ?? document.createDocumentFragment();
       const html = renderFragmentToHtml(fragment, schema, this.mdManager);
@@ -131,7 +147,11 @@ class MdastClipboardSerializer extends DOMSerializer {
       }
       return frag;
     } catch (err) {
-      console.warn('[clipboard] HTML serialize fell through — PM default DOMSerializer', err);
+      logSerializeFail({
+        view: 'wysiwyg',
+        kind: 'html',
+        reason: `markdown:${(err as Error)?.message ?? 'unknown'}`,
+      });
       return target ?? document.createDocumentFragment();
     }
   }

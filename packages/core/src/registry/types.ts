@@ -232,9 +232,10 @@ interface JsxComponentMetaBase {
 
 /**
  * Context threaded into a descriptor's `toClipboardHast` override. Mirrors
- * the shape of `SerializeContext` but for the hast emission tier.
+ * the shape of `SerializeContext` but for the hast emission tier. Exported
+ * so descriptor authors can type their override parameter explicitly.
  */
-interface ClipboardHastContext {
+export interface ClipboardHastContext {
   registry: Pick<ComponentRegistry, 'getOrWildcard'>;
   /** Descriptor name dispatch context — same as `node.attrs.componentName`. */
   descriptorName: string;

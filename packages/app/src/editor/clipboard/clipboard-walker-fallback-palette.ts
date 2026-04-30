@@ -24,7 +24,11 @@ const TYPE_TO_TONE: Record<string, { color: string; bg: string }> = {
 
 function calloutPalette(props: Record<string, unknown>): Element {
   const type = typeof props.type === 'string' ? props.type : 'note';
-  const tone = TYPE_TO_TONE[type] ?? TYPE_TO_TONE.note;
+  // Object.hasOwn guards against prototype-pollution names (`__proto__`,
+  // `constructor`, `toString`) which would otherwise return Object.prototype
+  // and emit `border-left: 3px solid undefined`. Mirrors the pattern at
+  // Callout.tsx + Accordion.tsx (co-editor DoS vector).
+  const tone = Object.hasOwn(TYPE_TO_TONE, type) ? TYPE_TO_TONE[type] : TYPE_TO_TONE.note;
   const aside = document.createElement('aside');
   aside.setAttribute('class', `callout callout-${type}`);
   aside.setAttribute('data-callout-type', type);
@@ -60,12 +64,18 @@ function imagePalette(props: Record<string, unknown>): Element {
 function videoPalette(props: Record<string, unknown>): Element {
   const video = document.createElement('video');
   if (typeof props.src === 'string') video.setAttribute('src', props.src);
+  // Mirror the descriptor's `controls.defaultValue: true` so cross-app
+  // destinations preserving the element verbatim render a usable player.
+  // The live walker captures `controls` automatically via cloneNode; this
+  // path fires only for Activity-hidden subtrees.
+  if (props.controls !== false) video.setAttribute('controls', '');
   return video;
 }
 
 function audioPalette(props: Record<string, unknown>): Element {
   const audio = document.createElement('audio');
   if (typeof props.src === 'string') audio.setAttribute('src', props.src);
+  if (props.controls !== false) audio.setAttribute('controls', '');
   return audio;
 }
 

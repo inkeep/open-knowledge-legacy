@@ -111,10 +111,15 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
 /**
  * Marker the descriptor sets on a subtree to opt out of clipboard capture.
  * Set on a React render root or descendant element as `data-clipboard-omit="true"`
- * to make the walker skip the subtree at copy time. Exported so descriptors
- * reference the constant rather than hardcoding the literal string.
+ * to make the walker skip the subtree at copy time.
+ *
+ * Module-internal: knip drops unused exports, so the constant is private until
+ * the first descriptor wires `data-clipboard-omit` and imports it. At that
+ * point promote to `export` and update consumers to reference the constant
+ * rather than hardcoding the literal string — a typo
+ * (`data-clipboard-ommit`) at a descriptor would silently fail to opt out.
  */
-const OPT_OUT_ATTR = 'data-clipboard-omit';
+const OPT_OUT_ATTR = 'data-clipboard-omit' as const;
 
 /**
  * Style-getter abstraction so the walker is testable without a real browser.

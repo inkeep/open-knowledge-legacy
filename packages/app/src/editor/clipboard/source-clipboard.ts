@@ -393,7 +393,12 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
 
   // 1. Rollback + restore. If we know bytesWritten (ChunkedInsertError) we
   //    delete the partial range; otherwise we restore the selection at the
-  //    anchor (best effort).
+  //    anchor (best effort). Track the outcome so the user-visible toast
+  //    reflects whether restoration actually succeeded — claiming "selection
+  //    restored" when the dispatch threw (view destroyed by Activity-hidden
+  //    unmount, Y.Doc GC'd) silently masks user-visible data loss.
+  type RestoreOutcome = 'restored' | 'restore-failed' | 'no-restore-needed';
+  let restoreOutcome: RestoreOutcome = 'no-restore-needed';
   if (err instanceof ChunkedInsertError && err.bytesWritten > 0) {
     const absStart =
       anchorRelPos && ydoc
@@ -406,21 +411,33 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
       view.dispatch({
         changes: { from: absStart, to: deleteEnd, insert: restoreText },
       });
+      restoreOutcome = restoreText.length > 0 ? 'restored' : 'no-restore-needed';
     } catch (restoreErr) {
       console.warn('[clipboard] partial-chunk rollback dispatch failed', restoreErr);
+      restoreOutcome = restoreText.length > 0 ? 'restore-failed' : 'no-restore-needed';
     }
   } else if (restoreText.length > 0) {
     // Non-typed error or zero bytes written — restore the user's selection
     // at the anchor. No partial range to delete.
     try {
       view.dispatch({ changes: { from: anchorIndex, to: anchorIndex, insert: restoreText } });
+      restoreOutcome = 'restored';
     } catch (restoreErr) {
       // Restoration is best-effort — the view may be destroyed by the time
       // the promise settles. Log, then continue emitting the telemetry /
       // toast paths.
       console.warn('[clipboard] selection-restore dispatch failed', restoreErr);
+      restoreOutcome = 'restore-failed';
     }
   }
+
+  // Toast suffix mirrors the actual outcome of the restoration attempt.
+  const restoreSuffix =
+    restoreOutcome === 'restored'
+      ? ' Your selection has been restored.'
+      : restoreOutcome === 'restore-failed'
+        ? ' Your selection could not be restored.'
+        : '';
 
   // 2. Emit structured telemetry.
   if (err instanceof ChunkedInsertError) {
@@ -434,7 +451,7 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
     });
     // 3. User-visible signal with partial-progress info.
     toast.error(
-      `Paste was incomplete — ${err.chunksCompleted} of ${err.totalChunks} chunks landed. Your selection has been restored.`,
+      `Paste was incomplete — ${err.chunksCompleted} of ${err.totalChunks} chunks landed.${restoreSuffix}`,
     );
     return;
   }
@@ -447,5 +464,5 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
     errorClass: classifyError(err),
     htmlBytes: html.length,
   });
-  toast.error('Paste failed. Your selection has been restored.');
+  toast.error(`Paste failed.${restoreSuffix}`);
 }
