@@ -172,6 +172,13 @@ const editorSchema = getSchema(sharedExtensions);
 const RECYCLE_DEBOUNCE_MS = 4_000;
 const CLEAR_DATA_TIMEOUT_MS = 10_000;
 
+type ClientPersistenceFactory = (args: {
+  branch: string;
+  serverInstanceId: string;
+  docName: string;
+  doc: Y.Doc;
+}) => ClientPersistenceProvider;
+
 class ClientPersistenceClearTimeoutError extends Error {
   constructor(
     readonly docName: string,
@@ -363,6 +370,7 @@ export class ProviderPool {
    * per SPEC §6).
    */
   private readonly bufferedUpdates = new Map<string, Uint8Array>();
+  private readonly persistenceFactory: ClientPersistenceFactory;
 
   /**
    * Storage handle the pool reads/writes `lastObservedBranch` through.
@@ -381,6 +389,7 @@ export class ProviderPool {
       recycleDebounceMs?: number;
       clearDataTimeoutMs?: number;
       storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null;
+      persistenceFactory?: ClientPersistenceFactory;
     },
   ) {
     this.maxSize = maxSize;
@@ -390,6 +399,7 @@ export class ProviderPool {
     this.wsUrl = wsUrl;
     this.recycleDebounceMs = options?.recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
     this.clearDataTimeoutMs = options?.clearDataTimeoutMs ?? CLEAR_DATA_TIMEOUT_MS;
+    this.persistenceFactory = options?.persistenceFactory ?? createClientPersistence;
     if (options?.storage !== undefined) {
       this.storage = options.storage;
     } else {
@@ -471,7 +481,7 @@ export class ProviderPool {
     docName: string,
     doc: Y.Doc,
   ): ClientPersistenceProvider {
-    return createClientPersistence({
+    return this.persistenceFactory({
       branch: this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL,
       serverInstanceId,
       docName,
@@ -483,11 +493,21 @@ export class ProviderPool {
     for (const entry of this._entries.values()) {
       if (entry.kind !== 'active') continue;
       if (entry.persistence !== null) continue;
-      entry.persistence = this.buildPersistence(
-        serverInstanceId,
-        entry.docName,
-        entry.provider.document,
-      );
+      try {
+        entry.persistence = this.buildPersistence(
+          serverInstanceId,
+          entry.docName,
+          entry.provider.document,
+        );
+      } catch (err: unknown) {
+        const errorName = err instanceof Error ? err.name : 'non-error-throw';
+        this.emitStructuredClientRecoveryEvent({
+          event: 'ok-client-persistence-attach-failed',
+          ...this.recoveryTelemetryBase(entry.docName),
+          errorName,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
@@ -1169,6 +1189,7 @@ export class ProviderPool {
             ...this.recoveryTelemetryBase(docName, staleClaimAtReplayInstall),
             replayByteLength: current.byteLength,
             errorName,
+            errorMessage: err instanceof Error ? err.message : String(err),
           });
         }
       };
@@ -1300,10 +1321,11 @@ export class ProviderPool {
         const docName = row.docName;
         if (result.status === 'rejected') {
           failed.push(docName);
-          if (result.reason instanceof ClientPersistenceClearTimeoutError) {
+          const isClearTimeout = result.reason instanceof ClientPersistenceClearTimeoutError;
+          if (isClearTimeout) {
             sawClearTimeout = true;
           }
-          if (result.reason instanceof ClientPersistenceClearTimeoutError) {
+          if (isClearTimeout) {
             this.emitStructuredClientRecoveryEvent({
               event: 'ok-client-cache-clear-failed',
               ...this.recoveryTelemetryBase(docName),

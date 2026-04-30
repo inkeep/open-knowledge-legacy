@@ -308,6 +308,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
   const frontmatterCache = new Map<string, string>();
+  const tripwireResetFailedDocs = new Set<string>();
 
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
@@ -670,6 +671,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
         const markdown = prependFrontmatter(frontmatter, body);
 
+        if (tripwireResetFailedDocs.has(documentName)) {
+          return;
+        }
+
         // Skip the write when the serialized output matches the load-time
         // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
         // including the first-pass observer sync that populates Y.Text from the
@@ -782,8 +787,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
                 ? readFileSync(requestedDiskPath, 'utf-8')
                 : currentBase;
               applyDiskContentToDoc(document, diskContent);
+              tripwireResetFailedDocs.delete(documentName);
             } catch (err) {
-              log.warn(
+              tripwireResetFailedDocs.add(documentName);
+              log.error(
                 { err, documentName },
                 `[persistence] Tripwire reset failed for ${documentName}`,
               );
@@ -868,6 +875,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
         // Update reconciled base after successful store
         setReconciledBase(documentName, markdown);
+        tripwireResetFailedDocs.delete(documentName);
 
         if (backlinkIndex) {
           backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
@@ -916,11 +924,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
       for (const [documentName, entry] of entries) {
         if (entry.branch !== getActiveBranch()) continue;
-        await storeDocumentNow({
-          document: entry.document,
-          documentName,
-          lastTransactionOrigin: entry.lastTransactionOrigin,
-        });
+        try {
+          await storeDocumentNow({
+            document: entry.document,
+            documentName,
+            lastTransactionOrigin: entry.lastTransactionOrigin,
+          });
+        } catch (err) {
+          log.error(
+            { err, documentName },
+            `[persistence] Deferred store failed for ${documentName}`,
+          );
+        }
       }
     })().finally(() => {
       deferredStoreDrainInFlight = null;

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
+import type { ClientPersistenceProvider } from './client-persistence';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
@@ -1654,6 +1655,15 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 // IDB databases (named `ok-ydoc:${branch}:${serverInstanceId}:${docName}`).
 // ---------------------------------------------------------------------------
 describe('ProviderPool client-persistence attachment (US-003)', () => {
+  function stubPersistence(): ClientPersistenceProvider {
+    return {
+      whenSynced: Promise.resolve(undefined as never),
+      synced: true,
+      destroy: mock(async () => {}),
+      clearData: mock(async () => {}),
+    } as ClientPersistenceProvider;
+  }
+
   test('open() attaches a ClientPersistenceProvider to the pool entry', () => {
     pool = new ProviderPool(3, DUMMY_WS);
     pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
@@ -1673,6 +1683,40 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     const entry = pool.open(docName);
     if (!entry) throw new Error('expected entry');
     expect(entry.persistence).toBeNull();
+  });
+
+  test('deferred persistence attach continues after one entry throws', () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const badDoc = uniqueDocName('pp-deferred-throw');
+      const goodDoc = uniqueDocName('pp-deferred-ok');
+      const goodPersistence = stubPersistence();
+      const persistenceFactory = mock(({ docName }: { docName: string }) => {
+        if (docName === badDoc) {
+          throw new Error('idb unavailable');
+        }
+        return goodPersistence;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory });
+      const badEntry = pool.open(badDoc);
+      const goodEntry = pool.open(goodDoc);
+      if (!badEntry || !goodEntry) throw new Error('expected entries');
+      expect(badEntry.persistence).toBeNull();
+      expect(goodEntry.persistence).toBeNull();
+
+      expect(() => pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID)).not.toThrow();
+
+      expect(badEntry.persistence).toBeNull();
+      expect(goodEntry.persistence).toBe(goodPersistence);
+      expect(persistenceFactory).toHaveBeenCalledTimes(2);
+      const events = warnSpy.mock.calls.map((call) => String(call[0] ?? ''));
+      expect(
+        events.some((event) => event.includes('"event":"ok-client-persistence-attach-failed"')),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('re-opening the same docName reuses the existing persistence instance', () => {
@@ -2385,6 +2429,7 @@ describe('ProviderPool structured mismatch telemetry', () => {
         serverInstanceId?: string;
         replayByteLength: number;
         errorName: string;
+        errorMessage: string;
       };
       expect(payload.event).toBe('ok-buffer-replay-failed');
       expect(payload.docName).toBe(docName);
@@ -2392,6 +2437,7 @@ describe('ProviderPool structured mismatch telemetry', () => {
       expect(payload.serverInstanceId).toBe('epoch-replay-telemetry');
       expect(payload.replayByteLength).toBe(3);
       expect(typeof payload.errorName).toBe('string');
+      expect(typeof payload.errorMessage).toBe('string');
       expect(new Set(Object.keys(payload))).toEqual(
         new Set([
           'event',
@@ -2400,6 +2446,7 @@ describe('ProviderPool structured mismatch telemetry', () => {
           'serverInstanceId',
           'replayByteLength',
           'errorName',
+          'errorMessage',
         ]),
       );
     } finally {

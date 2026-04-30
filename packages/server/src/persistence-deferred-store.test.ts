@@ -124,6 +124,36 @@ describe('batch-gated L1 persistence', () => {
     document.destroy();
   });
 
+  test('within-branch flush continues after one deferred store fails', async () => {
+    const badDocName = 'deferred-bad';
+    const goodDocName = 'deferred-good';
+    mkdirSync(join(tmpDir, `${badDocName}.md`));
+    const goodPath = join(tmpDir, `${goodDocName}.md`);
+    writeFileSync(goodPath, 'good base\n', 'utf-8');
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+    });
+    const badDoc = new Y.Doc();
+    const goodDoc = new Y.Doc();
+
+    badDoc.transact(() => replaceDocParagraph(badDoc, 'bad queued edit'), BROWSER_ORIGIN);
+    await loadDocument(persistence, goodDoc, goodDocName);
+    goodDoc.transact(() => replaceDocParagraph(goodDoc, 'good queued edit'), BROWSER_ORIGIN);
+
+    setBatchInProgress(true);
+    await storeDocument(persistence, badDoc, badDocName);
+    await storeDocument(persistence, goodDoc, goodDocName);
+    setBatchInProgress(false);
+
+    await expect(persistence.flushDeferredStores('within-branch')).resolves.toBeUndefined();
+    expect(readFileSync(goodPath, 'utf-8')).toContain('good queued edit');
+
+    badDoc.destroy();
+    goodDoc.destroy();
+  });
+
   test('stale deferred stores are discarded across branch changes', async () => {
     const docName = 'branch-protected';
     const docPath = join(tmpDir, `${docName}.md`);

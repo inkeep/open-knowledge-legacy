@@ -150,9 +150,11 @@ describe('persistence onStoreDocument tripwire', () => {
       expect(readFileSync(docPath, 'utf-8')).toBe(baselineBytes);
 
       // Reset must happen before the test exits — the same-base store is the
-      // signal that the resync to disk took effect.
+      // signal that the resync to disk took effect in both editor surfaces.
       await waitForCondition(() => serverDoc.getXmlFragment('default').length === baseChildren);
       expect(serverDoc.getXmlFragment('default').length).toBe(baseChildren);
+      await waitForCondition(() => serverDoc.getText('source').toString() === baselineBytes);
+      expect(serverDoc.getText('source').toString()).toBe(baselineBytes);
 
       // Inspect the structured event payload — bounded-cardinality keys only.
       const blockedCalls = warnSpy.mock.calls
