@@ -35,12 +35,12 @@ const scheduleExitAfterSummary = () => {
 };
 
 const inspectLine = (line) => {
-  if (/^\s*0 fail\b/.test(line)) {
+  if (/\b0\s+fail\b/.test(line)) {
     sawZeroFailures = true;
-  } else if (/^\s*[1-9]\d* fail\b/.test(line)) {
+  } else if (/\b[1-9]\d*\s+fail\b/.test(line)) {
     sawNonzeroFailures = true;
   }
-  if (/^Ran \d+ tests across \d+ files\./.test(line)) {
+  if (/Ran \d+ tests across \d+ files\./.test(line)) {
     sawRanLine = true;
   }
   scheduleExitAfterSummary();
