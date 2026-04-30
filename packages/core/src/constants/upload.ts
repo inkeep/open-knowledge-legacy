@@ -39,6 +39,38 @@ export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Canonical video-extension set. Strict subset of `WIKI_EMBED_EXTENSIONS`;
+ * disjoint from `IMAGE_EXTENSIONS` and `AUDIO_EXTENSIONS`. Members are the
+ * browser-renderable video containers — `<video>` element survives them
+ * across modern engines, and the sirv middleware serves them with
+ * `Content-Disposition: inline` (see `INLINE_RENDERABLE_EXTENSIONS`).
+ *
+ * One source of truth for video-shape dispatch: client emit
+ * (`pickInsertShape` returns `'jsx-video'`) and server mdast→PM
+ * (`handlers.wikiLinkEmbed` emits `jsxComponent('WikiEmbedVideo')`).
+ */
+export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv']);
+
+/**
+ * Canonical audio-extension set. Strict subset of `WIKI_EMBED_EXTENSIONS`;
+ * disjoint from `IMAGE_EXTENSIONS` and `VIDEO_EXTENSIONS`. Members render
+ * inline via `<audio>` and serve with `Content-Disposition: inline`.
+ *
+ * Mirrors `VIDEO_EXTENSIONS`'s role: one dispatch source for
+ * `pickInsertShape` (`'jsx-audio'`) and `handlers.wikiLinkEmbed`
+ * (`jsxComponent('WikiEmbedAudio')`).
+ */
+export const AUDIO_EXTENSIONS: ReadonlySet<string> = new Set([
+  'mp3',
+  'wav',
+  'ogg',
+  'm4a',
+  'flac',
+  'aac',
+  'opus',
+]);
+
+/**
  * SPEC 2026-04-23 amendment D-A5 — hard blocklist at the main-process
  * `openAsset` handler. Executable extensions are refused before
  * `shell.openPath` dispatch regardless of containment / existence checks.
