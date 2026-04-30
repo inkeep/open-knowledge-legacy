@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type { PropDef } from '@inkeep/open-knowledge-core';
+import { builtInComponents, type PropDef } from '@inkeep/open-knowledge-core';
 import { renderToString } from 'react-dom/server';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 
@@ -390,6 +390,103 @@ describe('PropPanel — autoFocus marker on string Input', () => {
       renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
     );
     expect(html).not.toContain('data-prop-autofocus');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real-registry narrowing: WikiEmbed* compats expose only [alias]; canonical
+// `<img>` exposes the full htmlImgProps surface. Pulls the metadata from the
+// shipped `builtInComponents` (not a stub) so the test catches drift between
+// the descriptor's authored prop list and what PropPanel renders.
+// ---------------------------------------------------------------------------
+
+function findBuiltIn(name: string): JsxComponentDescriptor {
+  const meta = builtInComponents.find((m) => m.name === name);
+  if (!meta) throw new Error(`built-in not found: ${name}`);
+  return {
+    ...meta,
+    Component: NoopComponent,
+    reactNodePropNames: new Set(),
+  } as JsxComponentDescriptor;
+}
+
+describe('PropPanel — descriptor.props narrowing (real registry)', () => {
+  test('WikiEmbedImage renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedImage');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    // No other prop control IDs from htmlImgProps appear.
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-alt"');
+    expect(html).not.toContain('id="prop-width"');
+    expect(html).not.toContain('id="prop-height"');
+    expect(html).not.toContain('id="prop-srcset"');
+    expect(html).not.toContain('id="prop-sizes"');
+    expect(html).not.toContain('id="prop-loading"');
+    expect(html).not.toContain('id="prop-title"');
+    // Single string prop is non-advanced → no Advanced collapsible.
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    // Exactly one `id="prop-..."` control rendered.
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('WikiEmbedVideo renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedVideo');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-controls"');
+    expect(html).not.toContain('id="prop-poster"');
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('WikiEmbedAudio renders only the alias control', () => {
+    const d = findBuiltIn('WikiEmbedAudio');
+    const html = withFakeStorage(() =>
+      renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />),
+    );
+    expect(html).toContain('id="prop-alias"');
+    expect(html).not.toContain('id="prop-src"');
+    expect(html).not.toContain('id="prop-controls"');
+    expect(html).not.toContain('data-prop-panel-advanced-trigger');
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(1);
+  });
+
+  test('canonical img descriptor renders the full htmlImgProps surface', () => {
+    const d = findBuiltIn('img');
+    // Pre-open the Advanced collapsible so SSR includes the advanced controls
+    // in markup. Radix Collapsible omits closed-content children from SSR.
+    const html = withFakeStorage(() => {
+      persistAdvancedOpenState('img', true);
+      return renderToString(<PropPanel descriptor={d} values={{}} onChange={() => {}} />);
+    });
+    // Common-tier props are always rendered.
+    expect(html).toContain('id="prop-src"');
+    expect(html).toContain('id="prop-alt"');
+    expect(html).toContain('id="prop-width"');
+    expect(html).toContain('id="prop-height"');
+    // Advanced collapsible exists and is open.
+    expect(html).toContain('data-prop-panel-advanced-trigger');
+    // Advanced controls render inside the open collapsible.
+    expect(html).toContain('id="prop-srcset"');
+    expect(html).toContain('id="prop-sizes"');
+    expect(html).toContain('id="prop-loading"');
+    expect(html).toContain('id="prop-title"');
+    expect(html).toContain('id="prop-decoding"');
+    expect(html).toContain('id="prop-fetchpriority"');
+    expect(html).toContain('id="prop-crossorigin"');
+    expect(html).toContain('id="prop-referrerpolicy"');
+    // Confirms WikiEmbed narrowing didn't accidentally apply to the canonical.
+    const propIds = html.match(/id="prop-[^"]+"/g) ?? [];
+    expect(propIds.length).toBe(12);
   });
 });
 
