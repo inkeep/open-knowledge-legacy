@@ -1,0 +1,58 @@
+/**
+ * Per-handler narrow-integration smoke test for `handleTestRescanBacklinks`
+ * (FR10 / D16, US-011). Dev-only route gated on `enableTestRoutes`.
+ *
+ * Asserts the canonical RFC 9457 wire shape for
+ * `POST /api/test-rescan-backlinks`:
+ *   - happy path: status 200, `Content-Type: application/json`, flat body
+ *     `{}` (no `ok: true` discriminator).
+ *   - method-not-allowed on GET → 405 `urn:ok:error:method-not-allowed`
+ *     with `Allow: POST`.
+ *
+ * The 503 `urn:ok:error:backlink-index-not-configured` path is
+ * unreachable in `createTestServer` (the harness wires up a real
+ * `BacklinkIndex`); covered by `packages/server/src/api-backlinks.test.ts`.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import {
+  ProblemDetailsSchema,
+  TestRescanBacklinksSuccessSchema,
+} from '@inkeep/open-knowledge-core';
+import { createTestServer, type TestServer } from '../test-harness';
+
+let server: TestServer;
+
+beforeAll(async () => {
+  server = await createTestServer();
+});
+
+afterAll(async () => {
+  await server.cleanup();
+});
+
+describe('test-rescan-backlinks envelope (RFC 9457)', () => {
+  test('happy path emits flat success body with application/json', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/test-rescan-backlinks`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+
+    const body = await res.json();
+    expect(TestRescanBacklinksSuccessSchema.safeParse(body).success).toBe(true);
+    expect((body as Record<string, unknown>).ok).toBeUndefined();
+  });
+
+  test('method-not-allowed on GET emits problem+json with Allow: POST', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/test-rescan-backlinks`);
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+
+    const parsed = ProblemDetailsSchema.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:method-not-allowed');
+    }
+  });
+});

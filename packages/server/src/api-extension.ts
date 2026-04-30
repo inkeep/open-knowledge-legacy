@@ -3164,166 +3164,217 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns per-file + per-burst stats for one agent's session(s).
    * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
    */
-  async function handleAgentActivity(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
-      // POST handler) — consistent identity shape across all surfaces per
-      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
-      const agentId = validateAgentId(url.searchParams.get('agentId'));
-      if (agentId === null) {
-        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
-        return;
+  const handleAgentActivity = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
+        // POST handler) — consistent identity shape across all surfaces per
+        // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
+        const agentId = validateAgentId(url.searchParams.get('agentId'));
+        if (agentId === null) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'agentId required (alphanumeric/_/- only).',
+            { handler: 'agent-activity' },
+          );
+          return;
+        }
+        const result = listAgentActivity(sessionManager, agentId);
+        json(res, 200, result);
+      } catch (e) {
+        log.error({ err: e }, '[agent-activity] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-activity',
+          cause: e,
+        });
       }
-      const result = listAgentActivity(sessionManager, agentId);
-      json(res, 200, { ok: true, ...result });
-    } catch (e) {
-      log.error({ err: e }, '[agent-activity] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-activity', method: 'GET', skipBodyParse: true },
+  );
 
   /**
    * GET /api/agent-burst-diff?agentId=<connId>&docName=<path>&stackIndex=<n>
    * Returns unified-diff text for one StackItem in a given session.
    * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
    */
-  async function handleAgentBurstDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const agentId = validateAgentId(url.searchParams.get('agentId'));
-      const rawDocName = url.searchParams.get('docName');
-      const stackIndexStr = url.searchParams.get('stackIndex');
-
-      if (agentId === null) {
-        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
-        return;
-      }
-      if (!rawDocName || rawDocName.trim() === '') {
-        json(res, 400, { ok: false, error: 'docName required' });
-        return;
-      }
-      // Same docName validator every mutating POST handler uses — parity with
-      // the rest of the API surface (path traversal, reserved names).
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
-        json(res, 400, { ok: false, error: 'stackIndex must be a number' });
-        return;
-      }
-      const stackIndex = Number(stackIndexStr);
-      if (!Number.isInteger(stackIndex) || stackIndex < 0) {
-        json(res, 400, { ok: false, error: 'stackIndex must be a non-negative integer' });
-        return;
-      }
-
-      // Typed accessor — no `(as any).sessions` bypass.
-      const session = sessionManager.getLiveSession(docName, agentId);
-      if (!session) {
-        json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
-        return;
-      }
-
-      const um = session.um;
-      if (stackIndex >= um.undoStack.length) {
-        json(res, 404, {
-          ok: false,
-          error: `stackIndex ${stackIndex} out of range (stack has ${um.undoStack.length} items)`,
-        });
-        return;
-      }
-
-      // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
-      const stackItem = um.undoStack[stackIndex] as any;
-      const ytext = session.dc.document.getText('source');
-      const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
-      // `generatedAt` is the server's wall clock at response time (used for
-      // client-side cache staleness). The StackItem's capture timestamp is
-      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
-      // to duplicate it here.
-      json(res, 200, { ok: true, diff, generatedAt: Date.now() });
-    } catch (e) {
-      log.error({ err: e }, '[agent-burst-diff] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleTestReset(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
-
-      // Path traversal guard — reuse the canonical validator from persistence.ts.
-      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
-      // we translate that to a 400 response. Keeping the guard in one place (not
-      // re-implementing the startsWith check inline) ensures handleTestReset stays
-      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
-      let filePath: string;
+  const handleAgentBurstDiff = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
       try {
-        filePath = safeContentPath(docName, contentDir);
-      } catch (err) {
-        // Log the original error (safeContentPath produces messages like
-        // `Invalid document name: ${docName}` which are useful for diagnosing
-        // unexpected failures beyond the standard path-traversal case — e.g.,
-        // encoding errors from resolve(), null-byte truncation, etc.) but
-        // still return a sanitized, uniform 400 message to the client so
-        // filesystem details never leak through the API boundary.
-        console.error('[test-reset] safeContentPath rejected docName:', docName, err);
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const agentId = validateAgentId(url.searchParams.get('agentId'));
+        const rawDocName = url.searchParams.get('docName');
+        const stackIndexStr = url.searchParams.get('stackIndex');
 
-      await sessionManager.closeAll(docName);
-      hocuspocus.closeConnections(docName);
+        if (agentId === null) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'agentId required (alphanumeric/_/- only).',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+        if (!rawDocName || rawDocName.trim() === '') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'docName required.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        // Same docName validator every mutating POST handler uses — parity with
+        // the rest of the API surface (path traversal, reserved names).
+        if (!isSafeDocName(rawDocName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        const docName = resolveAlias(rawDocName);
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+        if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'stackIndex must be a number.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        const stackIndex = Number(stackIndexStr);
+        if (!Number.isInteger(stackIndex) || stackIndex < 0) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'stackIndex must be a non-negative integer.',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
 
-      // D18: Force-flush any pending onStoreDocument debounced work before unload.
-      // Without this, unloadDocument silently no-ops if the debouncer is active
-      // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
-      const debounceId = `onStoreDocument-${docName}`;
-      if (hocuspocus.debouncer.isDebounced(debounceId)) {
-        await hocuspocus.debouncer.executeNow(debounceId);
-      }
+        // Typed accessor — no `(as any).sessions` bypass.
+        const session = sessionManager.getLiveSession(docName, agentId);
+        if (!session) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:no-active-session',
+            'No active session for this agentId and docName.',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
 
-      const doc = hocuspocus.documents.get(docName);
-      if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
-      writeFileSync(filePath, '', 'utf-8');
-      if (backlinkIndex) {
-        backlinkIndex.deleteDocument(docName);
-        void backlinkIndex.saveToDisk().catch((err) => {
-          console.warn(`[backlinks] Failed to persist cache after test-reset for ${docName}:`, err);
+        const um = session.um;
+        if (stackIndex >= um.undoStack.length) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:not-found',
+            `stackIndex ${stackIndex} out of range (stack has ${um.undoStack.length} items).`,
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+
+        // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
+        const stackItem = um.undoStack[stackIndex] as any;
+        const ytext = session.dc.document.getText('source');
+        const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
+        // `generatedAt` is the server's wall clock at response time (used for
+        // client-side cache staleness). The StackItem's capture timestamp is
+        // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
+        // to duplicate it here.
+        json(res, 200, { diff, generatedAt: Date.now() });
+      } catch (e) {
+        log.error({ err: e }, '[agent-burst-diff] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-burst-diff',
+          cause: e,
         });
-        signalChannel?.('backlinks');
-        signalChannel?.('graph');
       }
-      signalChannel?.('files');
-      json(res, 200, { ok: true });
-    } catch (e) {
-      console.error('[test-reset]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-burst-diff', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleTestReset = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
+
+        // Path traversal guard — reuse the canonical validator from persistence.ts.
+        // Throws `Invalid document name: ${docName}` for names that escape contentDir;
+        // we translate that to a 400 response. Keeping the guard in one place (not
+        // re-implementing the startsWith check inline) ensures handleTestReset stays
+        // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
+        let filePath: string;
+        try {
+          filePath = safeContentPath(docName, contentDir);
+        } catch (err) {
+          // Log the original error (safeContentPath produces messages like
+          // `Invalid document name: ${docName}` which are useful for diagnosing
+          // unexpected failures beyond the standard path-traversal case — e.g.,
+          // encoding errors from resolve(), null-byte truncation, etc.) but
+          // still return a sanitized, uniform 400 message to the client so
+          // filesystem details never leak through the API boundary.
+          console.error('[test-reset] safeContentPath rejected docName:', docName, err);
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'test-reset',
+            cause: err,
+          });
+          return;
+        }
+
+        await sessionManager.closeAll(docName);
+        hocuspocus.closeConnections(docName);
+
+        // D18: Force-flush any pending onStoreDocument debounced work before unload.
+        // Without this, unloadDocument silently no-ops if the debouncer is active
+        // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
+        const debounceId = `onStoreDocument-${docName}`;
+        if (hocuspocus.debouncer.isDebounced(debounceId)) {
+          await hocuspocus.debouncer.executeNow(debounceId);
+        }
+
+        const doc = hocuspocus.documents.get(docName);
+        if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
+        writeFileSync(filePath, '', 'utf-8');
+        if (backlinkIndex) {
+          backlinkIndex.deleteDocument(docName);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist cache after test-reset for ${docName}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+        signalChannel?.('files');
+        json(res, 200, {});
+      } catch (e) {
+        console.error('[test-reset]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'test-reset',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'test-reset', method: 'POST', skipBodyParse: true },
+  );
 
   /**
    * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
@@ -3342,32 +3393,37 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
    * behind `enableTestRoutes` for that reason.
    */
-  async function handleTestRescanBacklinks(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index not configured' });
-        return;
+  const handleTestRescanBacklinks = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        if (!backlinkIndex) {
+          errorResponse(
+            res,
+            503,
+            'urn:ok:error:backlink-index-not-configured',
+            'Backlink index not configured.',
+            { handler: 'test-rescan-backlinks' },
+          );
+          return;
+        }
+        backlinkIndex.rebuildFromDisk();
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+        });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
+        json(res, 200, {});
+      } catch (e) {
+        console.error('[test-rescan-backlinks]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'test-rescan-backlinks',
+          cause: e,
+        });
       }
-      backlinkIndex.rebuildFromDisk();
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
-      });
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
-      json(res, 200, { ok: true });
-    } catch (e) {
-      console.error('[test-rescan-backlinks]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'test-rescan-backlinks', method: 'POST', skipBodyParse: true },
+  );
 
   const handleSaveVersion = withValidation(
     SaveVersionRequestSchema,
@@ -4071,29 +4127,37 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     { handler: 'rollback', method: 'POST' },
   );
 
-  async function handleMetricsReconciliation(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    json(res, 200, getMetrics());
-  }
+  const handleMetricsReconciliation = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        json(res, 200, getMetrics());
+      } catch (e) {
+        log.error({ err: e }, '[metrics-reconciliation] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'metrics-reconciliation',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'metrics-reconciliation', method: 'GET', skipBodyParse: true },
+  );
 
-  async function handleMetricsParseHealth(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    json(res, 200, getParseHealth());
-  }
+  const handleMetricsParseHealth = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        json(res, 200, getParseHealth());
+      } catch (e) {
+        log.error({ err: e }, '[metrics-parse-health] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'metrics-parse-health',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'metrics-parse-health', method: 'GET', skipBodyParse: true },
+  );
 
   /**
    * GET /api/server-info
@@ -4219,36 +4283,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // via 405 (same pattern + rationale as handleWorkspace — see its
     // comment block for the ASVS / DNS-rebinding background).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'metrics-agent-presence',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'metrics-agent-presence',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'metrics-agent-presence',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
-    // Pre-filter stale entries using the same threshold the broadcaster
-    // uses for opportunistic eviction (runs inside setPresence). Eviction
-    // is write-triggered — if the last agent disconnects without the
-    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
-    // agent writes after, the raw map keeps the zombie entry. Clients
-    // already filter with their own 5s TTL so this is invisible to the
-    // bar, but `/api/metrics/agent-presence` would otherwise lie to
-    // operators. Filtering here matches what a "live" read returns
-    // without paying for a sparse timer.
-    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
-    const now = Date.now();
-    const presence: typeof rawPresence = {};
-    for (const [agentId, entry] of Object.entries(rawPresence)) {
-      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
-        presence[agentId] = entry;
+    try {
+      // Pre-filter stale entries using the same threshold the broadcaster
+      // uses for opportunistic eviction (runs inside setPresence). Eviction
+      // is write-triggered — if the last agent disconnects without the
+      // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+      // agent writes after, the raw map keeps the zombie entry. Clients
+      // already filter with their own 5s TTL so this is invisible to the
+      // bar, but `/api/metrics/agent-presence` would otherwise lie to
+      // operators. Filtering here matches what a "live" read returns
+      // without paying for a sparse timer.
+      const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+      const now = Date.now();
+      const presence: typeof rawPresence = {};
+      for (const [agentId, entry] of Object.entries(rawPresence)) {
+        if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+          presence[agentId] = entry;
+        }
       }
+      json(res, 200, { presence });
+    } catch (e) {
+      log.error({ err: e }, '[metrics-agent-presence] handler failed');
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'metrics-agent-presence',
+        cause: e,
+      });
     }
-    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -6658,8 +6736,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // `checkLocalOpSecurity` confines the fingerprint to same-machine,
     // same-origin callers (the editor UI) and refuses cross-origin browser
     // contexts + DNS-rebinding attempts that would otherwise succeed.
+    // `checkLocalOpSecurity` itself emits RFC 9457 problem+json on rejection.
     if (!checkLocalOpSecurity(req, res, { handler: 'installed-agents' })) return;
-    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+    try {
+      await handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+    } catch (e) {
+      // Defensive: `handleInstalledAgents` catches internally, so this only
+      // fires on truly unexpected throws (e.g., probeAll synchronously
+      // throwing before its internal try/catch). Guard `headersSent` so we
+      // don't double-emit if the inner handler already wrote a response.
+      if (!res.headersSent) {
+        log.error({ err: e }, '[installed-agents] route wrapper failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'installed-agents',
+          cause: e,
+        });
+      }
+    }
   }
 
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -6797,11 +6890,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (url.startsWith('/api/')) {
         const origin = request.headers.origin;
         if (origin !== undefined && !isAllowedApiOrigin(origin)) {
-          if (typeof response.setHeader === 'function') {
-            response.setHeader('Content-Type', 'application/json');
-          }
-          response.writeHead(403);
-          response.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+          // RFC 9457 problem+json. Tag the handler as `api-origin-gate` so
+          // the `ok.api.error.count` counter distinguishes onRequest-level
+          // CSRF rejections from per-handler emits. The cross-origin browser
+          // can't read the body anyway (CORS strips it) but consistent wire
+          // shape lets server-to-server callers + tests parse uniformly.
+          errorResponse(response, 403, 'urn:ok:error:invalid-origin', 'Origin not allowed.', {
+            handler: 'api-origin-gate',
+          });
           return;
         }
         if (typeof response.setHeader === 'function') {

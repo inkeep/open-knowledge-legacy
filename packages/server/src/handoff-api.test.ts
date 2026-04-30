@@ -148,12 +148,17 @@ describe('handleInstalledAgents', () => {
     expect(JSON.parse(mock.body)).toEqual({ claude: true, codex: false, cursor: true });
   });
 
-  test('POST returns 405', async () => {
+  test('POST returns 405 + RFC 9457 problem+json', async () => {
     const probeAll = async () => ({ claude: false, codex: false, cursor: false });
     const mock = createMockRes();
     await handleInstalledAgents(createMockReq('POST'), mock.res, probeAll);
     expect(mock.writeHead.status).toBe(405);
-    expect(JSON.parse(mock.body)).toEqual({ error: 'Method not allowed' });
+    expect(mock.writeHead.headers?.['Content-Type']).toBe('application/problem+json');
+    expect(mock.writeHead.headers?.Allow).toBe('GET');
+    const body = JSON.parse(mock.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:method-not-allowed');
+    expect(body.status).toBe(405);
+    expect(typeof body.title).toBe('string');
   });
 
   test('PUT returns 405', async () => {
@@ -170,14 +175,17 @@ describe('handleInstalledAgents', () => {
     expect(mock.writeHead.status).toBe(405);
   });
 
-  test('probe throw inside probeAll returns 500 (defensive — normally unreachable)', async () => {
+  test('probe throw inside probeAll returns 500 + RFC 9457 problem+json (defensive — normally unreachable)', async () => {
     const probeAll = async () => {
       throw new Error('unexpected');
     };
     const mock = createMockRes();
     await handleInstalledAgents(createMockReq('GET'), mock.res, probeAll);
     expect(mock.writeHead.status).toBe(500);
-    expect(JSON.parse(mock.body)).toEqual({ error: 'Internal server error' });
+    expect(mock.writeHead.headers?.['Content-Type']).toBe('application/problem+json');
+    const body = JSON.parse(mock.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:internal-server-error');
+    expect(body.status).toBe(500);
   });
 });
 
@@ -386,11 +394,15 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
     expect(probeCalls).toEqual({ claude: 1, codex: 1, cursor: 1 });
   });
 
-  test('POST returns 405', async () => {
+  test('POST returns 405 + RFC 9457 problem+json with Allow: GET', async () => {
     const res = await fetch(`http://localhost:${port}/api/installed-agents`, { method: 'POST' });
     expect(res.status).toBe(405);
-    const body = (await res.json()) as { error: string };
-    expect(body).toEqual({ error: 'Method not allowed' });
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json');
+    expect(res.headers.get('Allow')).toBe('GET');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:method-not-allowed');
+    expect(body.status).toBe(405);
+    expect(typeof body.title).toBe('string');
   });
 
   test('schemes constant is exactly the three product targets', () => {
@@ -407,8 +419,10 @@ describe('GET /api/installed-agents (integration — real HTTP + real createApiE
       headers: { Origin: 'https://evil.example.com' },
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:invalid-origin');
+    expect(body.status).toBe(403);
   });
 
   test('accepts same-origin browser requests (Origin: http://localhost)', async () => {

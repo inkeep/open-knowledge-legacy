@@ -174,7 +174,7 @@ describe('multi-agent presence — Tier 1 regression gate (FR-8)', () => {
     expect(body.presence[key].currentDoc).toBe(doc);
   });
 
-  test('GET /api/metrics/agent-presence rejects DNS-rebinding Host with 403', async () => {
+  test('GET /api/metrics/agent-presence rejects DNS-rebinding Host with 403 (RFC 9457)', async () => {
     // Mirrors the /api/workspace test: TCP peer is loopback (127.0.0.1) but
     // Host header names an attacker-controlled domain. The host-allowlist
     // must refuse even though the peer passes the loopback check — matches
@@ -183,8 +183,9 @@ describe('multi-agent presence — Tier 1 regression gate (FR-8)', () => {
       headers: { Host: 'attacker.example.com' },
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('host-header-not-allowed');
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.status).toBe(403);
   });
 });

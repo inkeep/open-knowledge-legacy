@@ -465,7 +465,7 @@ describe('POST /api/test-rescan-backlinks', () => {
         },
       );
       expect(rescanResp.status).toBe(200);
-      expect(JSON.parse(rescanResp.body)).toEqual({ ok: true });
+      expect(JSON.parse(rescanResp.body)).toEqual({});
 
       // Backlink index now reflects disk state.
       const backlinks = backlinkIndex.getBacklinks('beta');

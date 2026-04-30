@@ -129,7 +129,11 @@ function extractHandlerBody(handlerName: string): string | null {
   if (start === -1) return null;
   const nextFn = source.indexOf('\n  async function handle', start + 1);
   const nextConst = source.indexOf('\n  const handle', start + 1);
-  const candidates = [nextFn, nextConst].filter((i) => i !== -1);
+  // Bound the last handler at the route table so the onRequest extension
+  // body (which uses `errorResponse(...)` for the /api/* Origin gate) is
+  // never folded into the handler slice.
+  const nextRoutes = source.indexOf('\n  const routes:', start + 1);
+  const candidates = [nextFn, nextConst, nextRoutes].filter((i) => i !== -1);
   const next = candidates.length === 0 ? -1 : Math.min(...candidates);
   return source.slice(start, next === -1 ? source.length : next);
 }

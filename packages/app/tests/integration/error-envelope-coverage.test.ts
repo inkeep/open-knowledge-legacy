@@ -34,9 +34,6 @@ const source = readFileSync(API_EXT_PATH, 'utf8');
  * into fail-on-any-occurrence mode.
  */
 const UNMIGRATED_HANDLERS = new Set([
-  'handleAgentActivity',
-  'handleAgentBurstDiff',
-  'handleInstalledAgentsRoute',
   'handleLocalOpAuthIdentity',
   'handleLocalOpAuthLogin',
   'handleLocalOpAuthPat',
@@ -45,9 +42,6 @@ const UNMIGRATED_HANDLERS = new Set([
   'handleLocalOpAuthSignout',
   'handleLocalOpAuthStatus',
   'handleLocalOpOpen',
-  'handleMetricsAgentPresence',
-  'handleMetricsParseHealth',
-  'handleMetricsReconciliation',
   'handleSeedApply',
   'handleSeedPlan',
   'handleSyncAbortMerge',
@@ -57,8 +51,6 @@ const UNMIGRATED_HANDLERS = new Set([
   'handleSyncSetEnabled',
   'handleSyncStatus',
   'handleSyncTrigger',
-  'handleTestRescanBacklinks',
-  'handleTestReset',
 ]);
 
 function listAllHandlers(): string[] {
@@ -88,7 +80,12 @@ function extractHandlerBody(name: string): string | null {
   // Find the next handler declaration of either shape.
   const nextFn = source.indexOf('\n  async function handle', start + 1);
   const nextConst = source.indexOf('\n  const handle', start + 1);
-  const candidates = [nextFn, nextConst].filter((i) => i !== -1);
+  // The last handler in the file has no successor — bound at the route
+  // table declaration `\n  const routes:` so we don't accidentally include
+  // the onRequest extension (which itself uses `errorResponse(...)` for the
+  // /api/* Origin gate, post-US-011).
+  const nextRoutes = source.indexOf('\n  const routes:', start + 1);
+  const candidates = [nextFn, nextConst, nextRoutes].filter((i) => i !== -1);
   const next = candidates.length === 0 ? -1 : Math.min(...candidates);
   return source.slice(start, next === -1 ? source.length : next);
 }
