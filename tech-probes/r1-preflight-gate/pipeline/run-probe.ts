@@ -5,7 +5,7 @@
  * unified + remark-prosemirror pipeline. Emits TSV + JSON per-case results
  * and summary verdicts.
  */
-import { CONSTRUCTS, type Construct, type Category } from './constructs';
+import { type Category, CONSTRUCTS, type Construct } from './constructs';
 import { parse, serialize } from './pipeline';
 
 function normalizeTrailing(s: string): string {
@@ -36,11 +36,10 @@ function classify(input: string, output: string): Classification {
   if (tokens(ni) === tokens(no)) return 'WHITESPACE_DIFF';
 
   const lenRatio =
-    Math.min(tokens(ni).length, tokens(no).length) /
-    Math.max(tokens(ni).length, tokens(no).length);
+    Math.min(tokens(ni).length, tokens(no).length) / Math.max(tokens(ni).length, tokens(no).length);
   if (lenRatio < 0.8) return 'SEMANTIC_LOSS';
 
-  const syntaxChars = (s: string) => s.replace(/[^#*_\-+>`~|\[\]()!]/g, '');
+  const syntaxChars = (s: string) => s.replace(/[^#*_\-+>`~|[\]()!]/g, '');
   if (syntaxChars(ni) !== syntaxChars(no)) return 'STRUCTURE_CHANGE';
   return 'COSMETIC_NORMALIZATION';
 }
@@ -123,6 +122,7 @@ for (const r of rows) {
 
 // Write TSV + JSON
 import { writeFileSync } from 'node:fs';
+
 writeFileSync('/tmp/r1-probe-1776046234/probe-results.tsv', tsv.join('\n'));
 writeFileSync('/tmp/r1-probe-1776046234/probe-results.json', JSON.stringify(rows, null, 2));
 
@@ -136,7 +136,13 @@ const summary = {
   counts,
   failures: rows
     .filter((r) => r.klass !== 'BYTE_IDENTICAL' && r.klass !== 'WHITESPACE_DIFF')
-    .map((r) => ({ name: r.name, klass: r.klass, input: r.input, output: r.output, error: r.error })),
+    .map((r) => ({
+      name: r.name,
+      klass: r.klass,
+      input: r.input,
+      output: r.output,
+      error: r.error,
+    })),
 };
 writeFileSync('/tmp/r1-probe-1776046234/probe-summary.json', JSON.stringify(summary, null, 2));
 

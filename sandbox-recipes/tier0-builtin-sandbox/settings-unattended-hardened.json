@@ -9,9 +9,7 @@
     },
     "network": {
       "allowManagedDomainsOnly": true,
-      "allow": [
-        "api.anthropic.com"
-      ]
+      "allow": ["api.anthropic.com"]
     }
   },
   "_notes": {

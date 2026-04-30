@@ -90,7 +90,9 @@ export const customMdToMdHandlers: Record<string, any> = {
     if (node.title) {
       const titleExit = state.enter('titleQuote');
       value += tracker.move(' "');
-      value += tracker.move(state.safe(node.title, { before: value, after: '"', ...tracker.current() }));
+      value += tracker.move(
+        state.safe(node.title, { before: value, after: '"', ...tracker.current() }),
+      );
       value += tracker.move('"');
       titleExit();
     }
@@ -160,7 +162,7 @@ export const customMdToMdHandlers: Record<string, any> = {
     const children = node.children || [];
     const out: string[] = [];
     const delim = ordered ? (node.data?.listMarkerDelimiter ?? '.') : null;
-    let counter = node.start ?? 1;
+    const counter = node.start ?? 1;
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       const marker = ordered ? `${counter + i}${delim}` : (node.data?.bulletMarker ?? bullet);

@@ -1,7 +1,7 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toMarkdown } from 'mdast-util-to-markdown';
-import { wikiLink } from './wikilink-syntax.js';
 import { wikiLinkFromMarkdown, wikiLinkToMarkdown } from './wikilink-mdast.js';
+import { wikiLink } from './wikilink-syntax.js';
 
 const cases = [
   // Functional shapes

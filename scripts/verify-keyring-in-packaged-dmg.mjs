@@ -43,9 +43,7 @@ const KILL_ESCALATION_GRACE_MS = 2_000;
 export function parseArgs(argv) {
   const positional = argv.slice(2).filter((a) => !a.startsWith('-'));
   if (positional.length !== 1 || !positional[0]) {
-    throw new Error(
-      'Usage: verify-keyring-in-packaged-dmg.mjs <dmg-path | app-path>',
-    );
+    throw new Error('Usage: verify-keyring-in-packaged-dmg.mjs <dmg-path | app-path>');
   }
   return { inputPath: positional[0] };
 }
@@ -284,11 +282,7 @@ export async function runDriver(argv, deps = {}) {
     outDir = await mkdtempImpl(join(tmpdir(), 'ok-smoke-out-'));
     const outPath = join(outDir, 'smoke.json');
 
-    const { exitCode, stderr } = await spawnAppWithEnv(
-      resolvedApp.appPath,
-      outPath,
-      deps,
-    );
+    const { exitCode, stderr } = await spawnAppWithEnv(resolvedApp.appPath, outPath, deps);
 
     if (exitCode === null) {
       errStream('verify-keyring: app did not exit within timeout.\n');
@@ -321,9 +315,7 @@ export async function runDriver(argv, deps = {}) {
       return 0;
     }
 
-    errStream(
-      `verify-keyring: smoke reported failure — ${result.error ?? '(no error message)'}\n`,
-    );
+    errStream(`verify-keyring: smoke reported failure — ${result.error ?? '(no error message)'}\n`);
     errStream(formatStderrTail(stderr));
     return 1;
   } catch (err) {

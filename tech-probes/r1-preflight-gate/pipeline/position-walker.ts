@@ -3,8 +3,9 @@
  * dispatch. Reads node.position.{start,end}.offset against source string to
  * recover delimiters mdast drops, attaches to node.data.
  */
+
+import type { Nodes, Root } from 'mdast';
 import { visit } from 'unist-util-visit';
-import type { Root, Nodes } from 'mdast';
 
 export function walkRecoverDelimiters(source: string): (tree: Root) => void {
   return (tree: Root) => {
