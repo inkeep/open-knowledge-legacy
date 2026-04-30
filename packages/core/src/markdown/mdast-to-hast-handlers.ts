@@ -50,6 +50,7 @@ import { toWikiLinkSlug } from '../utils/slug.ts';
 import type {
   PromotedMdastType,
   RawMdxFallbackMdast,
+  WikiLinkEmbedMdast,
   WikiLinkMdast,
 } from './mdast-augmentation.ts';
 
@@ -133,6 +134,30 @@ const wikiLinkHandler: Handler = (state, node) => {
     // If the `children` array is empty (should not happen for well-formed
     // wikiLink per US-004, but defensive) fall back to the `value` field.
     children: wiki.children.length > 0 ? state.all(wiki) : [{ type: 'text', value: wiki.value }],
+  };
+  state.patch(node, result);
+  return state.applyData(node, result);
+};
+
+// SPEC §6 FR-3c: wikiLinkEmbed → `<a class="wiki-embed" data-*>`. Renders
+// as an anchor (not an `<img>`) at the hast layer so the clipboard HTML
+// round-trip lands a detectable shape that PM's DOMParser can reconstruct
+// as a wikiLinkEmbed node. Actual image/video/pdf display happens in the
+// WYSIWYG renderer at the PM layer based on target extension (D-F).
+const wikiLinkEmbedHandler: Handler = (state, node) => {
+  const embed = node as WikiLinkEmbedMdast;
+  const { target, anchor, alias } = embed.data;
+  const result: Element = {
+    type: 'element',
+    tagName: 'a',
+    properties: {
+      className: ['wiki-embed'],
+      dataTarget: target,
+      dataAnchor: anchor ?? '',
+      dataAlias: alias ?? '',
+      href: wikiLinkHref(target, anchor),
+    },
+    children: embed.children.length > 0 ? state.all(embed) : [{ type: 'text', value: embed.value }],
   };
   state.patch(node, result);
   return state.applyData(node, result);
@@ -245,6 +270,7 @@ const rawMdxFallbackHandler: Handler = (state, node) => {
  */
 const promotedHandlers: Record<PromotedMdastType, Handler> = {
   wikiLink: wikiLinkHandler,
+  wikiLinkEmbed: wikiLinkEmbedHandler,
   mdxJsxFlowElement: mdxJsxFlowHandler,
   mdxJsxTextElement: mdxJsxTextHandler,
   rawMdxFallback: rawMdxFallbackHandler,

@@ -12,6 +12,7 @@ import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
+  type ConfigValidationError,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
@@ -27,7 +28,8 @@ import type { JSONContent } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { type ConfigPersistenceCtx, loadConfigDoc, storeConfigDoc } from './config-persistence.ts';
 import type { ContributorEntry } from './contributor-tracker.ts';
 import {
   contributorCount,
@@ -150,6 +152,13 @@ export interface PersistenceOptions {
   /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
   getCurrentBranch?: () => string | null;
   /**
+   * US-013 FR-3b: resolves `![[photo.png]]` embed targets to disk-relative
+   * paths before PM dispatch. Consumed by `onLoadDocument`'s
+   * `mdManager.parseWithFallback` call so image-extension embeds materialize
+   * as PM `image` nodes with the resolved `src` (not the literal target).
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Accessor for the server's principal record. When a browser connection's
    * `ctx.principalId` matches `loadedPrincipal.id`, `resolveWriterFromOrigin`
    * emits WriterIdentity with the real display_name / display_email instead
@@ -176,6 +185,20 @@ export interface PersistenceOptions {
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
   applyDiskContentToDoc?: (document: Y.Doc, content: string) => void;
+  /**
+   * Override `os.homedir()` for config-doc persistence (US-006). Tests
+   * scope user-global writes (`__user__/config.yml`) to a tempdir; if
+   * unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   */
+  configHomedirOverride?: string;
+  /**
+   * Fired after the L3 persistence-hook reverts an invalid Y.Text
+   * mutation on a config doc. Wired in standalone boot to
+   * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
+   * so any open Settings pane sees the rejection toast. Omitted in
+   * plugin mode where no CC1Broadcaster is available.
+   */
+  onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
 }
 
 /**
@@ -285,6 +308,14 @@ export interface PersistenceHandle {
   flushDeferredStores: (mode?: 'within-branch' | 'discard-stale') => Promise<void>;
   flushPendingGitCommit: () => Promise<void>;
   waitForPendingCommits: () => Promise<void>;
+  /**
+   * Config-doc persistence context (US-007). Exposed so the file-watcher
+   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
+   * Treat as read-only — direct mutation breaks the L3 invariant that the
+   * cache only updates after a successful persist.
+   */
+  readonly configPersistenceCtx: ConfigPersistenceCtx;
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
@@ -305,6 +336,18 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const getPrincipal = options?.getPrincipal;
   const onAgentCommit = options?.onAgentCommit;
   const onDiskFlush = options?.onDiskFlush;
+
+  // Per-server-instance LKG cache for config docs (D45 L3 / D58). Maps
+  // each well-known config doc name to the most recent successfully-
+  // validated YAML string. Lives in the closure so multiple server
+  // instances don't share mutable state.
+  const configLkgCache = new Map<string, string>();
+  const configPersistenceCtx: ConfigPersistenceCtx = {
+    projectDir,
+    lkgCache: configLkgCache,
+    homedirOverride: options?.configHomedirOverride,
+    onConfigRejected: options?.onConfigRejected,
+  };
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -769,7 +812,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           const classification = classifyDuplication(markdown, currentBase);
           if (classification.kind === 'block') {
             if (tripwireResetFailedDocs.has(documentName)) {
-              log.warn({ documentName }, `[persistence] Tripwire breaker active — skipping duplicate store for ${documentName}`);
+              log.warn(
+                { documentName },
+                `[persistence] Tripwire breaker active — skipping duplicate store for ${documentName}`,
+              );
               return;
             }
             const fragmentChildren = document.getXmlFragment('default').length;
@@ -964,6 +1010,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
       if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        loadConfigDoc(document, documentName, configPersistenceCtx);
+        return;
+      }
       ensureHistograms();
       const started = Date.now();
       return withSpan(
@@ -1019,8 +1069,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           // rawMdxFallback preserving surrounding structure. On position-less
           // error, splits at blank-line boundaries per-block. Only falls
           // through to whole-doc raw text when every block fails — strictly
-          // better than parse() throwing on broken MDX.
-          const json = mdManager.parseWithFallback(body);
+          // better than parse() throwing on broken MDX. The optional
+          // `resolveEmbed` threads the basename-index resolver so post-load
+          // PM image/link nodes carry resolved src/href for `![[file.ext]]`.
+          const parseOpts = options?.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
+            : undefined;
+          const json = mdManager.parseWithFallback(body, parseOpts);
 
           if (xmlFragment.length === 0) {
             const pmNode = schema.nodeFromJSON(json);
@@ -1079,6 +1134,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       lastContext: _lastContext,
     }) {
       if (isSystemDoc(documentName)) return;
+      if (isConfigDoc(documentName)) {
+        await storeConfigDoc(document, documentName, lastTransactionOrigin, configPersistenceCtx);
+        return;
+      }
       if (isBatchInProgress()) {
         deferStore({ document, documentName, lastTransactionOrigin });
         return;
@@ -1095,5 +1154,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     if (commitInFlight) await commitInFlight;
   }
 
-  return { extension, flushDeferredStores, flushPendingGitCommit, waitForPendingCommits };
+  return {
+    extension,
+    flushDeferredStores,
+    flushPendingGitCommit,
+    waitForPendingCommits,
+    configPersistenceCtx,
+  };
 }

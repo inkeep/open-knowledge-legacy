@@ -19,14 +19,10 @@ const TEST_CONFIG: Config = {
     include: ['**/*.md', '**/*.mdx'],
     exclude: [],
   },
+  github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
   server: {
-    port: 0,
     host: 'localhost',
     openOnAgentEdit: false,
-  },
-  persistence: {
-    debounceMs: 2000,
-    maxDebounceMs: 10000,
   },
   preview: {},
   folders: [],
@@ -37,6 +33,7 @@ const TEST_CONFIG: Config = {
       search: { maxResults: 50 },
     },
   },
+  appearance: {},
 };
 
 describe('textResult', () => {

@@ -11,7 +11,71 @@ export {
 // Re-export VFileMessage for Observer B's error classification (instanceof check
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
-
+// Headless config writers (US-003 — D5 reshape Part B / D38 reshaped / D63).
+// UI ConfigBinding (US-008 — D5 reshape Part A / FR-33 / D48 / D59).
+// Browser+node compatible — no Node deps; structural ConfigDocProvider type
+// keeps `@hocuspocus/provider` out of core's runtime deps.
+export {
+  bindConfigDoc,
+  type ConfigBinding,
+  type ConfigBindingPatchResult,
+  type ConfigBindingPatchSuccess,
+  type ConfigDocProvider,
+  type Unsubscribe,
+} from './config/bind-config-doc.ts';
+export {
+  type ConfigIssue,
+  ConfigIssueSchema,
+  type ConfigIssueSource,
+  ConfigIssueSourceSchema,
+  type ConfigValidationError,
+  ConfigValidationErrorSchema,
+  type FieldScope,
+  FieldScopeSchema,
+  type ForwardCompatConfigError,
+  ForwardCompatConfigErrorSchema,
+  humanFormat,
+  isKnownConfigError,
+  type KnownConfigValidationError,
+  KnownConfigValidationErrorSchema,
+  type WriteScope,
+  WriteScopeSchema,
+} from './config/errors.ts';
+export {
+  type FieldMeta,
+  fieldRegistry,
+  getFieldMeta,
+} from './config/field-registry.ts';
+export type { Err, Ok, Result } from './config/result.ts';
+// Config (config-edit-paths spec — D44/D50/FR-31, US-001)
+// Schema, error envelope, and Result helper. Browser+node compatible.
+export {
+  type Config,
+  type ConfigPatch,
+  ConfigSchema,
+  type FolderFrontmatter,
+  FolderFrontmatterSchema,
+  type FolderRule,
+  FolderRuleSchema,
+} from './config/schema.ts';
+export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
+export { CONFIG_SCHEMA_MAJOR, CONFIG_SCHEMA_MAJOR_PATH } from './config/schema-version.ts';
+export { type LocateOptions, locateIssue } from './config/source-locator.ts';
+// OTel helpers for config-edit spans (US-014 / FR-38 / D53). Browser+node
+// compatible — imports only `@opentelemetry/api`. Spans are inert no-ops
+// when no SDK is registered (server: OTEL_SDK_DISABLED gate; app:
+// VITE_OTEL_ENABLED gate).
+export {
+  addConfigSpanEvent,
+  type ConfigOutcome,
+  type ConfigScopeAttr,
+  type ConfigSpanAttributes,
+  type ConfigTransport,
+  type ConfigValidationLayer,
+  setConfigOutcome,
+  withConfigSpan,
+  withConfigSpanSync,
+} from './config/telemetry.ts';
 // Constants
 export {
   ACTIVITY_TTL_MS,
@@ -20,7 +84,14 @@ export {
   FLASH_DURATION_MS,
   hasNewEntries,
 } from './constants/activity.ts';
-export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
+export {
+  CC1_CONTRACT_VERSION,
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAMES,
+  type ConfigDocName,
+  SYSTEM_DOC_NAME,
+} from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export {
@@ -28,7 +99,21 @@ export {
   ALLOWED_IMAGE_MIME_TYPES,
   ALLOWED_VIDEO_MIME_TYPES,
   ASSET_EXTENSIONS,
+  AUDIO_EXTENSIONS,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
+  DEFAULT_DEDUP_UI,
+  DEFAULT_EMIT_FORMAT,
+  type DedupMode,
+  type DedupUIMode,
+  type EmitFormat,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  WIKI_EMBED_EXTENSIONS,
 } from './constants/upload.ts';
+
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
@@ -53,6 +138,21 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+// `WikiLinkEmbed` is transient: client-insert-only at drop time, never
+// emitted by server-side mdast→PM dispatch (US-013). Post round-trip
+// the node becomes PM `image` (image ext) or PM text+link mark (non-
+// image), NOT this PM node type. Still re-exported symmetrically with
+// the `WikiLink` peer so future consumers that need the node type or
+// attr shape directly (e.g. a non-default editor surface, a schema
+// introspection tool, a typed-component-nodes Phase 2 consumer) have a
+// public import path. Binding to the shape is an intentional contract
+// — the attrs (`target` / `alias` / `anchor` / `resolvedSrc`) are
+// schema-add-only per precedent #9, so the export commits to additive
+// evolution only.
+export {
+  WikiLinkEmbed,
+  type WikiLinkEmbedAttrs,
+} from './extensions/wiki-link-embed.ts';
 // Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
 export {
   buildClaudeAiWebUrl,
@@ -117,10 +217,13 @@ export {
 } from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
+  type CC1ConfigValidationRejectedPayload,
+  CC1ConfigValidationRejectedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
   type CC1DiskAckPayload,
@@ -130,6 +233,7 @@ export {
   type DerivedViewChannel,
   DerivedViewChannelSchema,
 } from './schemas/cc1.ts';
+export { extensionOf } from './utils/extension.ts';
 
 // Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
 // defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`
@@ -205,14 +309,18 @@ export {
 } from './utils/identity.ts';
 export {
   type AnchorLinkTarget,
+  type AssetLinkTarget,
   buildRelativeMarkdownHref,
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
   classifyWikiLinkTarget,
   type DocLinkTarget,
   type ExternalLinkTarget,
+  extractAssetExtension,
   isExternalHref,
+  resolveAssetProjectPath,
 } from './utils/link-targets.ts';
+export { type BasenameIndex, createBasenameIndex } from './utils/path-resolve.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,

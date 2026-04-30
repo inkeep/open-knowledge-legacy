@@ -3,6 +3,7 @@ import {
   buildRelativeMarkdownHref,
   classifyMarkdownHref,
   classifyWikiLinkTarget,
+  resolveAssetProjectPath,
 } from './link-targets.ts';
 
 describe('classifyMarkdownHref', () => {
@@ -42,6 +43,36 @@ describe('classifyMarkdownHref', () => {
       url: '//cdn.example.com/lib.js',
     });
   });
+
+  test('classifies non-markdown relative paths as asset', () => {
+    expect(classifyMarkdownHref('./meeting.pdf', 'docs/notes')).toEqual({
+      kind: 'asset',
+      url: './meeting.pdf',
+      ext: 'pdf',
+    });
+  });
+
+  test('strips .mdx extension when resolving doc-link', () => {
+    expect(classifyMarkdownHref('./guide.mdx', 'docs/index')).toEqual({
+      kind: 'doc',
+      docName: 'docs/guide',
+      anchor: null,
+    });
+  });
+
+  test('HTTPS URL with asset extension stays external (not asset)', () => {
+    expect(classifyMarkdownHref('https://example.com/doc.pdf', 'docs/index')).toEqual({
+      kind: 'external',
+      url: 'https://example.com/doc.pdf',
+    });
+  });
+
+  test('absolute path with asset extension stays external (not asset)', () => {
+    expect(classifyMarkdownHref('/docs/file.pdf', 'notes/readme')).toEqual({
+      kind: 'external',
+      url: '/docs/file.pdf',
+    });
+  });
 });
 
 describe('classifyWikiLinkTarget', () => {
@@ -62,6 +93,67 @@ describe('classifyWikiLinkTarget', () => {
       kind: 'external',
       url: 'https://example.com/docs#section',
     });
+  });
+});
+
+describe('resolveAssetProjectPath', () => {
+  test('same-dir asset resolves to sourceDoc-dir/basename', () => {
+    expect(resolveAssetProjectPath('./meeting.pdf', 'notes/readme')).toBe('notes/meeting.pdf');
+  });
+
+  test('parent-relative asset walks up one dir', () => {
+    expect(resolveAssetProjectPath('../shared.pdf', 'notes/sub/readme')).toBe('notes/shared.pdf');
+  });
+
+  test('subdir-relative asset descends into sub', () => {
+    expect(resolveAssetProjectPath('./assets/photo.png', 'docs/guide')).toBe(
+      'docs/assets/photo.png',
+    );
+  });
+
+  test('path escape above project root returns null', () => {
+    expect(resolveAssetProjectPath('../../etc/passwd', 'notes/readme')).toBeNull();
+  });
+
+  test('strips anchor from returned path', () => {
+    expect(resolveAssetProjectPath('./meeting.pdf#page=3', 'notes/readme')).toBe(
+      'notes/meeting.pdf',
+    );
+  });
+
+  test('server-absolute path is treated as project-root-relative (2026-04-24b)', () => {
+    // SPEC §Post-finalization amendment (2026-04-24b). Server-absolute
+    // hrefs (`/`-leading) are emitted at drop time + post-roundtrip for
+    // subdirectory docs so hash routing doesn't resolve them against the
+    // wrong base. Treating them as external here breaks the asset-click
+    // dispatcher for any asset that round-tripped through the server —
+    // the click would fall through to external-URL handling rather than
+    // reaching `shell.openAsset` in Electron.
+    expect(resolveAssetProjectPath('/docs/file.pdf', 'notes/readme')).toBe('docs/file.pdf');
+    expect(resolveAssetProjectPath('/vale_15.m4v', 'notes/readme')).toBe('vale_15.m4v');
+    expect(resolveAssetProjectPath('/sub/dir/photo.png', 'docs/guide')).toBe('sub/dir/photo.png');
+  });
+
+  test('server-absolute path still refuses escape attempts', () => {
+    // `..` in server-absolute paths is nonsensical (there's no relative
+    // base) but a caller might construct `/../../etc/passwd` through a
+    // URL parser. Containment is defense-in-depth — the main-process
+    // `openAssetSafely` is the authoritative gate, but the renderer
+    // shouldn't feed it escape attempts.
+    expect(resolveAssetProjectPath('/../etc/passwd', 'notes/readme')).toBeNull();
+    expect(resolveAssetProjectPath('/docs/../../../etc/passwd', 'notes/readme')).toBeNull();
+  });
+
+  test('HTTPS URL returns null', () => {
+    expect(resolveAssetProjectPath('https://example.com/doc.pdf', 'notes/readme')).toBeNull();
+  });
+
+  test('source doc at root — `..` pop fails', () => {
+    expect(resolveAssetProjectPath('../escape.pdf', 'readme')).toBeNull();
+  });
+
+  test('empty href returns null', () => {
+    expect(resolveAssetProjectPath('', 'notes/readme')).toBeNull();
   });
 });
 

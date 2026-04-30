@@ -56,7 +56,7 @@ import type {
 import type { Processor } from 'unified';
 import { createRegistry } from '../registry/index.ts';
 import type { PropDef } from '../registry/types.ts';
-import type { WikiLinkMdast } from './mdast-augmentation.ts';
+import type { WikiLinkEmbedMdast, WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
 // reconstructAttrs is now consumed by descriptor `serialize` implementations
 // in registry/built-ins.ts via emitMdxJsx — no longer imported directly here.
@@ -83,6 +83,34 @@ interface MarkdownManagerOptions {
   extensions: Extensions;
 }
 
+/**
+ * Per-call context consulted by handlers during `parse()`. Threads the
+ * wiki-embed basename resolver + source docName through the pipeline
+ * without rebuilding the processor on every call.
+ *
+ * The handlers close over the holder object (not its `current` value), so
+ * they read live context at invocation time. `parse()` sets `current`
+ * before dispatching and clears it in a `finally` block — see US-013.
+ */
+interface ParseContext {
+  /**
+   * Resolver used by `handlers.wikiLinkEmbed` to map an embed target
+   * (e.g. `photo.png`) to a disk-relative path (`attachments/photo.png`).
+   * When omitted OR when the resolver returns `null`, the handler falls
+   * back to the literal target — browsers surface missing assets via
+   * `<img onerror>` (SPEC FR-3b "broken-ref placeholder" requirement).
+   */
+  resolveEmbed?: (target: string, sourcePath: string) => string | null;
+  /**
+   * docName of the document being parsed — used as the second argument
+   * to `resolveEmbed` for shortest-path computation. Omitted on client
+   * parses where the resolver is null anyway.
+   */
+  sourcePath?: string;
+}
+
+type ParseContextHolder = { current: ParseContext };
+
 export class MarkdownManager {
   private schema: Schema;
   private handlers: RemarkProseMirrorOptions['handlers'];
@@ -93,10 +121,13 @@ export class MarkdownManager {
   // anti-pattern (per-parse processor reconstruction).
   private parseProcessor: Processor;
   private serializeProcessor: Processor;
+  // US-013: live per-call context. Handlers close over this holder so they
+  // see whatever `parse()` set immediately before running the pipeline.
+  private parseCtx: ParseContextHolder = { current: {} };
 
   constructor(options: MarkdownManagerOptions) {
     this.schema = getSchema(options.extensions);
-    this.handlers = buildMdastToPmHandlers(this.schema);
+    this.handlers = buildMdastToPmHandlers(this.schema, this.parseCtx);
     const { nodeHandlers, markHandlers } = buildPmToMdastHandlers(this.schema);
     this.pmNodeHandlers = nodeHandlers;
     this.pmMarkHandlers = markHandlers;
@@ -128,15 +159,20 @@ export class MarkdownManager {
    * prevents the more severe class of crash (bare unmatched `<` and `{` that
    * cause "Unexpected end of file" errors).
    */
-  parse(markdown: string): JSONContent {
+  parse(markdown: string, opts?: ParseContext): JSONContent {
     if (!markdown.trim()) {
       return {
         type: 'doc',
         content: [{ type: 'paragraph', content: [] }],
       };
     }
-    const doc = parseMd(markdown, this.parseProcessor);
-    return doc.toJSON() as JSONContent;
+    this.parseCtx.current = opts ?? {};
+    try {
+      const doc = parseMd(markdown, this.parseProcessor);
+      return doc.toJSON() as JSONContent;
+    } finally {
+      this.parseCtx.current = {};
+    }
   }
 
   /**
@@ -174,11 +210,11 @@ export class MarkdownManager {
    * Supersedes the prior `parseSafe` API (removed as a redundant alias —
    * one name per function, per greenfield precedent).
    */
-  parseWithFallback(markdown: string): JSONContent {
+  parseWithFallback(markdown: string, opts?: ParseContext): JSONContent {
     if (!markdown.trim()) {
       return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
     }
-    return parseWithFallback(markdown, { parse: (md) => this.parse(md) });
+    return parseWithFallback(markdown, { parse: (md) => this.parse(md, opts) });
   }
 
   /**
@@ -377,7 +413,31 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 // Tier A passthrough + basic Tier B (enough for plain markdown).
 // Full handler table populated in US-004.
 
-function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handlers'] {
+// SPEC §6 FR-3c emit-dispatch matrix — partitions embed extensions into
+// image vs non-image renderable categories. Extensions outside both sets
+// are "opaque" (dispatch as a plain markdown link with literal href).
+//
+// Image-extension set is canonical at `constants/upload.ts` — one source
+// for every dispatch question (client emit-shape, server mdast→PM,
+// TipTap renderHTML). Non-image wikiembed extensions are derived from
+// `WIKI_EMBED_EXTENSIONS` minus `IMAGE_EXTENSIONS` so widening the
+// canonical list (e.g. adding `heic`) flows here automatically — no
+// manual edit in this file.
+import {
+  AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  WIKI_EMBED_EXTENSIONS,
+} from '../constants/upload.ts';
+
+const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
+
+import { extensionOf } from '../utils/extension.ts';
+
+function buildMdastToPmHandlers(
+  schema: Schema,
+  parseCtx: ParseContextHolder,
+): RemarkProseMirrorOptions['handlers'] {
   const n = schema.nodes;
   const m = schema.marks;
 
@@ -768,6 +828,148 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       });
   }
 
+  // SPEC §6 FR-3c: wiki-embed mdast → PM with extension-based dispatch.
+  // Two branches, in priority order:
+  //
+  //   (a) Block-context allowlisted extension (image/video/audio) with the
+  //       matching WikiEmbed* descriptor registered → `jsxComponent('WikiEmbed*')`.
+  //       Renders through Image.tsx / Video.tsx / Audio.tsx via the compat
+  //       descriptor's `translateProps`; PropPanel narrows to the alias slot.
+  //       Mirrors `imagePromoterPlugin`'s standalone-paragraph promotion: only
+  //       embeds that are the sole child of their paragraph promote, so mid-
+  //       prose `... ![[diagram.png]] ...` doesn't fragment the paragraph.
+  //
+  //   (b) Everything else (inline-position embeds, allowlisted-but-no-
+  //       descriptor cases, opaque extensions) → PM text with a `link` mark.
+  //       Allowlisted extensions get `sourceForm='wikiembed'` + target/
+  //       anchor/alias on the mark so round-trip stays byte-identical; opaque
+  //       extensions land on a plain link mark (`![[archive.zip]]` →
+  //       `[archive.zip](archive.zip)`, intentional normalization).
+  //
+  // The server-side mdast→PM path never emits the `wikiLinkEmbed` PM
+  // node — that node type is client-insert-only (transient, produced by
+  // `pickInsertShape` at drop time).
+  if (n.wikiLinkEmbed) {
+    handlers.wikiLinkEmbed = (node: WikiLinkEmbedMdast, parent?: MdastParent) => {
+      const target = node.data?.target ?? '';
+      const alias = node.data?.alias ?? null;
+      const anchor = node.data?.anchor ?? null;
+      const ext = extensionOf(target);
+      const { resolveEmbed, sourcePath } = parseCtx.current;
+      const resolved =
+        resolveEmbed && sourcePath ? (resolveEmbed(target, sourcePath) ?? null) : null;
+
+      // Bug B/C fix (2026-04-24 amendment): emit server-absolute URLs for
+      // resolved embed refs. `resolveEmbed` returns a contentDir-relative
+      // path (e.g. `stories/X/IMG.PNG`). The editor runs under hash
+      // routing — the browser's `location.pathname` is always `/`, so a
+      // doc-relative `<img src>` / `<a href>` resolves to the wrong URL
+      // for any doc not at content root, triggering the Vite SPA fallback
+      // (`text/html` response → broken images + blank PDF tabs). Prefixing
+      // with `/` roots the URL at origin, which is exactly the contentDir
+      // served by sirv. Unresolved refs (basename-index miss) keep the
+      // bare target — the server would 404 them either way, and the
+      // markdown-on-disk stays `![[name.ext]]` regardless of render shape.
+      const srcOrTarget = resolved ? `/${resolved}` : target;
+
+      // Block-context allowlisted extension → jsxComponent(WikiEmbed*).
+      // Mirrors imagePromoterPlugin's "single-embed paragraph → flow JSX"
+      // policy: only standalone embeds promote to a block-level component
+      // so mid-prose `... ![[diagram.png]] ...` keeps its inline shape and
+      // doesn't fragment the paragraph when the paragraph handler lifts
+      // block children. Inline-position allowlisted embeds fall through
+      // to the link-mark chip below — there is no inline-image PM-image
+      // path; image / video / audio all share the same chip treatment
+      // when not in block context.
+      const isBlockContext =
+        parent?.type === 'paragraph' &&
+        Array.isArray(parent.children) &&
+        parent.children.length === 1;
+
+      if (
+        isBlockContext &&
+        WIKI_EMBED_IMAGE_EXTS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedImage')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedImage',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, alt: alias ?? target, target, anchor, alias },
+        });
+      }
+      // Video.tsx / Audio.tsx accept `title` but not `alt`, so the
+      // descriptor maps alias → title for both.
+      if (
+        isBlockContext &&
+        VIDEO_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedVideo')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedVideo',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+        });
+      }
+      if (
+        isBlockContext &&
+        AUDIO_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedAudio')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedAudio',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+        });
+      }
+
+      const label = alias || (anchor ? `${target}#${anchor}` : target);
+      if (WIKI_EMBED_EXTENSIONS.has(ext) && m.link) {
+        const linkMark = m.link.create({
+          href: srcOrTarget,
+          title: null,
+          linkStyle: 'inline',
+          refLabel: null,
+          sourceForm: 'wikiembed',
+          target,
+          anchor,
+          alias,
+        });
+        return schema.text(label, [linkMark]);
+      }
+
+      if (m.link) {
+        const linkMark = m.link.create({
+          href: target,
+          title: null,
+          linkStyle: 'inline',
+          refLabel: null,
+        });
+        return schema.text(label, [linkMark]);
+      }
+
+      // Unreachable under `sharedExtensions`. Fail loud rather than emit
+      // a PM `wikiLinkEmbed` — per AGENTS.md STOP rule, server-side
+      // mdast→PM must never produce that node (y-prosemirror would
+      // tombstone user-content Items on the next round-trip).
+      throw new Error(
+        '[wikiLinkEmbed handler] schema lacks `link` mark — cannot dispatch ' +
+          'without violating the STOP rule against emitting PM wikiLinkEmbed server-side',
+      );
+    };
+  }
+
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
   // yaml + toml are pre-ignored by the library — correct behavior
 
@@ -948,7 +1150,10 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.tableCell) nodeHandlers.tableCell = fromPmNode('tableCell');
   if (n.tableHeader) nodeHandlers.tableHeader = fromPmNode('tableCell');
 
-  // Image
+  // Image — plain markdown images (`![alt](src)`). Block-context wiki-
+  // embed images flow through `jsxComponent('WikiEmbedImage')` (descriptor
+  // serialize). Inline-position wiki-embeds land on the link-mark chip,
+  // not a PM `image` node, so this handler only ever sees plain images.
   if (n.image) {
     nodeHandlers.image = (pmNode: PmNode) => ({
       type: 'image' as const,
@@ -1118,6 +1323,27 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
+  // SPEC §6 FR-3c reverse: PM wikiLinkEmbed → mdast. The `resolvedSrc`
+  // attr is a transient render-layer hint (populated by the upload
+  // response at drop time, consumed by `WikiLinkEmbed.renderHTML`) and
+  // MUST NOT flow back into mdast — serialization is lossless over
+  // target/anchor/alias only. The storage shape is always `![[name.ext]]`
+  // regardless of `upload.attachmentFolderPath`.
+  if (n.wikiLinkEmbed) {
+    nodeHandlers.wikiLinkEmbed = (pmNode: PmNode) => {
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLinkEmbed' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
+    };
+  }
+
   // Marks — carry fidelity data back to mdast
   if (m.emphasis) {
     markHandlers.emphasis = fromPmMark('emphasis', (mark: PmMark) => ({
@@ -1152,6 +1378,34 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   if (m.link) {
     markHandlers.link = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
+      // When the link mark was produced by `handlers.wikiLinkEmbed` for an
+      // allowlisted wiki-embed extension (image / video / audio / pdf in
+      // inline position, or any allowlisted ext outside block-context),
+      // `sourceForm='wikiembed'` is set and the mark carries the original
+      // `target`/`anchor`/`alias` separately from the (possibly resolver-
+      // remapped) `href`. Re-emit as an atomic `wikiLinkEmbed` mdast node
+      // — round-trip is byte-identical.
+      if (mark.attrs.sourceForm === 'wikiembed') {
+        const target =
+          typeof mark.attrs.target === 'string' && mark.attrs.target.length > 0
+            ? mark.attrs.target
+            : (mark.attrs.href ?? '');
+        const anchor: string | null =
+          typeof mark.attrs.anchor === 'string' && mark.attrs.anchor.length > 0
+            ? mark.attrs.anchor
+            : null;
+        const alias: string | null =
+          typeof mark.attrs.alias === 'string' && mark.attrs.alias.length > 0
+            ? mark.attrs.alias
+            : null;
+        const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+        return {
+          type: 'wikiLinkEmbed' as const,
+          value: label,
+          data: { target, anchor, alias },
+          children: [{ type: 'text' as const, value: label }],
+        } as unknown as MdastNodes;
+      }
       const style = mark.attrs.linkStyle;
       // Autolink form: serialize as <url>
       if (style === 'autolink') {

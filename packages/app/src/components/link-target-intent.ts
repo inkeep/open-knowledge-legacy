@@ -27,6 +27,7 @@ export function resolveLinkTargetIntent(
   options: {
     pages: ReadonlySet<string>;
     folderPaths?: ReadonlySet<string>;
+    pagesBySlug?: ReadonlyMap<string, string>;
     fallbackTargets?: Iterable<string>;
     createDialogSeed?: {
       initialDir: string;
@@ -45,6 +46,7 @@ export function resolveLinkTargetIntent(
     const resolvedTarget = resolveNavigationTarget(candidate, {
       pages: options.pages,
       folderPaths: options.folderPaths,
+      pagesBySlug: options.pagesBySlug,
     });
     if (resolvedTarget.kind === 'missing') {
       missingTarget ??= resolvedTarget;
@@ -63,6 +65,7 @@ export function resolveLinkTargetIntent(
     resolveNavigationTarget(target, {
       pages: options.pages,
       folderPaths: options.folderPaths,
+      pagesBySlug: options.pagesBySlug,
     });
   if (finalMissingTarget.kind !== 'missing') {
     return {

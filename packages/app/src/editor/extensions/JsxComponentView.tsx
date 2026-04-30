@@ -48,12 +48,22 @@ import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
-import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from '../../components/ui/popover.tsx';
+import { DescriptorPlaceholder } from '../components/DescriptorPlaceholder.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../hooks/use-block-selection.ts';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
+import {
+  resolveDescriptorPlaceholder,
+  shouldRenderPlaceholder,
+} from '../registry/resolve-descriptor-placeholder.ts';
 import {
   consumeAutoOpen,
   createChildNode,
@@ -300,6 +310,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       if ('hidden' in p && p.hidden) return false;
       return currentProps[p.name] === '';
     });
+
+  // STRICTER than `needsConfig`: only fires when the descriptor's autoFocus
+  // string prop is empty. `needsConfig` also flags `alt=''` on a fully
+  // rendered image and drives the chrome-bar gear nudge — conflating the two
+  // would regress images with valid src + empty alt into placeholder mode.
+  const showPlaceholder = shouldRenderPlaceholder(descriptor, currentProps);
+  const resolvedPlaceholder = showPlaceholder ? resolveDescriptorPlaceholder(descriptor) : null;
+
+  // Single source of truth for the three sites (handleBodyClick / handleOpenChange /
+  // onCloseAutoFocus) that gate behavior on "this descriptor renders as a leaf with
+  // no editable content hole" (img / video / audio). Drift between sites silently
+  // breaks focus + selection for one descriptor class.
+  const isSelfClosingLeaf = !descriptor.hasChildren || !!descriptor.isSelfClosing;
 
   // Auto-open popover when: (1) component becomes selected AND (2) the
   // pendingAutoOpen flag is set. Uses controlled state so it works across
@@ -571,8 +594,12 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // component so the chrome highlights and the user can act via arrows /
   // Delete / the gear popover. Uses `onClick` (runs after PM's mousedown
   // has committed) rather than `onMouseDown` (would clobber HTML5 drag).
+  // Placeholder-mode click is owned by `<DescriptorPlaceholder onClick>` —
+  // skip the wrapper-level handler so setNodeSelection does not double-fire
+  // alongside `openPanel`'s own selection + popover-open.
   const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (descriptor.hasChildren && !descriptor.isSelfClosing) return;
+    if (showPlaceholder) return;
+    if (!isSelfClosingLeaf) return;
     const target = e.target as HTMLElement;
     // React events bubble through the React tree including portals, so
     // clicks on inputs inside Radix Popover/Dialog content reach this
@@ -590,6 +617,18 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     const selFrom = editor.state.selection.from;
     if (selFrom < pos || selFrom >= nodeEnd) return;
     editor.chain().focus().setNodeSelection(pos).run();
+  };
+
+  // Click-on-placeholder: NodeSelect this block (so chrome / breadcrumb
+  // reflect it) and open the controlled popover. No rAF-defer needed (unlike
+  // the slash-insert auto-open path) — the click is user-event-time and the
+  // NodeView is already mounted, so `setNodeSelection` + `setPopoverOpen` can
+  // dispatch synchronously.
+  const openPanel = () => {
+    const p = typeof getPos === 'function' ? getPos() : undefined;
+    if (typeof p !== 'number') return;
+    editor.chain().focus().setNodeSelection(p).run();
+    setPopoverOpen(true);
   };
 
   // ARIA: role="group" for typed-children containers, with a descriptive
@@ -627,54 +666,86 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     setPopoverOpen(true);
   };
 
+  // Self-closing component close-handler: advance the caret past the node via
+  // `TextSelection.near` so typing doesn't land on the NodeSelection. `near` is
+  // load-bearing — `setTextSelection(pos+nodeSize)` can land on a block boundary
+  // (parent is a block container, not a textblock) so typing wraps in a new
+  // paragraph. Defer to rAF so PM's click handler settles first.
+  //
+  // DOM focus is owned by `onCloseAutoFocus` on `<PopoverContent>` below.
+  const handleOpenChange = (open: boolean) => {
+    setPopoverOpen(open);
+    if (open) return;
+    if (!isSelfClosingLeaf) return;
+    requestAnimationFrame(() => {
+      const p = typeof getPos === 'function' ? getPos() : undefined;
+      if (typeof p !== 'number') return;
+      const curNode = editor.state.doc.nodeAt(p);
+      if (!curNode) return;
+      const nodeEnd = p + curNode.nodeSize;
+      const selFrom = editor.state.selection.from;
+      if (selFrom < p || selFrom >= nodeEnd) return;
+      const $end = editor.state.doc.resolve(Math.min(nodeEnd, editor.state.doc.content.size));
+      const nextSel = TextSelection.near($end, 1);
+      editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
+    });
+  };
+
   return (
-    <NodeViewWrapper
-      className="jsx-component-wrapper my-2"
-      // Stable test-selector contract, decoupled from `className` (which can
-      // change for visual reasons). Tests that target "every component
-      // wrapper" use `[data-jsx-component]` — do not remove without
-      // updating `packages/app/tests/a11y/component-blocks.e2e.ts` etc.
-      data-jsx-component=""
-      data-component-type={descriptor.name.toLowerCase()}
-      data-selected={isInnermostSelected ? 'true' : undefined}
-      data-has-child-selected={hasChildSelected ? 'true' : undefined}
-      data-selection-origin={selectionOrigin}
-      data-dragging={isDraggingSelf ? 'true' : undefined}
-      data-needs-config={needsConfig ? 'true' : undefined}
-      // `aria-selected` is intentionally omitted — per WAI-ARIA 1.2, it's
-      // only valid on `role` values that support selection semantics
-      // (option, tab, row, gridcell, treeitem, columnheader, rowheader).
-      // Our wrappers carry `role="group"` (for emptyChildName containers)
-      // or no role (for generic block components). Emitting `aria-selected`
-      // on those roles is an ARIA conformance violation caught by axe-core.
-      // Selection announcement to AT is handled via the `<SelectionAnnouncer>`
-      // aria-live region (SPEC §3.6) which works regardless of wrapper role.
-      role={isGroupContainer ? 'group' : undefined}
-      aria-label={groupAriaLabel}
-      // Roving tabindex (W3C ARIA Authoring Practices, "Composite Widgets"):
-      // exactly one wrapper per editor is in the document tab order at a
-      // time — the currently-selected one. Without this, every top-level
-      // jsxComponent created an O(N) Tab cost before the user could reach
-      // anything outside the editor (Breadcrumb buttons, presence bar). The
-      // wrappers remain reachable via PM's NodeSelection arrow-nav; Tab
-      // stays a "leave the editor" affordance, not "step through every
-      // block." Matches Gutenberg / Lexical block-editor conventions.
-      tabIndex={isInnermostSelected ? 0 : -1}
-      {...(!isChildOfComponent
-        ? { 'data-drag-handle': '', draggable: 'true' }
-        : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
-      data-component-name={descriptor.name}
-      onClick={handleBodyClick}
-      onKeyDown={handleKeyDown}
-    >
-      {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
-      <div
-        className="jsx-component-chrome"
-        contentEditable={false}
-        onMouseDown={(e) => e.stopPropagation()}
+    <Popover open={popoverOpen} onOpenChange={handleOpenChange}>
+      <NodeViewWrapper
+        className="jsx-component-wrapper my-2"
+        // Stable test-selector contract, decoupled from `className` (which can
+        // change for visual reasons). Tests that target "every component
+        // wrapper" use `[data-jsx-component]` — do not remove without
+        // updating `packages/app/tests/a11y/component-blocks.e2e.ts` etc.
+        data-jsx-component=""
+        data-component-type={descriptor.name.toLowerCase()}
+        data-selected={isInnermostSelected ? 'true' : undefined}
+        data-has-child-selected={hasChildSelected ? 'true' : undefined}
+        data-selection-origin={selectionOrigin}
+        data-dragging={isDraggingSelf ? 'true' : undefined}
+        data-needs-config={needsConfig ? 'true' : undefined}
+        // `aria-selected` is intentionally omitted — per WAI-ARIA 1.2, it's
+        // only valid on `role` values that support selection semantics
+        // (option, tab, row, gridcell, treeitem, columnheader, rowheader).
+        // Our wrappers carry `role="group"` (for emptyChildName containers)
+        // or no role (for generic block components). Emitting `aria-selected`
+        // on those roles is an ARIA conformance violation caught by axe-core.
+        // Selection announcement to AT is handled via the `<SelectionAnnouncer>`
+        // aria-live region (SPEC §3.6) which works regardless of wrapper role.
+        role={isGroupContainer ? 'group' : undefined}
+        aria-label={groupAriaLabel}
+        // Roving tabindex (W3C ARIA Authoring Practices, "Composite Widgets"):
+        // exactly one wrapper per editor is in the document tab order at a
+        // time — the currently-selected one. Without this, every top-level
+        // jsxComponent created an O(N) Tab cost before the user could reach
+        // anything outside the editor (Breadcrumb buttons, presence bar). The
+        // wrappers remain reachable via PM's NodeSelection arrow-nav; Tab
+        // stays a "leave the editor" affordance, not "step through every
+        // block." Matches Gutenberg / Lexical block-editor conventions.
+        tabIndex={isInnermostSelected ? 0 : -1}
+        {...(!isChildOfComponent
+          ? { 'data-drag-handle': '', draggable: 'true' }
+          : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
+        data-component-name={descriptor.name}
+        onClick={handleBodyClick}
+        onKeyDown={handleKeyDown}
       >
-        {/* Move up/down — only for children inside containers; hidden at boundaries.
+        {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] — rendered for every
+          configured component AND placeholder mode. Placeholder mode keeps the
+          chrome (gear, move arrows, delete) visible because the same data-needs-config
+          gear-hint UX should apply to fresh slash-inserted blocks the same way it
+          does to any other unconfigured-prop block. The placeholder pill provides
+          an additional click-to-open affordance via PopoverAnchor; the gear remains
+          the canonical PopoverTrigger. */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
+        <div
+          className="jsx-component-chrome"
+          contentEditable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* Move up/down — only for children inside containers; hidden at boundaries.
             `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
             node's position is out-of-bounds because a concurrent remote peer edit
             (or an in-flight Observer B re-parse) shifted it between render and
@@ -683,232 +754,120 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             `ComponentErrorBoundary`, which would mis-attribute the click-time
             race as a `jsx-render-failure` and auto-convert this component to
             rawMdxFallback. Pattern mirrors the `isChildOfComponent` probe at L213. */}
-        {canMoveUp && (
-          <button
-            type="button"
-            className="jsx-chrome-btn"
-            aria-label="Move up"
-            onClick={() => {
-              try {
-                if (typeof pos !== 'number') return;
-                const $p = editor.state.doc.resolve(pos);
-                const idx = $p.index($p.depth);
-                if (idx === 0) return;
-                const parent = $p.node($p.depth);
-                const prev = parent.child(idx - 1);
-                const from = pos - prev.nodeSize;
-                const to = pos + node.nodeSize;
-                const tr = editor.state.tr;
-                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                const pre = editor.state.doc.slice(from, pos);
-                tr.replaceWith(from, to, cur.content.append(pre.content));
-                editor.view.dispatch(tr.scrollIntoView());
-              } catch (err) {
-                if (!(err instanceof RangeError)) throw err;
-                incrementJsxMoveFailed('up');
-                console.warn(
-                  JSON.stringify({
-                    event: 'jsx-component-move-failed',
-                    direction: 'up',
-                    component: descriptor.name,
-                    rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
-                    reason: err.message.slice(0, 500),
-                  }),
-                );
-              }
-            }}
-          >
-            <ArrowUp size={12} />
-          </button>
-        )}
+          {canMoveUp && (
+            <button
+              type="button"
+              className="jsx-chrome-btn"
+              aria-label="Move up"
+              onClick={() => {
+                try {
+                  if (typeof pos !== 'number') return;
+                  const $p = editor.state.doc.resolve(pos);
+                  const idx = $p.index($p.depth);
+                  if (idx === 0) return;
+                  const parent = $p.node($p.depth);
+                  const prev = parent.child(idx - 1);
+                  const from = pos - prev.nodeSize;
+                  const to = pos + node.nodeSize;
+                  const tr = editor.state.tr;
+                  const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                  const pre = editor.state.doc.slice(from, pos);
+                  tr.replaceWith(from, to, cur.content.append(pre.content));
+                  editor.view.dispatch(tr.scrollIntoView());
+                } catch (err) {
+                  if (!(err instanceof RangeError)) throw err;
+                  incrementJsxMoveFailed('up');
+                  console.warn(
+                    JSON.stringify({
+                      event: 'jsx-component-move-failed',
+                      direction: 'up',
+                      component: descriptor.name,
+                      rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                      reason: err.message.slice(0, 500),
+                    }),
+                  );
+                }
+              }}
+            >
+              <ArrowUp size={12} aria-hidden="true" />
+            </button>
+          )}
 
-        {canMoveDown && (
-          <button
-            type="button"
-            className="jsx-chrome-btn"
-            aria-label="Move down"
-            onClick={() => {
-              try {
-                if (typeof pos !== 'number') return;
-                const $p = editor.state.doc.resolve(pos);
-                const idx = $p.index($p.depth);
-                const parent = $p.node($p.depth);
-                if (idx >= parent.childCount - 1) return;
-                const next = parent.child(idx + 1);
-                const from = pos;
-                const to = pos + node.nodeSize + next.nodeSize;
-                const tr = editor.state.tr;
-                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
-                tr.replaceWith(from, to, nxt.content.append(cur.content));
-                editor.view.dispatch(tr.scrollIntoView());
-              } catch (err) {
-                if (!(err instanceof RangeError)) throw err;
-                incrementJsxMoveFailed('down');
-                console.warn(
-                  JSON.stringify({
-                    event: 'jsx-component-move-failed',
-                    direction: 'down',
-                    component: descriptor.name,
-                    rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
-                    reason: err.message.slice(0, 500),
-                  }),
-                );
-              }
-            }}
-          >
-            <ArrowDown size={12} />
-          </button>
-        )}
+          {canMoveDown && (
+            <button
+              type="button"
+              className="jsx-chrome-btn"
+              aria-label="Move down"
+              onClick={() => {
+                try {
+                  if (typeof pos !== 'number') return;
+                  const $p = editor.state.doc.resolve(pos);
+                  const idx = $p.index($p.depth);
+                  const parent = $p.node($p.depth);
+                  if (idx >= parent.childCount - 1) return;
+                  const next = parent.child(idx + 1);
+                  const from = pos;
+                  const to = pos + node.nodeSize + next.nodeSize;
+                  const tr = editor.state.tr;
+                  const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                  const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+                  tr.replaceWith(from, to, nxt.content.append(cur.content));
+                  editor.view.dispatch(tr.scrollIntoView());
+                } catch (err) {
+                  if (!(err instanceof RangeError)) throw err;
+                  incrementJsxMoveFailed('down');
+                  console.warn(
+                    JSON.stringify({
+                      event: 'jsx-component-move-failed',
+                      direction: 'down',
+                      component: descriptor.name,
+                      rawComponentName: String(node.attrs.componentName ?? '').slice(0, 200),
+                      reason: err.message.slice(0, 500),
+                    }),
+                  );
+                }
+              }}
+            >
+              <ArrowDown size={12} aria-hidden="true" />
+            </button>
+          )}
 
-        {/* Delete — positioned between move arrows and settings so the
+          {/* Delete — positioned between move arrows and settings so the
             settings gear stays anchored at the right edge of the chrome bar
             (consistent "destructive action mid, config action far-right"
             pattern regardless of whether the component has editable props). */}
-        <button
-          type="button"
-          className="jsx-chrome-btn jsx-chrome-btn--delete"
-          aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
-          onClick={() => {
-            if (typeof pos === 'number') {
-              editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
-            }
-          }}
-        >
-          <Trash2 size={12} />
-        </button>
-
-        {/* Settings → Popover PropPanel (shown whenever the descriptor has
-            any non-hidden, non-reactnode prop — even if the user hasn't set
-            a value yet; empty-prop state is a valid config entry point). */}
-        {hasEditableProps && (
-          <Popover
-            open={popoverOpen}
-            onOpenChange={(open) => {
-              setPopoverOpen(open);
-              // When the popover closes for a component with no editable
-              // children (self-closing like Image, …), the caret may still be
-              // on/inside the node. Defer to the next frame so PM's click
-              // handler settles first, then — if the caret is still within
-              // the node's range — advance it to the NEAREST VALID TEXT
-              // POSITION forward. Using `setTextSelection(pos + nodeSize)`
-              // can land on a block boundary (parent is a block container,
-              // not a textblock), so typing wraps the keystroke in a new
-              // paragraph. `TextSelection.near($pos, 1)` walks forward past
-              // block boundaries to a real text position.
-              if (open) return;
-              if (descriptor.hasChildren && !descriptor.isSelfClosing) return;
-              requestAnimationFrame(() => {
-                const p = typeof getPos === 'function' ? getPos() : undefined;
-                if (typeof p !== 'number') return;
-                const curNode = editor.state.doc.nodeAt(p);
-                if (!curNode) return;
-                const nodeEnd = p + curNode.nodeSize;
-                const selFrom = editor.state.selection.from;
-                if (selFrom < p || selFrom >= nodeEnd) return;
-                const $end = editor.state.doc.resolve(
-                  Math.min(nodeEnd, editor.state.doc.content.size),
-                );
-                const nextSel = TextSelection.near($end, 1);
-                editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
-                editor.view.focus();
-              });
+          <button
+            type="button"
+            className="jsx-chrome-btn jsx-chrome-btn--delete"
+            aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
+            onClick={() => {
+              if (typeof pos === 'number') {
+                editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+              }
             }}
           >
+            <Trash2 size={12} aria-hidden="true" />
+          </button>
+
+          {/* Settings — opens the controlled PropPanel popover hoisted above
+            NodeViewWrapper. `<PopoverTrigger asChild>` is the canonical click-to-
+            open path. In placeholder mode the popover is positioned via the
+            `<PopoverAnchor>` wrapping the placeholder pill (Anchor takes precedence
+            over Trigger for placement); both paths flip the same popoverOpen state. */}
+          {hasEditableProps && (
             <PopoverTrigger asChild>
               <button
                 type="button"
                 className="jsx-chrome-btn"
                 aria-label={`${descriptor.displayName ?? descriptor.name} properties`}
               >
-                <Settings2 size={12} />
+                <Settings2 size={12} aria-hidden="true" />
               </button>
             </PopoverTrigger>
-            {/* z-[60] overrides the shadcn popover base (z-50) so the
-                PropPanel reliably sits above other z-50 surfaces (wiki-link
-                Dialog overlays, sonner toasts, internal-link Dialogs). The
-                chrome bar in globals.css also uses z-50; a PopoverContent
-                at the same level is ordered by render-order, which isn't a
-                stable guarantee — an explicit bump makes it deterministic. */}
-            <PopoverContent side="right" align="start" sideOffset={8} className="w-64 p-3 z-[60]">
-              <div className="text-xs font-medium text-muted-foreground mb-2">
-                {descriptor.displayName ?? descriptor.name} Properties
-              </div>
-              <PropPanel
-                descriptor={descriptor}
-                values={primitiveProps}
-                onChange={(propName, value) => {
-                  // Update the node at its live position — NOT via
-                  // `editor.commands.updateAttributes`, which targets the
-                  // *current selection*. When the PropPanel popover has an
-                  // input focused, the PM selection has already moved off
-                  // this Card (the editor loses focus to the portal input),
-                  // so selection-based updateAttributes silently no-ops and
-                  // every keystroke disappears. `setNodeMarkup(pos, ...)`
-                  // targets the node at its position regardless of where
-                  // the selection is now.
-                  const p = typeof getPos === 'function' ? getPos() : undefined;
-                  if (typeof p !== 'number') return;
-                  const curNode = editor.state.doc.nodeAt(p);
-                  if (!curNode) return;
-                  // Defense at the write boundary: PropPanel writes only target
-                  // `kind: 'element'` nodes. Today PropPanel never opens for
-                  // `kind: 'expression'` nodes (their componentName is empty,
-                  // which falls through to the wildcard descriptor with empty
-                  // `props`, so `hasEditableProps` is false). If a future refactor
-                  // changes that gate (e.g., custom PropPanel for expression
-                  // blocks), this spread would otherwise stamp element-shaped
-                  // attrs onto an expression node and the serializer at
-                  // `markdown/index.ts:jsxComponent` would silently emit
-                  // `sourceRaw` verbatim, dropping every PropPanel edit.
-                  if (curNode.attrs.kind !== 'element') return;
-                  const currentProps = (curNode.attrs.props as Record<string, unknown>) ?? {};
-                  // `undefined` means "clear this prop" — we DELETE the key
-                  // rather than storing `{[propName]: undefined}`. If we kept
-                  // the undefined entry, `reconstructAttrs` would serialize it
-                  // as a boolean-shorthand attr (`<Image width />`) via
-                  // `propToMdxJsxAttribute`'s `value == null` branch. PropPanel
-                  // passes undefined when the user backspaces a numeric input
-                  // to empty for an optional prop. We ALSO filter the matching
-                  // entry out of the preserved `attributes` array so the
-                  // dirty-path reconstruction in `reconstructAttrs` doesn't
-                  // re-emit the original (stale) value.
-                  const nextProps: Record<string, unknown> = { ...currentProps };
-                  const currentAttributes = Array.isArray(curNode.attrs.attributes)
-                    ? (curNode.attrs.attributes as unknown[])
-                    : [];
-                  let nextAttributes = currentAttributes;
-                  if (value === undefined) {
-                    delete nextProps[propName];
-                    nextAttributes = currentAttributes.filter(
-                      (a) =>
-                        !(
-                          a != null &&
-                          typeof a === 'object' &&
-                          (a as Record<string, unknown>).type === 'mdxJsxAttribute' &&
-                          (a as Record<string, unknown>).name === propName
-                        ),
-                    );
-                  } else {
-                    nextProps[propName] = value;
-                  }
-                  editor.view.dispatch(
-                    editor.state.tr.setNodeMarkup(p, null, {
-                      ...curNode.attrs,
-                      attributes: nextAttributes,
-                      props: nextProps,
-                      sourceDirty: true,
-                    }),
-                  );
-                  markUserTyping();
-                }}
-              />
-            </PopoverContent>
-          </Popover>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Live React component — renders exactly like production.
+        {/* Live React component — renders exactly like production.
           Self-closing / no-children components get contentEditable={false} so
           native behaviors work (links navigate, etc.). ALL other components
           stay contentEditable (PM manages the content hole).
@@ -918,7 +877,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           BubbleMenu, and all PM features for descendants. Instead, a
           filterTransaction plugin (TypedChildrenGuard) rejects unwanted
           insertions at the PM transaction level. */}
-      {/*
+        {/*
         Reset mechanism: rely on `componentDidUpdate`'s resetKey-comparison
         branch (L107) to clear `errored` state when primitive props change.
         Previously we also set `key={resetKey}`, which forced a full remount
@@ -930,42 +889,175 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         renders and still clears the error path when the user fixes a
         prop that was causing the render to throw.
       */}
-      <ComponentErrorBoundary
-        resetKey={resetKey}
-        onError={setRenderError}
-        descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
-        rawComponentName={(node.attrs.componentName as string) ?? ''}
-      >
-        <Comp {...renderProps}>
-          <NodeViewContent
-            className={`component-children ${
-              !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
-            }`}
-            {...(!descriptor.hasChildren || descriptor.isSelfClosing
-              ? { contentEditable: false }
-              : {})}
-          />
-        </Comp>
-      </ComponentErrorBoundary>
+        {showPlaceholder && resolvedPlaceholder ? (
+          // No NodeViewContent here for the same reason the healthy branch's
+          // Image / Video / Audio components silently drop children: the
+          // descriptors that surface the placeholder are self-closing leaves
+          // (`hasChildren: false`), so PM never has block children to map.
+          // The slot's absence here matches Branch 2 for self-closing leaves;
+          // Precedent #30's "always rendered" obligation lives downstream in
+          // the renderer that does have children to host (Callout / Accordion).
+          <PopoverAnchor asChild>
+            <DescriptorPlaceholder
+              label={resolvedPlaceholder.label}
+              Icon={resolvedPlaceholder.Icon}
+              onClick={openPanel}
+              selected={isInnermostSelected}
+            />
+          </PopoverAnchor>
+        ) : (
+          <ComponentErrorBoundary
+            resetKey={resetKey}
+            onError={setRenderError}
+            descriptorName={descriptor.name === '*' ? 'wildcard' : descriptor.name}
+            rawComponentName={(node.attrs.componentName as string) ?? ''}
+          >
+            <Comp {...renderProps}>
+              <NodeViewContent
+                className={`component-children ${
+                  !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
+                }`}
+                {...(!descriptor.hasChildren || descriptor.isSelfClosing
+                  ? { contentEditable: false }
+                  : {})}
+              />
+            </Comp>
+          </ComponentErrorBoundary>
+        )}
 
-      {/* "Add child" pill — absolute overlay at bottom edge (containers only) */}
-      {descriptor.emptyChildName && (
-        <button
-          type="button"
-          contentEditable={false}
-          className={node.childCount === 0 ? 'jsx-empty-child-placeholder' : 'jsx-add-child-pill'}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            const childName = descriptor.emptyChildName as string;
-            const childJSON = createChildNode(childName);
-            const insertPos = insertChildAt();
-            editor.chain().focus().insertContentAt(insertPos, childJSON).run();
-            focusInsertedComponent(editor, insertPos, getDescriptor(childName));
-          }}
+        {/* "Add child" pill — absolute overlay at bottom edge (containers only) */}
+        {descriptor.emptyChildName && (
+          <button
+            type="button"
+            contentEditable={false}
+            className={node.childCount === 0 ? 'jsx-empty-child-placeholder' : 'jsx-add-child-pill'}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              const childName = descriptor.emptyChildName as string;
+              const childJSON = createChildNode(childName);
+              const insertPos = insertChildAt();
+              editor.chain().focus().insertContentAt(insertPos, childJSON).run();
+              focusInsertedComponent(editor, insertPos, getDescriptor(childName));
+            }}
+          >
+            <span>+ Add {descriptor.emptyChildName}</span>
+          </button>
+        )}
+      </NodeViewWrapper>
+      {/* z-[60] overrides the shadcn popover base (z-50) so the PropPanel
+          reliably sits above other z-50 surfaces (wiki-link Dialog overlays,
+          sonner toasts, internal-link Dialogs). The chrome bar in globals.css
+          also uses z-50; a PopoverContent at the same level is ordered by
+          render-order, which isn't a stable guarantee — explicit bump makes
+          it deterministic. */}
+      {hasEditableProps && (
+        // Placeholder mode anchors the popover via PopoverAnchor on the full-
+        // width pill, so the right-of-the-gear placement that suits a
+        // configured component reads as off-center and disconnected. Drop the
+        // popover under the pill, centered horizontally, with a small negative
+        // sideOffset so the top of the popover overlaps the bottom of the
+        // pill — Notion-style continuation between affordance and form.
+        <PopoverContent
+          side={showPlaceholder ? 'bottom' : 'right'}
+          align={showPlaceholder ? 'center' : 'start'}
+          sideOffset={showPlaceholder ? -4 : 8}
+          className="w-64 p-3 z-[60]"
+          // Self-closing leaves (img/video/audio) want the caret back in the
+          // editor body so the user can keep typing — the Notion-style
+          // "fill prop → Escape → continue" loop. Radix's default close-time
+          // focus restore points at `previouslyFocusedElement` captured when
+          // the popover mounted, which is typically the gear button or a
+          // now-detached slash-menu element; keystrokes after Escape land
+          // there and silently vanish until the user clicks back into the
+          // editor. Container components (Callout/Accordion) keep Radix's
+          // default — their content hole already pulls focus naturally.
+          //
+          // Runs inside Radix's setTimeout(0) close-tick, which beats the
+          // rAF-deferred caret-advance in handleOpenChange and any other
+          // racing focus calls. preventDefault on the unmount-auto-focus
+          // event tells FocusScope to skip its own focus() restore.
+          onCloseAutoFocus={
+            isSelfClosingLeaf
+              ? (e) => {
+                  e.preventDefault();
+                  editor.view.focus();
+                }
+              : undefined
+          }
         >
-          <span>+ Add {descriptor.emptyChildName}</span>
-        </button>
+          <div className="text-xs font-medium text-muted-foreground mb-2">
+            {descriptor.displayName ?? descriptor.name} Properties
+          </div>
+          <PropPanel
+            descriptor={descriptor}
+            values={primitiveProps}
+            onChange={(propName, value) => {
+              // Update the node at its live position — NOT via
+              // `editor.commands.updateAttributes`, which targets the
+              // *current selection*. When the PropPanel popover has an input
+              // focused, the PM selection has already moved off this Card
+              // (the editor loses focus to the portal input), so
+              // selection-based updateAttributes silently no-ops and every
+              // keystroke disappears. `setNodeMarkup(pos, ...)` targets the
+              // node at its position regardless of where the selection is now.
+              const p = typeof getPos === 'function' ? getPos() : undefined;
+              if (typeof p !== 'number') return;
+              const curNode = editor.state.doc.nodeAt(p);
+              if (!curNode) return;
+              // Defense at the write boundary: PropPanel writes only target
+              // `kind: 'element'` nodes. Today PropPanel never opens for
+              // `kind: 'expression'` nodes (their componentName is empty,
+              // which falls through to the wildcard descriptor with empty
+              // `props`, so `hasEditableProps` is false). If a future
+              // refactor changes that gate (e.g., custom PropPanel for
+              // expression blocks), this spread would otherwise stamp
+              // element-shaped attrs onto an expression node and the
+              // serializer at `markdown/index.ts:jsxComponent` would silently
+              // emit `sourceRaw` verbatim, dropping every PropPanel edit.
+              if (curNode.attrs.kind !== 'element') return;
+              const currentNodeProps = (curNode.attrs.props as Record<string, unknown>) ?? {};
+              // `undefined` means "clear this prop" — we DELETE the key
+              // rather than storing `{[propName]: undefined}`. If we kept
+              // the undefined entry, `reconstructAttrs` would serialize it
+              // as a boolean-shorthand attr (`<Image width />`) via
+              // `propToMdxJsxAttribute`'s `value == null` branch. PropPanel
+              // passes undefined when the user backspaces a numeric input to
+              // empty for an optional prop. We ALSO filter the matching
+              // entry out of the preserved `attributes` array so the
+              // dirty-path reconstruction in `reconstructAttrs` doesn't
+              // re-emit the original (stale) value.
+              const nextProps: Record<string, unknown> = { ...currentNodeProps };
+              const currentAttributes = Array.isArray(curNode.attrs.attributes)
+                ? (curNode.attrs.attributes as unknown[])
+                : [];
+              let nextAttributes = currentAttributes;
+              if (value === undefined) {
+                delete nextProps[propName];
+                nextAttributes = currentAttributes.filter(
+                  (a) =>
+                    !(
+                      a != null &&
+                      typeof a === 'object' &&
+                      (a as Record<string, unknown>).type === 'mdxJsxAttribute' &&
+                      (a as Record<string, unknown>).name === propName
+                    ),
+                );
+              } else {
+                nextProps[propName] = value;
+              }
+              editor.view.dispatch(
+                editor.state.tr.setNodeMarkup(p, null, {
+                  ...curNode.attrs,
+                  attributes: nextAttributes,
+                  props: nextProps,
+                  sourceDirty: true,
+                }),
+              );
+              markUserTyping();
+            }}
+          />
+        </PopoverContent>
       )}
-    </NodeViewWrapper>
+    </Popover>
   );
 }

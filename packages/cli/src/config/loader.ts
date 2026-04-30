@@ -8,11 +8,27 @@
  *
  * Deep merge: workspace leaf values override user leaf values.
  * Arrays are replaced, not concatenated.
+ *
+ * Errors are emitted with source positions via yaml@2's `parseDocument`
+ * (FR-27 / D36) — `file:line:col` plus a code-snippet with caret marker.
+ *
+ * The user-global file (`~/.open-knowledge/config.yml`) is read via
+ * `readConfigSafely` (FR-35 / D57) — invalid files are sidelined to
+ * `<path>.invalid-<ISO-timestamp>` and replaced with schema defaults so
+ * OK can still boot. The workspace file errors loud (throws) — workspace
+ * errors are user-fixable in-place and failing fast helps the user notice.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import {
+  type ConfigIssue,
+  type ConfigValidationError,
+  humanFormat,
+  locateIssue,
+} from '@inkeep/open-knowledge-core';
+import { readConfigSafely } from '@inkeep/open-knowledge-core/server';
+import { type Document, parseDocument } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { isObject } from '../utils/is-object.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
@@ -29,6 +45,10 @@ const DEFAULT_CONFIG_CACHE_MS = 1000;
 /**
  * Deep merge two objects. Leaf values in `override` replace `base`.
  * Arrays are replaced, not concatenated.
+ *
+ * Cross-scope `folders[]` concat-merge (Q11 resolution per spec §9.5.6) is
+ * NOT implemented here — left for a follow-up story. Today this is straight
+ * array-replace, matching the legacy behavior US-001/002/003 inherited.
  */
 function deepMerge(
   base: Record<string, unknown>,
@@ -47,51 +67,133 @@ function deepMerge(
   return result;
 }
 
-function loadYamlFile(filePath: string): Record<string, unknown> | null {
-  if (!existsSync(filePath)) return null;
+interface LoadedYamlFile {
+  /** Parsed JS object (or null if the file is empty / comments-only / missing). */
+  value: Record<string, unknown> | null;
+  /** Absolute path read. */
+  path: string;
+  /** Raw file source — needed for source-position rendering on validation failure. */
+  source: string | null;
+  /** yaml@2 Document AST — needed for `getIn(path)` → byte range translation. */
+  doc: Document | null;
+}
+
+/**
+ * Load a YAML file via parseDocument (source-position-preserving). Returns
+ * the parsed JS value plus the Document AST + raw source so callers can
+ * locate Zod issues back to file:line:col.
+ *
+ * On YAML syntax errors, logs a warning and returns `value: null` (existing
+ * graceful-degradation semantic — broken workspace YAML doesn't block boot;
+ * the user fixes the file and reloads).
+ */
+function loadYamlFile(filePath: string): LoadedYamlFile {
+  if (!existsSync(filePath)) {
+    return { value: null, path: filePath, source: null, doc: null };
+  }
+  let raw: string;
   try {
-    const raw = readFileSync(filePath, 'utf-8');
-    const parsed = parseYaml(raw);
-    if (isObject(parsed)) {
-      return parsed;
-    }
-    return null;
+    raw = readFileSync(filePath, 'utf-8');
   } catch (err) {
     console.warn(
-      `[config] Failed to parse ${filePath}: ${err instanceof Error ? err.message : err}`,
+      `[config] Failed to read ${filePath}: ${err instanceof Error ? err.message : err}`,
     );
-    return null;
+    return { value: null, path: filePath, source: null, doc: null };
   }
+  const doc = parseDocument(raw);
+  if (doc.errors.length > 0) {
+    console.warn(
+      `[config] Failed to parse ${filePath}: ${doc.errors.map((e) => e.message).join('; ')}`,
+    );
+    return { value: null, path: filePath, source: raw, doc: null };
+  }
+  const parsed = doc.toJSON();
+  if (isObject(parsed)) {
+    return { value: parsed, path: filePath, source: raw, doc };
+  }
+  // Comments-only or scalar root — treat as empty.
+  return { value: null, path: filePath, source: raw, doc };
+}
+
+/**
+ * Map Zod issues to source-located `ConfigIssue`s using the workspace
+ * Document AST when the path resolves there. User-global paths don't get
+ * source-located here (the user-global file went through readConfigSafely
+ * upstream and any user-global issues already triggered sideline + defaults
+ * before this merged validation runs).
+ */
+function annotateIssuesWithSource(
+  zodIssues: ReadonlyArray<{ path: PropertyKey[]; message: string; code: string }>,
+  workspaceFile: LoadedYamlFile,
+): ConfigIssue[] {
+  return zodIssues.map((issue) => {
+    const path = issue.path.map((seg) =>
+      typeof seg === 'symbol' ? String(seg) : (seg as string | number),
+    );
+    const base: ConfigIssue = {
+      path,
+      message: issue.message,
+      issueCode: issue.code,
+    };
+    if (workspaceFile.doc !== null && workspaceFile.source !== null) {
+      const located = locateIssue({
+        file: workspaceFile.path,
+        source: workspaceFile.source,
+        doc: workspaceFile.doc,
+        path,
+      });
+      if (located !== undefined) {
+        return { ...base, source: located };
+      }
+    }
+    return base;
+  });
 }
 
 export function loadConfig(cwd?: string): LoadConfigResult {
   const workingDir = cwd ?? process.cwd();
   const sources: string[] = [];
 
-  // Layer 1: user config
+  // Layer 1: user-global config — go through readConfigSafely so a broken
+  // file is sidelined and we boot on defaults instead of hanging the user.
   const userConfigPath = resolve(homedir(), OK_DIR, CONFIG_FILENAME);
+  const userResult = readConfigSafely({ absPath: userConfigPath });
   let merged: Record<string, unknown> = {};
-  const userConfig = loadYamlFile(userConfigPath);
-  if (userConfig) {
-    merged = deepMerge(merged, userConfig);
+  if (userResult.valid && userResult.source !== undefined) {
+    // Re-emit through the JSON projection so deepMerge stays uniform.
+    merged = deepMerge(merged, userResult.value as unknown as Record<string, unknown>);
     sources.push(userConfigPath);
+  } else if (!userResult.valid) {
+    // readConfigSafely already logged + sidelined; we treat this as "user
+    // contributed nothing" and proceed with defaults at this layer.
   }
 
-  // Layer 2: workspace config
+  // Layer 2: workspace config — fail loud on schema-fail so the user notices.
   const workspaceConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
-  const workspaceConfig = loadYamlFile(workspaceConfigPath);
-  if (workspaceConfig) {
-    merged = deepMerge(merged, workspaceConfig);
+  const workspaceFile = loadYamlFile(workspaceConfigPath);
+  if (workspaceFile.value !== null) {
+    merged = deepMerge(merged, workspaceFile.value);
     sources.push(workspaceConfigPath);
   }
 
-  // Validate with Zod (applies defaults for missing fields)
+  // Deprecation WARN — `upload.maxBytes` was removed when uploads switched
+  // to streaming (reports/streaming-upload-refactor/REPORT.md §D8). The
+  // schema is not `.strict()`, so the key parses cleanly and gets silently
+  // stripped; surface a one-time note so users can remove it from their
+  // config.
+  const mergedUpload = merged.upload;
+  if (isObject(mergedUpload) && mergedUpload.maxBytes !== undefined) {
+    console.warn(
+      '[config] upload.maxBytes is deprecated and ignored — streaming uploads have no user-facing cap. Remove the key to silence this warning.',
+    );
+  }
+
+  // Validate the merged result with Zod.
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
-    const errors = result.error.issues.map(
-      (issue) => `  ${issue.path.join('.')}: ${issue.message}`,
-    );
-    throw new Error(`Invalid configuration:\n${errors.join('\n')}`);
+    const issues = annotateIssuesWithSource(result.error.issues, workspaceFile);
+    const error: ConfigValidationError = { code: 'SCHEMA_INVALID', issues };
+    throw new Error(humanFormat(error));
   }
 
   return { config: result.data, sources };
@@ -101,21 +203,16 @@ export function loadConfig(cwd?: string): LoadConfigResult {
  * Apply process-level env overrides that affect config semantics. Kept narrow
  * on purpose: only values that already override the loaded config in the CLI
  * entrypoint belong here.
+ *
+ * `PORT` is intentionally NOT handled here — per D29 `server.port` is no
+ * longer a schema field; the `start` command resolves port directly from
+ * `--port` flag → `PORT` env → bootServer kernel-allocation.
  */
 function applyProcessEnvConfigOverrides(
   config: Config,
   env: NodeJS.ProcessEnv = process.env,
 ): Config {
   let next = config;
-  if (env.PORT) {
-    next = {
-      ...next,
-      server: {
-        ...next.server,
-        port: Number(env.PORT),
-      },
-    };
-  }
   if (env.HOST) {
     next = {
       ...next,

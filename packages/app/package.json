@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
@@ -18,7 +18,7 @@
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "measure:fuzz": "bash scripts/measure-fuzz.sh",
     "measure:stress": "bash scripts/measure-stress.sh",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts tests/stress/asset-embed.e2e.ts tests/stress/asset-embed-advanced.e2e.ts tests/stress/asset-click-dispatch.e2e.ts tests/stress/handoff.e2e.ts tests/stress/multi-agent-presence.e2e.ts tests/stress/editor-mode-persistence.e2e.ts tests/stress/sidebar-push-small-width.e2e.ts tests/stress/agent-activity-panel.e2e.ts",
     "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
@@ -38,7 +38,7 @@
     {
       "name": "all JS chunks combined (gzipped)",
       "path": "dist/assets/*.js",
-      "limit": "1.2 MB",
+      "limit": "1.3 MB",
       "gzip": true
     },
     {

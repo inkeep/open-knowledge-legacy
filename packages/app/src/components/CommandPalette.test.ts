@@ -135,3 +135,64 @@ describe('Switch Project entry (source-level guards)', () => {
     expect(valueLine).not.toContain('manage');
   });
 });
+
+describe('Settings entry (US-010 / FR-1 / D54 — source-level guards)', () => {
+  const SRC_PATH = join(__dirname, 'CommandPalette.tsx');
+  const src = readFileSync(SRC_PATH, 'utf-8');
+
+  // Isolate the Settings CommandItem block by its data-testid so a refactor
+  // that crosses the onSelect onto a sibling item (open-folder, install-claude-
+  // desktop, recent-*, open-in-agent-*) would fail the assertions below.
+  const settingsBlock = (() => {
+    const chunks = src.split(/(?=<CommandItem\b)/);
+    const ours = chunks.find((c) => c.includes('data-testid="command-palette-settings"'));
+    if (!ours) return '';
+    return ours.split('</CommandItem>')[0] ?? '';
+  })();
+
+  test('imports the Settings icon from lucide-react and SETTINGS_OPEN_HASH', () => {
+    expect(src).toMatch(/import\s*\{[^}]*\bSettings\b[^}]*\}\s*from\s*'lucide-react'/);
+    expect(src).toContain('SETTINGS_OPEN_HASH');
+    expect(src).toMatch(/from\s*'@\/lib\/use-settings-route'/);
+  });
+
+  test('Settings CommandItem carries the icon, the ⌘, shortcut hint, and the Settings… label', () => {
+    expect(settingsBlock, 'CommandItem with command-palette-settings not found').toBeTruthy();
+    expect(settingsBlock).toContain('<Settings');
+    expect(settingsBlock).toContain('Settings…');
+    expect(settingsBlock).toContain('<CommandShortcut>⌘,</CommandShortcut>');
+  });
+
+  test('Settings onSelect closes the palette and routes to SETTINGS_OPEN_HASH', () => {
+    // Wiring lives inside this CommandItem's onSelect. The `setOpen(false)`
+    // + hash-set pair MUST live together so a future edit that splits them
+    // across siblings is caught. Hash literal drift guard — entry funnels
+    // through the canonical export, not an inlined string.
+    expect(settingsBlock).toContain('setOpen(false)');
+    expect(settingsBlock).toContain('SETTINGS_OPEN_HASH');
+  });
+
+  test('search-token value covers settings / preferences / config substrings', () => {
+    // The cmdk `value` prop drives substring matching for fuzzy search. A
+    // user typing "preferences" or "config" should still find Settings.
+    const valueLine = settingsBlock.match(/value="settings[^"]*"/)?.[0] ?? '';
+    expect(valueLine).toContain('settings');
+    expect(valueLine).toContain('preferences');
+    expect(valueLine).toContain('config');
+  });
+
+  test('Settings sits inside the "Project" CommandGroup', () => {
+    // Regression guard on placement — Settings is a project-level command,
+    // not an agent or recent-projects entry. Locate the Settings testid and
+    // verify the surrounding CommandGroup heading is "Project".
+    const settingsIdx = src.indexOf('command-palette-settings');
+    const projectGroupIdx = src.indexOf('heading="Project"');
+    const agentGroupIdx = src.indexOf('heading="Open in agent"');
+    expect(projectGroupIdx).toBeLessThan(settingsIdx);
+    if (agentGroupIdx >= 0) {
+      // If the agent group exists, Settings should fall before it (still
+      // inside the Project group).
+      expect(settingsIdx).toBeLessThan(agentGroupIdx);
+    }
+  });
+});

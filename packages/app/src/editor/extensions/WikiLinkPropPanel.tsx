@@ -227,12 +227,13 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
   const anchor = normalizeNullableString(node?.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
 
-  const { folderPaths, pages, loading } = usePageList();
+  const { folderPaths, pages, pagesBySlug, loading } = usePageList();
   const classifiedTarget = classifyWikiLinkTarget(target, anchor);
   const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
   const linkIntent = resolveLinkTargetIntent(target, {
     pages,
     folderPaths,
+    pagesBySlug,
     fallbackTargets: getWikiLinkResolutionCandidates(target),
   });
 
