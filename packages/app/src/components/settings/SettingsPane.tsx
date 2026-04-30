@@ -210,7 +210,6 @@ const SECTIONS: SectionDef[] = [
 interface ConfigDocConnection {
   provider: HocuspocusProvider;
   binding: ConfigBinding;
-  config: Config;
   synced: boolean;
 }
 
@@ -236,23 +235,15 @@ function useConfigDocConnection(
       if (!mounted) return;
       setState((prev) => {
         if (prev?.provider !== provider) return prev;
-        return { ...prev, synced: true, config: binding.current() };
+        return { ...prev, synced: true };
       });
     };
     provider.on('synced', handleSynced);
-    const unsubscribe = binding.subscribe((next) => {
-      if (!mounted) return;
-      setState((prev) => {
-        if (prev?.provider !== provider) return prev;
-        return prev ? { ...prev, config: next } : prev;
-      });
-    });
 
-    setState({ provider, binding, config: binding.current(), synced: false });
+    setState({ provider, binding, synced: false });
 
     return () => {
       mounted = false;
-      unsubscribe();
       provider.off('synced', handleSynced);
       binding.dispose();
       provider.destroy();
@@ -874,14 +865,6 @@ function valuesEqual(a: unknown, b: unknown): boolean {
     return true;
   }
   return false;
-}
-
-function _humanFormatFirstIssue(error: ConfigValidationError): string {
-  if (isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
-    const first = error.issues[0];
-    if (first) return first.message;
-  }
-  return humanFormat(error);
 }
 
 function IntegrationsSection() {
