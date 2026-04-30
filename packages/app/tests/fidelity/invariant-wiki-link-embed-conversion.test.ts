@@ -29,9 +29,12 @@ import { assertAcrossSeeds, mdManager, mdRoundTrip, normalize, PBT_TIMEOUT_MS } 
 
 const stem = fc.stringMatching(/^[a-z][a-z0-9_-]{0,12}$/).filter((s) => s.length > 0);
 
-// Image extensions render inline in WYSIWYG; non-image extensions get a
-// plain-link fallback (P0) — both share the same mdast shape so the
-// invariant set covers all rendering paths.
+// All allowlisted extensions share the same dispatch contract:
+// block-context → `jsxComponent('WikiEmbed*')` (image/video/audio have a
+// descriptor); inline-position → text+link-mark chip with
+// `sourceForm='wikiembed'`; opaque ext → plain text+link. The image vs
+// non-image partition below is a label for sample distribution — both
+// classes go through identical chip / descriptor logic in this PBT.
 const imageExt = fc.constantFrom('png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg');
 const nonImageExt = fc.constantFrom('pdf', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a');
 const opaqueExt = fc.constantFrom('zip', 'docx', 'xyz', 'csv');
