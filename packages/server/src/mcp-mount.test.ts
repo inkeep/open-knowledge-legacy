@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { createServer, type Server as HttpServer } from 'node:http';
+import { createServer, type Server as HttpServer, request as httpRequest } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type { McpHttpHandler } from './mcp-http.ts';
@@ -47,6 +47,35 @@ async function startMountedServer(handler: McpHttpHandler): Promise<{ port: numb
   return { port };
 }
 
+async function postMcpWithHost(
+  port: number,
+  host: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/mcp',
+        method: 'POST',
+        headers: { Host: host, 'Content-Type': 'application/json' },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end('{}');
+  });
+}
+
 afterEach(async () => {
   const active = servers;
   servers = [];
@@ -79,6 +108,24 @@ describe('mountMcpAndApi /mcp guard', () => {
 
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ ok: false, error: 'origin-not-allowed' });
+    expect(calls).toBe(0);
+  });
+
+  test('rejects non-loopback Host before the MCP handler runs', async () => {
+    let calls = 0;
+    const { port } = await startMountedServer({
+      handle: async (_req, res) => {
+        calls += 1;
+        res.writeHead(200);
+        res.end('ok');
+      },
+      close: async () => {},
+    });
+
+    const res = await postMcpWithHost(port, 'evil.example');
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'host-header-not-allowed' });
     expect(calls).toBe(0);
   });
 

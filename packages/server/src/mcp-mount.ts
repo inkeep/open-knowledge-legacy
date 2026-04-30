@@ -36,8 +36,9 @@ import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import type { AgentPresenceBroadcaster } from './agent-presence.ts';
 import type { AgentSessionManager } from './agent-sessions.ts';
-import { isAllowedApiOrigin, isLoopbackRemoteAddress } from './api-origin.ts';
+import { isAllowedApiOrigin } from './api-origin.ts';
 import type { PinoLogger } from './logger.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
 import { handleCollabSocketError } from './metrics.ts';
 
@@ -135,9 +136,14 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
       const sessionId = Array.isArray(req.headers['mcp-session-id'])
         ? req.headers['mcp-session-id'][0]
         : req.headers['mcp-session-id'];
-      if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
-        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('MCP endpoint is only accessible from localhost');
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'loopback-required' }));
+        return;
+      }
+      if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'host-header-not-allowed' }));
         return;
       }
       if (origin !== undefined && !isAllowedApiOrigin(origin)) {
@@ -200,6 +206,13 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
 
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     if (req.url?.startsWith('/collab/keepalive')) {
+      if (
+        !isLoopbackAddress(req.socket.remoteAddress) ||
+        !isAllowedWorkspaceHostHeader(req.headers.host)
+      ) {
+        socket.destroy();
+        return;
+      }
       socket.on('error', (err: NodeJS.ErrnoException) => {
         if (handleCollabSocketError(err)) return;
         log.error({ err }, 'MCP keepalive socket error');

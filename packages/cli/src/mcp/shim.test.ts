@@ -152,6 +152,34 @@ describe('MCP stdio shim server resolution', () => {
     ).rejects.toThrow('spawn failed: spawn EACCES stderr:\nboot failed loudly');
   });
 
+  test('async spawn failure includes captured stderr', async () => {
+    let errorHandler: ((err: Error) => void) | undefined;
+
+    await expect(
+      resolveMcpHttpUrl({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {
+          errorHandler?.(new Error('spawn ENOENT'));
+        },
+        openErrorLog: () => 123,
+        closeFd: () => {},
+        readErrorLog: () => 'binary missing',
+        spawn: (() => ({
+          on: (event: string, cb: (err: Error) => void) => {
+            if (event === 'error') errorHandler = cb;
+          },
+          unref: () => {},
+        })) as never,
+        timeoutMs: 1000,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toThrow('spawn failed: spawn ENOENT stderr:\nbinary missing');
+  });
+
   test('spawn timeout includes captured stderr', async () => {
     await expect(
       resolveMcpHttpUrl({

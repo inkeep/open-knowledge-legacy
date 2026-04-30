@@ -177,6 +177,10 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
         return;
       }
       if (sessions.size >= maxSessions) {
+        opts.log?.warn?.(
+          { activeSessions: sessions.size, maxSessions },
+          'MCP HTTP session cap reached',
+        );
         writePlain(res, 503, 'Too many active MCP sessions');
         return;
       }
@@ -207,10 +211,16 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
       };
       transport.onclose = () => {
         const id = transport.sessionId;
-        const session = id ? sessions.get(id) : undefined;
-        if (id) sessions.delete(id);
-        if (session?.ttlTimer !== undefined) clearTimeout(session.ttlTimer);
-        opts.log?.info?.({ sessionId: id, reason: 'transport-closed' }, 'MCP HTTP session closed');
+        if (!id) {
+          opts.log?.info?.(
+            { sessionId: id, reason: 'transport-closed' },
+            'MCP HTTP session closed',
+          );
+          return;
+        }
+        void closeSession(id, 'transport-closed').catch((err) => {
+          opts.log?.warn?.({ err, sessionId: id }, 'MCP HTTP transport-close cleanup failed');
+        });
       };
 
       await transport.handleRequest(req, res);
