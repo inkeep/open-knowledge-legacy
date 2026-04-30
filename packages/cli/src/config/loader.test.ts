@@ -35,7 +35,7 @@ afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-/** Helper: write a workspace config.yml inside testDir */
+/** Helper: write a project config.yml inside testDir */
 function writeWorkspaceConfig(yaml: string) {
   const configDir = resolve(testDir, OK_DIR);
   mkdirSync(configDir, { recursive: true });
@@ -119,7 +119,7 @@ describe('loadConfig', () => {
 
   // ── Workspace overrides ─────────────────────────────────────────────
 
-  test('workspace config overrides a single field, other defaults preserved', () => {
+  test('project config overrides a single field, other defaults preserved', () => {
     writeWorkspaceConfig('server:\n  host: 0.0.0.0\n');
 
     const { config, sources } = loadConfig(testDir);
@@ -132,7 +132,7 @@ describe('loadConfig', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
   });
 
-  test('workspace config overrides multiple sections at once', () => {
+  test('project config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
 server:
   host: 0.0.0.0
@@ -221,7 +221,7 @@ content:
 
   // ── Source-located errors (FR-27 / D36) ────────────────────────────
 
-  test('schema-invalid workspace config emits file:line:col in error message', () => {
+  test('schema-invalid project config emits file:line:col in error message', () => {
     // mcp.tools.search.maxResults: schema is z.number().int().min(1)
     // — typing it as a string fails Zod validation. The loader uses
     // parseDocument + locateIssue to map the issue back to source position.
@@ -272,7 +272,7 @@ content:
 });
 
 describe('createProjectConfigResolver', () => {
-  test('loads different workspace configs per cwd', async () => {
+  test('loads different project configs per cwd', async () => {
     const projectA = resolve(testDir, 'project-a');
     const projectB = resolve(testDir, 'project-b');
     mkdirSync(projectA, { recursive: true });

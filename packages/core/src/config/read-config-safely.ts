@@ -8,7 +8,7 @@
  * is logged.
  *
  * Used at boot for `~/.open-knowledge/config.yml` (the user-global path).
- * The workspace path uses the regular loader because workspace errors are
+ * The project path uses the regular loader because project errors are
  * user-fixable in-place — failing fast helps the user notice. User-global
  * errors block every OK boot until manually repaired, so the recovery path
  * is the right default there.

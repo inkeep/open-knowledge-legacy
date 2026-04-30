@@ -144,7 +144,7 @@ describe('set_config — happy paths', () => {
     expect(userYaml).toContain('maxResults: 100');
   });
 
-  test('writes folders[] (workspace defaultScope)', async () => {
+  test('writes folders[] (project defaultScope)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({
@@ -157,11 +157,11 @@ describe('set_config — happy paths', () => {
       ok: boolean;
       scope: string;
     };
-    expect(success.scope).toBe('workspace');
+    expect(success.scope).toBe('project');
     expect(readWorkspaceYaml(project.cwd)).toContain('match: specs/**');
   });
 
-  test('writes content.include to workspace (defaultScope=workspace)', async () => {
+  test('writes content.include to project (defaultScope=project)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({
@@ -169,13 +169,13 @@ describe('set_config — happy paths', () => {
     });
     expect(result.isError).toBeUndefined();
     const success = result.structuredContent?.result as { scope: string };
-    expect(success.scope).toBe('workspace');
+    expect(success.scope).toBe('project');
   });
 
-  test('routes to workspace when path is already set in workspace YAML (scope-inference ladder)', async () => {
+  test('routes to project when path is already set in project YAML (scope-inference ladder)', async () => {
     const project = newProjectWithHome();
-    // Pre-seed mcp.tools.search.maxResults in workspace YAML so the inspect
-    // ladder sees `workspace: true` even though the field's defaultScope=user.
+    // Pre-seed mcp.tools.search.maxResults in project YAML so the inspect
+    // ladder sees `project: true` even though the field's defaultScope=user.
     writeFileSync(
       join(project.cwd, '.open-knowledge', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
@@ -186,7 +186,7 @@ describe('set_config — happy paths', () => {
     });
     expect(result.isError).toBeUndefined();
     const success = result.structuredContent?.result as { scope: string };
-    expect(success.scope).toBe('workspace');
+    expect(success.scope).toBe('project');
     const yaml = readWorkspaceYaml(project.cwd);
     expect(yaml).toContain('maxResults: 200');
   });
@@ -219,8 +219,8 @@ describe('set_config — error paths', () => {
 
   test('rejects MIXED_SCOPE when leaves resolve to different scopes', async () => {
     // Pre-seed mcp.tools.search.maxResults in user YAML and content.include
-    // in workspace YAML so the inspect ladder reports
-    // `mcp.tools.search.maxResults` → user, `content.include` → workspace.
+    // in project YAML so the inspect ladder reports
+    // `mcp.tools.search.maxResults` → user, `content.include` → project.
     const project = newProjectWithHome();
     writeFileSync(
       join(project.home, '.open-knowledge', 'config.yml'),
@@ -249,7 +249,7 @@ describe('set_config — error paths', () => {
     });
     expect(payload.error.paths).toContainEqual({
       path: ['content', 'include'],
-      scope: 'workspace',
+      scope: 'project',
     });
   });
 
@@ -293,7 +293,7 @@ describe('set_config — agent-settable allowlist alignment', () => {
     expect(result.isError).toBeUndefined();
   });
 
-  test('content.dir is NOT allowed (defaultScope=workspace, agentSettable=false)', async () => {
+  test('content.dir is NOT allowed (defaultScope=project, agentSettable=false)', async () => {
     const project = newProjectWithHome();
     const handler = captureHandler(project);
     const result = await handler({ patch: { content: { dir: 'docs' } } });

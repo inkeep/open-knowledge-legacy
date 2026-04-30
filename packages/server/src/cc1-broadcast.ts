@@ -45,7 +45,7 @@ const CONFIG_DOC_NAME_SET: ReadonlySet<string> = new Set(CONFIG_DOC_NAMES);
 
 /**
  * True for the bounded set of well-known config document names
- * (`__config__/workspace`, `__user__/config.yml`).
+ * (`__config__/project`, `__user__/config.yml`).
  *
  * Subsystems keyed off `documentName` MUST short-circuit on this predicate
  * the same way they do on `isSystemDoc`. Config docs are admitted Y.Text-only

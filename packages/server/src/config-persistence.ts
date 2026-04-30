@@ -7,7 +7,7 @@
  * schema drift, and external hand-edits that bypass L1/L2.
  *
  * On success, atomically writes Y.Text content to the resolved config path
- * (workspace or user-global). On failure, reverts Y.Text via
+ * (project or user-global). On failure, reverts Y.Text via
  * `CONFIG_VALIDATION_REVERT_ORIGIN` to the in-memory LKG cache and fires
  * `onConfigRejected` so the upstream CC1 emitter (`emitConfigValidationRejected`)
  * can broadcast to any connected Settings pane.
@@ -22,8 +22,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   addConfigSpanEvent,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   type ConfigIssue,
   ConfigSchema,
   type ConfigValidationError,
@@ -46,8 +46,8 @@ import { getLogger } from './logger.ts';
  * Returns `undefined` for non-config docs (caller should never invoke this
  * helper for those; config-persistence's branches are isConfigDoc-gated).
  */
-function configScopeAttr(documentName: string): 'user' | 'workspace' | undefined {
-  if (documentName === CONFIG_DOC_NAME_WORKSPACE) return 'workspace';
+function configScopeAttr(documentName: string): 'user' | 'project' | undefined {
+  if (documentName === CONFIG_DOC_NAME_PROJECT) return 'project';
   if (documentName === CONFIG_DOC_NAME_USER) return 'user';
   return undefined;
 }
@@ -73,11 +73,11 @@ function emitSchemaInvalidIssueEvents(error: ConfigValidationError): void {
 }
 
 export interface ConfigPersistenceCtx {
-  /** Project root — workspace config resolves to `<projectDir>/.open-knowledge/config.yml`. */
+  /** Project root — project config resolves to `<projectDir>/.open-knowledge/config.yml`. */
   projectDir: string;
   /**
    * Per-server-instance LKG cache. Maps each well-known config doc name
-   * (`__config__/workspace`, `__user__/config.yml`) to the most recent
+   * (`__config__/project`, `__user__/config.yml`) to the most recent
    * successfully-validated YAML string. Cleared at server shutdown.
    */
   lkgCache: Map<string, string>;
@@ -97,8 +97,8 @@ export interface ConfigPersistenceCtx {
 
 /** Resolve the on-disk path for a well-known config doc name. */
 export function configDocAbsPath(documentName: string, ctx: ConfigPersistenceCtx): string {
-  if (documentName === CONFIG_DOC_NAME_WORKSPACE) {
-    return resolveConfigPath('workspace', ctx.projectDir, ctx.homedirOverride);
+  if (documentName === CONFIG_DOC_NAME_PROJECT) {
+    return resolveConfigPath('project', ctx.projectDir, ctx.homedirOverride);
   }
   if (documentName === CONFIG_DOC_NAME_USER) {
     return resolveConfigPath('user', ctx.projectDir, ctx.homedirOverride);

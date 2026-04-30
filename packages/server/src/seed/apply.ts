@@ -75,8 +75,8 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
   }
 
   // 3. config.yml edits via applyFolderRulesUpsert. Plan emits configEdits
-  //    pointing at the workspace `<projectDir>/.open-knowledge/config.yml`;
-  //    the upsert helper writes there via the same scope='workspace'
+  //    pointing at the project `<projectDir>/.open-knowledge/config.yml`;
+  //    the upsert helper writes there via the same scope='project'
   //    contract used by MCP/CLI (D63).
   if (plan.configEdits.length > 0) {
     // Seed's local FolderFrontmatter is a closed-shape interface; core's
@@ -84,7 +84,7 @@ export async function applySeed(plan: ScaffoldPlan, opts: SeedOptions = {}): Pro
     // are structurally compatible — spread to widen for the upsert call.
     const result = await applyFolderRulesUpsert({
       cwd: projectDir,
-      scope: 'workspace',
+      scope: 'project',
       rules: plan.configEdits.map((edit) => ({
         match: edit.entry.match,
         frontmatter: { ...edit.entry.frontmatter },

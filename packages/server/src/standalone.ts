@@ -5,8 +5,8 @@ import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
   type BasenameIndex,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
   createBasenameIndex,
   type Principal,
@@ -1651,7 +1651,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
     // it match LKG, and returns 'no-op' before mutating Y.Text.
     const configPathByDoc = new Map<string, string>([
-      [CONFIG_DOC_NAME_WORKSPACE, resolveConfigPath('workspace', projectDir)],
+      [CONFIG_DOC_NAME_PROJECT, resolveConfigPath('project', projectDir)],
       [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
     ]);
     for (const configDocName of CONFIG_DOC_NAMES) {

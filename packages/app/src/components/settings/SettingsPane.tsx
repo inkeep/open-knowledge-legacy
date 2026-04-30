@@ -3,7 +3,7 @@
  *
  * Replaces the document view in the main editor area when invoked via Cmd-,,
  * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
- * workspace ("This project") and user-global ("User") scopes;
+ * project ("This project") and user-global ("User") scopes;
  * each tab acquires its own `HocuspocusProvider` and binds via
  * `bindConfigDoc`.
  *
@@ -24,8 +24,8 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
   type CC1ConfigValidationRejectedPayload,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   type Config,
   type ConfigBinding,
   ConfigSchema,
@@ -139,7 +139,7 @@ const SECTIONS: SectionDef[] = [
       {
         path: ['preview', 'baseUrl'],
         label: 'Preview base URL',
-        description: 'URL of your team’s deployed wiki (workspace-only).',
+        description: 'URL of your team’s deployed wiki (project-only).',
       },
     ],
   },
@@ -206,7 +206,7 @@ function useConfigDocConnection(
 
   useEffect(() => {
     if (collabUrl === null) return;
-    const docName = scope === 'workspace' ? CONFIG_DOC_NAME_WORKSPACE : CONFIG_DOC_NAME_USER;
+    const docName = scope === 'project' ? CONFIG_DOC_NAME_PROJECT : CONFIG_DOC_NAME_USER;
     const ydoc = new Y.Doc();
     const provider = new HocuspocusProvider({
       url: collabUrl,
@@ -266,7 +266,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
     const unsubscribe = subscribeToConfigValidationRejected(
       (event: CC1ConfigValidationRejectedPayload) => {
         const isMatchingScope =
-          (scope === 'workspace' && event.docName === CONFIG_DOC_NAME_WORKSPACE) ||
+          (scope === 'project' && event.docName === CONFIG_DOC_NAME_PROJECT) ||
           (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
         if (!isMatchingScope) return;
 
@@ -298,7 +298,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
             type="single"
             value={scope}
             onValueChange={(v) => {
-              if (v === 'workspace' || v === 'user') onScopeChange(v);
+              if (v === 'project' || v === 'user') onScopeChange(v);
             }}
             aria-label="Settings scope"
             variant="segmented"
@@ -306,7 +306,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
             spacing={1}
             className="bg-muted dark:bg-background p-0.5 rounded-lg"
           >
-            <ToggleGroupItem value="workspace" className="text-xs">
+            <ToggleGroupItem value="project" className="text-xs">
               This project
             </ToggleGroupItem>
             <ToggleGroupItem value="user" className="text-xs">
@@ -410,7 +410,7 @@ function isFieldVisibleAtScope(path: readonly string[], scope: SettingsScope): b
   if (!leafSchema) return true;
   const meta = getFieldMeta(leafSchema);
   if (!meta) return true;
-  if (meta.scope === 'workspace' && scope !== 'workspace') return false;
+  if (meta.scope === 'project' && scope !== 'project') return false;
   if (meta.scope === 'user' && scope !== 'user') return false;
   return true;
 }
@@ -530,7 +530,7 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
         enumOptions={enumOptions}
         onCommit={commit}
         readonlyReason={
-          meta?.scope === 'workspace' && scope !== 'workspace'
+          meta?.scope === 'project' && scope !== 'project'
             ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
             : meta?.scope === 'user' && scope !== 'user'
               ? "This field can only be set globally. Switch to the 'User' tab to edit it."

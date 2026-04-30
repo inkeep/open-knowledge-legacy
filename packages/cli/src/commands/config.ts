@@ -2,7 +2,7 @@
  * `ok config` command — inspect and maintain Open Knowledge config files.
  *
  * Subcommands:
- *   - `validate` — load merged config (defaults → user → workspace) and report
+ *   - `validate` — load merged config (defaults → user → project) and report
  *     conformance. Exit 0 on success, exit 1 with source-located errors on
  *     failure. Success message goes to stderr (stdout is reserved for
  *     structured CI output, of which we emit none).
@@ -60,7 +60,7 @@ export function runValidate(opts: ValidateRunOpts = {}): ValidateOutcome {
 
 interface MigrateRunOpts {
   cwd?: string;
-  scope?: 'workspace' | 'user' | 'both';
+  scope?: 'project' | 'user' | 'both';
   dryRun?: boolean;
   homedirOverride?: string;
   log?: (msg: string) => void;
@@ -70,7 +70,7 @@ interface MigrateRunOpts {
 
 interface MigrateFileOutcome {
   path: string;
-  scope: 'workspace' | 'user';
+  scope: 'project' | 'user';
   /** Dotted paths that exist in the file. */
   found: string[];
   /** Dotted paths actually removed (== found unless dry-run or write failed). */
@@ -146,11 +146,11 @@ export async function runMigrate(opts: MigrateRunOpts = {}): Promise<MigrateOutc
   const cwd = opts.cwd ?? process.cwd();
   const writePatch = opts.writeConfigPatchFn ?? writeConfigPatch;
 
-  const targets: Array<{ scope: 'workspace' | 'user'; absPath: string }> = [];
-  if (scope === 'workspace' || scope === 'both') {
+  const targets: Array<{ scope: 'project' | 'user'; absPath: string }> = [];
+  if (scope === 'project' || scope === 'both') {
     targets.push({
-      scope: 'workspace',
-      absPath: resolveConfigPath('workspace', cwd, opts.homedirOverride),
+      scope: 'project',
+      absPath: resolveConfigPath('project', cwd, opts.homedirOverride),
     });
   }
   if (scope === 'user' || scope === 'both') {
@@ -243,7 +243,7 @@ export function configCommand(): Command {
 
   cmd
     .command('validate')
-    .description('Validate the merged config (defaults → user → workspace)')
+    .description('Validate the merged config (defaults → user → project)')
     .action(() => {
       const outcome = runValidate({});
       if (!outcome.ok) {
@@ -256,12 +256,12 @@ export function configCommand(): Command {
     .description(
       'Remove deprecated config fields (sync.*, persistence.{debounceMs,maxDebounceMs}, server.port) idempotently',
     )
-    .option('--scope <scope>', 'Which scope to migrate: workspace | user | both', 'both')
+    .option('--scope <scope>', 'Which scope to migrate: project | user | both', 'both')
     .option('--dry-run', 'Preview without writing', false)
     .action(async (subOpts) => {
-      const scope = subOpts.scope as 'workspace' | 'user' | 'both';
-      if (scope !== 'workspace' && scope !== 'user' && scope !== 'both') {
-        console.error(`Invalid --scope: ${scope}. Expected: workspace | user | both`);
+      const scope = subOpts.scope as 'project' | 'user' | 'both';
+      if (scope !== 'project' && scope !== 'user' && scope !== 'both') {
+        console.error(`Invalid --scope: ${scope}. Expected: project | user | both`);
         process.exitCode = 2;
         return;
       }

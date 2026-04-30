@@ -39,8 +39,8 @@ export interface FolderRuleUpsert {
 export interface ApplyFolderRulesUpsertOptions {
   cwd: string;
   rules: FolderRuleUpsert[];
-  /** Defaults to 'workspace' — folders[] are most natural at workspace scope. */
-  scope?: 'workspace' | 'user';
+  /** Defaults to 'project' — folders[] are most natural at project scope. */
+  scope?: 'project' | 'user';
   /** Override homedir for tests. */
   homedirOverride?: string;
 }
@@ -111,7 +111,7 @@ function ok(value: WriteConfigPatchSuccess): Ok<WriteConfigPatchSuccess> {
 export async function applyFolderRulesUpsert(
   opts: ApplyFolderRulesUpsertOptions,
 ): Promise<ApplyFolderRulesUpsertResult> {
-  const scope = opts.scope ?? 'workspace';
+  const scope = opts.scope ?? 'project';
   const absPath = resolveConfigPath(scope, opts.cwd, opts.homedirOverride);
 
   let current: FolderRule[];
