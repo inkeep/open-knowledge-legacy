@@ -49,8 +49,44 @@
 import type { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
+import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { mark } from '@/lib/perf';
+
+/**
+ * Read the per-editor Yjs UndoManager so the caller can null its `restore`
+ * field after `editor.destroy()`. Without this, mount/destroy cycles leak the
+ * full editor graph (~30 MB per cycle on multi-MB docs) via two cooperating
+ * upstream behaviors:
+ *
+ *  1. Yjs's `UndoManager` constructor registers
+ *     `doc.on('destroy', () => this.destroy())` with no stable reference, so
+ *     `UndoManager.destroy()` cannot off it. The Set entry retains the
+ *     UndoManager forever (verified on yjs@13.6.30, v14.0.0-rc.13, and main —
+ *     no upstream fix as of 2026-04-30).
+ *  2. `@tiptap/extension-collaboration`'s plugin-view destroy assigns
+ *     `undoManager.restore = closure(viewRet, view, editor, binding, ...)` —
+ *     the closure captures the entire EditorView + ProsemirrorBinding +
+ *     Editor + PM document tree.
+ *
+ * Clearing `restore` post-destroy breaks the closure chain so the captured
+ * graph is GC-eligible. The leaked UndoManager itself remains in
+ * `Y.Doc._observers.get('destroy')` but its retained payload drops from
+ * ~30 MB to a few hundred bytes per cycle.
+ */
+function readEditorUndoManager(editor: Editor): { restore?: unknown } | null {
+  try {
+    const state = editor.state;
+    const pluginState = yUndoPluginKey.getState(state) as
+      | { undoManager?: { restore?: unknown } }
+      | null
+      | undefined;
+    return pluginState?.undoManager ?? null;
+  } catch {
+    // editor.state is a throwing proxy in known TipTap mid-teardown windows.
+    return null;
+  }
+}
 
 /**
  * Emergency kill switch. When `false`:
@@ -386,10 +422,24 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
     // Kill-switch / uncached fallthrough: destroy the editor now. Provider
     // + ydoc are NOT destroyed — they're owned by the ProviderPool which
     // has its own eviction logic.
+    //
+    // Capture the UndoManager BEFORE destroy — `editor.state` is only safely
+    // readable while the editor is alive. After destroy, clear
+    // `undoManager.restore` to break the @tiptap/extension-collaboration
+    // closure that retains the full editor graph. See `readEditorUndoManager`
+    // above for the complete chain.
+    const undoManager = readEditorUndoManager(entry.editor);
     try {
       entry.editor.destroy();
     } catch {
       // already destroyed or proxy is in a throwing state — safe to ignore
+    }
+    if (undoManager) {
+      try {
+        undoManager.restore = undefined;
+      } catch {
+        // setter may throw on frozen objects — defensive
+      }
     }
     entry.activeMountKey = null;
     return;
@@ -434,6 +484,9 @@ export function evictTiptapEditor(docName: string): boolean {
   const entry = tiptapCache.get(docName);
   if (!entry) return false;
 
+  // See parkTiptapEditor / readEditorUndoManager for the rationale on
+  // capture-before-destroy + clear-restore-after.
+  const undoManager = readEditorUndoManager(entry.editor);
   try {
     entry.editor.destroy();
   } catch (err) {
@@ -443,6 +496,13 @@ export function evictTiptapEditor(docName: string): boolean {
       stage: 'editor',
       message: err instanceof Error ? err.message : String(err),
     });
+  }
+  if (undoManager) {
+    try {
+      undoManager.restore = undefined;
+    } catch {
+      // defensive — setter may throw on frozen objects
+    }
   }
   try {
     entry.provider.destroy();
