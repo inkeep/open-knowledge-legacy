@@ -1378,11 +1378,15 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   if (m.link) {
     markHandlers.link = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
-      // US-013: when the link mark was produced by `handlers.wikiLinkEmbed`
-      // for a non-image wiki-embed, `sourceForm='wikiembed'` is set and
-      // the mark carries the original `target`/`anchor`/`alias` separately
-      // from the (possibly resolver-remapped) `href`. Re-emit as an atomic
-      // `wikiLinkEmbed` mdast node — round-trip is byte-identical.
+      // When the link mark was produced by `handlers.wikiLinkEmbed` for an
+      // allowlisted wiki-embed extension (image / video / audio / pdf in
+      // inline position, or any allowlisted ext outside block-context),
+      // `sourceForm='wikiembed'` is set and the mark carries the original
+      // `target`/`anchor`/`alias` separately from the (possibly resolver-
+      // remapped) `href`. Re-emit as an atomic `wikiLinkEmbed` mdast node
+      // — round-trip is byte-identical. (Pre-2026-04-29 inline images
+      // used a separate PM `image` shape; the shape was killed in
+      // commit `cfb2eeee` and image extensions now share this chip path.)
       if (mark.attrs.sourceForm === 'wikiembed') {
         const target =
           typeof mark.attrs.target === 'string' && mark.attrs.target.length > 0

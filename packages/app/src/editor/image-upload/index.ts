@@ -158,14 +158,7 @@ function docNameFromEditor(editor: Editor): string | null {
 }
 
 interface InsertShape {
-  kind:
-    | 'wikiembed'
-    | 'image'
-    | 'jsx-img'
-    | 'jsx-video'
-    | 'jsx-audio'
-    | 'markdown-link'
-    | 'wiki-link';
+  kind: 'wikiembed' | 'jsx-img' | 'jsx-video' | 'jsx-audio' | 'markdown-link' | 'wiki-link';
   ext: string;
 }
 
@@ -443,15 +436,6 @@ export async function uploadAndInsert(
     // rendering so the in-page `<img>` / `<a>` resolves correctly
     // regardless of attachmentFolderPath or doc subdirectory.
     tr.insert(mappedPos, node.create({ target: src, alias: null, anchor: null, resolvedSrc }));
-  } else if (shape.kind === 'image') {
-    const imageNode = state.schema.nodes.image;
-    if (!imageNode) {
-      console.error('[uploadAndInsert] image node missing from schema');
-      showError(editor, uploadId);
-      return;
-    }
-    const alt = file.name.replace(/\.[^.]+$/, '');
-    tr.insert(mappedPos, imageNode.create({ src: resolvedSrc, alt }));
   } else if (shape.kind === 'wiki-link') {
     const wikiLinkNode = state.schema.nodes.wikiLink;
     if (!wikiLinkNode) {
