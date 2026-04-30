@@ -334,7 +334,10 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
           ws.terminate();
         });
       });
+      return;
     }
+
+    socket.destroy();
   };
 
   httpServer.on('request', onRequest);

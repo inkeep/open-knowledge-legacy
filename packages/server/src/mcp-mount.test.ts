@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createServer, type Server as HttpServer, request as httpRequest } from 'node:http';
-import { type AddressInfo, createServer as createNetServer } from 'node:net';
+import {
+  type AddressInfo,
+  connect as createNetConnection,
+  createServer as createNetServer,
+} from 'node:net';
 import type { Hocuspocus } from '@hocuspocus/server';
 import type { McpHttpHandler } from './mcp-http.ts';
 import { type MountMcpAndApiHandle, mountMcpAndApi } from './mcp-mount.ts';
@@ -76,6 +80,41 @@ async function postMcpWithHost(
   });
 }
 
+async function requestUnknownUpgrade(port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = createNetConnection({ host: '127.0.0.1', port });
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('timed out waiting for unknown upgrade socket to close'));
+    }, 1000);
+
+    socket.on('connect', () => {
+      socket.write(
+        [
+          'GET /not-a-websocket-route HTTP/1.1',
+          'Host: 127.0.0.1',
+          'Connection: Upgrade',
+          'Upgrade: websocket',
+          'Sec-WebSocket-Version: 13',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          '',
+          '',
+        ].join('\r\n'),
+      );
+    });
+    socket.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    socket.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    socket.on('close', () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString('utf-8'));
+    });
+  });
+}
+
 afterEach(async () => {
   const active = servers;
   servers = [];
@@ -148,6 +187,23 @@ describe('mountMcpAndApi /mcp guard', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
     expect(res.headers.get('access-control-allow-headers')).toContain('mcp-session-id');
+    expect(calls).toBe(0);
+  });
+
+  test('closes unrecognized WebSocket upgrade paths', async () => {
+    let calls = 0;
+    const { port } = await startMountedServer({
+      handle: async (_req, res) => {
+        calls += 1;
+        res.writeHead(200);
+        res.end('ok');
+      },
+      close: async () => {},
+    });
+
+    const response = await requestUnknownUpgrade(port);
+
+    expect(response).toBe('');
     expect(calls).toBe(0);
   });
 });
