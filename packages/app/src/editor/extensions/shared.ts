@@ -3,10 +3,7 @@
  * JsxComponent for the React-enabled version with NodeView, and adds
  * app-only extensions (slash command menu, etc.).
  */
-import {
-  ALLOWED_IMAGE_MIME_TYPES,
-  sharedExtensions as coreExtensions,
-} from '@inkeep/open-knowledge-core';
+import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
 import FileHandler from '@tiptap/extension-file-handler';
 import { KeyboardNav } from '../block-ux/keyboard-nav';
 import { uploadAndInsert } from '../image-upload/index.ts';
@@ -31,6 +28,7 @@ import { SelectionStatePlugin } from './selection-state-plugin';
 import { SlashCommand } from './slash-command';
 import { SourceDirtyObserver } from './source-dirty-observer';
 import { WikiLink } from './wiki-link';
+import { WikiLinkEmbed } from './wiki-link-embed';
 
 // Replace core extensions that have app-side NodeViews or mark views.
 export const sharedExtensions = [
@@ -38,6 +36,7 @@ export const sharedExtensions = [
     if (ext.name === 'jsxComponent') return JsxComponent;
     if (ext.name === 'rawMdxFallback') return RawMdxFallback;
     if (ext.name === 'wikiLink') return WikiLink;
+    if (ext.name === 'wikiLinkEmbed') return WikiLinkEmbed;
     if (ext.name === 'link') return InternalLink;
     return ext;
   }),
@@ -50,8 +49,12 @@ export const sharedExtensions = [
       data: 'Data',
     },
   }),
+  // Omit `allowedMimeTypes` so the FileHandler accepts every browser-
+  // readable file type. The server is the single policy point — there's
+  // no user-facing cap either; disk fullness (`storage-full` → 507) is
+  // the only rejection axis, and the SVG `<img>`-only routing happens
+  // server-side. See reports/streaming-upload-refactor/REPORT.md.
   FileHandler.configure({
-    allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES],
     onDrop(editor, files, pos) {
       for (const file of files) {
         uploadAndInsert(file, editor, pos);

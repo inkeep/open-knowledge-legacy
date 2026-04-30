@@ -251,6 +251,14 @@ function PropControl({
       const stringId = `prop-${propDef.name}`;
       const accept = propDef.accept;
       const showUpload = accept !== undefined && accept.length > 0;
+      // Optional, no-default string props treat empty input as a clear:
+      // emit `undefined` so the JsxComponentView onChange handler removes
+      // the key entirely (preventing `<img srcset="" sizes="" title="" />`
+      // empty-attr drift on disk). Required props and props with an
+      // explicit `defaultValue: ''` (e.g. `alt`) keep the literal empty
+      // string — those positions are semantically distinct from "absent."
+      // Mirrors the number PropControl's clear-on-empty branch below.
+      const treatEmptyAsUndefined = !propDef.required && propDef.defaultValue === undefined;
       return (
         <div className="flex flex-col gap-1">
           <label htmlFor={stringId} className="text-xs text-muted-foreground">
@@ -261,7 +269,14 @@ function PropControl({
               id={stringId}
               type="text"
               value={(value as string) ?? ''}
-              onChange={(e) => onChange(e.target.value)}
+              onChange={(e) => {
+                const raw = e.target.value;
+                if (raw === '' && treatEmptyAsUndefined) {
+                  onChange(undefined);
+                  return;
+                }
+                onChange(raw);
+              }}
               autoFocus={isAutoFocused}
               data-prop-autofocus={isAutoFocused ? '' : undefined}
               className="h-7 text-sm"

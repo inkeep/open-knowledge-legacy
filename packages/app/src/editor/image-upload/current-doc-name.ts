@@ -1,20 +1,20 @@
 /**
- * Module-level singleton for the currently-open document name. TiptapEditor
- * sets this on mount; upload helpers (uploadAndInsert, uploadFile) read it to
- * derive the multipart `parentDocName` field. Singleton is fine because the
- * editor surface is single-instance — only one document is mounted at a time.
+ * Resolve the currently-active document name from the URL hash. The hash
+ * route (`#/foo/bar`) is the canonical source of truth for the active doc;
+ * `internal-link-helpers.ts:10` reads it the same way for link
+ * classification.
  *
- * Extracted from `image-upload/index.ts` so `upload-file.ts` can read it
- * without creating a cycle (index.ts imports upload-file.ts via the refactored
- * `uploadAndInsert`).
+ * Pre-merge this module exposed a singleton (`setCurrentDocName` / module-
+ * level `currentDocName`) populated by `TiptapEditor.tsx` on mount. Post-
+ * supersession HEAD uses a per-editor WeakMap (`editorDocName` in
+ * `extensions/doc-context.ts`) for callers that have an Editor instance —
+ * but PropPanel's `runUpload` doesn't have one. The hash is stable,
+ * race-free against editor mount/unmount, and aligned with how the rest of
+ * the link layer already resolves the active doc.
  */
 
-let currentDocName: string | null = null;
-
-export function setCurrentDocName(docName: string | null): void {
-  currentDocName = docName;
-}
-
 export function getCurrentDocName(): string | null {
-  return currentDocName;
+  if (typeof window === 'undefined') return null;
+  const match = window.location.hash.match(/^#\/([^?#]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }

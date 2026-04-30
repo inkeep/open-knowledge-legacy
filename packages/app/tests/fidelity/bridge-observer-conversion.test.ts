@@ -1062,6 +1062,32 @@ describe('Handler-specific survivability (chains A+C)', () => {
       label: 'rawMdxFallback — malformed JSX trailing',
       md: 'Paragraph\n\n<Bad attr=\n',
     },
+    // SPEC §6 FR-3a + V0-14 STOP rule: wikiLinkEmbed is a conversion-
+    // class surface (mdast ↔ PM ↔ hast) added in US-013. The PR-tier
+    // fidelity PBT is the sole defense against regressions in the
+    // Observer A (XmlFragment → Y.Text) ↔ Observer B (Y.Text →
+    // XmlFragment) round-trip for `![[file.ext]]` after the CI signal-
+    // quality work removed fuzz/stress from automated tiers. A
+    // regression here would silently break every Obsidian refugee's
+    // inline embeds on the next round-trip.
+    //
+    // Scope: covers the two renderable branches (image + non-image in
+    // `wikiEmbedExtensions`) — these ARE byte-identical round-trip and
+    // must satisfy the Chain C bridge invariant. Opaque extensions
+    // (`.zip`, `.docx`, ...) are documented NG12 deviations: they
+    // normalize from `![[archive.zip]]` to `[archive.zip](archive.zip)`
+    // on first save and thus intentionally break the bridge invariant
+    // `ytext === serialize(fragment)` for unresolved embeds. The
+    // opaque-normalization deviation has its own dedicated test at
+    // `packages/app/tests/fidelity/invariant-wiki-link-embed-conversion.test.ts`.
+    {
+      label: 'wikiLinkEmbed — image extension',
+      md: '![[photo.png]]\n',
+    },
+    {
+      label: 'wikiLinkEmbed — non-image renderable with anchor + alias',
+      md: '![[draft.pdf#page=3|Draft]]\n',
+    },
   ];
 
   for (const { label, md } of handlerCases) {

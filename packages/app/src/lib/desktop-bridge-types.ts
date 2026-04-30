@@ -198,6 +198,38 @@ export interface OkDesktopBridge {
         | 'dispatch-error'
         | 'web-host-cursor-unsupported';
     }): Promise<void>;
+
+    /**
+     * Open an asset via the OS default handler. See canonical JSDoc in
+     * `packages/desktop/src/shared/bridge-contract.ts`. Asset-click-dispatcher
+     * surface (FR-A6 of 2026-04-23 amendment).
+     */
+    openAsset(
+      relPath: string,
+    ): Promise<
+      | { ok: true }
+      | { ok: false; reason: 'extension-blocked' | 'path-escape' | 'not-found' | 'resolve-error' }
+    >;
+
+    /**
+     * Reveal an asset in the native file manager. See canonical JSDoc in
+     * `packages/desktop/src/shared/bridge-contract.ts`. Asset-click-dispatcher
+     * surface (FR-A6).
+     */
+    revealAsset(
+      relPath: string,
+    ): Promise<{ ok: true } | { ok: false; reason: 'path-escape' | 'not-found' | 'resolve-error' }>;
+
+    /**
+     * Display the native right-click context menu for an on-disk reference.
+     * See canonical JSDoc in `packages/desktop/src/shared/bridge-contract.ts`.
+     * Asset-click-dispatcher surface (FR-A8).
+     */
+    showAssetMenu(params: {
+      readonly relPath: string;
+      readonly title: string;
+      readonly kind: 'asset' | 'wiki-link' | 'image';
+    }): Promise<void>;
     /**
      * Reveal a file or folder in the OS file manager. See canonical JSDoc
      * in `packages/desktop/src/shared/bridge-contract.ts`.

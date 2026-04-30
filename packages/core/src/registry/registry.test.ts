@@ -4,14 +4,15 @@ import { builtInComponents, createRegistry, wildcardMeta } from './index.ts';
 import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
-  test('returns the 5 canonical + 3 compat descriptors + wildcard', () => {
-    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 3 compats
-    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion) + '*' wildcard.
-    // Compats are registered for parse + render but filtered out of the slash
-    // menu; they preserve source-form fidelity through round-trip edits.
+  test('returns the 5 canonical + 6 compat descriptors + wildcard', () => {
+    // 5 canonicals (Callout, Image, Video, Audio, Accordion) + 6 compats
+    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion, WikiEmbedImage,
+    // WikiEmbedVideo, WikiEmbedAudio) + '*' wildcard. Compats are registered
+    // for parse + render but filtered out of the slash menu; they preserve
+    // source-form fidelity through round-trip edits.
     const registry = createRegistry();
     const entries = [...registry.entries()];
-    expect(entries.length).toBe(9);
+    expect(entries.length).toBe(12);
   });
 
   test('get returns registered component by name', () => {
@@ -93,12 +94,12 @@ describe('createRegistry', () => {
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 5 canonical + 3 compat entries (5-pack + source-form preservation)', () => {
-    expect(builtInComponents.length).toBe(8);
+  test('contains 5 canonical + 6 compat entries (5-pack + source-form preservation)', () => {
+    expect(builtInComponents.length).toBe(11);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
     expect(canonical.length).toBe(5);
-    expect(compat.length).toBe(3);
+    expect(compat.length).toBe(6);
   });
 
   test('all entries have required fields', () => {

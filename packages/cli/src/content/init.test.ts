@@ -157,7 +157,7 @@ describe('initContent', () => {
     // missing" — pin every byte.
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(after).toBe(
-      `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nlast-spawn-error.log\n`,
+      `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nstate.json\nlast-spawn-error.log\n`,
     );
     // The merge path classifies as 'updated', not 'created' — surfaces a
     // distinct banner at the CLI ('Updated: .gitignore' vs 'Created: ...').

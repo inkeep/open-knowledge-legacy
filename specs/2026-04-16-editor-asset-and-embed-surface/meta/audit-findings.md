@@ -1,391 +1,400 @@
-# Audit Findings — Editor Asset + Embed Surface SPEC
+# Audit Findings — Editor Asset + Embed Surface SPEC (Session 2 finalize pass)
 
 **Artifact:** `specs/2026-04-16-editor-asset-and-embed-surface/SPEC.md`
-**Baseline commit:** `432a834b` (current worktree HEAD — confirmed via `git log -1`)
-**Audit date:** 2026-04-17
-**Total findings:** 16 (3 HIGH, 7 MEDIUM, 6 LOW)
+**Audit date:** 2026-04-21
+**Declared baseline:** `2ad0177a` (SPEC line 7)
+**Worktree HEAD:** `9629664c` (spec commit absorbing F8 + F9 + D-L + E2E scenarios — codebase identical to `2ad0177a`; only the spec text changed)
+**Total findings:** 14 (5 HIGH, 5 MEDIUM, 4 LOW)
 
-Cold-read audit covering (1) coherence across §1-§16, (2) factual verification of file:line citations, evidence, dependency versions, and CLAUDE.md precedent references, and (3) spec-specific pattern checks (schema add-only, typed origins, opaque-content-bearing, idempotent micromark attacher, I1-I10 fidelity invariants). The spec is substantively sound — architecturally coherent, well-grounded in prior art, decisions traceable to evidence. The HIGH findings are concentrated in one surface (stale file:line citations in §8 and evidence/current-shipped-state.md against the current baseline); the MEDIUM findings cluster around config-field name drift between sections that were written at different iteration points.
+This is a cold-read re-audit after Session 2's close-out absorbed F8 + F9 into FR-1a/NFR-3, added D-L two-message rule, added `evidence/e2e-acceptance-scenarios.md`, and moved the declared baseline from `432a834b` → `2ad0177a`. Session 1's findings (H1 / H2 / H3 / M1-M7 / L1-L6) are resolved per `meta/_changelog.md` 2026-04-17 entry and not re-enumerated here.
+
+The concentrated failure mode for this pass is **baseline drift**: the declared baseline moved from `432a834b` to `2ad0177a`, but §8 and most of §16's file:line citations were not re-verified at the new baseline, and `evidence/current-shipped-state.md` is explicitly locked to `432a834b` without a re-verification pass. Combined with four not-yet-purged "FIX-SHIPPED MICRO-PR" callsites that directly contradict the F8+F9 absorbed scope, the spec contains internal contradictions an implementer will hit on first read. The E2E scenarios file itself is well-constructed and traces cleanly to FRs + Goals — no findings there.
 
 ---
 
 ## High Severity
 
-### [H1] Finding 1: §8 Current State and evidence/current-shipped-state.md file:line citations are stale — systematically off by 200-300 lines against the claimed baseline
+### [H1] §16 EXCLUDE list contradicts §13 In Scope on F8 + F9
+
+**Category:** COHERENCE
+**Source:** Lens L1 (cross-finding contradictions), directly called out in audit-focus #4
+**Location:** SPEC.md §16 lines 381-382 vs §13 lines 311-312 vs §3 Status line 3 + §6 line 158 + §6 line 186
+**Status:** INCOHERENT
+
+**Issue.** Session 2 absorbed F8 (shortestImageRef dirname-matrix fix) and F9 (unicode-safe sanitizeFilename) into FR-1a and NFR-3 respectively. The §13 In Scope list explicitly includes these fixes (lines 311-312). The status line 3 advertises "F8 + F9 absorbed into scope 2026-04-21." But §16 EXCLUDE still tells the implementer NOT to touch these sites:
+
+**Current text — §16 EXCLUDE, lines 381-382:**
+> - Do not touch `shortestImageRef()` behavior change (F8 micro-PR handles separately)
+> - Do not touch filename sanitization regex (F9 micro-PR handles separately)
+
+**Directly contradicted by §13 In Scope, lines 311-312:**
+> - **F8 absorbed fix (FR-1a):** one-line `shortestImageRef` correction at `packages/app/src/editor/image-upload/index.ts:91` + dirname-matrix test…
+> - **F9 absorbed fix (NFR-3):** one-line `sanitizeFilename` regex at `packages/server/src/api-extension.ts`…
+
+**Evidence.** The changelog at `meta/_changelog.md` 2026-04-21 session-2 entry says "§15 Identified: F8 and F9 entries removed" and "F8 fix absorbed" / "F9 fix absorbed" — but does not list the §16 EXCLUDE removals. The purge was incomplete.
+
+**Impact.** An implementer following /spec's `Agent Constraints` discipline (§16 is the canonical hand-off to `/ship` / `/implement`) would skip both F8 and F9 — leaving two known-broken sites untouched, which are the whole point of "no deferred tech debt on greenfield."
+
+**Suggested resolution.** Delete both bullets from §16 EXCLUDE. Do NOT replace with a "Do modify F8/F9 sites" bullet — the SCOPE list already names `image-upload/index.ts` (line 373) and `api-extension.ts` (line 367) as in-bounds.
+
+---
+
+### [H2] §8 "Current state" contains two "micro-PR" leftovers that contradict F8 + F9 absorbed scope
+
+**Category:** COHERENCE
+**Source:** Lens L1 (cross-finding contradictions) + Lens L5 (summary coherence); directly called out in audit-focus #4
+**Location:** SPEC.md §8 lines 203-204
+**Status:** INCOHERENT
+
+**Issue.** Two more stale "micro-PR" references survived the Session 2 purge:
+
+**Line 203:**
+> ASCII-only filename sanitization at lines 137-144 (F9 micro-PR fixes separately).
+
+**Line 204:**
+> `shortestImageRef()` at `image-upload/index.ts:91-96` (needs fix, see §9 separate F8 micro-PR).
+
+Both say the fixes are out of scope / handled separately, directly contradicting the absorbed-scope claim in the status line and in §13 / §9 / §6 FR-1a / §6 NFR-3.
+
+**Suggested resolution.** Strike the parenthetical "(F9 micro-PR fixes separately)" and "(needs fix, see §9 separate F8 micro-PR)." Optionally replace with a forward pointer: "(F9 absorbed — see NFR-3 + §13)" and "(F8 absorbed — see FR-1a + §13)."
+
+---
+
+### [H3] §8 upload-handler citations are stale against the declared baseline (off by ~35-230 lines)
+
+**Category:** FACTUAL
+**Source:** Track T1 (own codebase); directly called out in audit-focus #6
+**Location:** SPEC.md §8 line 203 (upload-handler line numbers)
+**Status:** CONTRADICTED
+
+**Issue.** SPEC line 7 declares `Baseline commit: 2ad0177a`. The file:line citations in §8 line 203 are from `432a834b` and have NOT been re-verified at the new baseline. Verified at HEAD `9629664c` (code-identical to `2ad0177a`):
+
+| Claim | §8 cites (432a834b numbers) | Actual at 2ad0177a |
+|---|---|---|
+| `POST /api/upload-image` handler | `api-extension.ts:2779-2894` | `api-extension.ts:3014-3129` |
+| `MAX_UPLOAD_BYTES = 10MB` | line 132 | line 167 |
+| `ALLOWED_MIME_TYPES` Set | line 133 | line 168 |
+| `GENERIC_PASTE_NAMES` regex | line 135 | line 170 |
+| `readUploadBody` start | line 176 | line 211 |
+| `sanitizeFilename` regex | lines 137-144 | lines 172-179 |
+
+Session 1's audit caught the prior drift (evidence/current-shipped-state.md line 19 shows a 2026-04-17 re-verification at `432a834b`), but Session 2 moved the baseline to `2ad0177a` without re-running that pass.
+
+**Evidence.** `git show 432a834b:packages/server/src/api-extension.ts | grep -n "sanitizeFilename\|MAX_UPLOAD_BYTES\|readUploadBody"` returns lines 132, 137, 176 — matching §8's citations exactly. The current-tree `grep -n` returns lines 167, 172, 211.
+
+**Impact.** Implementer navigating from §8 "Current state" lands 35-230 lines away from the real code. Every identifier listed in §8 line 203 requires re-locating. Compounds with H2 because the stale citations sit next to the "micro-PR fixes separately" language that also needs removal.
+
+**Suggested resolution.** Re-verify every `api-extension.ts` citation in §8 against HEAD. Specifically update line 203 to: `api-extension.ts:3014-3129` (handler), `:167`, `:168`, `:170` (constants), `:211` (readUploadBody), `:172-179` (sanitizeFilename). Also update `evidence/current-shipped-state.md` lines 23-41 + header assertion at line 19.
+
+---
+
+### [H4] §16 SCOPE + §13 In Scope reference `packages/core/src/markdown/handlers.ts` which does not exist
 
 **Category:** FACTUAL
 **Source:** Track T1 (own codebase)
-**Location:** SPEC.md §8 lines 189-198; `evidence/current-shipped-state.md` lines 17-67 (upload-handler section)
+**Location:** SPEC.md §13 lines 303-304 and §16 line 364
 **Status:** CONTRADICTED
 
-**Issue.** The evidence file header states (line 19): "All file:line citations verified at commit `432a834b` (origin/main tip at spec intake)." Spot-checking against the actual file at HEAD (`432a834b`, verified via `git log -1`) shows every line number for the upload handler is wrong by ~200-300 lines. The handler has moved without the evidence being re-verified.
+**Issue.** Three bullets direct the implementer to edit a file that does not exist on disk:
 
-**Verified discrepancies (evidence claim → actual at 432a834b):**
+**§13 line 303:**
+> - Embed mdast → PM handler (FR-3c) — `packages/core/src/markdown/handlers.ts`: extension-dispatch…
 
-| Claim | Evidence/§8 | Actual |
-|---|---|---|
-| `handleUploadImage` function | `api-extension.ts:2465-2580` | `api-extension.ts:2779-2894` |
-| `MAX_UPLOAD_BYTES = 10 * 1024 * 1024` | line 122 | line 132 |
-| `ALLOWED_MIME_TYPES` Set construction | line 123 | line 133 |
-| `GENERIC_PASTE_NAMES` regex | line 125 | line 135 |
-| `sanitizeFilename` regex | lines 127-134 | lines 137-144 |
-| `readUploadBody` | lines 166-238 | starts line 176 |
-| `fileTypeFromBuffer` magic-byte call | line 2535 | line 2849 |
-| `ALLOWED_MIME_TYPES.has(detectedMime)` check | line 2546 | line 2860 |
-| SVG manual detection | lines 2539-2544 | lines 2853-2858 |
-| `destDir = resolve(...)` | line 2505 | line 2819 |
-| Path-escape guards | lines 2494-2532 | lines 2809-2846 |
-| `writeUploadAtomic` call | line 2571 | line 2885 |
-| Success response `{ ok: true, src: ... }` | line 2574 | line 2888 |
+**§13 line 304:**
+> - Embed PM → mdast handler (FR-3c reverse) — same file…
 
-**Additionally** the evidence claims `file-type@8.x` at `api-extension.ts:2535` (line 40). This is contradicted by INV3 in the same evidence dir, which confirms `file-type@22.0.1` (verified: `packages/server/package.json` `"file-type": "^22.0.1"` and `bun.lock` resolves `file-type@22.0.1`). The two evidence files disagree with each other.
+**§16 line 364:**
+> - `packages/core/src/markdown/handlers.ts` — add `wikiLinkEmbed` → PM handler (extension dispatch) + PM → mdast reverse
 
-**Also:** SPEC §8 states the sanitizeFilename regex is `[^a-zA-Z0-9_\-.]+` (the plus quantifier implied by the `replace` semantics). Actual code at line 141 is `stem.replace(/[^a-zA-Z0-9_\-.]/g, '_')` — no `+` quantifier. Not load-bearing (semantically equivalent under `g` flag when replacing with a fixed string) but shows the evidence was not a literal read.
+**Verified absent.** `ls packages/core/src/markdown/` at HEAD shows `handlers.test.ts`, `handlers.mdx.test.ts`, `mdast-to-hast-handlers.ts`, `to-markdown-handlers.ts`, and `index.ts` — but no `handlers.ts`. Actual wiki-link handlers live in `packages/core/src/markdown/index.ts` — `handlers.wikiLink` at `index.ts:591-594` (mdast → PM) and `nodeHandlers.wikiLink` at `index.ts:876-884` (PM → mdast).
 
-**Impact.** Any implementer using §8 / evidence/current-shipped-state.md as a map to modify the upload handler will land ~300 lines away from the real code. Implementer will have to re-navigate from scratch. Also erodes trust in other citations in the evidence dir.
+CLAUDE.md line 958 has the same stale citation: `packages/core/src/markdown/handlers.ts → index.ts`. The spec seems to have inherited it verbatim from CLAUDE.md without verifying; CLAUDE.md itself needs a corrigendum on the path contract but that's out of scope for this audit.
 
-**Suggested resolution.** Re-verify every file:line citation in evidence/current-shipped-state.md against HEAD (`432a834b`) and update. Update the claim in the evidence file header to either note a re-verify date or remove the verification assertion. Also remove the `file-type@8.x` claim in evidence/current-shipped-state.md line 40 (already superseded by INV3) — keep exactly one source of truth on the version.
+**Impact.** Implementer follows §13/§16, opens `handlers.ts`, gets file-not-found, has to detour into `index.ts` (~600+ lines of `MarkdownManager`) to locate the correct handler tables. Non-trivial detour — `index.ts` doesn't advertise "mdast handler table" in its symbol names.
+
+**Suggested resolution.** Change all three citations (§13 lines 303-304, §16 line 364) from `handlers.ts` to `index.ts`. Additionally specify the existing handler anchors: "add `wikiLinkEmbed` handler near the existing `wikiLink` handler at `index.ts:591-594` (mdast → PM) and the PM → mdast handler at `index.ts:876-884`."
 
 ---
 
-### [H2] Finding 2: §5 P2 journey (line 106) specifies config fields (`assetLocation`, `globalAssetDir`, `emitFormat: 'wikilink'`) that FR-5 does not define
+### [H5] §13 F9 breadcrumb misstates the `432a834b` line number (claims 176; actual was 137)
 
-**Category:** COHERENCE
-**Source:** Lens L1 (cross-finding contradictions) + L5 (summary coherence)
-**Location:** SPEC.md §5 line 106 (P2 user journey) vs §6 FR-5 line 165
-**Status:** INCOHERENT
+**Category:** FACTUAL
+**Source:** Track T1 (own codebase); directly called out in audit-focus #6
+**Location:** SPEC.md §13 line 312
+**Status:** CONTRADICTED
 
-**Issue.** The P2 "Obsidian refugee opens vault" journey describes the behavior as "pre-populates `upload.assetLocation: 'global'`, `upload.globalAssetDir: 'attachments/'`, `upload.emitFormat: 'wikilink'`". None of these three field names/values match FR-5's actual schema lock:
+**Issue.** The §13 F9 absorbed-fix bullet carries a drift breadcrumb:
 
-- FR-5 (line 165) defines `attachmentFolderPath` (free-form string per D-J) — not `assetLocation` + `globalAssetDir` pair.
-- FR-5 specifies `emitFormat: 'wikiembed' | 'markdown-image'` — not `'wikilink' | 'markdown'`.
+**Current text:**
+> **F9 absorbed fix (NFR-3):** one-line `sanitizeFilename` regex at `packages/server/src/api-extension.ts` (line has drifted from 176 at baseline `432a834b` to 172-179 at baseline `2ad0177a`)…
 
-§5 P2 appears to predate the D-I / D-J session-2 pivot. FR-4 (line 164) already uses the new names (`upload.attachmentFolderPath` + `upload.emitFormat`).
+**Verified via `git show 432a834b:packages/server/src/api-extension.ts`:**
+- `sanitizeFilename` at `432a834b` was at line **137** (not 176).
+- Line 176 at `432a834b` was `readUploadBody` — a different function.
+- Current `2ad0177a` position of `sanitizeFilename` is `172-179` ✓ (this half of the breadcrumb is correct).
 
-**Additional occurrences of stale names:**
-- §3 NG14 (line 80): "FR-5's `assetLocation` default is `co-located`" — but FR-5 has no `assetLocation` field.
-- §9 D28 mapping (line 227): "D28 `assetLocation` default" — refers to a field FR-5 doesn't define.
-- §10 D2 row (line 236): "`assetLocation` default is `co-located`, config exposes free-form string (per D-J)" — internal contradiction: can't be both a `co-located` default AND a free-form string, unless "co-located" is the semantic meaning of `attachmentFolderPath: "./"` (INV1 §2.1 confirms this mapping). Needs to be stated that way.
+The breadcrumb confuses two different symbols. It claims `sanitizeFilename` was at 176, when in fact 176 was `readUploadBody` and `sanitizeFilename` was at 137-144.
 
-**Impact.** An implementer reading §5 P2 first will build a Zod schema with `assetLocation`/`globalAssetDir`, discover it conflicts with FR-5 at review time, and have to re-implement. Worse, the test vector in P2 is used as acceptance criteria (M2) — tests will encode the wrong field names.
+**Impact.** Low-cost to fix (it's a single number) but the breadcrumb is meant to teach an archaeologist how the line moved. Getting the start-line wrong defeats the purpose. Also erodes trust in the other breadcrumbs planned for post-ship corrigendum work (per CLAUDE.md §Post-ship corrigendum annotations).
 
-**Suggested resolution.** Three-part edit in §5 P2 (line 106):
-1. Replace `upload.assetLocation: 'global'` with the equivalent in the new schema: `upload.attachmentFolderPath: 'attachments'` (global path form per D-J).
-2. Drop `upload.globalAssetDir: 'attachments/'` (subsumed into attachmentFolderPath).
-3. Replace `upload.emitFormat: 'wikilink'` with `upload.emitFormat: 'wikiembed'`.
-
-Also fix §3 NG14 (line 80), §9 D28 mapping (line 227), §10 D2 (line 236) to use the new names consistently. Spell out the semantic bridge in D2: "default is co-located, modeled as `attachmentFolderPath: './'` per D-J".
-
----
-
-### [H3] Finding 3: NG6 "Hard reject at 25MB (FR-5)" contradicts FR-5's operator-configurable `maxBytes`
-
-**Category:** COHERENCE
-**Source:** Lens L1 (cross-finding contradictions)
-**Location:** SPEC.md §3 NG6 line 72; §5 P4 journey lines 124-134; §6 FR-5 line 165
-**Status:** INCOHERENT
-
-**Issue.** §3 NG6 (line 72): "[NOT NOW] NG6: Git LFS for large binaries. **Hard reject at 25MB (FR-5)**; revisit when someone hits the ceiling." The word "hard reject at 25MB" reads as a floor/ceiling invariant.
-
-But FR-5 (line 165): "`maxBytes` (default 25MB)" — it's a **default**, explicitly tunable. P4 journey (lines 124-134) shows the operator bumping it to 100MB via `.open-knowledge/config.yml`. M5 success metric (line 184) encodes operator-tunability.
-
-**Impact.** Reader understands NG6 as "there's a 25MB ceiling you cannot exceed" but the product ships an operator-configurable limit. If an implementer hardcodes 25MB as a floor-capped max-of-config-and-25MB, they'd break the P4 journey and M5 metric.
-
-**Suggested resolution.** Rewrite NG6 to match FR-5's actual semantics:
-
-> "[NOT NOW] NG6: Git LFS for large binaries. **Default reject at 25MB (FR-5 `upload.maxBytes` default; operator-tunable); revisit if someone hits practical upload-size ceilings (e.g. 100MB+ video assets forcing a Git LFS integration).**"
+**Suggested resolution.** Change "drifted from 176" to "drifted from 137-144." Rationale: evidence/current-shipped-state.md line 45 cites the `432a834b` range as `api-extension.ts:137-144`; the breadcrumb should match the same claim.
 
 ---
 
 ## Medium Severity
 
-### [M1] Finding 4: §6 NFR-5 under-specifies which fidelity invariants apply to `![[file.ext]]` round-trip
-
-**Category:** COHERENCE
-**Source:** Spec-specific pattern check (Storage-layer fidelity invariants I1-I10)
-**Location:** SPEC.md §6 NFR-5 line 176
-**Status:** INCOHERENT (completeness gap)
-
-**Issue.** NFR-5: "`![[file.ext]]` byte-identical through parse → PM → serialize. Preserves I1 (Identity) and I4 (Idempotence) invariants from CLAUDE.md Storage-layer fidelity contract." Only I1 and I4 are named.
-
-The spec introduces both (a) a new mdast type (`wikiLinkEmbed`) with its own to-markdown handler, and (b) multiple write surfaces (FR-3a parse, FR-3d emit on drop). This means at minimum **I5 (Layer A === Layer B — mdManager path and Y.Doc path produce the same output)** and **I7 (Cross-path consistency — all write paths produce equivalent serialized output)** also apply. FR-3a+FR-3d+FR-3c form exactly the "multiple write paths / multiple render paths" shape that I5/I7 exist to cover.
-
-**Impact.** Implementer may not add I5/I7 to the test matrix; fidelity test gates (`bun run test:fidelity`) cover I1-I10 PBTs via property tests, but the spec's acceptance criteria should explicitly include them so new `wikiLinkEmbed` fixtures join the corpus.
-
-**Suggested resolution.** Expand NFR-5 to: "Preserves I1 (Identity), I4 (Idempotence), I5 (Layer A === Layer B: mdManager parse/serialize and Y.Doc → PM → Y.Text round-trip agree), and I7 (Cross-path consistency: FR-3d emit on drop and FR-3a parse of hand-authored `![[...]]` produce equivalent mdast + PM) invariants from CLAUDE.md Storage-layer fidelity contract."
-
----
-
-### [M2] Finding 5: Semantic relationship between `emitFormat` enum and `wikiEmbedExtensions` allowlist is under-specified
-
-**Category:** COHERENCE
-**Source:** Lens L1 + L3 (missing conditionality)
-**Location:** SPEC.md §6 FR-5 line 165, §6 FR-1a line 158, §3 NG11 line 77
-**Status:** INCOHERENT (ambiguity blocks implementer)
-
-**Issue.** Two configuration knobs control the same emit dispatch and their interaction is not specified:
-
-1. `wikiEmbedExtensions` (allowlist): "`['png', 'jpg', ..., 'pdf', 'mp4', ...]`". If extension matches → `![[basename.ext]]`; else → `[basename](relativePath)`. (FR-1a)
-2. `emitFormat` (enum): `'wikiembed' | 'markdown-image'`. Default `'wikiembed'`. (FR-5)
-
-Question the spec does not answer: when `emitFormat: 'markdown-image'` is set, does it
-  - (a) override the `wikiEmbedExtensions` gate, forcing ALL drops to `[basename](path)` (including PDF/MP4)?
-  - (b) only flip IMAGE drops to `![...](path)` while PDFs/videos still use `![[...]]` (since they're in `wikiEmbedExtensions` but not images)?
-  - (c) something else?
-
-NG11 (line 77) says "The `emitFormat` config flag is retained in FR-5 but scoped to image emit only (`![[img.png]]` wiki-embed vs `![img](img.png)` plain markdown)." This reads like interpretation (b). But FR-1a's single extension-gate is silent on this override. §5 journeys never exercise the toggle.
-
-**Impact.** Direct implementation ambiguity. Zod schema may be wired one way; tests written the other; operators can't rely on the flag.
-
-**Suggested resolution.** Add an explicit table to FR-1a or FR-5 showing all emit-dispatch combinations:
-
-| File ext in `wikiEmbedExtensions`? | `emitFormat` | Emit shape |
-|---|---|---|
-| Yes, extension is an image ext | `wikiembed` | `![[file.ext]]` |
-| Yes, extension is an image ext | `markdown-image` | `![alt](path)` |
-| Yes, extension is non-image (mp4/pdf/...) | `wikiembed` (default) | `![[file.ext]]` |
-| Yes, extension is non-image (mp4/pdf/...) | `markdown-image` | TBD — DECIDE |
-| No (opaque: zip/docx/generic) | (ignored) | `[name](path)` |
-
-And cross-reference NG11 so the narrow scope of `emitFormat` is unambiguous.
-
----
-
-### [M3] Finding 6: FR-3b `resolveEmbed` tiebreak rule for true ambiguity is undefined
-
-**Category:** COHERENCE
-**Source:** Lens L3 (missing conditionality) + L4 (evidence-synthesis fidelity)
-**Location:** SPEC.md §6 FR-3b line 161; `evidence/inv2-foam-shortest-path-algorithm.md` §2.3 line 108-112 + §8 item 1
-**Status:** INCOHERENT (design gap surfaced in evidence but not resolved in spec)
-
-**Issue.** FR-3b specifies: "`resolveEmbed(basename, sourcePath) → resolvedPath | null` with Foam-style shortest-path from sourcePath's dirname." INV2 explicitly notes (§8, unresolved item 1): "When haystack isn't empty at end of needle tokens, Foam returns full path. No secondary tiebreak (alphabetical, filesystem order, etc.) is documented in code." And §10 gotcha 4: "True ambiguity: Foam falls back to full path; we should document our tiebreak rule explicitly."
-
-The spec inherits Foam's ambiguity gap without resolving it. The P2 journey implicitly assumes the resolver returns a single hit. What happens when two vaults have `photo.png` in different directories, both equidistant from the source doc's dirname? No declaration:
-
-- Return `null`? (breaks G2 "just works")
-- Return the first-indexed? (non-deterministic across rebuilds)
-- Prefer the source dir's own subtree? (reasonable — document it)
-- Return an ambiguity signal and surface a picker UI? (scope creep)
-
-**Impact.** Real repos with shared basenames (`README.md`, `icon.png`, `diagram.png`) will hit this on day one. Without a stated rule, behavior drifts between dev/production or across startup orders.
-
-**Suggested resolution.** Add explicit tiebreak rule to FR-3b. Suggestion (aligned with Obsidian's "shortest" semantics per INV1 §2.3):
-1. Shortest-path match wins.
-2. If multiple paths tie on suffix length: prefer the one in the source doc's own dirname subtree (depth-first from sourcePath's dir).
-3. If still tied: prefer alphabetical path order (deterministic, not startup-order-sensitive).
-4. Document as NG if user-facing ambiguity resolution (picker UI) is out of scope.
-
----
-
-### [M4] Finding 7: SCOPE list does not list `packages/server/src/cc1-broadcast.ts` or the CC1 subscriber wiring location — FR-6 "basename index subscribes to CC1 `ch:'files'`" has no explicit implementation site
-
-**Category:** COHERENCE
-**Source:** Lens L1 + L3
-**Location:** SPEC.md §13 In Scope lines 283-298; §16 SCOPE lines 343-357; §6 FR-6 line 166
-**Status:** INCOHERENT (gap)
-
-**Issue.** FR-6 says the basename index subscribes to CC1 `ch:'files'` and rebuilds on asset-event fires. §16 SCOPE lists `packages/server/src/standalone.ts` (extend `handleDiskEvent`) and a NEW `packages/core/src/utils/path-resolve.ts` (basename index). But the subscriber wiring — how `path-resolve.ts` (in `core`, browser-compatible) subscribes to a server-side CC1 broadcast — is not specified.
-
-The CC1 broadcaster is a server-side class (`packages/server/src/cc1-broadcast.ts`). The basename index is specified as `packages/core/src/utils/path-resolve.ts` which must stay browser+Node compatible per the `packages/core` constraint in CLAUDE.md. Core cannot import server-side primitives. So the wiring must happen in one of:
-
-- `packages/server/src/standalone.ts` (server side) — instantiates index there and passes it in
-- Split: index core → data structure only; wiring file in server.
-
-Neither is explicit.
-
-**Impact.** FR-3b declares the index in core, FR-6 wires it server-side — the split is load-bearing for `packages/core` purity but not called out. Implementer may accidentally add server deps to core, breaking the browser build.
-
-**Suggested resolution.** Add a sentence to FR-3b or FR-6 clarifying: "The basename index data structure (`Map<basename, string[]>` + `resolveEmbed()` function) lives in `packages/core/src/utils/path-resolve.ts` (browser+Node compatible, no server deps). The CC1 subscription + rebuild-on-signal wiring lives server-side in `packages/server/src/standalone.ts`, which constructs the index and wires it to the broadcaster (via `cc1Broadcaster.subscribe('files', () => rebuildIndex())` or equivalent primitive per `cc1-broadcast.ts`'s public API)."
-
-Also: CC1 broadcast is push-only via `broadcastStateless` (verified at `cc1-broadcast.ts:75`). If client-side code (e.g. a UI panel) also needs to invalidate, that's out of FR-6's scope and should be a non-goal.
-
----
-
-### [M5] Finding 8: FR-3a extension of wiki-link-micromark does not explicitly require preservation of precedent #15 (idempotent attacher) or #9 (schema add-only)
-
-**Category:** COHERENCE + FACTUAL
-**Source:** Spec-specific pattern check (CLAUDE.md precedents #9 and #15)
-**Location:** SPEC.md §6 FR-3a line 160; §13 In Scope line 287; §16 SCOPE line 344
-**Status:** INCOHERENT (missing explicit constraint)
-
-**Issue.** CLAUDE.md precedent #15 (Idempotent micromark-extension attachers) documents that `wiki-link-micromark.ts` currently uses identity-based dedup via a module-level singleton (`MICROMARK_EXT = wikiLinkSyntax()` at line 238, then `data.micromarkExtensions.some((e) => e === MICROMARK_EXT)` at lines 259, 265, 270 — verified). Any extension adding `!` prefix branch must preserve this pattern (re-running the attacher must not accumulate duplicate extensions).
-
-Precedent #9 (Schema add-only) forbids narrowing mdast/PM schemas. The spec treats `wikiLinkEmbed` as a new node distinct from `wikiLink` — good. But does the `wiki-link-micromark.ts` tokenizer state machine add a new `!`-prefixed code path without modifying the existing `[[...]]` code path? §16 EXCLUDE says "the embed branch is additive" — this is the right direction, but precedent #15 is not explicitly named.
-
-**Impact.** An implementer who rewrites the tokenizer rather than extends it may drop the identity-dedup and trigger the duplicate-extension accumulation that precedent #15 prevents. Risk is small (`MICROMARK_EXT` is reusable) but the contract should be explicit.
-
-**Suggested resolution.** Add a line to FR-3a acceptance criteria or §16 SCOPE: "Extending `wiki-link-micromark.ts` MUST preserve the module-level singleton + identity-dedup pattern (precedent #15) by using the same `MICROMARK_EXT` constant for both `[[...]]` and `![[...]]` tokenization. Adding `CODE_BANG` entry to the syntax extension's text map at construct-registration time is the expected shape."
-
-Also reference precedent #9 in STOP_IF: "STOP_IF `wikiLinkEmbed` node definition or tokenizer changes narrow the existing `wikiLink` shape — schema changes must be add-only per precedent #9."
-
----
-
-### [M6] Finding 9: §10 D-E rename race rationale references "CC1 100ms debounce handles common bursts" — verified correct, but conflates two different debounces
-
-**Category:** COHERENCE / FACTUAL
-**Source:** Track T1 + Lens L3
-**Location:** SPEC.md §10 D-E line 243
-**Status:** INCOHERENT (imprecise citation)
-
-**Issue.** D-E says: "CC1 100ms debounce handles common bursts." Verified: `cc1-broadcast.ts:11` `const DEBOUNCE_MS = 100`. Confirmed correct. But the reader should understand what is being debounced.
-
-The CC1 debounce batches **signal-to-clients broadcasts**, i.e., how often the `__system__` Y.Doc broadcasts `{v:1, ch:'files', seq:N}` stateless messages. It does NOT debounce the server-side rewriter path for doc moves. If a burst of fs-events (user `git checkout` touching 200 files) hits the rewriter, the CC1 broadcaster coalesces the UI-invalidation signal, but the per-file rename-rewrite logic in `managed-rename-rewrite.ts` still runs per file.
-
-For the markdown-image case that D-E worries about, the race is: doc moved + asset moved in same fs burst. The rewrite logic (FR-7) either (a) resolves the rename against the new doc location with an old asset path that's about to be different once the asset-move event fires, or (b) rewrites twice.
-
-D-E's rationale conflates "CC1 signal debounce" with "rename-rewrite event-ordering". The 100ms debounce is on the signal; rewriter bursts are a separate question.
-
-**Impact.** The stated rationale may not actually eliminate the race — it just batches the UI-side invalidation after the race has occurred. If an implementer leans on the "CC1 debounce handles bursts" framing, they may under-test the rename+asset-move race.
-
-**Suggested resolution.** Rewrite D-E rationale to separate the concerns:
-
-> "The CC1 100ms broadcast debounce coalesces UI-side invalidation signals (so ProviderPool sees one `ch:'files'` event after a burst), not the rewriter path itself. For the residual markdown-image case, Foam/Dendron/SilverBullet all rely on fs-event ordering (no documented pathology). If P0 dogfood surfaces a concrete repro, additively debounce the rewriter itself."
-
----
-
-### [M7] Finding 10: §8 claim "regex for markdown link — `readMarkdownLink` at line 87 — starts with `\[`, not `!\[`" has wrong file:line and wrong character analysis
+### [M1] §16 STOP_IF SVG-fallback line range is stale against the declared baseline
 
 **Category:** FACTUAL
-**Source:** Track T1
-**Location:** `evidence/current-shipped-state.md` line 111
+**Source:** Track T1 (own codebase); audit-focus #6
+**Location:** SPEC.md §16 line 390
 **Status:** CONTRADICTED
 
-**Issue.** Evidence line 111: "Regex for markdown link: `readMarkdownLink` at line 87: `/^\[([^\]\n]*)\]\(.../` — starts with `\[`, not `!\[`. Even without the exclusion guard, the regex wouldn't match image refs."
+**Issue.**
 
-Verified at 432a834b:
-- `readMarkdownLink` is at `managed-rename-rewrite.ts:77` (not line 87).
-- The regex is at line 88 (inside the function body).
-- The regex string is correct: starts with `\[`.
-- The claim that "even without the exclusion guard, the regex wouldn't match image refs" is accurate semantically.
+**Current text:**
+> SVG extension-fallback at `api-extension.ts:2853-2858` is removed without compensating guard…
 
-**Impact.** Low-severity citation error — interpretation is right, file:line is wrong.
+**Actual at 2ad0177a.** The SVG manual detection block is at lines `3088-3093`:
+```typescript
+if (!detectedMime) {
+  const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
+  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+    detectedMime = 'image/svg+xml';
+    detectedExt = 'svg';
+  }
+}
+```
 
-**Suggested resolution.** Update line reference to `readMarkdownLink` at line 77 (regex at line 88). Less impact than H1 since the semantic claim is correct, but still part of the evidence-file staleness pattern.
+`2853-2858` was the `432a834b` range (verified by session 1 audit H1 resolution).
+
+**Impact.** This STOP_IF is load-bearing: if the implementer searches for `2853-2858` they will find random code unrelated to SVG, miss the real guard, and possibly think the spec's STOP_IF is stale enough to ignore. Worse — when they remove / modify the SVG block in §13 FR-1 work, the STOP_IF may not fire in review because the line numbers no longer match.
+
+**Suggested resolution.** Update to `api-extension.ts:3088-3093`. Or use a symbolic anchor: "the `<svg` text-sniff block inside `handleUploadImage` (currently around line 3088)."
+
+---
+
+### [M2] `evidence/current-shipped-state.md` header explicitly locked to `432a834b` while SPEC declares `2ad0177a`
+
+**Category:** COHERENCE
+**Source:** Lens L1 (cross-finding contradictions) between SPEC metadata and evidence artifact; audit-focus #6
+**Location:** `evidence/current-shipped-state.md` line 19
+**Status:** INCOHERENT
+
+**Issue.** The evidence file's verification header reads:
+> All file:line citations re-verified at commit `432a834b` (current worktree HEAD) on 2026-04-17 during audit remediation.
+
+SPEC now declares `Baseline commit: 2ad0177a` (line 7). The evidence file is the SPEC's only grounding for "current shipped state" file:line claims, and it has not been re-verified at the new baseline. Every line number in this evidence file drifts the same way as §8 (e.g., `readUploadBody` claimed at line 176, actual at line 211; sanitizeFilename claimed at 137-144, actual at 172-179).
+
+The Session 2 close-out changelog acknowledged drift for the F9 fix but did not re-verify the evidence file as a whole. Per the task-level instruction ("the prior baseline was 432a834b so some evidence-file citations may need breadcrumbs"), the choice is either to:
+1. Re-verify at `2ad0177a` and rewrite the numbers, or
+2. Add a breadcrumb per CLAUDE.md §Post-ship corrigendum convention alongside the existing header, documenting that this file was last verified at `432a834b` and that citations may need +35 to +230 line shift against the current baseline.
+
+Neither has been done.
+
+**Impact.** Same class as [H3] but for the evidence artifact that /ship will consume. Implementers who cross-reference SPEC §8 against the evidence file will see two out-of-sync versions of the same claims.
+
+**Suggested resolution.** Option 1 is more durable: re-run the `grep -n` spot-checks against HEAD, update the numbers, update the header date + baseline. Option 2 is cheaper but pushes the drift cost to future readers. The worktree is named `finalize-asset-embed-surface` — Option 1 fits the finalize posture.
+
+---
+
+### [M3] CC1 broadcaster API references `signalChannel` in three places; actual method is `signal`
+
+**Category:** FACTUAL
+**Source:** Track T1 (own codebase)
+**Location:** SPEC.md §6 line 166 (FR-6 acceptance), §13 line 308 (In Scope entry), §16 line 369 (SCOPE entry)
+**Status:** CONTRADICTED
+
+**Issue.** The `CC1Broadcaster` class in `packages/server/src/cc1-broadcast.ts` exposes a public `signal(channel: string): void` method at line 36. No method named `signalChannel` exists:
+
+```typescript
+signal(channel: string): void {
+  const existing = this.timers.get(channel);
+  …
+}
+```
+
+The SPEC uses three names inconsistently:
+- §6 FR-3b line 161 correctly says: `cc1Broadcaster.signal('files')` ✓
+- §6 FR-6 line 166 says: `signalChannel('files') fires on asset events too` ✗
+- §13 line 308 says: `→ signalChannel('files')` ✗
+- §16 line 369 says: `→ signalChannel('files')` ✗
+
+**Impact.** Low-cost navigation break — implementer will grep for `signalChannel`, not find it, eventually realize the method is `signal()`. Creates ambiguity about whether the spec means to call `signal()` or propose a new `signalChannel` wrapper.
+
+**Suggested resolution.** Replace `signalChannel` with `signal` (or `cc1Broadcaster.signal`) in all three sites. The correct precedent is already in FR-3b line 161.
+
+---
+
+### [M4] §11 references `evidence/inv4-outline-drop-pattern.md` which does not exist
+
+**Category:** FACTUAL
+**Source:** Track T1 (own filesystem)
+**Location:** SPEC.md §11 line 278 (Q-INV4 row)
+**Status:** UNVERIFIABLE (evidence file absent)
+
+**Issue.**
+
+**Current text:**
+> Q-INV4 | Outline's non-image drop pattern for convergence | Technical | RESOLVED — `evidence/inv4-outline-drop-pattern.md`. Outline uses typed nodes (image/video/attachment) with `[title size](url)` metadata encoding. Contributed to D-I analysis.
+
+**Verified.** `ls specs/2026-04-16-editor-asset-and-embed-surface/evidence/` returns `inv1`, `inv2`, `inv3`, `inv5`, `inv6` — no `inv4`. The changelog 2026-04-16 entry lists "INV4: Outline's non-image drop pattern — subagent" but no `evidence/inv4-*.md` artifact was ever committed.
+
+The INV4 findings are loosely reflected in the full-sweep D-I rationale at §10 and in `reports/editor-asset-embed-patterns-across-universe/REPORT.md` (second external input) — so the *knowledge* wasn't lost, but the Q-INV4 row in §11 points to a nonexistent file.
+
+**Impact.** Any reader clicking through to verify the "RESOLVED" claim will hit 404 on the evidence file. Slight trust erosion plus blocks independent verification of the Outline-pattern claim.
+
+**Suggested resolution.** Either (a) back-fill `evidence/inv4-outline-drop-pattern.md` with the subagent output (if preserved in session logs), (b) repoint the Q-INV4 row to `reports/editor-asset-embed-patterns-across-universe/REPORT.md` which has the Outline cross-survey, or (c) mark Q-INV4 as "RESOLVED via external cross-survey — see reports/editor-asset-embed-patterns-across-universe/" and drop the dead evidence pointer.
+
+---
+
+### [M5] `evidence/inv3-file-type-mime-coverage.md` file:line citations are stale against declared baseline
+
+**Category:** FACTUAL
+**Source:** Track T1 (own codebase); audit-focus #6
+**Location:** `evidence/inv3-file-type-mime-coverage.md` line 29
+**Status:** CONTRADICTED
+
+**Issue.**
+
+**Current text in inv3 file:**
+> Call site: `packages/server/src/api-extension.ts:38` (`import { fileTypeFromBuffer } from 'file-type'`) used at line 2535
+
+**Actual at 2ad0177a:**
+- Import at line **40** (not 38).
+- Use site at line **3084** (not 2535).
+
+Same drift pattern as H3 / M1 / M2 — inv3 was written at `432a834b` (or earlier) and never re-verified at `2ad0177a`.
+
+**Impact.** Same class as M2 — implementer cross-referencing inv3 will find the numbers misaligned with both the SPEC and the real code.
+
+**Suggested resolution.** Bundle the fix with M2's re-verification pass. Same dated-header update is appropriate.
 
 ---
 
 ## Low Severity
 
-### [L1] Finding 11: §6 FR-5 counts "7 fields" in agent constraints but lists 8 top-level + 1 nested
+### [L1] §15 Future Work line 341 describes Phase 2 as replacing `[name](path)` emit — but FR-1a/D-I emits `![[...]]`
 
-**Location:** SPEC.md §16 SCOPE line 348 ("`upload.*` Zod section (7 fields per FR-5)") vs FR-5 line 165 enumeration
-**Severity:** LOW (counting convention ambiguity)
+**Category:** COHERENCE
+**Source:** Lens L5 (summary coherence)
+**Location:** SPEC.md §15 line 341
+**Status:** INCOHERENT (leftover from pre-D-I scope)
 
-FR-5 enumerates: `attachmentFolderPath`, `emitFormat`, `maxBytes`, `warnBytes`, `dedup`, `dedup.ui`, `allowedMimeTypes`, `wikiEmbedExtensions` = 8 mentions (with `dedup.ui` as nested). §16 says "7 fields". Interpretation: count `dedup` + `dedup.ui` as one "field with nested" = 7 top-level. Fine but inconsistent counting invites drift at implementation time.
+**Issue.**
 
-**Suggested resolution.** Say "7 top-level fields with `dedup` being an object containing `scope` + `ui`", or simply "upload config section (see FR-5)".
+**Current text:**
+> | Typed-component-nodes Phase 2 rich previews | Video/Audio/PDFViewer replace `[name](path)` emit from FR-1 | Phase 2 lands |
 
----
+D-I (line 260) locks wiki-embed `![[file.ext]]` as the P0 storage shape for renderable non-image extensions (pdf/mp4/mp3/…). §3 NG2 (line 68) and §5 P1 journey step 7 (line 99) consistently say P0 renders `![[file.ext]]` as plain-link fallback and Phase 2 promotes that same wiki-embed to a typed component at render time — storage shape never changes.
 
-### [L2] Finding 12: Evidence handler line ranges in wiki-link-micromark.ts are off by 1-6 lines
+Line 341 still says Phase 2 "replaces `[name](path)` emit from FR-1" — describing a pre-D-I world where FR-1 emitted markdown-link for non-image. It's a leftover from the session-1 scope before D-I pivoted.
 
-**Location:** `evidence/current-shipped-state.md` lines 89-91
-**Severity:** LOW
+**Impact.** Misleads a Phase 2 implementer into thinking they need to migrate stored `[name](path)` refs to typed components. Under D-I, they only need to switch the render dispatch for existing `![[name.ext]]` refs — no content migration.
 
-- "Handlers: `enterWikiLink/exitTarget/exitAnchor/exitAlias/exitWikiLink` at lines 154-191" — actual `enterWikiLink` at 154, `exitWikiLink` ends at 197. Close; end-line off by 6.
-- "Serializer: `wikiLinkHandler` at lines 204-214" — actual at 211-220. Off by 7.
-
-Both are ballpark correct, not load-bearing for implementation.
-
----
-
-### [L3] Finding 13: §8 current-state enumeration of config schema sections omits `preview` and `folders`
-
-**Location:** `evidence/current-shipped-state.md` lines 117-121
-**Severity:** LOW
-
-Evidence enumerates: `content.dir/include/exclude`, `server.port/host`, `persistence.debounceMs/maxDebounceMs`, `mcp.tools.read_document.historyDepth`, `mcp.tools.search.maxResults`. Verified actual `packages/cli/src/config/schema.ts` also has `preview.baseUrl` and `folders: FolderRule[]`. Not load-bearing for FR-5 (which adds a disjoint `upload.*`), but completeness issue in the evidence.
+**Suggested resolution.** Rewrite to: "Typed-component-nodes Phase 2 rich previews | Video/Audio/PDFViewer swap for the P0 plain-link fallback on read (D-F read-time promotion); storage shape `![[file.ext]]` unchanged | Phase 2 lands."
 
 ---
 
-### [L4] Finding 14: Spec §10 D-I claims "6-editor convergence" when underlying report §D2 lists 5 surveyed editors
+### [L2] "Builds on" line 9 count of "8 items not shipped" is loose relative to REPORT.md findings inventory
 
-**Location:** SPEC.md §10 D-I line 247; REPORT §D2 line 113
-**Severity:** LOW (ambiguous, defensible framing)
+**Category:** COHERENCE
+**Source:** Lens L7 (inline source attribution); audit-focus #5
+**Location:** SPEC.md line 9
+**Status:** INCOHERENT (loose, not load-bearing)
 
-D-I says: "6-editor convergence (Obsidian + Logseq + Foam + Dendron + Fumadocs + SilverBullet)". The REPORT §D2 table lists 5 "YES" editors (Logseq, Foam, Dendron, Fumadocs, SilverBullet) and does not include Obsidian in its 16-editor surveyed set (Obsidian is proprietary). Counting Obsidian as the 6th (canonical/reference) is defensible but not transparent in the SPEC — the REPORT §D2 opens with "Finding: 5 of 16 surveyed editors". If a reader cross-references, the "6 vs 5" mismatch invites confusion.
+**Issue.**
 
-**Suggested resolution.** Change D-I rationale to "6-editor convergence (5 surveyed: Logseq + Foam + Dendron + Fumadocs + SilverBullet; plus proprietary Obsidian as canonical reference)". Or just "5 surveyed + Obsidian".
+**Current text:**
+> **Builds on:** `reports/editor-input-surface-worldmodel/REPORT.md` — triage of an earlier 30-decision draft SPEC that was developed in a sibling worktree but never committed to main. 8 items not shipped; others superseded, refuted, or fixed in this spec. See §9 for per-row disposition.
 
----
+Triangulation of the "8 items" claim:
+- REPORT.md exec summary: "13 findings inventory" = 5 S-items + 5 DIFF-items + 3 A-items.
+- `meta/_changelog.md` 2026-04-16: "7 items classified ACTION-NOW by /assess-findings became the scope of this spec (FR-1 through FR-7)."
+- Session 2 added FR-8 (endpoint rename) which is NOT from the prior spec. So post-Session-2, there are 8 FRs in this spec but only 7 of them trace back to the prior-spec triage.
 
-### [L5] Finding 15: INV1 evidence §2.2 recommends `emitFormat: 'markdown' | 'wikilink'` values but FR-5 locks `'wikiembed' | 'markdown-image'`
+The "8 items not shipped" claim appears to be counting the current spec's 8 FRs (FR-1 through FR-8) rather than 8 prior-spec items. That's internally defensible but misleading when paired with "prior 30-decision draft" — FR-8 (endpoint rename) is a new decision that didn't exist in the prior spec.
 
-**Location:** `evidence/inv1-obsidian-app-json-schema.md` §2.2 lines 156-166
-**Severity:** LOW
+Separately: REPORT.md describes itself as "findings inventory ready for /assess-findings triage" (line 8) — it's the INPUT to triage, not the triage OUTPUT. The SPEC's characterization "triage of an earlier 30-decision draft" + "(worldmodel + assess-findings triage)" at line 15 reads like the report contains the classifications, when actually the classifications were reached in conversation + persisted only in changelog + §9.
 
-INV1's mapping recommendation (line 160-166) uses `emitFormat: "markdown" | "wikilink"` — these are the old-spec values. FR-5 / D-I pivot locked `'wikiembed' | 'markdown-image'`. The semantic mapping is:
-- `useMarkdownLinks: true` → `emitFormat: 'markdown-image'`
-- `useMarkdownLinks: false` → `emitFormat: 'wikiembed'`
+**Impact.** Low — reader confusion, not load-bearing. §9 has the per-row disposition for real.
 
-Not load-bearing for the Zod schema (FR-5 is canonical) but could confuse an implementer reading INV1 before FR-5.
-
-**Suggested resolution.** Add a footnote to INV1 §2.2 noting that the `emitFormat` values in §2.2 predate the D-I pivot; see SPEC FR-5 for the locked enum.
-
----
-
-### [L6] Finding 16: Content-filter line-number citations in evidence/current-shipped-state.md are off
-
-**Location:** `evidence/current-shipped-state.md` lines 136-142 (ContentFilter section)
-**Severity:** LOW
-
-Claims "content-filter.ts:125-192" for the asset-admission rule and "dirCount: Map<string, number> (lines 179-192)" for the refcount map.
-
-Verified:
-- `ASSET_EXTENSIONS.has(ext)` check at `content-filter.ts:204` (evidence OK at "125-192" range but sibling-asset rule narrower).
-- `dirCount` declared at line 175 (not 179).
-- `incrementMdDir` / `decrementMdDir` methods at lines 229-240 (not 179-192).
-
-Consistent with the H1 stale-citation pattern at a smaller scale.
+**Suggested resolution.** Either (a) change "8 items not shipped" to "7 items from the prior spec's 30-decision inventory still needed (FR-1..FR-7); FR-8 is net-new in this spec; others superseded, refuted, or fixed" — or (b) leave the phrasing but change "triage" to "findings inventory for /assess-findings triage; triage outcomes in §9."
 
 ---
 
-## Checked (all clear)
+### [L3] §13 `evidence/inv4` reference interacts with M4 — push-down list implicitly consumes the Outline drop pattern
 
-- **Baseline commit.** Verified `git log -1` returns `432a834b Restore config.yml to default`. SPEC header claim is correct.
-- **file-type version.** `packages/server/package.json` line `"file-type": "^22.0.1"`; `bun.lock` resolves `file-type@22.0.1`; `node_modules/file-type/package.json` shows `"version": "22.0.1"`. INV3 version claim confirmed.
-- **CLAUDE.md precedent references.** Precedents #1 (typed transaction origins), #9 (schema add-only), #10 (opaque-but-content-bearing), #15 (idempotent micromark attacher) all exist at CLAUDE.md lines 75, 83, 84, 98 respectively, and the spec's characterization of each matches CLAUDE.md's own language.
-- **Wiki-link tokenizer baseline.** `wiki-link-micromark.ts` verified: `start` state at line 42 confirms `CODE_LBRACKET` (91) check only; `CODE_BANG` (33) not referenced; module-level singleton `MICROMARK_EXT = wikiLinkSyntax()` at line 238 with identity dedup at 259, 265, 270 matches SPEC's characterization and precedent #15.
-- **Managed-rename-rewrite exclusion guard.** `line[idx - 1] !== '!'` at line 243 — exactly as claimed in SPEC §6 FR-7, §8, and §16 SCOPE. `rewriteWikiLinksForDocumentRename` at 270 and `rewriteMarkdownLinksForDocumentRename` at 302 — evidence-exact.
-- **CC1 broadcaster.** `DEBOUNCE_MS = 100` at `cc1-broadcast.ts:11` confirmed (INV6 + §10 D-E claim accurate). `signalChannel` function at `standalone.ts:162`; `handleDiskEvent` at line 262; `case 'create'` fires `signalChannel('files')` + backlinks + graph at 271-273; `case 'update'` fires backlinks + graph only (not 'files') at 285-286 — matches INV6 exactly.
-- **Content-filter ASSET_EXTENSIONS import.** `content-filter.ts` imports `ASSET_EXTENSIONS` from `@inkeep/open-knowledge-core` at line 11 — confirming that widening `packages/core/src/constants/upload.ts` (in §13 In Scope) is sufficient to widen content-filter admission without a separate edit. Evidence's stated "Consequence for FR-5" is self-resolving.
-- **Clipboard-mdast-canonical NG4 boundary.** NG4 in `specs/2026-04-16-clipboard-mdast-canonical/SPEC.md:46` verified verbatim. INV5 quote matches.
-- **Decision mapping in §9.** All 30 prior-spec decisions (D1-D30) are accounted for. D5+D27 and D22-D26 are appropriately joined; none dropped.
-- **11 LOCKED decisions count.** D-A through D-K = 11 LOCKED decisions. Spec header "All 11 decisions LOCKED" is accurate.
-- **Goals → Requirements traceability.** G1→FR-1/FR-1a/FR-5; G2→FR-3/FR-4; G3→FR-2; G4→FR-5; G5→FR-7; G6→NFR-5 + §16 EXCLUDE. All goals have an FR anchor.
-- **User-journey coverage in FR table.** P1 → FR-1, FR-1a, FR-8; P2 → FR-3, FR-4; P3 → FR-2, FR-1a; P4 → FR-5; P5 → FR-7, FR-3b. All journeys traceable through FR rows.
-- **Non-goals do not conflict with requirements.** Each NG is consistent with an in-scope FR (NG1 references FR-2 narrowed scope; NG6 is the boundary case of FR-5; etc.).
-- **Success metrics falsifiability.** M1-M6 all include a test vector or observable outcome. Testable.
-- **Risks & mitigations coverage.** R1 resolved by D-A, R2/R6 covered by additive pattern, R7 covered by NFR-3, R8 covered by realpath + isWithinContentDir. No orphan risks.
-- **D-I cross-check vs REPORT §D2.** "6 editors" matches Obsidian + the 5 surveyed with "YES" in REPORT §D2 table (Logseq, Foam, Dendron, Fumadocs, SilverBullet). Counting is defensible (see L4 for framing note).
-- **Schema add-only (precedent #9).** `wikiLinkEmbed` is a new mdast type distinct from `wikiLink`; existing `wikiLink` tokenizer left alone per §16 EXCLUDE; FR-3a explicitly "additive". Consistent with precedent #9.
-- **Typed transaction origins (precedent #1).** FR-7 operates on markdown strings (line-based rewrite), no Y.Doc transaction origin needed. FR-3d is PM `tr.insert` through existing `uploadAndInsert` path — uses existing origin plumbing. No new transaction origins introduced, so no new `LocalTransactionOrigin` object refs needed. Consistent.
-- **Opaque-but-content-bearing (precedent #10).** `wikiLinkEmbed` mdast → PM dispatches to existing PM node types (image, link) per FR-3c; no new raw-content-in-attrs PM node introduced. Precedent #10 does not apply in this spec. Non-issue.
-- **Obsidian `app.json` schema (INV1) field samples.** Spot-checked 3 sample repos from INV1 §3 — `daniel-vera-g/obsidian-config`, `chatopera/docs`, `Sma-Das/Minimalistic-Obsidian-Config` — field names `attachmentFolderPath`, `useMarkdownLinks`, `newLinkFormat` confirmed stable across samples, consistent with INV1's claims.
+**Category:** COHERENCE
+**Source:** Lens L5 (summary coherence)
+**Location:** SPEC.md §13 line 316 (push-down list)
+**Status:** INCOHERENT (ambiguity only)
+
+**Issue.** The push-down list (line 316) mentions:
+> **MIME allowlist precision** (every `file-type@22.0.1` supported extension behaves correctly): parameterized narrow integration…
+
+This reflects INV3 findings correctly. But there's no equivalent entry that consumes the Outline drop pattern (INV4) — which supposedly "contributed to D-I analysis" per §11. Combined with M4 (inv4 evidence file missing), the Outline pattern's role is unclear: is it an incidental cross-editor datapoint (in which case just linking the universe REPORT is enough), or is it load-bearing on D-I and thus should be re-findable?
+
+**Impact.** Low. D-I itself is LOCKED with 6-editor convergence rationale; INV4 is one supporting datapoint and its loss doesn't re-open D-I. But it is a dangling citation.
+
+**Suggested resolution.** Combine with M4 resolution. If M4 picks "repoint to universe REPORT," this finding resolves in tandem.
 
 ---
 
-## Scope covered
+### [L4] FR-3a's `CODE_BANG (33)` parenthetical in §6 leaks implementation detail into acceptance criteria
 
-**Did cover:**
-- End-to-end intuitive read of SPEC.md
-- Extraction and verification of every load-bearing file:line citation in SPEC §8 and evidence/current-shipped-state.md (upload-handler, wiki-link-micromark, managed-rename-rewrite, cc1-broadcast, content-filter, standalone, image-upload)
-- Verification of file-type version claim (package.json, bun.lock, node_modules)
-- Verification of CLAUDE.md precedents #1, #9, #10, #15 existence and accuracy of characterization
-- Clipboard-mdast-canonical NG4 cross-reference
-- Goals → Requirements → Decisions traceability
-- Non-goals non-conflict with requirements
-- §9 prior-spec decision mapping completeness
-- Schema add-only pattern for `wikiLinkEmbed`
-- Idempotent micromark attacher (precedent #15) for existing code
-- Fidelity invariants I1/I4/I5/I7 spec coverage
-- Coherence lenses L1 (cross-finding contradictions), L2 (confidence-prose alignment), L3 (missing conditionality), L4 (evidence-synthesis fidelity — spot-checked), L5 (summary coherence), L6 (stance consistency), L7 (inline source attribution)
-- Spot-check of 3 INV1 sample repos for field stability
+**Category:** COHERENCE
+**Source:** Lens L7 (inline source attribution)
+**Location:** SPEC.md §6 line 160 (FR-3a acceptance criteria)
+**Status:** stylistic
 
-**Did not cover:**
-- End-to-end read of the 16-editor cross-survey REPORT.md (only sampled Executive Summary, D1-D8 detailed findings, Cross-Editor Convergences). Per-editor evidence citations in `reports/editor-asset-embed-patterns-across-universe/evidence/per-editor-findings.md` were not spot-checked.
-- Evidence INV4 (`inv4-outline-drop-pattern.md`) was not directly read — only consumed via the REPORT D1 table. If an OK decision depends on INV4 specifics (e.g. Outline's metadata-encoding in `[title size](url)`), that evidence file would need separate verification.
-- Dynamic verification (running tests, executing the upload handler) was not attempted — static read-only audit.
-- Security analysis of the widened MIME allowlist (SVG/PDF rendering paths, ZIP peek-inside as new attack surface via file-type's OOXML expansion) was not the audit's scope; R7 mitigation was accepted as stated.
-- Performance validation of A6 (sha256 <200ms on 25MB) — the napkin math (500MB/s CPU throughput) was accepted without measurement.
-- Deep coherence check of prior-spec SPEC.md (`specs/2026-04-08-editor-input-surface/SPEC.md`) beyond the §9 mapping — the prior spec's claims were not independently audited.
+**Issue.**
+
+**Current text:**
+> …Adding the `CODE_BANG` (33) entry to the syntax extension's text map at construct-registration time is the expected shape.
+
+Acceptance criteria typically state *what* must be true, not *how* to achieve it. "Adding CODE_BANG (33)" is an implementation tip. Under CLAUDE.md anti-patterns, acceptance criteria should be verifiable end-states, not code recipes. CODE_BANG is also already defined implicitly (character code 33 = `!`); spelling out the numeric constant is noise.
+
+That said, this is consistent with how the spec pins other low-level expectations (precedent #15 identity-dedup, precedent #9 add-only schema), and removing it might lose a useful signal for the implementer about which extension slot to add to.
+
+**Impact.** Negligible.
+
+**Suggested resolution.** Either accept as-is (a load-bearing hint), or rewrite to: "the embed branch should register on the `!` text entry of the syntax extension's `text` map (sharing the singleton pattern with the `[` entry per precedent #15)."
+
+---
+
+## Confirmed Claims (summary)
+
+The following claims verified cleanly at baseline `2ad0177a`:
+
+**Track T1 (own codebase) — passing:**
+- `shortestImageRef` function exists at `packages/app/src/editor/image-upload/index.ts:91` ✓ — F8 fix-point citation correct.
+- Client POST target at `packages/app/src/editor/image-upload/index.ts:132` ✓ — FR-8 endpoint-rename client edit site.
+- `managed-rename-rewrite.ts:243` contains `line[idx - 1] !== '!'` exclusion ✓ — FR-7 anchor site.
+- `readMarkdownLink` at `managed-rename-rewrite.ts:77`, regex at line 88 ✓.
+- `rewriteWikiLinksForDocumentRename` at `managed-rename-rewrite.ts:270`, `rewriteMarkdownLinksForDocumentRename` at line 302 ✓.
+- `wiki-link-micromark.ts:42` `CODE_LBRACKET` check ✓ — FR-3a tokenizer reuse point.
+- `MICROMARK_EXT` singleton at `wiki-link-micromark.ts:238` ✓.
+- Identity-dedup checks at `wiki-link-micromark.ts:259, 265, 270` ✓.
+- `enterWikiLink` line 154, `exitWikiLink` line 187 ending ~197, `wikiLinkHandler` 211-220 ✓.
+- `content-filter.ts` `ASSET_EXTENSIONS.has(ext)` at line 204 ✓.
+- `content-filter.ts` `dirCount` at line 175 ✓.
+- `content-filter.ts` `incrementMdDir` / `decrementMdDir` lifecycle at lines 229-240 ✓.
+- `file-type@^22.0.1` in `packages/server/package.json` line 22 ✓ — consistent with INV3.
+- `reports/editor-input-surface-worldmodel/REPORT.md` exists and contains D1-D30 characterization + 13 F-numbered findings ✓.
+- `reports/editor-asset-embed-patterns-across-universe/REPORT.md` exists ✓.
+- `shared.ts` FileHandler block with `allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES]` at lines 31-43 ✓ (SPEC's `32-44` range is off by one but §8 still resolves to the right block).
+
+**Lenses L1-L7 — passing (Session-2-scope checks):**
+- D-L two-message rule (§10 line 263) is internally consistent with FR-1 (line 157) — trigger conditions, message A/B texts, client-side extension check all match. Byte-exact message-A text propagates consistently through FR-1 → D-L → `e2e-acceptance-scenarios.md` P1.2 invariant 2. Byte-exact message-B text propagates through FR-1 → D-L → P1.2d invariant + P4.1 invariant 1.
+- FR-1 + D-L edge cases traced to the emit-dispatch matrix (§6 lines 170-180) and to P1.2e (extension `.txt`, bytes sniff as PDF → accepts per D-A; emit uses extension → opaque → markdown-link) — coherent.
+- D-L decision rationale (staff-eng + staff-PM convergence on message-specificity principle) is load-bearing for the two-message shape. Reversibility-on-copy is correctly noted.
+- `evidence/e2e-acceptance-scenarios.md` — 10 primary scenarios (P1.1, P1.2, P2.1, P3.1, P4.1, P5.1, P5.1a, P5.2, P6.1, P6.2) exactly match §13 line 315 enumeration. "Top 10 budget" at scenarios line 325 matches same enumeration. Push-down list (scenarios line 344-357) is coherent with the push-down carve-out at §13 line 316.
+- Each E2E scenario names perturbation classes that a silent regression would introduce — not vague ("test should fail") but specific (e.g., P5.1's perturbation names the line-243 exclusion guard, P6.2's perturbation names the FR-6 file-watcher widening). Each scenario states numbered invariants that are byte-level verifiable (exact strings, file existence, HTTP response shapes, CRDT Y.Text contents).
+- Cross-FR coherence — §6 ↔ §9 ↔ §10 ↔ §13: the FR-to-prior-decision mapping in §9 correctly reflects F8 (D3 row) and F9 (D7 row) absorption into FR-1a and NFR-3 respectively. §10 D-L row is well-formed. §13 In Scope enumeration matches §6 FRs 1:1.
+- Phase 2 coordination protocol in scenarios lines 362-371 (marking P1.1 / P1.1a / P1.1b / P1.1c / P6.1 as assertions to flip at Phase 2) is a sound handoff to the `specs/2026-04-08-typed-component-nodes/` Phase 2 In-Scope list.
+
+## Unverifiable Claims
+
+- **Q-INV4 Outline drop pattern.** Referenced evidence file missing (M4). The loose version of the claim (Outline uses typed nodes) is consistent with Outline's public design, but the "[title size](url)" metadata-encoding detail cannot be confirmed without either the evidence file or a targeted re-probe of the Outline source. Low urgency because D-I is locked with 6-editor convergence independent of INV4.
+- **"8 items not shipped"** numerical claim (L2). The intended count is ambiguous (7 prior-spec items + 1 new FR-8, or 8 total FRs treating FR-1a as extension of FR-1). Not load-bearing; prose should just be tightened.

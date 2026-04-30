@@ -27,6 +27,7 @@ import {
   type ClassifiedLinkTarget,
   classifyMarkdownHref,
   isExternalHref,
+  resolveAssetProjectPath,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { posToDOMRect } from '@tiptap/core';
@@ -53,6 +54,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { normalizeDocNameInput } from '../../lib/doc-paths';
 import { cn } from '../../lib/utils';
+import { dispatchAssetClick } from '../asset-dispatch';
 import {
   buildCurrentRelativeMarkdownHref,
   classifyCurrentMarkdownHref,
@@ -318,6 +320,24 @@ export function InternalLinkPropPanel({
 
   function handleNavigate(opts: { newTab?: boolean }) {
     if (!target) return;
+    if (target.kind === 'asset') {
+      // PropPanel asset branch. Bare click on an asset ref normally
+      // bypasses the PropPanel (handled by `internal-link.ts`
+      // handlePrimary), but if the panel does open for an asset
+      // (path-escape fallback, programmatic open), "Open" routes through
+      // the same dispatcher so the user always reaches the asset via
+      // the canonical path.
+      const projectRelPath = resolveAssetProjectPath(target.url, sourceDocName);
+      if (!projectRelPath) return;
+      void dispatchAssetClick({
+        url: target.url,
+        projectRelPath,
+        ext: target.ext,
+        title: projectRelPath.split('/').pop() ?? target.url,
+        forceOsDelegation: opts.newTab ?? false,
+      });
+      return;
+    }
     if (target.kind === 'external') {
       navigateToMarkdownTarget(target);
       return;
@@ -361,6 +381,12 @@ export function InternalLinkPropPanel({
       icon: <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />,
       text: 'Loading…',
       className: 'text-muted-foreground',
+    };
+  } else if (target?.kind === 'asset') {
+    stateLabel = {
+      icon: <File className="size-3.5 shrink-0" aria-hidden="true" />,
+      text: 'Asset reference',
+      className: 'text-foreground',
     };
   } else if (target?.kind === 'external') {
     stateLabel = {

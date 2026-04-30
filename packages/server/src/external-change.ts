@@ -58,12 +58,14 @@ export function applyExternalChange(
   hocuspocus: Hocuspocus,
   docName: string,
   content: string,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): void {
   if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
   const { frontmatter, body } = stripFrontmatter(content);
-  const parsedJson = mdManager.parseWithFallback(body);
+  const parseOpts = resolveEmbed ? { resolveEmbed, sourcePath: docName } : undefined;
+  const parsedJson = mdManager.parseWithFallback(body, parseOpts);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
@@ -104,10 +106,11 @@ export function applyExternalChange(
  */
 export function createExternalChangeHandler(
   hocuspocus: Hocuspocus,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): (docName: string, content: string) => Promise<void> {
   return async (docName: string, content: string): Promise<void> => {
     try {
-      applyExternalChange(hocuspocus, docName, content);
+      applyExternalChange(hocuspocus, docName, content, resolveEmbed);
       console.log(`[file-watcher] Applied external change: ${docName}`);
     } catch (err) {
       console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);

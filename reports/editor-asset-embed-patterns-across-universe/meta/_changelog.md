@@ -89,3 +89,39 @@ Skipped (same rationale as initial pass — subagent outputs are independently-p
 - Obsidian + Notion proprietary — not invested; secondary-source only
 - AFFiNE app-layer integration (beyond BlockSuite) — low value
 - HedgeDoc D1/D3/D4 INFERRED — architecturally distant from OK, skipped
+
+---
+
+## 2026-04-23 — Path C update: D9 click behavior / open semantics
+
+**Trigger:** Post-`![[file.pdf]]` drop shipping in PR #270, a user-level bug surfaced — post-reload the link renders as broken CSS (pages-cache classifier treats asset href as `'unresolved'` doc-link). While fixing the bug, a design question emerged: for files we can't inline-render, should click open in a new localhost tab (current web behavior), via OS-default (`shell.openPath` in Electron), in a modal, or download-only? The existing report covered embed patterns but not click/open behavior. This Path C update adds the click-behavior dimension to inform the decision.
+
+**Scope:** 1 new dimension (D9) across 10 editors — Obsidian, Zettlr, Logseq, SilverBullet, AFFiNE, Outline, Docmost, HedgeDoc, Foam, Dendron. Web vs Electron behavior, renderable vs opaque, `shell.openPath` call-site verification.
+
+**Method:** One general-purpose subagent, ~150K context tokens, 147s runtime. WebFetch + DeepWiki + GitHub source reads + community forum archaeology. Primary sources cited inline.
+
+### Findings added
+
+- **D9 section in REPORT.md** — four click-behavior clusters (browser-native pass-through, OS-delegation via `shell.openPath`, inline-preview-first, download-only). Per-editor table.
+- **evidence/d9-click-behavior.md** — 5 findings with file:line and URL citations. Zettlr's `shell.openPath` at `open-attachment.ts:87,127` verified as the sole Electron-editor-that-intercepts-on-click.
+
+### Recommendation for OK (stated in D9's "Implications")
+
+Adopt Docmost's pattern: server-set `Content-Disposition` gated by extension (inline for renderables, attachment for opaque). Unifies web + Electron behavior (both end up as Chromium-native handling); no new IPC surface; no OS-delegation security cost. Reject Zettlr-style `shell.openPath` on click — outlier pattern, closest-shape peer (Obsidian) explicitly rejects it.
+
+### Validation
+
+- [x] D9 dimension has evidence file with file:line citations for primary claims
+- [x] Frontmatter updatedAt + revisions reflects the addition
+- [x] "Decision-Specific Findings" left unchanged (original D-B / D-C / D-D / D-E / D-F / D-I / D-J are preserved; D9's OK recommendation is embedded in D9's own "Implications" paragraph so downstream readers find it in-place)
+- [x] Non-goals respected (no benchmarking; no UI screenshots; no mobile coverage)
+- [x] Cross-finding consistency: D9's recommendation (browser-native pass-through + extension-gated Content-Disposition) is compatible with D-M accept-all stance from the asset-embed spec — extension-gating for `Content-Disposition` is NOT a rejection gate, it's a download-vs-inline hint
+
+### Audit
+
+Skipped — single-dimension additive update with tight evidence trail and narrow decision scope. If downstream consumers (the implementation spec) commission a broader review, this Path C pass can be audited at that point.
+
+### Remaining open
+
+- Logseq's `shell.openPath` call site not located — UNCERTAIN whether Electron Logseq actually delegates or reuses web download fallback. Not load-bearing for the OK recommendation.
+- Mobile-browser click behavior for Obsidian Mobile + Logseq Mobile out of scope (OK ships desktop/Electron + web only).

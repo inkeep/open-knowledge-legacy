@@ -154,10 +154,14 @@ describe('previewContent', () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it('ignores non-.md files', () => {
+  it('ignores files outside the asset allowlist and the include pattern', () => {
     writeFileSync(join(testDir, 'readme.md'), '# Readme');
+    // TypeScript source is in EXECUTABLE_BLOCKLIST_EXTENSIONS territory and
+    // outside the `**/*.md` include pattern — filter excludes it at step 4.
     writeFileSync(join(testDir, 'script.ts'), 'export {}');
-    writeFileSync(join(testDir, 'data.json'), '{}');
+    // Truly unknown extension — outside ASSET_EXTENSIONS, outside include
+    // pattern, outside gitignore — falls through to step 4 default-exclude.
+    writeFileSync(join(testDir, 'arbitrary.xyz'), 'data');
 
     const result = previewContent({
       projectDir: testDir,

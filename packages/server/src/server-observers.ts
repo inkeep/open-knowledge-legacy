@@ -219,6 +219,18 @@ export interface SetupServerObserversOpts {
   /** Absolute content root (used to place the blob inside the checkpoint tree). */
   contentRoot?: string;
   /**
+   * US-013 FR-3b: basename-index resolver used by `mdManager.parse` so
+   * `![[photo.png]]` wiki-embed refs resolve to the right disk path before
+   * dispatch to the PM image / link node. When omitted OR when the
+   * resolver returns `null`, the handler falls back to the literal target
+   * (broken-ref placeholder via `<img onerror>` / `<a href>` — browsers
+   * surface missing assets without throwing).
+   *
+   * Resolver signature matches `packages/core/src/utils/path-resolve.ts`:
+   * `(basename, sourcePath) => path | null`.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
+  /**
    * Test-only dispatch hook. Omitted in production. When provided, called
    * once per drain (from inside `afterAllTransactions`) with the dispatch
    * decision the settlement handler made.
@@ -514,20 +526,19 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         return;
       }
 
-      // FR-22 (G9 bridge always-live): parseWithFallback never throws — it
-      // always produces a valid JSONContent tree, falling back to rawMdxFallback
-      // for unparseable spans via single-pass structural enumeration (FR-23).
-      // Replaces the previous mdManager.parse(body) + catch-and-freeze pattern
-      // that swallowed SyntaxError/VFileMessage/RangeError and froze XmlFragment
-      // on any malformed MDX. Under server-authoritative architecture
-      // (precedent #14), this observer is the sole writer for XmlFragment — so
-      // preserving the "always-live" contract here means no client sees frozen
-      // WYSIWYG when another peer is mid-typing a broken MDX tag.
-      //
-      // Consistency: every other server parse call site already uses
-      // parseWithFallback (persistence.ts, external-change.ts, agent-sessions.ts,
-      // api-extension.ts). Previously this observer was the sole outlier.
-      const parsedJson = mdManager.parseWithFallback(body);
+      // FR-22 (bridge always-live): parseWithFallback never throws — it
+      // always produces a valid JSONContent tree, falling back to
+      // rawMdxFallback for unparseable spans. Threads `resolveEmbed` +
+      // `sourcePath` so `![[photo.png]]` mdast nodes resolve to disk paths
+      // before PM dispatch (US-013 FR-3b). Under server-authoritative
+      // architecture (precedent #14), this observer is the sole writer for
+      // XmlFragment — the "always-live" contract here means no client sees
+      // frozen WYSIWYG when another peer is mid-typing a broken MDX tag.
+      const parseOpts =
+        opts.resolveEmbed && opts.docName
+          ? { resolveEmbed: opts.resolveEmbed, sourcePath: opts.docName }
+          : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
 
       const pmNode = opts.schema.nodeFromJSON(parsedJson);
 

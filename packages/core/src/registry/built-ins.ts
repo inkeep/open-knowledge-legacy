@@ -44,6 +44,7 @@
  * `specs/2026-04-14-component-blocks-v2/evidence/mermaid-audio-rendering-deferred.md`
  * for the un-deferral framework.
  */
+import type { Nodes as MdastNodes } from 'mdast';
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   ALLOWED_IMAGE_MIME_TYPES,
@@ -200,6 +201,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'lazy',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Native img loading strategy (defaults to lazy)',
   },
   {
@@ -216,6 +218,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Hint for how the browser should decode the image',
   },
   {
@@ -225,6 +228,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Resource fetch priority hint',
   },
   {
@@ -266,6 +270,7 @@ const htmlVideoProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 video controls (defaults to true)',
   },
   {
@@ -343,6 +348,7 @@ const htmlAudioProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 audio controls (defaults to true)',
   },
   {
@@ -510,6 +516,45 @@ const htmlDetailsAccordionProps: PropDef[] = [
   accordionProps[5],
 ];
 
+// WikiEmbed* compats expose only what `![[file.ext|alias]]` can encode — a
+// single editable string slot. Stored target / anchor stay on the prop bag
+// alongside `alias` so `serialize` can rebuild byte-identical source bytes,
+// but they are not surfaced in PropPanel (the parser owns them; the user
+// edits the alias and nothing else).
+//
+// The three sibling PropDef arrays differ only in the description string —
+// kept distinct so PropPanel renders the user-friendly alias-syntax example
+// matching the file kind they're editing (image / video / audio).
+const wikiEmbedImageProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Alt text (Obsidian alias syntax: `![[file.png|alt text]]`)',
+  },
+];
+
+const wikiEmbedVideoProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[clip.mp4|title]]`)',
+  },
+];
+
+const wikiEmbedAudioProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[song.mp3|title]]`)',
+  },
+];
+
 // ── Compat serialize helpers ─────────────────────────────────────────────────
 
 /** Minimal HTML attribute-value escape (matches the lossiness of the parser). */
@@ -524,6 +569,30 @@ function escapeHtmlAttr(value: string): string {
 /** Minimal HTML text-content escape for `<summary>` inner text. */
 function escapeHtmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Shared serialize for the WikiEmbed* compat descriptors (Image / Video /
+ * Audio). All three render `![[target|alias]]` source bytes via wiki-embed
+ * mdast — only `rendersAs` and `translateProps` differ across the three
+ * descriptors, the source-form emit is identical. Reads the prop bag from
+ * `node.attrs.props`; an absent / non-string `target` collapses to `''`,
+ * matching the wikiLinkEmbed parser's default.
+ */
+function serializeWikiEmbed(node: { attrs: { props?: unknown } }): MdastNodes {
+  const p = node.attrs.props as
+    | { target?: string; alias?: string | null; anchor?: string | null }
+    | undefined;
+  const target = p?.target ?? '';
+  const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+  const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+  const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+  return {
+    type: 'wikiLinkEmbed' as const,
+    value: label,
+    data: { target, anchor, alias },
+    children: [{ type: 'text' as const, value: label }],
+  } as unknown as MdastNodes;
 }
 
 // ── Manifest ─────────────────────────────────────────────────────────────────
@@ -552,7 +621,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
     searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
-    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx, calloutProps),
   },
 
   // Media — lowercase per the rule above. HTML's `<img>` / `<video>` /
@@ -571,7 +640,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with click-to-zoom and HTML-native attributes',
     searchTerms: ['image', 'zoom', 'picture', 'photo'],
-    serialize: (node, ctx) => emitMdxJsx('img', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('img', node, ctx, htmlImgProps),
   },
   {
     name: 'video',
@@ -584,7 +653,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
-    serialize: (node, ctx) => emitMdxJsx('video', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('video', node, ctx, htmlVideoProps),
   },
   {
     name: 'audio',
@@ -597,7 +666,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
-    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx, htmlAudioProps),
   },
 
   // Content
@@ -612,7 +681,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
-    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
   },
 
   // ── Compat descriptors ─────────────────────────────────────────────────────
@@ -708,6 +777,80 @@ export const builtInComponents: JsxComponentMeta[] = [
         children: [image],
       };
     },
+  },
+
+  {
+    name: 'WikiEmbedImage',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedImageProps,
+    icon: 'ZoomIn',
+    category: 'media',
+    displayName: 'Wiki Embed Image',
+    description:
+      'Obsidian-style `![[file.png]]` wiki-embed — read-only compat. Edit the alt-text via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'img',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        alt: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
+  },
+
+  // Video / audio sibling compats. Both canonicals (Video.tsx / Audio.tsx)
+  // expose `title` as the user-visible authored string — neither HTML5 element
+  // accepts an `alt` attribute. Alias maps to `title` for both. The serialize
+  // shape is identical to WikiEmbedImage's (shared `serializeWikiEmbed`
+  // helper); only `rendersAs` and the prop mapping differ.
+  {
+    name: 'WikiEmbedVideo',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedVideoProps,
+    icon: 'Film',
+    category: 'media',
+    displayName: 'Wiki Embed Video',
+    description:
+      'Obsidian-style `![[clip.mp4]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'video',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
+  },
+
+  {
+    name: 'WikiEmbedAudio',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedAudioProps,
+    icon: 'Volume2',
+    category: 'media',
+    displayName: 'Wiki Embed Audio',
+    description:
+      'Obsidian-style `![[song.mp3]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'audio',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+      };
+    },
+    serialize: serializeWikiEmbed,
   },
 
   {
