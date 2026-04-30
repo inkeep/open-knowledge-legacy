@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 const child = spawn('bun', ['--conditions=development', 'test'], {
+  detached: true,
   stdio: ['inherit', 'pipe', 'pipe'],
 });
 
@@ -10,12 +11,25 @@ let sawZeroFailures = false;
 let sawNonzeroFailures = false;
 let forcedExitTimer;
 
+const terminateChildGroup = () => {
+  if (child.exitCode !== null) return;
+  if (child.pid === undefined) {
+    child.kill('SIGTERM');
+    return;
+  }
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+};
+
 const scheduleExitAfterSummary = () => {
   if (forcedExitTimer !== undefined || !sawRanLine) return;
   if (!sawZeroFailures && !sawNonzeroFailures) return;
 
   forcedExitTimer = setTimeout(() => {
-    if (child.exitCode === null) child.kill('SIGTERM');
+    terminateChildGroup();
     process.exit(sawZeroFailures && !sawNonzeroFailures ? 0 : 1);
   }, 5000);
 };
