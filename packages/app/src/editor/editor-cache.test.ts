@@ -835,6 +835,48 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(__peekTiptap(h.docName)).toBeUndefined();
   });
 
+  test('capture-before-destroy ordering: state inaccessible AFTER destroy still clears restore', () => {
+    // Models real TipTap post-destroy semantics: editor.state is accessible
+    // before destroy, but becomes a throwing proxy after. The cleanup must
+    // capture the undoManager BEFORE calling destroy. This test fails if
+    // anyone reorders the production code to call readEditorUndoManager
+    // after editor.destroy() — at which point the throwing-proxy state
+    // would cause readEditorUndoManager to return null and the leak would
+    // return silently. Existing throw-tests don't catch this because they
+    // model "state always throws" or "destroy throws"; this test models the
+    // production transition state-OK → destroy-OK → state-throws.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      Object.defineProperty(h.editor, 'state', {
+        get() {
+          throw new Error('state after destroy — TipTap throwing proxy');
+        },
+        configurable: true,
+      });
+    };
+
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    parkTiptapEditor(entry);
+
+    expect(h.spies.destroyCalls).toBe(1);
+    // Capture must have happened pre-destroy — otherwise the throwing state
+    // proxy would have made readEditorUndoManager return null and restore
+    // would still be the original closure.
+    expect(undoManager.restore).toBeUndefined();
+  });
+
   test('no crash when editor.state throws (TipTap throwing-proxy mid-teardown)', () => {
     // editor.state is a throwing proxy in known TipTap mid-teardown windows.
     // Pre-destroy capture must defensive-noop in that case rather than
