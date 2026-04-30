@@ -16,19 +16,30 @@ export {
   type FrontmatterBinding,
   type FrontmatterBindingPatchResult,
   type FrontmatterBindingPatchSuccess,
+  type FrontmatterBindingRenameResult,
+  type FrontmatterBindingRenameSuccess,
+  type FrontmatterBindingReorderResult,
+  type FrontmatterBindingReorderSuccess,
   type FrontmatterDocProvider,
+  type FrontmatterSnapshot,
   type Unsubscribe as FrontmatterBindingUnsubscribe,
 } from './bind-frontmatter-doc.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export {
-  composeFrontmatterForStore,
-  getFrontmatter,
-  getFrontmatterMap,
-  setFrontmatterFromYaml,
-  setFrontmatterProperty,
-  type WriteFrontmatterResult,
-  writeFrontmatterDualSlot,
-} from './frontmatter-y.ts';
+  applyPatchToFm,
+  applyRenameToFm,
+  applyReorderToFm,
+  detectFmRegion,
+  type FmEditError,
+  type FmEditResult,
+  MAX_FM_REGION_BYTES,
+  type ParsedFmRegion,
+  parseFencedFmRegion,
+  parseFmRegion,
+  readFmKeys,
+  readFmMap,
+  readFmRegionWithError,
+} from './frontmatter-region.ts';
 export {
   assertContentPreservation,
   BridgeMergeContentLossError,

@@ -28,8 +28,6 @@ import {
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
   CC1DiskAckPayloadSchema,
-  type CC1FrontmatterValidationRejectedPayload,
-  CC1FrontmatterValidationRejectedPayloadSchema,
   type CC1ServerInfoPayload,
   CC1ServerInfoPayloadSchema,
   type DerivedViewChannel,
@@ -75,12 +73,6 @@ export function parseCC1ConfigValidationRejected(
   payload: string,
 ): CC1ConfigValidationRejectedPayload | null {
   return safeParseJson(payload, CC1ConfigValidationRejectedPayloadSchema);
-}
-
-function parseCC1FrontmatterValidationRejected(
-  payload: string,
-): CC1FrontmatterValidationRejectedPayload | null {
-  return safeParseJson(payload, CC1FrontmatterValidationRejectedPayloadSchema);
 }
 
 /**
@@ -129,7 +121,6 @@ interface CC1StatelessHandlers {
   onDiskAck?: (parsed: CC1DiskAckParsed) => void;
   onDerivedView?: (payload: CC1DerivedViewPayload) => void;
   onConfigValidationRejected?: (payload: CC1ConfigValidationRejectedPayload) => void;
-  onFrontmatterValidationRejected?: (payload: CC1FrontmatterValidationRejectedPayload) => void;
   onUnknown?: (rawPayload: string) => void;
 }
 
@@ -172,11 +163,6 @@ export function dispatchCC1Stateless(payload: string, handlers: CC1StatelessHand
   const configRejected = parseCC1ConfigValidationRejected(payload);
   if (configRejected) {
     handlers.onConfigValidationRejected?.(configRejected);
-    return;
-  }
-  const frontmatterRejected = parseCC1FrontmatterValidationRejected(payload);
-  if (frontmatterRejected) {
-    handlers.onFrontmatterValidationRejected?.(frontmatterRejected);
     return;
   }
   handlers.onUnknown?.(payload);

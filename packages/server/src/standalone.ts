@@ -7,9 +7,9 @@ import {
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
-  getFrontmatter,
   type Principal,
   prependFrontmatter,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -360,12 +360,6 @@ export function createServer(options: ServerOptions): ServerInstance {
       // affected field. Same closure-deferred pattern.
       onConfigRejected: (docName, error) =>
         cc1Broadcaster?.emitConfigValidationRejected(docName, error),
-      // L3 frontmatter validation rejection — sibling of `onConfigRejected`
-      // for non-config docs. Fired when the persistence-hook reverts a bad
-      // `Y.Map('metadata')` write; the broadcast tells the originating
-      // PropertyPanel to toast + flash the affected key's row.
-      onFrontmatterRejected: (docName, error) =>
-        cc1Broadcaster?.emitFrontmatterValidationRejected(docName, error),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -627,7 +621,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     const xmlFragment = document.getXmlFragment('default');
     const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
-    return prependFrontmatter(getFrontmatter(document), body);
+    // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
+    const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+    return prependFrontmatter(fm, body);
   }
 
   /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */

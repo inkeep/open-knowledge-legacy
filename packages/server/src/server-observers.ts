@@ -30,12 +30,10 @@ import {
   applyFastDiff,
   applyIncrementalDiff,
   BridgeMergeContentLossError,
-  getFrontmatter,
   mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
   stripFrontmatter,
-  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -321,22 +319,19 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   let lastSyncedXmlMd = '';
   let xmlDirty = false;
   let textDirty = false;
+
   /**
-   * Set when `Y.Map('metadata')` deep-changes outside an observer self-write or
-   * a paired-write origin. Triggers Observer A's sync pass so per-key form
-   * writes (e.g. via FORM_WRITE_ORIGIN, US-005) propagate the recomposed
-   * `prependFrontmatter(getFrontmatter(doc), body)` to Y.Text. Without this,
-   * Observer A would only refresh on XmlFragment events and form-only writes
-   * would leave Y.Text stale.
+   * Read the current FM region directly from Y.Text. After D8 (Y.Map metadata
+   * fully eliminated as an FM source), the YAML region of `Y.Text('source')`
+   * IS the FM source of truth — no recompose needed.
    */
-  let metaDirty = false;
-  const metaMap = doc.getMap('metadata');
+  const readCurrentFm = (): string => stripFrontmatter(ytext.toString()).frontmatter;
 
   /** Initialize Observer A baseline from current XmlFragment state. */
   try {
     const initialJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const initialBody = mdManager.serialize(initialJson);
-    const initialFrontmatter = getFrontmatter(doc);
+    const initialFrontmatter = readCurrentFm();
     lastSyncedXmlMd = prependFrontmatter(initialFrontmatter, initialBody);
   } catch (err) {
     incrementServerObserverError('a');
@@ -355,7 +350,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     try {
       const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
-      const frontmatter = getFrontmatter(doc);
+      const frontmatter = readCurrentFm();
       const md = prependFrontmatter(frontmatter, body);
 
       if (lastSyncedXmlMd === md) return;
@@ -445,7 +440,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
+        const frontmatter = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       } catch (err) {
         incrementServerObserverError('a');
@@ -464,59 +459,12 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     xmlDirty = true;
   };
 
-  /**
-   * Observer Meta callback — fires on every deep change inside `Y.Map('metadata')`
-   * (per-key set/delete plus mutations to nested `Y.Text` / `Y.Array<Y.Text>`
-   * slots). Origin guards mirror Observer A:
-   *
-   *  - `OBSERVER_SYNC_ORIGIN`: our own legacy-slot mirror or per-key write —
-   *    self-skip.
-   *  - Paired-write origins: refresh `lastSyncedXmlMd` synchronously from the
-   *    post-write composed FM + body; the paired writer atomically updated
-   *    XmlFragment + Y.Text + metadata in one transact, so the composed
-   *    baseline is the post-write canonical state. Decline to set `metaDirty`.
-   *  - Anything else (e.g. FORM_WRITE_ORIGIN per US-005, future per-key
-   *    helpers): set `metaDirty` so the settlement handler dispatches Observer
-   *    A's sync. `runObserverASync` reads `getFrontmatter(doc)` (synthesizes
-   *    YAML from per-key state, falls back to legacy slot) and propagates the
-   *    recomposed full markdown to Y.Text.
-   *
-   * Settlement-side: `metaDirty || xmlDirty` triggers Observer A's run; the
-   * inner Y.Text write (under `OBSERVER_SYNC_ORIGIN`) self-skips through this
-   * callback so there is no recursion.
-   */
-  const observerMeta = (
-    _events: Y.YEvent<Y.AbstractType<unknown>>[],
-    transaction: Y.Transaction,
-  ) => {
-    if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
-
-    if (isPairedWriteOrigin(transaction.origin)) {
-      try {
-        const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
-        const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-      } catch (err) {
-        incrementServerObserverError('a');
-        console.warn(
-          '[Server Observer Meta] Paired-write baseline refresh failed — falling through to settlement:',
-          err instanceof Error ? err.message : String(err),
-        );
-        metaDirty = true;
-      }
-      return;
-    }
-
-    metaDirty = true;
-  };
-
   // ─── Initial sync: populate Y.Text from XmlFragment if empty ──
   if (xmlFragment.length > 0 && ytext.length === 0) {
     try {
       const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
-      const frontmatter = getFrontmatter(doc);
+      const frontmatter = readCurrentFm();
       const md = prependFrontmatter(frontmatter, body);
       doc.transact(() => {
         ytext.insert(0, md);
@@ -538,13 +486,14 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   /**
    * Observer B sync work. Parses Y.Text markdown and applies to XmlFragment
-   * via updateYFragment. Handles frontmatter sync: strips frontmatter from
-   * Y.Text, caches in Y.Map('metadata'), parses body only.
+   * via updateYFragment. Frontmatter lives in Y.Text directly (D8) — the
+   * observer only needs to strip the FM region before parsing the body.
    *
    * Under the settlement dispatcher, this always runs AFTER runObserverASync
    * within the same drain (when both flags are set), so any fresh XmlFragment
    * state from Observer A's write is already visible to this pass.
    */
+  let priorFmForTelemetry = readCurrentFm();
   const runObserverBSync = (): void => {
     try {
       const md = ytext.toString();
@@ -555,31 +504,15 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // Uses the maintained `lastSyncedXmlMd` baseline instead of a fresh
       // serialize(XmlFragment) call — the baseline is refreshed on every
       // Observer A path and on every paired-write origin's synchronous
-      // short-circuit (lines 433-451), so it always reflects the current
-      // canonical XmlFragment form. This avoids an O(doc-size) serialize
-      // on every Observer B fire, which during bursty Y.Text writes
-      // (chunked-paste of 1 MB in 20 × 50 KB transactions) aggregated to
-      // hundreds of ms of wasted work on content the observer wouldn't
-      // touch anyway.
+      // short-circuit, so it always reflects the current canonical XmlFragment
+      // form.
       if (normalizeBridge(lastSyncedXmlMd) === normalizeBridge(md)) {
-        // Tree and text are already in sync — just update frontmatter if changed.
-        // Per-key diff (D13) preserves UndoManager attribution per property;
-        // legacy single-string slot is mirrored for transition compat with
-        // readers that still consult `metaMap.get('frontmatter')` directly
-        // until US-011 lands. Same pattern as `external-change.ts` and
-        // `agent-sessions.ts`. Malformed YAML keeps last valid per-key state
-        // (setFrontmatterFromYaml returns false and is a no-op).
-        const currentFm = metaMap.get('frontmatter');
-        if ((currentFm ?? '') !== frontmatter) {
-          doc.transact(() => {
-            const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
-            if (!fmResult.ok) {
-              console.warn(
-                `[Server Observer B] Malformed YAML in source-mode FM (early-exit branch, ${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
-              );
-            }
-          }, OBSERVER_SYNC_ORIGIN);
+        // Tree and text are already in sync. FM region is already where it
+        // should be (Y.Text is the source of truth). Just emit telemetry if
+        // the FM changed.
+        if (priorFmForTelemetry !== frontmatter) {
           recordFrontmatterEditSurface('source-mode');
+          priorFmForTelemetry = frontmatter;
         }
         return;
       }
@@ -587,42 +520,21 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // FR-22 (G9 bridge always-live): parseWithFallback never throws — it
       // always produces a valid JSONContent tree, falling back to rawMdxFallback
       // for unparseable spans via single-pass structural enumeration (FR-23).
-      // Replaces the previous mdManager.parse(body) + catch-and-freeze pattern
-      // that swallowed SyntaxError/VFileMessage/RangeError and froze XmlFragment
-      // on any malformed MDX. Under server-authoritative architecture
-      // (precedent #14), this observer is the sole writer for XmlFragment — so
-      // preserving the "always-live" contract here means no client sees frozen
-      // WYSIWYG when another peer is mid-typing a broken MDX tag.
-      //
-      // Consistency: every other server parse call site already uses
-      // parseWithFallback (persistence.ts, external-change.ts, agent-sessions.ts,
-      // api-extension.ts). Previously this observer was the sole outlier.
+      // Under server-authoritative architecture (precedent #14), this observer
+      // is the sole writer for XmlFragment — so preserving the "always-live"
+      // contract here means no client sees frozen WYSIWYG when another peer
+      // is mid-typing a broken MDX tag.
       const parsedJson = mdManager.parseWithFallback(body);
-
       const pmNode = opts.schema.nodeFromJSON(parsedJson);
-
-      // Capture prior FM string so we can attribute the edit_surface counter
-      // only to events where source-mode actually changed FM. Body-only edits
-      // pass through Observer B every keystroke and should not count.
-      const priorFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
 
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);
-        // Per-key diff (D13) + legacy mirror via writeFrontmatterDualSlot.
-        // Malformed YAML keeps last valid per-key state (helper returns false
-        // and logs); the legacy slot still tracks the verbatim Y.Text FM
-        // string for the transition window.
-        const fmResult = writeFrontmatterDualSlot(doc, frontmatter);
-        if (!fmResult.ok) {
-          console.warn(
-            `[Server Observer B] Malformed YAML in source-mode FM (parse branch, ${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
-          );
-        }
       }, OBSERVER_SYNC_ORIGIN);
 
-      if (priorFm !== frontmatter) {
+      if (priorFmForTelemetry !== frontmatter) {
         recordFrontmatterEditSurface('source-mode');
+        priorFmForTelemetry = frontmatter;
       }
 
       incrementServerObserverFire('b');
@@ -683,7 +595,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const postJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const postBody = mdManager.serialize(postJson);
-        const fm = getFrontmatter(doc);
+        const fm = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(fm, postBody);
       } catch (innerErr) {
         console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
@@ -710,7 +622,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
+        const frontmatter = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       } catch (err) {
         incrementServerObserverError('b');
@@ -742,7 +654,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
    *   the sync work doesn't double-dispatch.
    */
   const afterAll = (_doc: Y.Doc, transactions: Y.Transaction[]): void => {
-    if (!xmlDirty && !textDirty && !metaDirty) {
+    if (!xmlDirty && !textDirty) {
       opts.onDispatch?.('none');
       return;
     }
@@ -754,7 +666,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     if (transactions.every((t) => t.origin === OBSERVER_SYNC_ORIGIN)) {
       xmlDirty = false;
       textDirty = false;
-      metaDirty = false;
       opts.onDispatch?.('none');
       return;
     }
@@ -765,13 +676,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // normalize gate. This mirrors the debounce-era "defer Observer B while
     // Observer A pending" behavior but is now synchronous and ordered rather
     // than time-coupled.
-    //
-    // `metaDirty` rolls into A's dispatch — runObserverASync recomposes the
-    // full markdown via `prependFrontmatter(getFrontmatter(doc), body)` which
-    // covers both XmlFragment changes and per-key metaMap changes uniformly.
-    if (xmlDirty || metaDirty) {
+    if (xmlDirty) {
       xmlDirty = false;
-      metaDirty = false;
       opts.onDispatch?.('a');
       runObserverASync();
     }
@@ -784,7 +690,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   // ─── Subscribe ─────────────────────────────────────────────
   xmlFragment.observeDeep(observerA);
-  metaMap.observeDeep(observerMeta);
   ytext.observe(observerB);
   doc.on('afterAllTransactions', afterAll);
 
@@ -792,7 +697,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   return () => {
     doc.off('afterAllTransactions', afterAll);
     xmlFragment.unobserveDeep(observerA);
-    metaMap.unobserveDeep(observerMeta);
     ytext.unobserve(observerB);
   };
 }

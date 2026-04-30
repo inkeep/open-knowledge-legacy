@@ -1,21 +1,22 @@
 /**
- * Unit tests for `bindFrontmatterDoc` — L1 client-side validation,
- * Y.Map('metadata') write semantics, subscribe/dispose lifecycle.
- *
- * Mirrors `bind-config-doc.test.ts` posture: tests run against a bare Y.Doc
- * with a minimal `FrontmatterDocProvider` mock, no Hocuspocus server needed.
+ * Unit tests for `bindFrontmatterDoc` — D11 hybrid contract: patch, rename,
+ * reorder, current, subscribe, dispose. Writes the YAML region of
+ * `Y.Text('source')` directly under `FORM_WRITE_ORIGIN` (D2).
  */
 
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
-import type { FrontmatterDocProvider } from './bind-frontmatter-doc.ts';
+import type { FrontmatterDocProvider, FrontmatterSnapshot } from './bind-frontmatter-doc.ts';
 import { bindFrontmatterDoc, FORM_WRITE_ORIGIN } from './bind-frontmatter-doc.ts';
-import { getFrontmatterMap } from './frontmatter-y.ts';
+import { detectFmRegion, MAX_FM_REGION_BYTES, readFmMap } from './frontmatter-region.ts';
 
-function makeProvider(): FrontmatterDocProvider & {
+function makeProvider(initial = ''): FrontmatterDocProvider & {
   emitSynced: () => void;
 } {
   const document = new Y.Doc();
+  if (initial) {
+    document.getText('source').insert(0, initial);
+  }
   const handlers = new Set<() => void>();
   return {
     document,
@@ -31,8 +32,12 @@ function makeProvider(): FrontmatterDocProvider & {
   };
 }
 
+function readYTextFm(provider: FrontmatterDocProvider): string {
+  return detectFmRegion(provider.document.getText('source').toString()).fenced;
+}
+
 describe('bindFrontmatterDoc — patch()', () => {
-  test('valid patch writes per-key entries and reports applied keys', () => {
+  test('valid patch writes the YAML region and reports applied keys', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
 
@@ -42,7 +47,7 @@ describe('bindFrontmatterDoc — patch()', () => {
     if (result.ok) {
       expect(result.appliedKeys.sort()).toEqual(['count', 'draft', 'title']);
     }
-    const map = getFrontmatterMap(provider.document);
+    const map = readFmMap(provider.document.getText('source').toString());
     expect(map).toEqual({ title: 'Hello', count: 3, draft: true });
   });
 
@@ -54,26 +59,43 @@ describe('bindFrontmatterDoc — patch()', () => {
     const result = binding.patch({ tag: null });
 
     expect(result.ok).toBe(true);
-    expect(getFrontmatterMap(provider.document)).toEqual({ title: 'Hello' });
+    expect(readFmMap(provider.document.getText('source').toString())).toEqual({ title: 'Hello' });
   });
 
-  test('invalid value returns SCHEMA_INVALID and does not mutate metaMap', () => {
+  test('updating an existing key does NOT reorder properties (FR2)', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello', cluster: 'X', tags: ['a'] });
+
+    binding.patch({ title: 'Goodbye' });
+
+    expect(binding.current().keys).toEqual(['title', 'cluster', 'tags']);
+  });
+
+  test('new keys append at the end (D15 / FR8)', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello' });
+    binding.patch({ status: 'draft' });
+
+    expect(binding.current().keys).toEqual(['title', 'status']);
+  });
+
+  test('invalid value returns SCHEMA_INVALID without mutating Y.Text', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
     binding.patch({ title: 'Hello' });
 
-    // Object value is not a valid FrontmatterValue (string/number/boolean/string[])
     const result = binding.patch({ count: { nested: true } as unknown as number });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('SCHEMA_INVALID');
     }
-    // metaMap unchanged — title is still there, count was not added
-    expect(getFrontmatterMap(provider.document)).toEqual({ title: 'Hello' });
+    expect(readFmMap(provider.document.getText('source').toString())).toEqual({ title: 'Hello' });
   });
 
-  test('reserved key "frontmatter" is rejected without mutation', () => {
+  test('reserved key "frontmatter" is rejected', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
 
@@ -87,8 +109,7 @@ describe('bindFrontmatterDoc — patch()', () => {
         expect(result.error.issues[0]?.issueCode).toBe('reserved_key');
       }
     }
-    // metaMap stays empty
-    expect(getFrontmatterMap(provider.document)).toEqual({});
+    expect(readYTextFm(provider)).toBe('');
   });
 
   test('writes are stamped with FORM_WRITE_ORIGIN', () => {
@@ -96,25 +117,30 @@ describe('bindFrontmatterDoc — patch()', () => {
     const binding = bindFrontmatterDoc(provider);
 
     let observedOrigin: unknown = null;
-    provider.document.getMap('metadata').observe((_event, transaction) => {
+    provider.document.getText('source').observe((_event, transaction) => {
       observedOrigin = transaction.origin;
     });
 
     binding.patch({ title: 'Hello' });
 
-    // The frozen origin object identity reaches the observer because the
-    // transact runs in-process (no Hocuspocus wire serialization here).
     expect(observedOrigin).toBe(FORM_WRITE_ORIGIN);
   });
 
-  test('list of strings round-trips', () => {
+  test('region exceeding MAX_FM_REGION_BYTES is refused', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
 
-    const result = binding.patch({ tags: ['a', 'b', 'c'] });
+    // Build a value that exceeds the byte limit when serialized.
+    const huge = 'x'.repeat(MAX_FM_REGION_BYTES + 1);
+    const result = binding.patch({ pad: huge });
 
-    expect(result.ok).toBe(true);
-    expect(getFrontmatterMap(provider.document)).toEqual({ tags: ['a', 'b', 'c'] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('SCHEMA_INVALID');
+      if (result.error.code === 'SCHEMA_INVALID') {
+        expect(result.error.issues[0]?.issueCode).toBe('region_too_large');
+      }
+    }
   });
 
   test('disposed binding rejects further patches', () => {
@@ -128,41 +154,136 @@ describe('bindFrontmatterDoc — patch()', () => {
     if (!result.ok) {
       expect(result.error.code).toBe('WRITE_ERROR');
     }
-    expect(getFrontmatterMap(provider.document)).toEqual({});
+    expect(readYTextFm(provider)).toBe('');
+  });
+});
+
+describe('bindFrontmatterDoc — rename()', () => {
+  test('renames in place, preserving order (FR2)', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello', cluster: 'X', tags: ['a'] });
+
+    const result = binding.rename('cluster', 'group');
+
+    expect(result.ok).toBe(true);
+    expect(binding.current().keys).toEqual(['title', 'group', 'tags']);
+    expect(binding.current().map).toEqual({ title: 'Hello', group: 'X', tags: ['a'] });
+  });
+
+  test('refuses unknown source key', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello' });
+
+    const result = binding.rename('cluster', 'group');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('SCHEMA_INVALID');
+    }
+  });
+
+  test('refuses target collision when allowDuplicate is false', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello', status: 'draft' });
+
+    const result = binding.rename('status', 'title');
+
+    expect(result.ok).toBe(false);
+  });
+
+  test('admits duplicate target when allowDuplicate is true (D17/D18)', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello', status: 'draft' });
+
+    const result = binding.rename('status', 'title', { allowDuplicate: true });
+
+    expect(result.ok).toBe(true);
+    expect(binding.current().keys).toEqual(['title', 'title']);
+  });
+});
+
+describe('bindFrontmatterDoc — reorder()', () => {
+  test('reorders to the requested permutation (FR4)', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ a: 1, b: 2, c: 3 });
+
+    const result = binding.reorder(['c', 'a', 'b']);
+
+    expect(result.ok).toBe(true);
+    expect(binding.current().keys).toEqual(['c', 'a', 'b']);
+    expect(binding.current().map).toEqual({ a: 1, b: 2, c: 3 });
+  });
+
+  test('refuses non-permutation list', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ a: 1, b: 2 });
+
+    const result = binding.reorder(['a', 'b', 'c']);
+
+    expect(result.ok).toBe(false);
   });
 });
 
 describe('bindFrontmatterDoc — current()', () => {
-  test('returns empty map when doc has no per-key entries', () => {
+  test('returns empty snapshot when there is no FM region', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
-    expect(binding.current()).toEqual({});
+    expect(binding.current()).toEqual({ map: {}, keys: [], parseError: undefined });
   });
 
-  test('reflects per-key state after writes', () => {
+  test('reflects the YAML region after writes', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
     binding.patch({ title: 'Hello', tags: ['a'] });
-    expect(binding.current()).toEqual({ title: 'Hello', tags: ['a'] });
+    expect(binding.current().map).toEqual({ title: 'Hello', tags: ['a'] });
+  });
+
+  test('surfaces parseError when YAML region is malformed', () => {
+    const provider = makeProvider('---\n: : : invalid\n---\nbody\n');
+    const binding = bindFrontmatterDoc(provider);
+    const snapshot = binding.current();
+    expect(snapshot.parseError).toBeDefined();
   });
 });
 
 describe('bindFrontmatterDoc — subscribe()', () => {
-  test('listener fires on metaMap change', () => {
+  test('listener fires on patch', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
-    const calls: Array<Record<string, unknown>> = [];
-    binding.subscribe((map) => {
-      calls.push({ ...map });
+    const calls: FrontmatterSnapshot[] = [];
+    binding.subscribe((snapshot) => {
+      calls.push(snapshot);
     });
 
     binding.patch({ title: 'Hello' });
 
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls.at(-1)).toEqual({ title: 'Hello' });
+    expect(calls.at(-1)?.map).toEqual({ title: 'Hello' });
   });
 
-  test('listener fires on provider synced even when no delta', () => {
+  test('content-equality bailout: body-only edits do not fire (D20)', () => {
+    const provider = makeProvider('---\ntitle: Hello\n---\nbody\n');
+    const binding = bindFrontmatterDoc(provider);
+    let calls = 0;
+    binding.subscribe(() => {
+      calls += 1;
+    });
+    const callsBefore = calls;
+
+    // Append body content — does NOT touch the FM region.
+    const ytext = provider.document.getText('source');
+    ytext.insert(ytext.length, '\nmore body\n');
+
+    expect(calls).toBe(callsBefore);
+  });
+
+  test('listener fires on provider synced', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
     let calls = 0;
@@ -193,7 +314,7 @@ describe('bindFrontmatterDoc — subscribe()', () => {
 });
 
 describe('bindFrontmatterDoc — dispose()', () => {
-  test('removes deep observer + provider listener', () => {
+  test('removes Y.Text observer + provider listener', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
     let calls = 0;
@@ -202,8 +323,8 @@ describe('bindFrontmatterDoc — dispose()', () => {
     });
     binding.dispose();
 
-    binding.patch({ title: 'after-dispose' }); // returns WRITE_ERROR; no fire
-    provider.emitSynced(); // listener was off()'d — no fire
+    binding.patch({ title: 'after-dispose' });
+    provider.emitSynced();
 
     expect(calls).toBe(0);
   });
@@ -216,72 +337,27 @@ describe('bindFrontmatterDoc — dispose()', () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────
-// AC-Q4: multi-client concurrent same-key writes converge to last-wins.
-//
-// Simulates two clients independently writing different values to the
-// same key, then exchanging Y.js updates peer-to-peer. The new CRDT-direct
-// path adds a `FORM_WRITE_ORIGIN` and an L3 server-side hook that runs on
-// every store. This test pins the underlying Y.Map LWW guarantee through
-// the binding's public API: post-merge, both docs see the same value, and
-// it is one of the two written values (not a corrupted state).
-// ────────────────────────────────────────────────────────────────────────
-describe('bindFrontmatterDoc — concurrent same-key convergence (AC-Q4)', () => {
-  test('two clients write the same key concurrently → both converge to the same value', () => {
+describe('bindFrontmatterDoc — multi-client convergence', () => {
+  test('two clients editing different keys (with shared baseline) converge via Y.Text', () => {
     const providerA = makeProvider();
-    const providerB = makeProvider();
     const bindingA = bindFrontmatterDoc(providerA);
-    const bindingB = bindFrontmatterDoc(providerB);
 
-    // Establish a shared baseline: both clients have the same starting state.
-    const baseline = Y.encodeStateAsUpdate(providerA.document);
-    Y.applyUpdate(providerB.document, baseline);
+    // Establish a shared baseline so the FM region exists on both peers
+    // before concurrent edits.
+    bindingA.patch({ title: 'Initial', cluster: 'X' });
 
-    // Concurrent writes to the SAME key, on disjoint docs (no sync yet).
-    bindingA.patch({ status: 'draft' });
-    bindingB.patch({ status: 'published' });
-
-    // Pre-merge: each client sees its own write.
-    expect(bindingA.current()).toEqual({ status: 'draft' });
-    expect(bindingB.current()).toEqual({ status: 'published' });
-
-    // Exchange updates peer-to-peer (mirrors what a Hocuspocus relay would do).
-    const updateA = Y.encodeStateAsUpdate(providerA.document);
-    const updateB = Y.encodeStateAsUpdate(providerB.document);
-    Y.applyUpdate(providerA.document, updateB);
-    Y.applyUpdate(providerB.document, updateA);
-
-    // Convergence: both clients agree on the same final value (LWW per key).
-    const finalA = bindingA.current();
-    const finalB = bindingB.current();
-    expect(finalA).toEqual(finalB);
-    expect(finalA.status).toBeDefined();
-    // The winning value is one of the two — Y.Map LWW guarantees neither
-    // corruption nor loss of the underlying contract.
-    expect(['draft', 'published']).toContain(finalA.status);
-
-    bindingA.dispose();
-    bindingB.dispose();
-  });
-
-  test('two clients write different keys concurrently → both keys present after merge', () => {
-    const providerA = makeProvider();
     const providerB = makeProvider();
-    const bindingA = bindFrontmatterDoc(providerA);
+    Y.applyUpdate(providerB.document, Y.encodeStateAsUpdate(providerA.document));
     const bindingB = bindFrontmatterDoc(providerB);
-
-    const baseline = Y.encodeStateAsUpdate(providerA.document);
-    Y.applyUpdate(providerB.document, baseline);
 
     bindingA.patch({ title: 'Hello' });
-    bindingB.patch({ tags: ['alpha', 'beta'] });
+    bindingB.patch({ cluster: 'Y' });
 
     Y.applyUpdate(providerA.document, Y.encodeStateAsUpdate(providerB.document));
     Y.applyUpdate(providerB.document, Y.encodeStateAsUpdate(providerA.document));
 
-    // Field-level CRDT merge: both writes survive.
-    expect(bindingA.current()).toEqual({ title: 'Hello', tags: ['alpha', 'beta'] });
-    expect(bindingB.current()).toEqual({ title: 'Hello', tags: ['alpha', 'beta'] });
+    // Both peers converge on the same final state.
+    expect(bindingA.current().map).toEqual(bindingB.current().map);
 
     bindingA.dispose();
     bindingB.dispose();

@@ -13,13 +13,10 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
   type ConfigValidationError,
-  composeFrontmatterForStore,
-  type FrontmatterValidationError,
   normalizeBridge,
   type Principal,
   prependFrontmatter,
   stripFrontmatter,
-  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import {
   composeCommitSubject,
@@ -44,11 +41,6 @@ import {
 } from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
-import {
-  type FrontmatterL3Ctx,
-  type FrontmatterLkgCache,
-  validateAndRevertFrontmatterIfBad,
-} from './frontmatter-l3.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -197,14 +189,6 @@ export interface PersistenceOptions {
    * plugin mode where no CC1Broadcaster is available.
    */
   onConfigRejected?: (docName: string, error: ConfigValidationError) => void;
-  /**
-   * Fired after the L3 frontmatter validation hook reverts an invalid
-   * `Y.Map('metadata')` mutation on a regular doc. Wired in standalone
-   * boot to `cc1Broadcaster.emitFrontmatterValidationRejected(docName, error)`
-   * so any open property panel sees the rejection toast. Omitted in
-   * plugin mode where no CC1Broadcaster is available.
-   */
-  onFrontmatterRejected?: (docName: string, error: FrontmatterValidationError) => void;
 }
 
 /**
@@ -354,24 +338,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     onConfigRejected: options?.onConfigRejected,
   };
 
-  // L3 frontmatter validation cache — sibling of `configLkgCache`, scoped
-  // per regular doc. Updated only after a successful per-key validation
-  // pass; revert path uses it to restore last-good values for failed keys.
-  const frontmatterLkgCache: FrontmatterLkgCache = new Map();
-  const frontmatterL3Ctx: FrontmatterL3Ctx = {
-    lkgCache: frontmatterLkgCache,
-    onFrontmatterRejected: options?.onFrontmatterRejected,
-  };
-
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
   // so that standalone.ts and persistence stay in sync.
   //
-  // Per-instance frontmatter cache was retired (D9): per-key `Y.Map('metadata')`
-  // entries are the single source. `composeFrontmatterForStore` synthesizes
-  // canonical YAML from per-key state and falls back to the legacy single-string
-  // slot verbatim during the transition window when its parsed value matches
-  // the per-key map (preserves comments + scalar styles for no-op round-trips).
+  // Frontmatter lives in the YAML region of `Y.Text('source')` (D8/D26):
+  // `onStoreDocument` writes `ytext.toString()` verbatim — no recompose
+  // step, no per-key cache, no L3 hook (D31 LOCKED).
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -731,26 +704,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           const raw = readFileSync(filePath, 'utf-8');
           const { frontmatter, body } = stripFrontmatter(raw);
 
-          if (frontmatter) {
-            // Eager-on-load migration (Q9): parse YAML and write per-key entries
-            // during the load transaction so observers / readers never see a
-            // half-migrated doc. Mirror the fenced FM into the legacy slot too —
-            // `agent-sessions.ts`, `server-observers.ts`, and `api-extension.ts`
-            // still consult `metaMap.get('frontmatter')` directly until their
-            // respective migration stories land. The mirror is a transition
-            // affordance only and goes away once all readers migrate to
-            // `getFrontmatter(doc)`.
-            document.transact(() => {
-              const fmResult = writeFrontmatterDualSlot(document, frontmatter);
-              if (!fmResult.ok) {
-                log.warn(
-                  { documentName, parseError: fmResult.error },
-                  '[persistence] Malformed YAML on load — per-key entries unchanged; legacy slot mirrored as-supplied',
-                );
-              }
-            });
-          }
-
           const xmlFragment = document.getXmlFragment('default');
           log.info(
             { documentName, fragmentLength: xmlFragment.length },
@@ -794,6 +747,20 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
             );
           }
+
+          // D8/D26: FM lives in the YAML region of `Y.Text('source')`. Populate
+          // Y.Text with the full file content (FM + body) directly on load so
+          // bindings + readers see the FM region without waiting for the
+          // observer's initial sync to recompose it. The XmlFragment-only init
+          // path doesn't carry FM; without this populate, the binding's first
+          // `current()` would observe an empty FM map.
+          const ytext = document.getText('source');
+          if (ytext.length === 0 && raw.length > 0) {
+            document.transact(() => {
+              ytext.insert(0, raw);
+            });
+          }
+
           // Use normalized serialization as the base so onStoreDocument doesn't
           // false-positive on the first store after load. Raw file content may
           // differ from TipTap's output (blank lines, trailing newlines, list
@@ -834,33 +801,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       }
       if (isBatchInProgress()) return;
 
-      // L3 frontmatter validation hook — defense-in-depth gate for direct
-      // `Y.Map('metadata')` writes that bypass `bindFrontmatterDoc`'s L1.
-      // Reverts bad-shape entries to LKG (or deletes when no LKG) and fires
-      // `onFrontmatterRejected` so the originating client can toast via CC1.
-      // No-op for the revert origin itself (loop guard) and for unchanged
-      // metaMap state. The disk-write path proceeds in all cases — after
-      // a revert, the post-revert state is the one that lands on disk.
-      //
-      // The call is guarded so a hook failure (Y.Doc lifecycle race during
-      // the revert transact, a throwing `onFrontmatterRejected` callback, or
-      // any other unexpected exception) cannot abort the disk write for this
-      // document. Aborting onStoreDocument would leave the user's edits
-      // unflushed in memory; a server crash before the next debounce would
-      // lose them.
-      try {
-        validateAndRevertFrontmatterIfBad(
-          document,
-          documentName,
-          lastTransactionOrigin,
-          frontmatterL3Ctx,
-        );
-      } catch (e) {
-        log.error(
-          { err: e, docName: documentName },
-          '[persistence] L3 frontmatter hook threw — proceeding with disk write',
-        );
-      }
+      // D31 LOCKED: no L3 server-side validation hook. Y.Text region IS the
+      // source of truth, including malformed bytes. Defense moves to the
+      // binding's L1 commit gate (against UI-driven malformed inputs) and
+      // the panel's last-valid render (D21).
       ensureHistograms();
       const started = Date.now();
       return withSpan(
@@ -874,8 +818,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           // boundary would silently break the disk-ack watermark.
           const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
+          // D26: Y.Text IS the FM source of truth. Read FM from the YAML
+          // region of `Y.Text('source')` directly; no recompose step.
           const body = mdManager.serialize(json);
-          const frontmatter = composeFrontmatterForStore(document);
+          const ytextSnapshot = document.getText('source').toString();
+          const { frontmatter } = stripFrontmatter(ytextSnapshot);
           const markdown = prependFrontmatter(frontmatter, body);
 
           // Skip the write when the serialized output matches the load-time

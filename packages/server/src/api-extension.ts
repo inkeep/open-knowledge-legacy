@@ -33,15 +33,14 @@ import {
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
-  getFrontmatterMap,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  readFmMap,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
-  writeFrontmatterDualSlot,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -861,7 +860,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const doc = hocuspocus.documents.get(docName);
       if (doc) {
-        const map = getFrontmatterMap(doc);
+        const map = readFmMap(doc.getText('source').toString());
         if (Object.keys(map).length > 0) {
           const cluster = typeof map.cluster === 'string' ? map.cluster : undefined;
           const category = typeof map.category === 'string' ? map.category : undefined;
@@ -2235,12 +2234,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // (frontmatter + body) so agents can patch frontmatter fields
           // (e.g. `title:`, `cluster:`) the same way they patch body text.
           // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in Y.Map('metadata') and must be composed
-          // in for the search surface to reflect the document as the
-          // agent sees it on disk.
+          // frontmatter lives in the YAML region of `Y.Text('source')`
+          // (D8) and must be composed in for the search surface to
+          // reflect the document as the agent sees it on disk.
           const xmlFragment = session.dc.document.getXmlFragment('default');
-          const metaMap = session.dc.document.getMap('metadata');
-          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+          const ytext = session.dc.document.getText('source');
+          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
           const currentBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
           );
@@ -2275,15 +2274,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
           // Splice at the character level. Only body-region patches
           // reach here, so this branch never modifies the FM.
-          // Route through explicit split-then-write so empty-FM is
-          // distinguishable from "body-only payload" (which
-          // applyAgentMarkdownWrite preserves).
+          // `applyAgentMarkdownWrite` reads the current FM from the
+          // YAML region of Y.Text and writes the canonical full
+          // document back, so a body-only payload here keeps the
+          // existing FM intact.
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
-          if (newFm !== currentFm) {
-            metaMap.set('frontmatter', newFm);
-          }
+          const { body: newBody } = stripFrontmatter(newFull);
           applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
 
           const activityMap = session.dc.document.getMap('agent-flash');
@@ -3237,7 +3234,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
+      const { body: mdBody } = stripFrontmatter(markdown);
       const parsedJson = mdManager.parseWithFallback(mdBody);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
@@ -3246,23 +3243,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(document, xmlFragment, pmNode, meta);
 
+        // Y.Text receives the full markdown (FM + body) verbatim — the
+        // YAML region IS the FM source of truth (D8/D26). No separate
+        // metadata-map mirror.
         const ytext = document.getText('source');
         const currentText = ytext.toString();
         if (currentText !== markdown) {
           ytext.delete(0, currentText.length);
           ytext.insert(0, markdown);
-        }
-
-        // Restored FM must land in BOTH the per-key entries and the legacy
-        // slot. Writing only the legacy slot (the prior bug) leaves stale
-        // per-key state — `composeFrontmatterForStore` then re-synthesizes
-        // from per-key on the next L1 flush, overwriting disk with the
-        // pre-rollback FM despite the legacy slot being correct.
-        const fmResult = writeFrontmatterDualSlot(document, frontmatter);
-        if (!fmResult.ok) {
-          console.warn(
-            `[rollback] Malformed YAML in restored snapshot for ${docName} (${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
-          );
         }
       }, ROLLBACK_ORIGIN);
 

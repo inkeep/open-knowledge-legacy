@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { renderToString } from 'react-dom/server';
-import * as Y from 'yjs';
 import { PropertyProvider } from './PropertyContext';
 import { PropertyPanel } from './PropertyPanel';
 
@@ -35,12 +34,16 @@ afterEach(() => {
   }
 });
 
-function seedMetaMap(provider: HocuspocusProvider, entries: Record<string, unknown>): void {
-  const metaMap = provider.document.getMap<unknown>('metadata');
+/**
+ * Seed the FM region of `Y.Text('source')` directly. After D8, the YAML
+ * region IS the FM source of truth; the panel reads through `bindFrontmatterDoc`
+ * which observes Y.Text.
+ */
+function seedYTextFm(provider: HocuspocusProvider, fenced: string): void {
+  const ytext = provider.document.getText('source');
   provider.document.transact(() => {
-    for (const [key, value] of Object.entries(entries)) {
-      metaMap.set(key, value);
-    }
+    ytext.delete(0, ytext.length);
+    ytext.insert(0, fenced);
   });
 }
 
@@ -51,9 +54,9 @@ describe('PropertyPanel', () => {
     expect(html).toBe('');
   });
 
-  test('renders Properties header + one row per per-key entry', () => {
+  test('renders Properties header + one row per FM property', () => {
     const provider = makeProvider('populated-doc');
-    seedMetaMap(provider, { title: 'Hello', draft: false, version: 3 });
+    seedYTextFm(provider, '---\ntitle: Hello\ndraft: false\nversion: 3\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('>Properties<');
     expect(html).toContain('data-testid="property-panel"');
@@ -62,44 +65,25 @@ describe('PropertyPanel', () => {
     expect(html).toContain('data-key="version"');
   });
 
-  test('ignores the legacy single-string slot when per-key entries exist', () => {
-    const provider = makeProvider('mixed-doc');
-    seedMetaMap(provider, {
-      title: 'Just title',
-      frontmatter: '---\ntitle: Just title\n---\n',
-    });
-    const html = renderPanel(provider);
-    expect(html).toContain('>Properties<');
-    expect(html).toContain('data-key="title"');
-    expect(html).not.toContain('data-key="frontmatter"');
-  });
-
-  test('renders nothing when only the legacy single-string slot is set', () => {
-    const provider = makeProvider('legacy-only-doc');
-    seedMetaMap(provider, { frontmatter: '---\ntitle: Foo\n---\n' });
-    const html = renderPanel(provider);
-    expect(html).toBe('');
-  });
-
   test('panel header is an aria-expanded button (collapse affordance)', () => {
     const provider = makeProvider('collapsible-doc');
-    seedMetaMap(provider, { title: 'Hello' });
+    seedYTextFm(provider, '---\ntitle: Hello\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('aria-expanded="true"');
   });
 
   test('rows are visible by default (panel mounts expanded)', () => {
     const provider = makeProvider('default-expanded-doc');
-    seedMetaMap(provider, { title: 'Hello' });
+    seedYTextFm(provider, '---\ntitle: Hello\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-row"');
   });
 });
 
-describe('PropertyPanel widget routing (US-008)', () => {
+describe('PropertyPanel widget routing', () => {
   test('text-shape value renders TextWidget', () => {
     const provider = makeProvider('text-doc');
-    seedMetaMap(provider, { title: 'My Title' });
+    seedYTextFm(provider, '---\ntitle: My Title\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="text"');
     expect(html).toContain('data-testid="text-widget"');
@@ -108,7 +92,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
 
   test('number-shape value renders NumberWidget', () => {
     const provider = makeProvider('number-doc');
-    seedMetaMap(provider, { version: 7 });
+    seedYTextFm(provider, '---\nversion: 7\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="number"');
     expect(html).toContain('data-testid="number-widget"');
@@ -117,7 +101,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
 
   test('boolean-shape value renders BooleanWidget (Switch)', () => {
     const provider = makeProvider('boolean-doc');
-    seedMetaMap(provider, { draft: false });
+    seedYTextFm(provider, '---\ndraft: false\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="boolean"');
     expect(html).toContain('data-testid="boolean-widget"');
@@ -125,7 +109,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
 
   test('ISO date string renders DateWidget', () => {
     const provider = makeProvider('date-doc');
-    seedMetaMap(provider, { published: '2026-04-24' });
+    seedYTextFm(provider, '---\npublished: 2026-04-24\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="date"');
     expect(html).toContain('data-testid="date-widget"');
@@ -134,7 +118,7 @@ describe('PropertyPanel widget routing (US-008)', () => {
 
   test('list-shape value renders ListWidget with chips', () => {
     const provider = makeProvider('list-doc');
-    seedMetaMap(provider, { tags: ['docs', 'crdt', 'mcp'] });
+    seedYTextFm(provider, '---\ntags:\n  - docs\n  - crdt\n  - mcp\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="list"');
     expect(html).toContain('data-testid="list-widget"');
@@ -148,40 +132,27 @@ describe('PropertyPanel widget routing (US-008)', () => {
 
   test('value-shape wins: array always renders as list, even if declared was text', () => {
     const provider = makeProvider('shape-wins-doc');
-    seedMetaMap(provider, { topics: ['a', 'b'] });
+    seedYTextFm(provider, '---\ntopics:\n  - a\n  - b\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-widget-type="list"');
   });
 
   test('type icon button is per-row + matches inferred type', () => {
     const provider = makeProvider('type-icon-doc');
-    seedMetaMap(provider, { title: 'Hello', count: 5 });
+    seedYTextFm(provider, '---\ntitle: Hello\ncount: 5\n---\n');
     const html = renderPanel(provider);
     const iconMatches = html.match(/data-testid="type-icon-button"/g) ?? [];
-    // One per row + one in the (possibly hidden) AddPropertyRow if present;
-    // with no add-row open, only per-row icons render.
     expect(iconMatches.length).toBe(2);
     expect(html).toContain('data-key="title"');
     expect(html).toContain('aria-label="title type: Text. Click to change."');
     expect(html).toContain('aria-label="count type: Number. Click to change."');
   });
-
-  test('observeDeep picks up Y.Text-wrapped string slots (forward-compat)', () => {
-    const provider = makeProvider('ytext-doc');
-    const metaMap = provider.document.getMap<unknown>('metadata');
-    provider.document.transact(() => {
-      metaMap.set('title', new Y.Text('YText title'));
-    });
-    const html = renderPanel(provider);
-    expect(html).toContain('value="YText title"');
-    expect(html).toContain('data-widget-type="text"');
-  });
 });
 
-describe('PropertyPanel row chrome (US-009)', () => {
+describe('PropertyPanel row chrome', () => {
   test('each row renders a remove button with key-scoped aria-label', () => {
     const provider = makeProvider('chrome-remove-doc');
-    seedMetaMap(provider, { title: 'A', status: 'draft' });
+    seedYTextFm(provider, '---\ntitle: A\nstatus: draft\n---\n');
     const html = renderPanel(provider);
     const trashMatches = html.match(/data-testid="property-remove-button"/g) ?? [];
     expect(trashMatches.length).toBe(2);
@@ -191,61 +162,71 @@ describe('PropertyPanel row chrome (US-009)', () => {
 
   test('property name renders as a button (rename affordance)', () => {
     const provider = makeProvider('chrome-rename-doc');
-    seedMetaMap(provider, { title: 'A' });
+    seedYTextFm(provider, '---\ntitle: A\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-name-button"');
     expect(html).toContain('data-key="title"');
   });
+
+  test('each row renders move-up + move-down buttons (drag-as-buttons fallback)', () => {
+    const provider = makeProvider('chrome-move-doc');
+    seedYTextFm(provider, '---\ntitle: A\nstatus: draft\n---\n');
+    const html = renderPanel(provider);
+    expect(html).toContain('data-testid="property-move-up"');
+    expect(html).toContain('data-testid="property-move-down"');
+  });
 });
 
-describe('PropertyPanel add-property trigger (US-009)', () => {
+describe('PropertyPanel add-property trigger', () => {
   test('persistent add-property button at the bottom of the expanded panel', () => {
     const provider = makeProvider('add-trigger-doc');
-    seedMetaMap(provider, { title: 'A' });
+    seedYTextFm(provider, '---\ntitle: A\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-testid="add-property-trigger"');
     expect(html).toContain('Add property');
   });
 
-  test('add-property button renders even when there are no rows yet — wait, panel is hidden in that case', () => {
-    // Panel is null when (a) no rows AND (b) no add-row open. The add-trigger
-    // is only visible when rows already exist; the toolbar trigger in
-    // EditorHeader handles the empty-state init path.
+  test('panel is hidden when there are no rows AND no add-row open', () => {
     const provider = makeProvider('add-trigger-empty-doc');
     const html = renderPanel(provider);
     expect(html).toBe('');
   });
 });
 
-describe('PropertyPanel duplicate-name guard (US-009)', () => {
-  test('Object.hasOwn surface is the rejection signal (contract pin)', () => {
-    const provider = makeProvider('dup-guard-shape-doc');
-    seedMetaMap(provider, { title: 'A', status: 'draft' });
-    // Rebuild the map shape readers see — this pins that hasOwn discriminates
-    // existing vs new keys across the same surface the panel queries.
-    const map = provider.document.getMap<unknown>('metadata');
-    expect(map.has('title')).toBe(true);
-    expect(map.has('status')).toBe(true);
-    expect(map.has('newKey')).toBe(false);
+describe('PropertyPanel duplicate-name surfacing', () => {
+  test('two rows with the same name both render with a duplicate-name marker (D17/FR6)', () => {
+    const provider = makeProvider('dup-name-doc');
+    // yaml@2 with `uniqueKeys: false` admits duplicate keys; both are
+    // emitted by Document.toString and parsed via readFmKeys.
+    seedYTextFm(provider, '---\ntitle: First\ntitle: Second\n---\n');
+    const html = renderPanel(provider);
+    const dupMarkerMatches = html.match(/data-testid="property-duplicate-marker"/g) ?? [];
+    expect(dupMarkerMatches.length).toBe(2);
   });
 });
 
-describe('PropertyPanel error rendering (US-010)', () => {
+describe('PropertyPanel malformed YAML banner (FR9)', () => {
+  test('renders an inline banner when the YAML region is unparseable', () => {
+    const provider = makeProvider('malformed-yaml-doc');
+    seedYTextFm(provider, '---\n: : : invalid\n---\n');
+    const html = renderPanel(provider);
+    expect(html).toContain('data-testid="property-panel-yaml-error"');
+    expect(html).toContain('Frontmatter YAML is malformed');
+  });
+});
+
+describe('PropertyPanel error rendering', () => {
   test('rows render with no error subline by default', () => {
     const provider = makeProvider('no-error-doc');
-    seedMetaMap(provider, { title: 'Hello' });
+    seedYTextFm(provider, '---\ntitle: Hello\n---\n');
     const html = renderPanel(provider);
     expect(html).not.toContain('data-testid="property-error"');
     expect(html).not.toContain('data-error="');
   });
 
   test('row container exposes data-error="undefined" attribute slot for failed-commit attribution', () => {
-    // The presence of the data-error attribute slot is part of the contract
-    // for browser-side error visibility (the value populates dynamically when
-    // a failed commit lands). On the SSR snapshot, error is null → React
-    // omits the attribute entirely.
     const provider = makeProvider('error-slot-doc');
-    seedMetaMap(provider, { title: 'Hello' });
+    seedYTextFm(provider, '---\ntitle: Hello\n---\n');
     const html = renderPanel(provider);
     expect(html).toContain('data-testid="property-row"');
     expect(html).toContain('data-key="title"');

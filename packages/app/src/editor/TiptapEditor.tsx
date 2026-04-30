@@ -643,21 +643,23 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
   }, [editor]);
 
-  // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
+  // Read frontmatter from the YAML region of `Y.Text('source')` (D8 — Y.Map
+  // metadata is no longer an FM source). The observer fires on every Y.Text
+  // change including body keystrokes; `stripFrontmatter` is cheap (regex +
+  // slice) so we don't try to bail out on body-only edits here.
   useEffect(() => {
-    const metaMap = provider.document.getMap('metadata');
-    const fm = metaMap.get('frontmatter');
-    if (typeof fm === 'string' && fm) {
-      frontmatterRef.current = fm;
-    }
-    const observer = () => {
-      const updated = metaMap.get('frontmatter');
-      if (typeof updated === 'string') {
-        frontmatterRef.current = updated;
-      }
+    const ytext = provider.document.getText('source');
+    const readFm = (): string => {
+      const md = ytext.toString();
+      const match = md.match(/^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/);
+      return match ? match[0] : '';
     };
-    metaMap.observe(observer);
-    return () => metaMap.unobserve(observer);
+    frontmatterRef.current = readFm();
+    const observer = () => {
+      frontmatterRef.current = readFm();
+    };
+    ytext.observe(observer);
+    return () => ytext.unobserve(observer);
   }, [provider.document]);
 
   // Publish (or clear) this tab's awareness for the doc this editor binds to.

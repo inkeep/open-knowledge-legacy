@@ -18,12 +18,7 @@
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import {
-  applyFastDiff,
-  prependFrontmatter,
-  stripFrontmatter,
-  writeFrontmatterDualSlot,
-} from '@inkeep/open-knowledge-core';
+import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
@@ -121,12 +116,13 @@ function applyAgentMarkdownWriteInner(
   try {
     const xmlFragment = document.getXmlFragment('default');
     const ytext = document.getText('source');
-    const metaMap = document.getMap('metadata');
 
-    // 1. Read current authoritative state from XmlFragment + metaMap.
+    // 1. Read current authoritative state. XmlFragment is authoritative for
+    //    body (precedent #12); FM lives in the YAML region of `Y.Text('source')`
+    //    (D8) — read via stripFrontmatter on the current ytext snapshot.
     const currentJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const currentBody = mdManager.serialize(currentJson);
-    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    const { frontmatter: existingFm } = stripFrontmatter(ytext.toString());
 
     // 2. Split the agent's payload into frontmatter + body. The agent may
     //    send a full document (FM + body) or body-only; we handle both.
@@ -164,26 +160,15 @@ function applyAgentMarkdownWriteInner(
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // 5. Commit the final frontmatter to metaMap if it changed. Per-key diff
-    //    populates one slot per property — Y.UndoManager tracks each
-    //    property's history independently, so undoing a single-property
-    //    write reverts only that property. Legacy single-string slot is
-    //    mirrored for cross-package readers that still consult
-    //    `metaMap.get('frontmatter')` directly. Same pattern as
-    //    `external-change.ts` and `persistence.ts:onLoadDocument`.
     if (finalFm !== existingFm) {
-      const fmResult = writeFrontmatterDualSlot(document, finalFm);
-      if (!fmResult.ok) {
-        log.warn(
-          { docName: document.name, parseError: fmResult.error },
-          '[agent-session] Malformed YAML in agent-write — per-key entries unchanged; legacy slot mirrored as-supplied',
-        );
-      }
       recordFrontmatterEditSurface('mcp-write');
     }
 
-    // 6. Mirror Y.Text with minimal mutation. Only the changed region is
+    // 5. Mirror Y.Text with minimal mutation. Only the changed region is
     //    touched, so user-content Items in Y.Text retain their origin.
+    //    The composed `canonicalFull` includes the final FM, so the
+    //    YAML region of Y.Text reflects the post-write FM directly (no
+    //    separate metaMap slot needed).
     const canonicalBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
     );
@@ -241,7 +226,6 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
   const ytext = document.getText('source');
-  const metaMap = document.getMap('metadata');
 
   let undone = false;
   // F1 (D4): wrap undo + composition in one outer transact under undoOrigin.
@@ -260,32 +244,15 @@ function applyAgentUndoInner(session: SessionRecord, scope: 'last' | 'session'):
     }
 
     // Post-undo: Y.Text has the desired content. Apply XmlFragment-authoritative
-    // composition so XmlFragment matches (precedent #10, #12).
+    // composition so XmlFragment matches (precedent #10, #12). Y.Text's YAML
+    // region IS the FM source of truth (D8) — extract via stripFrontmatter.
     const fullMd = ytext.toString();
-    const { body, frontmatter: newFm } = stripFrontmatter(fullMd);
+    const { body, frontmatter: finalFm } = stripFrontmatter(fullMd);
 
     const parsedJson = mdManager.parseWithFallback(body);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-
-    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
-    const finalFm = newFm || existingFm;
-    // Per-key + legacy mirror — same pattern as `applyAgentMarkdownWrite`.
-    // The conditional captures the divergence case where post-undo Y.Text's
-    // FM region differs from the post-undo legacy slot (e.g. when
-    // `um.undo()` reverted Y.Text but a later non-tracked write touched
-    // metaMap). In the common case both are reverted in lockstep and this
-    // is a no-op.
-    if (newFm && newFm !== existingFm) {
-      const fmResult = writeFrontmatterDualSlot(document, finalFm);
-      if (!fmResult.ok) {
-        log.warn(
-          { docName: document.name, parseError: fmResult.error },
-          '[agent-session] Malformed YAML in agent-undo — per-key entries unchanged; legacy slot mirrored as-supplied',
-        );
-      }
-    }
 
     const canonicalBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
@@ -538,12 +505,12 @@ export class AgentSessionManager {
     // keep the flash side-channel in lock-step with source text, not to track
     // cross-session flash updates (those fire under remote origins and are
     // filtered by trackedOrigins + ignoreRemoteMapChanges).
+    // FM lives in the YAML region of Y.Text (D8) — `Y.Map('metadata')` is no
+    // longer a CRDT root for FM data. The UndoManager tracks Y.Text (covers
+    // body + FM region) and `agent-flash` (so undo of an agent write also
+    // reverts the flash entry).
     const um = new Y.UndoManager(
-      [
-        dc.document.getText('source'),
-        dc.document.getMap('metadata'),
-        dc.document.getMap('agent-flash'),
-      ],
+      [dc.document.getText('source'), dc.document.getMap('agent-flash')],
       {
         trackedOrigins: new Set([origin]),
         captureTimeout: 500,

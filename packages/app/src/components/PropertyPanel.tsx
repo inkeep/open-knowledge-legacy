@@ -2,15 +2,16 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindFrontmatterDoc,
   type FrontmatterBinding,
-  type FrontmatterMap,
   type FrontmatterPatch,
+  type FrontmatterSnapshot,
   type FrontmatterType,
   type FrontmatterValue,
   fieldErrorsFromError,
-  getFrontmatterMap,
   inferType,
+  readFmKeys,
+  readFmRegionWithError,
 } from '@inkeep/open-knowledge-core';
-import { ChevronRight, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useProperties } from '@/components/PropertyContext';
 import {
@@ -26,7 +27,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
-import { subscribeToFrontmatterValidationRejected } from '@/lib/frontmatter-validation-events';
 
 interface PropertyPanelProps {
   provider: HocuspocusProvider;
@@ -40,27 +40,40 @@ const DEFAULT_VALUE_FOR_TYPE: Record<FrontmatterType, FrontmatterValue> = {
   list: [],
 };
 
-export function PropertyPanel({ provider }: PropertyPanelProps) {
-  // Read the frontmatter map directly from `Y.Map('metadata')` — synchronous
-  // so SSR / first-render readers see the right state. The binding below is
-  // for writes only; subscriptions to remote updates are handled via a
-  // separate `metaMap.observeDeep` effect to keep first-render synchronous.
-  const map = useFrontmatterMap(provider);
+function readInitialSnapshot(provider: PropertyPanelProps['provider']): FrontmatterSnapshot {
+  const ytext = provider.document.getText('source').toString();
+  const { map, parseError } = readFmRegionWithError(ytext);
+  const keys = readFmKeys(ytext);
+  return { map, keys, parseError };
+}
 
-  // Binding for write operations — created in an effect so React Compiler
-  // can manage memoization without `useMemo` (CLAUDE.md rule). The binding
-  // owns its own metaMap observer + provider 'synced' listener for the
-  // pub/sub surface, but our `useFrontmatterMap` covers the React-render
-  // subscription independently. `binding.dispose()` detaches both.
+export function PropertyPanel({ provider }: PropertyPanelProps) {
+  // Binding for read + write — over the YAML region of `Y.Text('source')`.
+  // The initial snapshot is read synchronously from the provider so SSR + the
+  // first client render see the right state without waiting for a useEffect.
   const [binding, setBinding] = useState<FrontmatterBinding | null>(null);
+  const [snapshot, setSnapshot] = useState<FrontmatterSnapshot>(() =>
+    readInitialSnapshot(provider),
+  );
+
   useEffect(() => {
     const next = bindFrontmatterDoc(provider);
     setBinding(next);
+    setSnapshot(next.current());
+    const unsub = next.subscribe((s) => {
+      setSnapshot(s);
+    });
     return () => {
+      unsub();
       next.dispose();
       setBinding((prev) => (prev === next ? null : prev));
     };
   }, [provider]);
+
+  const map = snapshot.map;
+  const orderedKeys = snapshot.keys;
+  const parseError = snapshot.parseError;
+
   const [collapsed, setCollapsed] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, FrontmatterType>>({});
   const [adding, setAdding] = useState<AddDraft | null>(null);
@@ -69,17 +82,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   const [resetCounters, setResetCounters] = useState<Record<string, number>>({});
   const docName = provider.configuration.name ?? '';
 
-  /**
-   * Commit a JSON-Merge-Patch through the CRDT binding. Local L1 validation
-   * runs synchronously inside `binding.patch`; on success the per-key writes
-   * land in `Y.Map('metadata')` under `FORM_WRITE_ORIGIN` and propagate to
-   * the server via Hocuspocus.
-   *
-   * Server-side L3 rejections (rare — would only fire if a non-form writer
-   * inserts an invalid value into metaMap) arrive asynchronously via
-   * `subscribeToFrontmatterValidationRejected`. Those errors are folded
-   * into the same `errors` state map by the effect below.
-   */
   function commitPatch(patch: FrontmatterPatch): PatchResult {
     if (!binding) {
       return { ok: false, error: 'Connecting…' };
@@ -141,15 +143,36 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
   }
 
   function renameProperty(oldKey: string, newKey: string): PatchResult {
+    if (!binding) return { ok: false, error: 'Connecting…' };
     if (oldKey === newKey) return { ok: true };
-    if (Object.hasOwn(map, newKey)) {
-      return { ok: false, error: `Property "${newKey}" already exists` };
+    const result = binding.rename(oldKey, newKey);
+    if (result.ok) return { ok: true };
+    if (result.error.code === 'WRITE_ERROR') {
+      return { ok: false, error: result.error.detail };
     }
-    const value = map[oldKey];
-    if (value === undefined) {
-      return { ok: false, error: `Property "${oldKey}" not found` };
+    const fieldErrors = fieldErrorsFromError(result.error);
+    const firstIssue = result.error.issues[0]?.message ?? 'Failed to rename';
+    return {
+      ok: false,
+      error: firstIssue,
+      fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined,
+    };
+  }
+
+  function moveProperty(key: string, direction: -1 | 1): void {
+    if (!binding) return;
+    const idx = orderedKeys.indexOf(key);
+    if (idx < 0) return;
+    const target = idx + direction;
+    if (target < 0 || target >= orderedKeys.length) return;
+    const next = orderedKeys.slice();
+    const [moved] = next.splice(idx, 1);
+    if (!moved) return;
+    next.splice(target, 0, moved);
+    const result = binding.reorder(next);
+    if (!result.ok) {
+      console.warn('[PropertyPanel] reorder failed:', result.error);
     }
-    return commitPatch({ [oldKey]: null, [newKey]: value });
   }
 
   function setType(key: string, nextType: FrontmatterType) {
@@ -162,50 +185,12 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     }
   }
 
-  // Server-side L3 rejection — fires when a non-binding writer (e.g., a
-  // direct `metaMap.set(...)` from an MCP path that bypasses
-  // `setFrontmatterProperty`) inserts an invalid value, the persistence
-  // hook reverts it, and the broadcast tells us. Surface as an error
-  // overlay on the affected key. Filtered to this doc only.
-  useEffect(() => {
-    return subscribeToFrontmatterValidationRejected((event) => {
-      if (event.docName !== docName) return;
-      if (event.error.code !== 'SCHEMA_INVALID') return;
-      const fieldErrors = fieldErrorsFromError(event.error);
-      const keys = Object.keys(fieldErrors);
-      if (keys.length === 0) return;
-      setErrors((prev) => {
-        const next = { ...prev };
-        for (const key of keys) {
-          next[key] = fieldErrors[key] ?? 'Validation failed';
-        }
-        return next;
-      });
-      setResetCounters((prev) => {
-        const next = { ...prev };
-        for (const key of keys) {
-          next[key] = (next[key] ?? 0) + 1;
-        }
-        return next;
-      });
-    });
-  }, [docName]);
-
   function beginAdd() {
     setAdding({ name: '', type: 'text', value: '', error: null });
     setCollapsed(false);
   }
 
-  // Cross-tree signal from the toolbar's "Add Properties" button. The button
-  // calls `requestAddProperty(docName)` which bumps the per-doc counter; we
-  // react to each tick by opening the AddPropertyRow form.
-  //
-  // Counter (not boolean) so consecutive clicks still fire when the user
-  // cancels the previous add without committing.
-  //
-  // Each PropertyPanel only watches its own doc's counter, so hidden Activity
-  // panels for other docs see no signal change — no ghost-state leak (the
-  // bug the prior window-event approach had before scoping was added).
+  // Cross-tree signal from the toolbar's "Add Properties" button.
   const { addPropertySignal, clearAddProperty } = useProperties();
   const addSignal = addPropertySignal.get(docName) ?? 0;
   useEffect(() => {
@@ -214,9 +199,6 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
       setCollapsed(false);
     }
   }, [addSignal]);
-  // Drop the per-doc entry on unmount so a re-mount (e.g., after pool
-  // eviction) starts fresh at 0 and doesn't replay the last counter value
-  // on cold mount.
   useEffect(() => {
     return () => clearAddProperty(docName);
   }, [docName, clearAddProperty]);
@@ -285,6 +267,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     if (!renaming) return;
     const trimmed = renaming.draft.trim();
     if (!trimmed) {
+      // Empty/whitespace name during typing is a transient panel state (D16);
+      // don't commit, just close the editor.
       setRenaming(null);
       return;
     }
@@ -318,8 +302,17 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
     setRenaming({ ...renaming, error: message });
   }
 
-  const keys = Object.keys(map);
-  if (keys.length === 0 && !adding) return null;
+  // Pick render keys from snapshot order. When YAML is malformed, `parseError`
+  // is set and `keys` may be empty (the panel renders the last-valid map's
+  // keys derived from `Object.keys(map)` — a degraded but non-blocking state).
+  const renderKeys = orderedKeys.length > 0 ? orderedKeys : Object.keys(map);
+
+  // Duplicate-name detection (D17). When the same name appears twice in the
+  // YAML region, mark every affected row with a duplicate-name marker.
+  const dupCount = new Map<string, number>();
+  for (const k of renderKeys) dupCount.set(k, (dupCount.get(k) ?? 0) + 1);
+
+  if (renderKeys.length === 0 && !adding && !parseError) return null;
 
   return (
     <div
@@ -341,20 +334,45 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-[collapsible-down_150ms_ease-out] data-[state=closed]:animate-[collapsible-up_150ms_ease-in]">
-          {keys.map((key) => {
+          {parseError ? (
+            <div
+              role="alert"
+              data-testid="property-panel-yaml-error"
+              className="mb-1 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive"
+            >
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div>
+                Frontmatter YAML is malformed; fix in source mode to recover.
+                <span className="block text-[10px] opacity-80">{parseError}</span>
+              </div>
+            </div>
+          ) : null}
+          {renderKeys.map((key, idx) => {
             const value = map[key];
             if (value === undefined) return null;
             const declared = overrides[key] ?? inferType(value);
             const renameState = renaming?.key === key ? renaming : null;
+            const isDuplicate = (dupCount.get(key) ?? 0) > 1;
+            // Position-aware key: dup-name rows share the same `key` string,
+            // so we suffix with the source-order index so React can tell them
+            // apart. yaml@2 with `uniqueKeys: false` admits duplicates, and
+            // FR6 surfaces them as distinct rows. The index is load-bearing
+            // here precisely because the YAML source order is the rendered
+            // order — biome/lint warns about index keys for unstable arrays,
+            // but FM rows are deterministic by source position.
             return (
               <PropertyRow
-                key={key}
+                // biome-ignore lint/suspicious/noArrayIndexKey: position-aware key for dup-name rows (FR6).
+                key={`${key}-${idx}`}
                 keyName={key}
                 value={value}
                 declared={declared}
                 renameState={renameState}
                 error={errors[key] ?? null}
                 resetCounter={resetCounters[key] ?? 0}
+                isDuplicate={isDuplicate}
+                canMoveUp={idx > 0}
+                canMoveDown={idx < renderKeys.length - 1}
                 onCommit={(v) => commitProperty(key, v)}
                 onChangeType={(t) => setType(key, t)}
                 onRemove={() => removeProperty(key)}
@@ -362,6 +380,8 @@ export function PropertyPanel({ provider }: PropertyPanelProps) {
                 onChangeRenameDraft={changeRenameDraft}
                 onCommitRename={commitRename}
                 onCancelRename={cancelRename}
+                onMoveUp={() => moveProperty(key, -1)}
+                onMoveDown={() => moveProperty(key, 1)}
               />
             );
           })}
@@ -419,6 +439,9 @@ interface PropertyRowProps {
   renameState: RenameDraft | null;
   error: string | null;
   resetCounter: number;
+  isDuplicate: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   onCommit: (next: FrontmatterValue) => void;
   onChangeType: (next: FrontmatterType) => void;
   onRemove: () => void;
@@ -426,6 +449,8 @@ interface PropertyRowProps {
   onChangeRenameDraft: (next: string) => void;
   onCommitRename: () => void;
   onCancelRename: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }
 
 function PropertyRow({
@@ -435,6 +460,9 @@ function PropertyRow({
   renameState,
   error,
   resetCounter,
+  isDuplicate,
+  canMoveUp,
+  canMoveDown,
   onCommit,
   onChangeType,
   onRemove,
@@ -442,6 +470,8 @@ function PropertyRow({
   onChangeRenameDraft,
   onCommitRename,
   onCancelRename,
+  onMoveUp,
+  onMoveDown,
 }: PropertyRowProps) {
   const widgetType = resolveWidgetType(value, declared);
   return (
@@ -451,8 +481,37 @@ function PropertyRow({
       data-key={keyName}
       data-widget-type={widgetType}
       data-error={error ?? undefined}
+      data-duplicate={isDuplicate || undefined}
     >
       <div className="flex items-center gap-1">
+        <div className="flex flex-col">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            data-testid="property-move-up"
+            data-key={keyName}
+            aria-label={`Move ${keyName} up`}
+            disabled={!canMoveUp}
+            onClick={onMoveUp}
+            className="h-3.5 px-0.5 text-muted-foreground/60 hover:text-foreground disabled:opacity-30"
+          >
+            <ArrowUp className="size-3" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            data-testid="property-move-down"
+            data-key={keyName}
+            aria-label={`Move ${keyName} down`}
+            disabled={!canMoveDown}
+            onClick={onMoveDown}
+            className="h-3.5 px-0.5 text-muted-foreground/60 hover:text-foreground disabled:opacity-30"
+          >
+            <ArrowDown className="size-3" />
+          </Button>
+        </div>
         <TypeIconButton keyName={keyName} type={widgetType} onChangeType={onChangeType} />
         <div className="w-32 shrink-0">
           {renameState ? (
@@ -477,6 +536,16 @@ function PropertyRow({
             </Button>
           )}
         </div>
+        {isDuplicate ? (
+          <span
+            data-testid="property-duplicate-marker"
+            data-key={keyName}
+            title={`Duplicate name "${keyName}"`}
+            className="flex size-4 items-center justify-center text-amber-600"
+          >
+            <AlertTriangle className="size-3.5" />
+          </span>
+        ) : null}
         <div className="flex-1">
           <Widget
             key={`widget-${resetCounter}`}
@@ -501,13 +570,6 @@ function PropertyRow({
       </div>
       {error ? (
         <div
-          // Live region — error appears asynchronously after a network
-          // request, so screen readers need role="alert" to announce it.
-          // Sibling RenameInput / AddPropertyRow use the matched
-          // aria-invalid + aria-describedby pattern; PropertyRow's error is
-          // less directly tied to one focusable target (commits fire from
-          // multiple widget surfaces) so role="alert" carries the
-          // announcement responsibility.
           role="alert"
           data-testid="property-error"
           data-key={keyName}
@@ -700,22 +762,4 @@ function sameValue(a: FrontmatterValue, b: FrontmatterValue): boolean {
     return a.every((item, i) => item === b[i]);
   }
   return a === b;
-}
-
-/**
- * Synchronous read + observeDeep subscription on `Y.Map('metadata')` for the
- * React render path. SSR + first-render see the right map without waiting
- * for a useEffect to create the binding. The `bindFrontmatterDoc` binding
- * (used for writes) maintains its own listener pool for non-React subscribers.
- */
-function useFrontmatterMap(provider: HocuspocusProvider): FrontmatterMap {
-  const [map, setMap] = useState<FrontmatterMap>(() => getFrontmatterMap(provider.document));
-  useEffect(() => {
-    const metaMap = provider.document.getMap('metadata');
-    const update = () => setMap(getFrontmatterMap(provider.document));
-    update();
-    metaMap.observeDeep(update);
-    return () => metaMap.unobserveDeep(update);
-  }, [provider]);
-  return map;
 }

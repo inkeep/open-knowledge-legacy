@@ -5,7 +5,7 @@
  * Frontmatter must be regex-stripped before parsing and re-prepended after serialization.
  */
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
+export const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
 
 export function stripFrontmatter(markdown: string): { frontmatter: string; body: string } {
   const match = markdown.match(FRONTMATTER_RE);

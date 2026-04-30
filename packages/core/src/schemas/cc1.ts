@@ -25,7 +25,6 @@
 import { z } from 'zod';
 import { ConfigValidationErrorSchema } from '../config/errors.ts';
 import { CC1_CONTRACT_VERSION } from '../constants/cc1.ts';
-import { FrontmatterValidationErrorSchema } from '../frontmatter/errors.ts';
 
 /** CC1 channel identifier for the per-process `serverInstanceId` broadcast. */
 export const CC1_CHANNEL_SERVER_INFO = 'server-info' as const;
@@ -174,35 +173,4 @@ export const CC1ConfigValidationRejectedPayloadSchema = z
   .loose();
 export type CC1ConfigValidationRejectedPayload = z.infer<
   typeof CC1ConfigValidationRejectedPayloadSchema
->;
-
-/**
- * Channel name for the L3 frontmatter validation hook's broadcast.
- *
- * Fired when the persistence-hook regular-doc branch reverts an invalid
- * `Y.Map('metadata')` mutation that bypassed `bindFrontmatterDoc`'s L1
- * gate. The PropertyPanel subscribes to this channel and surfaces a toast
- * + flashes the affected key's row (mapped from `error.issues[].path` for
- * `SCHEMA_INVALID`).
- *
- * Per-document: `docName` carries the target regular doc name (NOT a
- * config doc) — `__system__` is the stateless carrier.
- */
-export const CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED =
-  'frontmatter-validation-rejected' as const;
-
-/** `frontmatter-validation-rejected` broadcast shape — sibling of
- *  `CC1ConfigValidationRejectedPayloadSchema` scoped to per-key
- *  `Y.Map('metadata')` writes. */
-export const CC1FrontmatterValidationRejectedPayloadSchema = z
-  .object({
-    v: z.literal(CC1_CONTRACT_VERSION),
-    ch: z.literal(CC1_CHANNEL_FRONTMATTER_VALIDATION_REJECTED),
-    seq: z.number(),
-    docName: z.string().min(1),
-    error: FrontmatterValidationErrorSchema,
-  })
-  .loose();
-export type CC1FrontmatterValidationRejectedPayload = z.infer<
-  typeof CC1FrontmatterValidationRejectedPayloadSchema
 >;

@@ -22,14 +22,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {
-  getFrontmatter,
-  getFrontmatterMap,
   MarkdownManager,
   normalizeBridge,
-  prependFrontmatter,
-  setFrontmatterFromYaml,
+  readFmMap,
   sharedExtensions,
-  unwrapFrontmatterFences,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
@@ -239,7 +236,7 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     cleanup();
   });
 
-  test('frontmatter: Observer B caches frontmatter in Y.Map metadata (legacy slot + per-key)', () => {
+  test('frontmatter: Observer B leaves the YAML region of Y.Text intact (Y.Text IS the FM source — D8)', () => {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
@@ -248,27 +245,28 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
       ytext.insert(0, '---\ntitle: My Page\n---\n\n# Hello\n\nWorld\n');
     });
 
-    const metaMap = doc.getMap('metadata');
-    expect(metaMap.get('frontmatter')).toBe('---\ntitle: My Page\n---\n');
-    // Per-key entry populated alongside the legacy mirror (US-004 D13).
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'My Page' });
+    // FM region in Y.Text round-trips verbatim; the parsed map matches what
+    // was written.
+    expect(stripFrontmatter(ytext.toString()).frontmatter).toBe('---\ntitle: My Page\n---\n');
+    expect(readFmMap(ytext.toString())).toEqual({ title: 'My Page' });
 
     cleanup();
   });
 
-  test('frontmatter: Observer A prepends frontmatter from Y.Map on serialize', () => {
+  test('frontmatter: post-load Y.Text carries FM + body verbatim (D8 — Y.Text IS the FM source)', () => {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
-    // Pre-set frontmatter in metadata map
+    // Production load flow (persistence.onLoadDocument): both XmlFragment
+    // (body) and Y.Text (full file: FM + body) populate during the load
+    // transaction. Mirror that here.
+    populateFragment(doc, xmlFragment, '# Hello\n\nContent\n');
     doc.transact(() => {
-      doc.getMap('metadata').set('frontmatter', '---\ntitle: Test\n---\n');
+      ytext.insert(0, '---\ntitle: Test\n---\n# Hello\n\nContent\n');
     });
 
-    // Populate XmlFragment with body content
-    populateFragment(doc, xmlFragment, '# Hello\n\nContent\n');
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Y.Text should have frontmatter prepended (initial sync populated it).
+    // Y.Text carries the FM region as the source of truth.
     expect(ytext.toString()).toContain('---\ntitle: Test\n---\n');
     expect(ytext.toString()).toContain('Hello');
 
@@ -916,308 +914,6 @@ describe('Server Observer B — error recovery paths', () => {
     expect(
       mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
     ).toContain('Extra');
-
-    cleanup();
-  });
-});
-
-describe('Per-key frontmatter migration (US-004)', () => {
-  /**
-   * Stand-in for the FORM_WRITE_ORIGIN that lands with US-005 — non-paired,
-   * not OBSERVER_SYNC_ORIGIN, not file-watcher. Per D14 + D30, the form path's
-   * origin is single-root (touches only metaMap), so Observer A must fire
-   * normally to propagate the recomposed FM to Y.Text.
-   */
-  const TEST_NON_PAIRED_ORIGIN: LocalTransactionOrigin = {
-    source: 'local',
-    context: { origin: 'test-non-paired-meta' },
-  };
-
-  /**
-   * Seed the doc with a fenced FM + body, mirrored into both the per-key map
-   * and the legacy slot. Y.Text uses `prependFrontmatter` (FM + body, no
-   * blank line between) — the canonical shape produced by
-   * `applyAgentMarkdownWrite` after US-003. Tests that explicitly need the
-   * "with-blank-line" shape (markdown-on-disk convention) construct Y.Text
-   * directly inside the test.
-   */
-  function seedWithFrontmatter(
-    doc: Y.Doc,
-    xmlFragment: Y.XmlFragment,
-    ytext: Y.Text,
-    fencedFm: string,
-    body: string,
-  ): void {
-    populateFragment(doc, xmlFragment, body);
-    const canonical = prependFrontmatter(fencedFm, body);
-    doc.transact(() => {
-      setFrontmatterFromYaml(doc, unwrapFrontmatterFences(fencedFm));
-      doc.getMap('metadata').set('frontmatter', fencedFm);
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, canonical);
-    }, AGENT_WRITE_ORIGIN);
-  }
-
-  test('per-key metaMap mutation under non-paired origin propagates new FM to Y.Text via Observer A', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Old\n---\n', '# Body\n');
-    const dispatchesBefore = recorder.dispatches.length;
-
-    // Form-style write: only metaMap, no XmlFragment, no Y.Text.
-    doc.transact(() => {
-      doc.getMap('metadata').set('title', 'New');
-    }, TEST_NON_PAIRED_ORIGIN);
-
-    // Outer drain dispatches 'a' (metaDirty triggered Observer A); the inner
-    // OBSERVER_SYNC_ORIGIN write that propagates to Y.Text fires a second
-    // settlement with no dirty flags (dispatches 'none').
-    const newDispatches = recorder.dispatches.slice(dispatchesBefore);
-    expect(newDispatches[0]).toBe('a');
-
-    // Y.Text now reflects the new FM in YAML form.
-    const ytextStr = ytext.toString();
-    expect(ytextStr).toContain('title: New');
-    expect(ytextStr).not.toContain('title: Old');
-    // Body content survives.
-    expect(ytextStr).toContain('# Body');
-    // Per-key entry reflects the new value.
-    expect(getFrontmatterMap(doc).title).toBe('New');
-
-    cleanup();
-  });
-
-  test('per-key add: new key in metaMap surfaces in Y.Text after Observer A settlement', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Doc\n---\n', '# Body\n');
-
-    doc.transact(() => {
-      doc.getMap('metadata').set('status', 'draft');
-    }, TEST_NON_PAIRED_ORIGIN);
-
-    const ytextStr = ytext.toString();
-    expect(ytextStr).toContain('title: Doc');
-    expect(ytextStr).toContain('status: draft');
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'Doc', status: 'draft' });
-
-    cleanup();
-  });
-
-  test('per-key delete: removing a key from metaMap removes it from Y.Text', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(
-      doc,
-      xmlFragment,
-      ytext,
-      '---\ntitle: Doc\nstatus: draft\n---\n',
-      '# Body\n',
-    );
-
-    doc.transact(() => {
-      doc.getMap('metadata').delete('status');
-    }, TEST_NON_PAIRED_ORIGIN);
-
-    const ytextStr = ytext.toString();
-    expect(ytextStr).toContain('title: Doc');
-    expect(ytextStr).not.toContain('status:');
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'Doc' });
-
-    cleanup();
-  });
-
-  test('Observer B per-key diff: source-mode YAML edit populates per-key entries', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Old\n---\n', '# Body\n');
-
-    // Source-mode-style write: replace the FM block with a new one that has
-    // an additional key. Observer B sees the Y.Text change (non-paired,
-    // non-self), parses the FM via `setFrontmatterFromYaml`, and applies a
-    // per-key diff to metaMap.
-    doc.transact(() => {
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, '---\ntitle: New\nstatus: published\n---\n\n# Body\n');
-    });
-
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'New', status: 'published' });
-    // Legacy mirror also updated.
-    expect(doc.getMap('metadata').get('frontmatter')).toContain('title: New');
-    expect(doc.getMap('metadata').get('frontmatter')).toContain('status: published');
-
-    cleanup();
-  });
-
-  test('Observer B per-key diff: source-mode edit modifies only changed keys (UndoManager attribution preserved)', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(
-      doc,
-      xmlFragment,
-      ytext,
-      '---\ntitle: Stable\nstatus: draft\n---\n',
-      '# Body\n',
-    );
-
-    // Y.Map's internal item-tree is opaque, so the user-observable proxy for
-    // "no bulk replace" is: a Y.Map observe() event under Observer B's
-    // OBSERVER_SYNC_ORIGIN write reports zero changes for unchanged keys.
-    // A bulk `clear()+setAll()` would emit deletes + inserts on every key.
-    const metaMap = doc.getMap('metadata');
-    const originalTitle = metaMap.get('title');
-
-    let titleChangeEvents = 0;
-    let statusChangeEvents = 0;
-    metaMap.observe((event) => {
-      if (event.transaction.origin !== OBSERVER_SYNC_ORIGIN) return;
-      for (const key of event.changes.keys.keys()) {
-        if (key === 'title') titleChangeEvents++;
-        else if (key === 'status') statusChangeEvents++;
-      }
-    });
-
-    // Source-mode edit: status changes draft → published; title unchanged.
-    doc.transact(() => {
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, '---\ntitle: Stable\nstatus: published\n---\n\n# Body\n');
-    });
-
-    // 'title' slot was not rewritten — preserves UndoManager attribution per
-    // property.
-    expect(metaMap.get('title')).toBe(originalTitle);
-    expect(titleChangeEvents).toBe(0);
-    // 'status' slot was rewritten exactly once.
-    expect(statusChangeEvents).toBe(1);
-    expect(metaMap.get('status')).toBe('published');
-
-    cleanup();
-  });
-
-  test('Observer B malformed YAML: last valid per-key state preserved, body still propagates', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(
-      doc,
-      xmlFragment,
-      ytext,
-      '---\ntitle: Valid\nstatus: published\n---\n',
-      '# Original body\n',
-    );
-
-    // User pastes malformed YAML in source mode (unterminated bracket).
-    doc.transact(() => {
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, '---\ntitle: [unterminated\n---\n\n# Updated body\n');
-    });
-
-    // Per-key state preserved (last valid).
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'Valid', status: 'published' });
-
-    // Body part of the document still propagates to XmlFragment so the user
-    // can see their non-FM edits while they fix the YAML.
-    const bodyAfter = mdManager.serialize(
-      yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-    );
-    expect(bodyAfter).toContain('Updated body');
-
-    // Legacy slot mirrors the verbatim (malformed) Y.Text FM string —
-    // tracks what flowed in, not necessarily what's parseable. This is the
-    // transition affordance for readers that haven't migrated yet.
-    expect(doc.getMap('metadata').get('frontmatter')).toContain('[unterminated');
-
-    cleanup();
-  });
-
-  test('substrate bridge invariant green under per-key writes', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Bridge\n---\n', '# Hello\n\nWorld\n');
-
-    // Per-key form-style write — only touches metaMap.
-    doc.transact(() => {
-      doc.getMap('metadata').set('title', 'Updated');
-      doc.getMap('metadata').set('tags', ['one', 'two']);
-    }, TEST_NON_PAIRED_ORIGIN);
-
-    // After Observer A settlement, the substrate bridge invariant holds:
-    // stripped Y.Text === stripped serialize(XmlFragment + composed FM).
-    const stripTrailingWhitespace = (s: string): string => s.replace(/\s+$/, '');
-    const ytextNormalized = stripTrailingWhitespace(ytext.toString());
-    const composedXml = stripTrailingWhitespace(
-      prependFrontmatter(
-        getFrontmatter(doc),
-        mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON()),
-      ),
-    );
-    expect(ytextNormalized).toBe(composedXml);
-
-    cleanup();
-  });
-
-  test('paired-write origin with metadata mutations: settlement dispatches none, baseline refreshed', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Initial\n---\n', '# Body\n');
-    const dispatchesBefore = recorder.dispatches.length;
-
-    // Paired-write surface (mirrors `applyExternalChange` and
-    // `applyAgentMarkdownWrite`'s triple-write pattern under per-key): all
-    // three roots mutated atomically inside one paired-origin transact.
-    const newFm = '---\ntitle: PairedUpdate\nstatus: ok\n---\n';
-    const newBody = '# New body\n';
-    const newFull = prependFrontmatter(newFm, newBody);
-    const newJson = mdManager.parse(newBody);
-    const newPmNode = schema.nodeFromJSON(newJson);
-    doc.transact(() => {
-      const meta = { mapping: new Map(), isOMark: new Map() };
-      updateYFragment(doc, xmlFragment, newPmNode, meta);
-      setFrontmatterFromYaml(doc, unwrapFrontmatterFences(newFm));
-      doc.getMap('metadata').set('frontmatter', newFm);
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, newFull);
-    }, AGENT_WRITE_ORIGIN);
-
-    // The paired drain produces only a single 'none' dispatch — the metaMap
-    // observer's paired branch refreshed the baseline synchronously, so the
-    // settlement handler had no Observer A work to dispatch even though
-    // metaMap mutated.
-    expect(recorder.dispatches.slice(dispatchesBefore)).toEqual(['none']);
-
-    // Final state reflects all three mutations.
-    expect(getFrontmatterMap(doc)).toEqual({ title: 'PairedUpdate', status: 'ok' });
-    expect(ytext.toString()).toContain('PairedUpdate');
-    expect(ytext.toString()).toContain('New body');
-
-    cleanup();
-  });
-
-  test('FORM_WRITE-style non-paired origin is NOT in paired set: Observer A fires for form writes', () => {
-    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
-
-    seedWithFrontmatter(doc, xmlFragment, ytext, '---\ntitle: Initial\n---\n', '# Body\n');
-    const dispatchesBefore = recorder.dispatches.length;
-
-    // Non-paired origin (no `context.paired: true`).
-    doc.transact(() => {
-      doc.getMap('metadata').set('title', 'Form-driven');
-    }, TEST_NON_PAIRED_ORIGIN);
-
-    // First dispatch is 'a' — metaMap observer set metaDirty (not paired), so
-    // settlement runs runObserverASync. Without the metaMap observer or with
-    // a paired classification, Y.Text would not pick up the new FM.
-    const dispatches = recorder.dispatches.slice(dispatchesBefore);
-    expect(dispatches[0]).toBe('a');
-    expect(ytext.toString()).toContain('title: Form-driven');
 
     cleanup();
   });

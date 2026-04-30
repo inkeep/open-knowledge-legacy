@@ -7,11 +7,7 @@
  */
 
 import type { Hocuspocus } from '@hocuspocus/server';
-import {
-  applyFastDiff,
-  stripFrontmatter,
-  writeFrontmatterDualSlot,
-} from '@inkeep/open-knowledge-core';
+import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
@@ -72,32 +68,19 @@ export function applyExternalChange(
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
-  // Capture the prior FM string before the transact so we can attribute the
-  // edit_surface counter only to events that actually changed the FM. The
-  // legacy slot is mirrored on every FM-touching write site, so reading it
-  // here gives us the post-load state. `setFrontmatterFromYaml` is per-key
-  // and skips equal slots, but the counter must reflect "FM was edited from
-  // disk," not "applyExternalChange ran" — body-only edits should not count.
-  const priorFm = (document.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
+  // Capture prior FM region from Y.Text so the edit_surface counter only
+  // fires when disk content actually changed FM (body-only edits shouldn't
+  // count). After D8, the YAML region of `Y.Text('source')` IS the FM source
+  // of truth — read it before the transact applies the disk content.
+  const priorFm = stripFrontmatter(document.getText('source').toString()).frontmatter;
 
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // Per-key diff (D13) — `writeFrontmatterDualSlot` adds, removes, and
-    // updates entries individually so UndoManager attribution is preserved
-    // per property, and mirrors the fenced YAML into the legacy single-string
-    // slot for back-compat with readers that haven't migrated yet
-    // (`agent-sessions.ts`, `server-observers.ts`, `api-extension.ts`).
-    // Returns false when YAML is malformed — per-key state stays at last
-    // valid value (documented contract); we surface the divergence in logs.
-    const fmResult = writeFrontmatterDualSlot(document, frontmatter);
-    if (!fmResult.ok) {
-      console.warn(
-        `[file-watcher] Malformed YAML frontmatter on disk for ${docName} (${fmResult.error}) — per-key entries unchanged; legacy slot mirrored as-supplied`,
-      );
-    }
-
+    // Y.Text receives the full file content (FM + body) directly — the FM
+    // region IS the source of truth for FM (D8, D26). Malformed YAML on disk
+    // round-trips as-is; the panel renders last-valid + a banner per D21.
     const ytext = document.getText('source');
     const currentText = ytext.toString();
     if (currentText !== content) {
