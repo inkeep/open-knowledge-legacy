@@ -8,12 +8,13 @@
  * emit (rolldown-plugin-dts) can resolve the names — the plugin doesn't
  * trace bare re-exports across workspace package boundaries.
  */
-import {
-  type Config as CoreConfig,
-  ConfigSchema as CoreConfigSchema,
-  type FolderFrontmatter as CoreFolderFrontmatter,
-  type FolderRule as CoreFolderRule,
+
+import type {
+  Config as CoreConfig,
+  FolderFrontmatter as CoreFolderFrontmatter,
+  FolderRule as CoreFolderRule,
 } from '@inkeep/open-knowledge-core';
+import { ConfigSchema as CoreConfigSchema } from '@inkeep/open-knowledge-core';
 
 export type Config = CoreConfig;
 export type FolderFrontmatter = CoreFolderFrontmatter;
