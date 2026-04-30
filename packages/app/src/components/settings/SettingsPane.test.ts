@@ -36,6 +36,12 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain('subscribeToConfigValidationRejected');
   });
 
+  test('L3 rejection wires form.setError + form.setFocus on the rejected field', () => {
+    expect(SRC).toContain('form.setError(');
+    expect(SRC).toContain('form.setFocus(');
+    expect(SRC).toContain("type: 'config-validation-rejected'");
+  });
+
   test('renders as a pane, NOT a Dialog overlay', () => {
     // The architectural choice — the file should not import Dialog from ui/dialog
     // for its own structural shell. (InstallInClaudeDesktopDialog is rendered

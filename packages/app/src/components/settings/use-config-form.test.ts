@@ -13,7 +13,7 @@
  * true, keepDirty: true, keepTouched: true })` — that exact options
  * triple is what `bindConfigDoc.subscribe → form.reset` relies on for the
  * "external update lands on non-dirty fields, leaves dirty fields alone"
- * contract (D65 LOCKED).
+ * contract.
  */
 
 import { describe, expect, mock, test } from 'bun:test';
@@ -71,17 +71,20 @@ function createMockForm(getValuesImpl: (name: string) => unknown): {
   form: MockedRunCommitForm;
   setError: ReturnType<typeof mock>;
   clearErrors: ReturnType<typeof mock>;
+  resetField: ReturnType<typeof mock>;
   getValues: ReturnType<typeof mock>;
 } {
   const setError = mock();
   const clearErrors = mock();
+  const resetField = mock();
   const getValues = mock(getValuesImpl);
   const form: MockedRunCommitForm = {
     getValues: getValues as unknown as MockedRunCommitForm['getValues'],
     setError: setError as unknown as MockedRunCommitForm['setError'],
     clearErrors: clearErrors as unknown as MockedRunCommitForm['clearErrors'],
+    resetField: resetField as unknown as MockedRunCommitForm['resetField'],
   };
-  return { form, setError, clearErrors, getValues };
+  return { form, setError, clearErrors, resetField, getValues };
 }
 
 function createMockBinding(patchImpl: (patch: ConfigPatch) => ConfigBindingPatchResult): {
@@ -126,6 +129,50 @@ describe('runCommit — success path', () => {
 
     expect(clearErrors).toHaveBeenCalledTimes(1);
     expect(clearErrors).toHaveBeenCalledWith('server.host');
+  });
+
+  test('re-baselines defaultValue via resetField so the field is no longer dirty', () => {
+    // Without this re-baseline, every committed field stays dirty
+    // forever; the next external Y.Text update would skip it under
+    // `keepDirtyValues: true`, leaving the UI stuck on the user's old
+    // value after a remote-writer change.
+    const { form, resetField } = createMockForm(() => 100);
+    const { binding } = createMockBinding(() => ({
+      ok: true,
+      effective: { mcp: { tools: { search: { maxResults: 100 } } } } as unknown as Config,
+      appliedPaths: ['mcp.tools.search.maxResults'],
+    }));
+
+    runCommit(form, binding, 'mcp.tools.search.maxResults');
+
+    expect(resetField).toHaveBeenCalledTimes(1);
+    const [name, options] = resetField.mock.calls[0] ?? [];
+    expect(name).toBe('mcp.tools.search.maxResults');
+    expect(options).toMatchObject({ defaultValue: 100, keepError: false });
+  });
+
+  test('null-as-clear (reset path) round-trips through buildPatch and binding.patch', () => {
+    // The Settings-pane reset button writes `null` for fields with no
+    // schema default. `buildPatch` must preserve null (RFC 7396
+    // null-as-clear), and `binding.patch` must receive `{[path]: null}`.
+    // A regression that strips nulls would silently break reset-to-default
+    // for `appearance.theme` / `appearance.editorModeDefault`.
+    const { form, resetField } = createMockForm(() => null);
+    const { binding, patch } = createMockBinding(() => ({
+      ok: true,
+      effective: { appearance: {} } as unknown as Config,
+      appliedPaths: ['appearance.theme'],
+    }));
+
+    const result = runCommit(form, binding, 'appearance.theme');
+
+    expect(result).toBe(true);
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch.mock.calls[0]?.[0]).toEqual({ appearance: { theme: null } });
+    // Re-baseline the resetField default to null so subsequent external
+    // updates can flow through.
+    expect(resetField).toHaveBeenCalledTimes(1);
+    expect(resetField.mock.calls[0]?.[1]).toMatchObject({ defaultValue: null });
   });
 });
 
@@ -257,9 +304,9 @@ describe('useConfigForm module shape', () => {
 });
 
 // Source-level guards: the hook invokes useForm with binding.current() as
-// the seed and runs without a resolver (D64 LOCKED). The repo's no-DOM
-// unit-test convention means we can't render the hook; the guard ensures
-// the structural contract holds. Behavioral coverage of useForm itself
+// the seed and runs without a resolver. The repo's no-DOM unit-test
+// convention means we can't render the hook; the guard ensures the
+// structural contract holds. Behavioral coverage of useForm itself
 // belongs to RHF's own tests + Settings-pane Playwright E2E.
 const HOOK_SRC = readFileSync(
   join(new URL('.', import.meta.url).pathname, 'use-config-form.ts'),
@@ -272,7 +319,7 @@ describe('useConfigForm source-level guards', () => {
   test('initializes useForm with binding.current() as defaultValues + no resolver', () => {
     expect(SRC).toContain('useForm');
     expect(SRC).toContain('defaultValues: binding.current()');
-    // D64 LOCKED: no zodResolver, no resolver: prop on useForm.
+    // No zodResolver, no resolver: prop on useForm — bindConfigDoc.patch is the single L1.
     expect(SRC).not.toContain('zodResolver');
     expect(SRC).not.toMatch(/resolver:\s/);
   });
@@ -282,7 +329,7 @@ describe('useConfigForm source-level guards', () => {
     expect(SRC).toContain('applyExternalUpdate');
   });
 
-  test('does not instantiate client-side IndexeddbPersistence (D59)', () => {
+  test('does not instantiate client-side IndexeddbPersistence', () => {
     expect(SRC).not.toContain('IndexeddbPersistence');
     expect(SRC).not.toContain('createClientPersistence');
   });

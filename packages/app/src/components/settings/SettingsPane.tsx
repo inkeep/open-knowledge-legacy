@@ -14,11 +14,11 @@
  * default.
  *
  * Form harness: a single `useForm<Config>` instance owned by
- * `useConfigForm(binding)` (D64 LOCKED resolver-less); external Y.Text
- * updates merge in via `binding.subscribe → form.reset({keepDirtyValues:
- * true, keepDirty: true, keepTouched: true})` (D65 LOCKED). Each
- * `SettingsField` wraps its body in a shadcn `FormField` whose
- * render-prop dispatches on the schema-walker's type tag.
+ * `useConfigForm(binding)` (resolver-less); external Y.Text updates merge
+ * in via `binding.subscribe → form.reset({keepDirtyValues: true,
+ * keepDirty: true, keepTouched: true})`. Each `SettingsField` wraps its
+ * body in a shadcn `FormField` whose render-prop dispatches on the
+ * schema-walker's type tag.
  *
  * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
  * sonner toast + brief field flash.
@@ -71,7 +71,7 @@ import {
   getLeafTypeTag,
   resolveLeafSchema,
 } from './schema-walker';
-import { useConfigForm } from './use-config-form';
+import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 interface SettingsPaneProps {
   scope: SettingsScope;
@@ -356,12 +356,11 @@ interface BoundSettingsFormProps {
  * (`connection === null || !synced`) so we don't `useForm` on a binding
  * that hasn't synced yet.
  *
- * Owns the CC1 `'config-validation-rejected'` subscription (FR-39) and
- * the per-field flash state, since both need access to the `form`
- * instance — `form.setError` populates the inline FormMessage,
- * `form.setFocus` puts focus on the offending field, and the flash
- * triggers the `animate-settings-flash` CSS animation on the FormItem
- * wrapper.
+ * Owns the CC1 `'config-validation-rejected'` subscription and the
+ * per-field flash state, since both need access to the `form` instance —
+ * `form.setError` populates the inline FormMessage, `form.setFocus` puts
+ * focus on the offending field, and the flash triggers the
+ * `animate-settings-flash` CSS animation on the FormItem wrapper.
  */
 function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
   const { form, commitField } = useConfigForm(binding);
@@ -376,14 +375,17 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
           (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
         if (!isMatchingScope) return;
 
-        const message = humanFormat(event.error);
-        toast.error(message, { duration: 8000 });
+        // Toast carries the full multi-line summary (humanFormat); the
+        // inline FormMessage shows only the path-matched issue so the
+        // field doesn't render a multi-line block with file paths and
+        // caret markers.
+        toast.error(humanFormat(event.error), { duration: 8000 });
 
         const path = firstIssuePath(event.error);
         if (path) {
           form.setError(path as FieldPath<Config>, {
             type: 'config-validation-rejected',
-            message,
+            message: pickFirstIssueForPath(event.error, path),
           });
           form.setFocus(path as FieldPath<Config>);
           setFlashedPath(path);
@@ -573,14 +575,18 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
               </FormDescription>
             ) : null}
             {readonlyReason ? (
-              // `role="note"` so screen readers announce this as explanatory
-              // text rather than treating the dangling label as broken.
-              <div
-                role="note"
-                className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
-              >
-                {readonlyReason}
-              </div>
+              // Wrap in <FormControl> so the slot's `id={formItemId}` lands
+              // on the note div — the FormLabel's `htmlFor` resolves to it
+              // instead of dangling. `role="note"` makes screen readers
+              // announce this as explanatory text.
+              <FormControl>
+                <div
+                  role="note"
+                  className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
+                >
+                  {readonlyReason}
+                </div>
+              </FormControl>
             ) : (
               <div className="flex items-center gap-2">
                 <FormControl>
@@ -730,8 +736,9 @@ function NumberControlBody({
   const lastSyncedValueRef = useRef(ctl.value);
 
   useEffect(() => {
-    // Pull a remote update into the textbox iff the user isn't mid-edit
-    // (pendingText still matches the previously-synced value).
+    // Skip if ctl.value hasn't changed since the last sync (dedup —
+    // avoids resetting pendingText on unrelated re-renders). When
+    // ctl.value DOES change, refresh pendingText to track it.
     if (lastSyncedValueRef.current === ctl.value) return;
     setPendingText(ctl.value === undefined ? '' : String(ctl.value));
     lastSyncedValueRef.current = ctl.value;

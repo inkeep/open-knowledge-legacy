@@ -4,11 +4,10 @@
  * merges external Y.Text updates into form state without stomping the
  * user's in-progress edits.
  *
- * Resolver-less per spec D64 (LOCKED): `bindConfigDoc.patch` is the single
- * L1 safeParse gate; per-field rejections mirror via `form.setError` from
- * the rejection branch in `commitField`. `keepDirtyValues: true` is RHF's
- * native semantic for "remote updates land on non-dirty fields, leave
- * dirty fields alone" (D65 LOCKED).
+ * Resolver-less: `bindConfigDoc.patch` is the single L1 safeParse gate;
+ * per-field rejections mirror via `form.setError` from the rejection
+ * branch in `runCommit`. `keepDirtyValues: true` is RHF's native semantic
+ * for "remote updates land on non-dirty fields, leave dirty fields alone."
  *
  * The pure helpers (`applyExternalUpdate`, `runCommit`,
  * `pickFirstIssueForPath`) are exported so unit tests exercise them
@@ -38,7 +37,7 @@ interface UseConfigFormResult {
 }
 
 export function useConfigForm(binding: ConfigBinding): UseConfigFormResult {
-  // Resolver-less per D64 — bindConfigDoc.patch is the single L1 safeParse.
+  // Resolver-less — bindConfigDoc.patch is the single L1 safeParse.
   const form = useForm<Config>({
     defaultValues: binding.current() as Config,
     mode: 'onBlur',
@@ -81,7 +80,7 @@ export function applyExternalUpdate<T extends Config = Config>(
 /** Subset of `UseFormReturn` consumed by `runCommit`. */
 export type RunCommitForm<T extends Config = Config> = Pick<
   UseFormReturn<T>,
-  'getValues' | 'setError' | 'clearErrors'
+  'getValues' | 'setError' | 'clearErrors' | 'resetField'
 >;
 
 /** Subset of `ConfigBinding` consumed by `runCommit` — the patch surface only. */
@@ -92,7 +91,11 @@ export interface RunCommitBinding {
 /**
  * Per-field commit. Reads the current form value at `name`, builds a
  * deep-partial patch, hands it to `binding.patch`. On success: clear any
- * existing error on that field. On failure: mirror the rejection into
+ * existing error on that field and re-baseline its defaultValue so the
+ * field stops being marked dirty — without this, every committed field
+ * stays dirty forever and `keepDirtyValues: true` on the next external
+ * update would skip it, leaving the UI stuck on the user's old value
+ * after a remote-writer change. On failure: mirror the rejection into
  * `form.setError` (path-matched issue message preferred; `humanFormat`
  * fallback otherwise). Returns the patch outcome.
  */
@@ -106,6 +109,10 @@ export function runCommit<T extends Config = Config>(
   const result = binding.patch(patch);
   if (result.ok) {
     form.clearErrors(name);
+    form.resetField(name, {
+      defaultValue: value as never,
+      keepError: false,
+    });
     return true;
   }
   form.setError(name, {
