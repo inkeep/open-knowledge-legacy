@@ -23,6 +23,7 @@
 import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   isProcessAlive as defaultIsProcessAlive,
@@ -71,6 +72,12 @@ interface ResolveMcpHttpUrlOptions {
 
 interface StartMcpShimOptions extends ResolveMcpHttpUrlOptions {
   stderr?: NodeJS.WritableStream;
+}
+
+interface BridgeStdioToHttpMcpOptions {
+  stderr?: NodeJS.WritableStream;
+  stdin?: Readable;
+  stdout?: Writable;
 }
 
 function formatHost(host: string): string {
@@ -221,12 +228,12 @@ export async function resolveMcpHttpUrl(opts: ResolveMcpHttpUrlOptions): Promise
 }
 
 /** Bridge stdio JSON-RPC frames to the server-owned Streamable HTTP MCP endpoint. */
-async function bridgeStdioToHttpMcp(
+export async function bridgeStdioToHttpMcp(
   endpointUrl: string,
-  opts: { stderr?: NodeJS.WritableStream } = {},
+  opts: BridgeStdioToHttpMcpOptions = {},
 ): Promise<{ close: () => Promise<void> }> {
   const stderr = opts.stderr ?? process.stderr;
-  const stdio = new StdioServerTransport();
+  const stdio = new StdioServerTransport(opts.stdin, opts.stdout);
   const http = new StreamableHTTPClientTransport(new URL(endpointUrl));
   let closed = false;
 
