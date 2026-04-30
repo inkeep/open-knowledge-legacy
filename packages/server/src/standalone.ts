@@ -727,10 +727,23 @@ export function createServer(options: ServerOptions): ServerInstance {
     if (pendingAssetRerenderBasenames === null) {
       pendingAssetRerenderBasenames = new Set();
       setImmediate(() => {
-        const toRender = pendingAssetRerenderBasenames;
-        pendingAssetRerenderBasenames = null;
-        if (!toRender) return;
-        for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
+        // Top-level catch — `setImmediate` runs outside the file-watcher's
+        // handleDiskEvent try-catch scope. The per-doc body inside
+        // `rerenderDocsReferencingAssetBasename` already guards each
+        // `applyDiskContentToDoc` call, but the iteration itself
+        // (`hocuspocus.documents` Map iteration, `getText('source')`,
+        // `String.prototype.includes`) is essentially infallible — yet an
+        // uncaught throw here would crash the server with no actionable
+        // log. Log + swallow as defense-in-depth.
+        try {
+          const toRender = pendingAssetRerenderBasenames;
+          pendingAssetRerenderBasenames = null;
+          if (!toRender) return;
+          for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
+        } catch (err) {
+          pendingAssetRerenderBasenames = null;
+          log.error({ err }, '[asset-event] dedup rerender pass crashed');
+        }
       });
     }
     pendingAssetRerenderBasenames.add(assetBasename);
