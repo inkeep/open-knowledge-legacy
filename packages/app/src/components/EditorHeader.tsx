@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, Save } from 'lucide-react';
+import { FolderOpen, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -72,7 +72,6 @@ interface EditorHeaderProps {
   onSignIn?: () => void;
   onSetIdentity?: () => void;
   onOpenConflictResolver?: () => void;
-  onOpenClone?: () => void;
 }
 
 export function EditorHeader({
@@ -83,7 +82,6 @@ export function EditorHeader({
   onSignIn,
   onSetIdentity,
   onOpenConflictResolver,
-  onOpenClone,
 }: EditorHeaderProps) {
   const { activeDocName, activeProvider, activeTarget, closeDocument } = useDocumentContext();
   const { pageMeta } = usePageList();
@@ -451,22 +449,6 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {onOpenClone && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Clone from GitHub"
-                onClick={onOpenClone}
-                className="text-muted-foreground"
-              >
-                <GitFork className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Clone from GitHub…</TooltipContent>
-          </Tooltip>
-        )}
         {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
