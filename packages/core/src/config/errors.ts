@@ -181,7 +181,12 @@ export function humanFormat(error: ConfigValidationError): string {
     case 'SCOPE_VIOLATION':
       return `Field ${error.path.join('.')} cannot be set at ${error.actualScope} scope (expected: ${error.expectedScope}).`;
     case 'NOT_AGENT_SETTABLE':
-      return `Field ${error.path.join('.')} is not agent-settable.`;
+      return [
+        `Field ${error.path.join('.')} is not agent-settable.`,
+        'Agent-settable paths: content.include, content.exclude, folders[],',
+        'mcp.tools.search.maxResults, mcp.tools.read_document.historyDepth.',
+        'Other fields can be edited via the Settings pane or by hand-editing config.yml.',
+      ].join(' ');
     case 'MIXED_SCOPE': {
       const summary = error.paths
         .map(({ path, scope }) => `  ${path.join('.')} → ${scope}`)

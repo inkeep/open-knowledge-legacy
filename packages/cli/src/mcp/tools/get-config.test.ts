@@ -78,11 +78,16 @@ describe('get_config tool', () => {
     expect(result.structuredContent?.value).toBe(50);
   });
 
-  test('returns undefined for a nonexistent path', async () => {
+  test('returns null + exists:false for a nonexistent path', async () => {
+    // Wire-format note: `JSON.stringify(undefined)` returns the JS value
+    // `undefined` rather than a JSON string, so we surface absence as
+    // `{ value: null, exists: false }` and a human-readable text body.
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
     const result = await handler({ path: ['nonexistent', 'leaf'] });
-    expect(result.structuredContent?.value).toBeUndefined();
+    expect(result.structuredContent?.value).toBeNull();
+    expect(result.structuredContent?.exists).toBe(false);
+    expect(result.content[0]?.text).toContain('no value at nonexistent.leaf');
   });
 
   test('content[0].text is JSON-serialized for agent consumption', async () => {

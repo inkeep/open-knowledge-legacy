@@ -52,6 +52,17 @@ const InputSchema = {
 
 const OutputSchema = {
   value: z.unknown().describe('Resolved config value at the requested path (or full config).'),
+  exists: z
+    .boolean()
+    .optional()
+    .describe(
+      'Whether the requested path resolved to a value. `false` distinguishes ' +
+        '"path absent" from "path explicitly set to null"; absent on full-config reads.',
+    ),
+  path: z
+    .array(z.string())
+    .optional()
+    .describe('Echo of the requested dotted path (empty when reading the full config).'),
 } as const;
 
 function readConfigPath(value: unknown, path: readonly string[]): unknown {
@@ -84,11 +95,20 @@ export function register(server: ServerInstance, deps: GetConfigDeps): void {
           content: [{ type: 'text' as const, text: `Error: ${context.error}` }],
         };
       }
-      const value =
-        args.path && args.path.length > 0
-          ? readConfigPath(context.config, args.path)
-          : context.config;
-      return textPlusStructured(JSON.stringify(value, null, 2), { value });
+      const path = args.path ?? [];
+      const value = path.length > 0 ? readConfigPath(context.config, path) : context.config;
+      // `JSON.stringify(undefined)` returns the JS value `undefined` rather
+      // than a JSON string — agents would see ambiguous text content and
+      // can't distinguish "path absent" from "path explicitly set to null".
+      // Surface the absence as a structured `exists: false` payload + a
+      // human-readable text body.
+      if (path.length > 0 && value === undefined) {
+        return textPlusStructured(
+          `(no value at ${path.join('.')})`,
+          { value: null, exists: false, path },
+        );
+      }
+      return textPlusStructured(JSON.stringify(value, null, 2), { value, exists: true, path });
     },
   );
 }

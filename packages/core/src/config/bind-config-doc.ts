@@ -250,6 +250,15 @@ function bindConfigDocInner(
         'config.parse.errorCount': doc.errors.length,
         'config.parse.topLevelNonMap': topLevelNonMap,
       });
+      // Mirror the OTel event with a console.warn so headless operators
+      // (no telemetry collector) still see the recovery happen.
+      const summary =
+        doc.errors.length > 0
+          ? doc.errors.map((e) => e.message).join('; ')
+          : 'top-level YAML is not a mapping';
+      console.warn(
+        `[bindConfigDoc:${scope}] dropping corrupt Y.Text and re-applying patch onto empty doc. Reason: ${summary}`,
+      );
       doc = parseDocument('');
     }
     if (doc.contents === null) {

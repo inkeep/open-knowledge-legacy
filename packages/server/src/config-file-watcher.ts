@@ -124,7 +124,10 @@ export async function startConfigFileWatcher(
     log.debug({ path }, 'config file unlinked; Y.Text retained at current state');
   });
   watcher.on('error', (err) => {
-    log.warn({ err }, 'chokidar error');
+    log.warn(
+      { err, watchDir, absPath },
+      `[config-file-watcher] chokidar error while watching ${absPath}`,
+    );
   });
 
   let closed = false;

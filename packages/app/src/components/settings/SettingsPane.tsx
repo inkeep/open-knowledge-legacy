@@ -886,10 +886,19 @@ function StringArrayControl({
 }
 
 function SavedIndicator({ visible }: { visible: boolean }) {
-  if (!visible) return null;
+  // Live region — auto-save replaces an explicit Save button, so this
+  // checkmark IS the save confirmation. Polite announcement so screen
+  // readers say "Saved" without interrupting other speech (WCAG 4.1.3).
+  // Always render the wrapper so the SR-only text node is present at
+  // mount time; the visible checkmark is the only thing that toggles.
   return (
-    <span aria-hidden="true" className="text-emerald-600">
-      <Check className="size-3.5" />
+    <span role="status" aria-live="polite" className="text-emerald-600">
+      {visible ? (
+        <>
+          <Check aria-hidden="true" className="size-3.5" />
+          <span className="sr-only">Saved</span>
+        </>
+      ) : null}
     </span>
   );
 }
