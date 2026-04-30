@@ -783,9 +783,9 @@ export async function awaitFileWatcherIndexed(
     });
     if (res?.ok) {
       lastStatus = res.status;
-      const data = (await res.json()) as { ok: boolean; documents?: Array<{ docName: string }> };
+      const data = (await res.json()) as { documents?: Array<{ docName: string }> };
       lastBodyPreview = `ok, docs=${data.documents?.length ?? 0}`;
-      if (data.ok && data.documents?.some((d) => d.docName === docPath)) {
+      if (data.documents?.some((d) => d.docName === docPath)) {
         return;
       }
     } else if (res) {
@@ -843,10 +843,9 @@ export async function awaitBacklinkIndexed(
     if (res?.ok) {
       lastStatus = res.status;
       const data = (await res.json()) as {
-        ok: boolean;
         backlinks?: Array<{ source: string }>;
       };
-      if (data.ok && data.backlinks?.some((b) => b.source === sourceDocName)) return;
+      if (data.backlinks?.some((b) => b.source === sourceDocName)) return;
     } else if (res) {
       lastStatus = res.status;
     }

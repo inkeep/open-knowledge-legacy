@@ -8,12 +8,27 @@ import {
   AgentWriteMdSuccessSchema,
   AgentWriteRequestSchema,
   AgentWriteSuccessSchema,
+  BacklinkCountsSuccessSchema,
+  BacklinkEntrySchema,
+  BacklinksSuccessSchema,
   CreatePageRequestSchema,
   CreatePageSuccessSchema,
   DeletePathRequestSchema,
   DeletePathSuccessSchema,
+  DocumentListEntrySchema,
+  DocumentListSuccessSchema,
+  DocumentReadSuccessSchema,
   EmptyRequestSchema,
+  ForwardLinkDocEntrySchema,
+  ForwardLinkEntrySchema,
+  ForwardLinkExternalEntrySchema,
+  ForwardLinksSuccessSchema,
   HeadingEntrySchema,
+  LinkGraphDocNodeSchema,
+  LinkGraphEdgeSchema,
+  LinkGraphExternalNodeSchema,
+  LinkGraphNodeSchema,
+  LinkGraphSuccessSchema,
   LocalOpCloneRequestSchema,
   PageEntrySchema,
   PageHeadingsSuccessSchema,
@@ -1070,6 +1085,310 @@ describe('RollbackSuccessSchema', () => {
         restoredFrom: 'abc',
         timestamp: '2026-04-30T00:00:00Z',
         summary: { value: 'Restored to abc' },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+// ─── Cluster C URN tokens (US-008) ───────────────────────────────────────
+
+describe('ProblemTypeSchema cluster C URN tokens', () => {
+  test('document-not-available is valid', () => {
+    expect(ProblemTypeSchema.safeParse('urn:ok:error:document-not-available').success).toBe(true);
+  });
+  test('backlink-index-not-configured is valid', () => {
+    expect(ProblemTypeSchema.safeParse('urn:ok:error:backlink-index-not-configured').success).toBe(
+      true,
+    );
+  });
+});
+
+// ─── Cluster C: read endpoint success schemas ────────────────────────────
+
+describe('DocumentReadSuccessSchema', () => {
+  test('parses a flat success body', () => {
+    expect(
+      DocumentReadSuccessSchema.safeParse({ docName: 'foo', content: '# hi\n\nbody' }).success,
+    ).toBe(true);
+  });
+  test('parses an empty content string', () => {
+    expect(DocumentReadSuccessSchema.safeParse({ docName: 'foo', content: '' }).success).toBe(true);
+  });
+  test('rejects missing content', () => {
+    expect(DocumentReadSuccessSchema.safeParse({ docName: 'foo' }).success).toBe(false);
+  });
+  test('rejects empty docName', () => {
+    expect(DocumentReadSuccessSchema.safeParse({ docName: '', content: 'x' }).success).toBe(false);
+  });
+});
+
+describe('DocumentListEntrySchema', () => {
+  test('parses a non-symlink entry', () => {
+    expect(
+      DocumentListEntrySchema.safeParse({
+        docName: 'pages/foo',
+        docExt: '.md',
+        size: 142,
+        modified: '2026-04-30T00:00:00Z',
+        isSymlink: false,
+        canonicalDocName: null,
+        targetPath: null,
+      }).success,
+    ).toBe(true);
+  });
+  test('parses a symlink alias entry', () => {
+    expect(
+      DocumentListEntrySchema.safeParse({
+        docName: 'foo',
+        docExt: '.md',
+        size: 142,
+        modified: '2026-04-30T00:00:00Z',
+        isSymlink: true,
+        canonicalDocName: 'target',
+        targetPath: 'target.md',
+      }).success,
+    ).toBe(true);
+  });
+  test('rejects negative size', () => {
+    expect(
+      DocumentListEntrySchema.safeParse({
+        docName: 'foo',
+        docExt: '.md',
+        size: -1,
+        modified: '2026-04-30T00:00:00Z',
+        isSymlink: false,
+        canonicalDocName: null,
+        targetPath: null,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('DocumentListSuccessSchema', () => {
+  test('parses an empty list', () => {
+    expect(DocumentListSuccessSchema.safeParse({ documents: [] }).success).toBe(true);
+  });
+  test('parses a populated list', () => {
+    expect(
+      DocumentListSuccessSchema.safeParse({
+        documents: [
+          {
+            docName: 'foo',
+            docExt: '.md',
+            size: 0,
+            modified: '2026-04-30T00:00:00Z',
+            isSymlink: false,
+            canonicalDocName: null,
+            targetPath: null,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('BacklinkEntrySchema', () => {
+  test('parses with anchor + snippet present', () => {
+    expect(
+      BacklinkEntrySchema.safeParse({
+        source: 'alpha',
+        anchor: 'intro',
+        title: 'Alpha',
+        snippet: 'Refers to beta.',
+      }).success,
+    ).toBe(true);
+  });
+  test('parses with null anchor + snippet', () => {
+    expect(
+      BacklinkEntrySchema.safeParse({
+        source: 'alpha',
+        anchor: null,
+        title: 'Alpha',
+        snippet: null,
+      }).success,
+    ).toBe(true);
+  });
+  test('rejects empty source', () => {
+    expect(
+      BacklinkEntrySchema.safeParse({
+        source: '',
+        anchor: null,
+        title: 'Alpha',
+        snippet: null,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('BacklinksSuccessSchema', () => {
+  test('parses success body with empty backlinks', () => {
+    expect(BacklinksSuccessSchema.safeParse({ docName: 'beta', backlinks: [] }).success).toBe(true);
+  });
+});
+
+describe('BacklinkCountsSuccessSchema', () => {
+  test('parses an empty count map', () => {
+    expect(BacklinkCountsSuccessSchema.safeParse({ counts: {} }).success).toBe(true);
+  });
+  test('parses populated counts', () => {
+    expect(
+      BacklinkCountsSuccessSchema.safeParse({ counts: { alpha: 3, beta: 0, gamma: 12 } }).success,
+    ).toBe(true);
+  });
+  test('rejects negative counts', () => {
+    expect(BacklinkCountsSuccessSchema.safeParse({ counts: { alpha: -1 } }).success).toBe(false);
+  });
+});
+
+describe('ForwardLinkEntrySchema', () => {
+  test('parses doc kind', () => {
+    expect(
+      ForwardLinkDocEntrySchema.safeParse({
+        kind: 'doc',
+        docName: 'beta',
+        anchor: null,
+        title: 'Beta',
+        snippet: null,
+      }).success,
+    ).toBe(true);
+  });
+  test('parses external kind', () => {
+    expect(
+      ForwardLinkExternalEntrySchema.safeParse({
+        kind: 'external',
+        url: 'https://example.com/x',
+        title: 'X',
+        snippet: null,
+      }).success,
+    ).toBe(true);
+  });
+  test('discriminated union routes by kind', () => {
+    const docResult = ForwardLinkEntrySchema.safeParse({
+      kind: 'doc',
+      docName: 'beta',
+      anchor: 'h1',
+      title: 'Beta',
+      snippet: 'snippet',
+    });
+    expect(docResult.success).toBe(true);
+    if (docResult.success) {
+      expect(docResult.data.kind).toBe('doc');
+    }
+
+    const extResult = ForwardLinkEntrySchema.safeParse({
+      kind: 'external',
+      url: 'https://example.com',
+      title: 'Example',
+      snippet: null,
+    });
+    expect(extResult.success).toBe(true);
+    if (extResult.success) {
+      expect(extResult.data.kind).toBe('external');
+    }
+  });
+  test('rejects unknown kind', () => {
+    expect(ForwardLinkEntrySchema.safeParse({ kind: 'mystery' }).success).toBe(false);
+  });
+});
+
+describe('ForwardLinksSuccessSchema', () => {
+  test('parses success body', () => {
+    expect(
+      ForwardLinksSuccessSchema.safeParse({
+        docName: 'alpha',
+        forwardLinks: [
+          { kind: 'doc', docName: 'beta', anchor: null, title: 'Beta', snippet: null },
+          {
+            kind: 'external',
+            url: 'https://example.com',
+            title: 'Example',
+            snippet: null,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('LinkGraphNodeSchema', () => {
+  test('parses doc node with metadata', () => {
+    expect(
+      LinkGraphDocNodeSchema.safeParse({
+        id: 'doc:foo',
+        kind: 'doc',
+        docName: 'foo',
+        anchor: null,
+        label: 'Foo',
+        cluster: 'retrieval',
+        category: 'concept',
+        tags: ['search', 'vectors'],
+      }).success,
+    ).toBe(true);
+  });
+  test('parses doc node with all metadata null', () => {
+    expect(
+      LinkGraphDocNodeSchema.safeParse({
+        id: 'doc:foo',
+        kind: 'doc',
+        docName: 'foo',
+        anchor: null,
+        label: 'Foo',
+        cluster: null,
+        category: null,
+        tags: null,
+      }).success,
+    ).toBe(true);
+  });
+  test('parses external node', () => {
+    expect(
+      LinkGraphExternalNodeSchema.safeParse({
+        id: 'ext:https://example.com',
+        kind: 'external',
+        url: 'https://example.com',
+        label: 'Example',
+      }).success,
+    ).toBe(true);
+  });
+  test('discriminated union rejects unknown kind', () => {
+    expect(LinkGraphNodeSchema.safeParse({ id: 'a', kind: 'mystery' }).success).toBe(false);
+  });
+});
+
+describe('LinkGraphEdgeSchema', () => {
+  test('parses an edge', () => {
+    expect(LinkGraphEdgeSchema.safeParse({ source: 'doc:a', target: 'doc:b' }).success).toBe(true);
+  });
+  test('rejects empty source', () => {
+    expect(LinkGraphEdgeSchema.safeParse({ source: '', target: 'doc:b' }).success).toBe(false);
+  });
+});
+
+describe('LinkGraphSuccessSchema', () => {
+  test('parses an empty graph', () => {
+    expect(LinkGraphSuccessSchema.safeParse({ nodes: [], links: [] }).success).toBe(true);
+  });
+  test('parses a populated graph', () => {
+    expect(
+      LinkGraphSuccessSchema.safeParse({
+        nodes: [
+          {
+            id: 'doc:a',
+            kind: 'doc',
+            docName: 'a',
+            anchor: null,
+            label: 'A',
+            cluster: null,
+            category: null,
+            tags: null,
+          },
+          {
+            id: 'ext:https://example.com',
+            kind: 'external',
+            url: 'https://example.com',
+            label: 'Example',
+          },
+        ],
+        links: [{ source: 'doc:a', target: 'ext:https://example.com' }],
       }).success,
     ).toBe(true);
   });

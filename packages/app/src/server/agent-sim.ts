@@ -113,7 +113,22 @@ async function agentPatch(
 
 async function readDocument(): Promise<{ ok: boolean; content?: string; error?: string }> {
   const res = await fetch(`${BASE_URL}/api/document?docName=${encodeURIComponent(docName)}`);
-  return (await res.json()) as { ok: boolean; content?: string; error?: string };
+  const body = (await res.json().catch(() => null)) as {
+    docName?: unknown;
+    content?: unknown;
+    type?: unknown;
+    title?: unknown;
+  } | null;
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: typeof body?.title === 'string' ? body.title : `HTTP ${res.status}`,
+    };
+  }
+  return {
+    ok: true,
+    content: typeof body?.content === 'string' ? body.content : '',
+  };
 }
 
 // --- Write helper (existing modes) ---

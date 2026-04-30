@@ -174,6 +174,14 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:doc-already-exists',
   'urn:ok:error:document-not-open',
   'urn:ok:error:rollback-not-configured',
+  // Cluster C: document/links read part 1 (US-008). `document-not-available`
+  // distinguishes hocuspocus-document-load failure from `doc-not-found`
+  // (former is server-internal, latter is "doesn't exist on disk").
+  // `backlink-index-not-configured` flags the (rare) startup state where
+  // the backlink index hasn't initialized yet — distinct from internal
+  // errors during read.
+  'urn:ok:error:document-not-available',
+  'urn:ok:error:backlink-index-not-configured',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -794,3 +802,225 @@ export type RollbackSuccess = z.infer<typeof RollbackSuccessSchema>;
 const _RollbackSuccessSchemaIsStandard: StandardSchemaV1<unknown, RollbackSuccess> =
   RollbackSuccessSchema;
 void _RollbackSuccessSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster C: document/links read part 1 (US-008)
+// ---------------------------------------------------------------------------
+//
+// Read-only handlers backing the BacklinksPanel / ForwardLinksPanel / GraphView /
+// FileTree / EmptyEditorState / agent-sim consumers. All take query params
+// (no body) and use `EmptyRequestSchema` + `skipBodyParse` at the wrapper.
+
+/** Success body for `GET /api/document?docName=...`. */
+export const DocumentReadSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+    content: z.string(),
+  })
+  .loose();
+export type DocumentReadSuccess = z.infer<typeof DocumentReadSuccessSchema>;
+const _DocumentReadSuccessSchemaIsStandard: StandardSchemaV1<unknown, DocumentReadSuccess> =
+  DocumentReadSuccessSchema;
+void _DocumentReadSuccessSchemaIsStandard;
+
+/**
+ * Single document entry in the `documents` array of `GET /api/documents`.
+ * Symlink-aware: aliases share `size` / `modified` with their canonical
+ * sibling. `targetPath` is the canonical-relative on-disk path (only set
+ * for `isSymlink: true`).
+ */
+export const DocumentListEntrySchema = z
+  .object({
+    docName: z.string().min(1),
+    docExt: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    modified: z.string().min(1),
+    isSymlink: z.boolean(),
+    canonicalDocName: z.string().nullable(),
+    targetPath: z.string().nullable(),
+  })
+  .loose();
+export type DocumentListEntry = z.infer<typeof DocumentListEntrySchema>;
+const _DocumentListEntrySchemaIsStandard: StandardSchemaV1<unknown, DocumentListEntry> =
+  DocumentListEntrySchema;
+void _DocumentListEntrySchemaIsStandard;
+
+/** Success body for `GET /api/documents`. Sorted alphabetically by docName. */
+export const DocumentListSuccessSchema = z
+  .object({
+    documents: z.array(DocumentListEntrySchema),
+  })
+  .loose();
+export type DocumentListSuccess = z.infer<typeof DocumentListSuccessSchema>;
+const _DocumentListSuccessSchemaIsStandard: StandardSchemaV1<unknown, DocumentListSuccess> =
+  DocumentListSuccessSchema;
+void _DocumentListSuccessSchemaIsStandard;
+
+/**
+ * Single backlink edge returned by `/api/backlinks`. `anchor` is null when
+ * the backlink targets the page root (no `#heading`). `snippet` is the
+ * surrounding paragraph or `null` when the source has no nearby prose.
+ */
+export const BacklinkEntrySchema = z
+  .object({
+    source: z.string().min(1),
+    anchor: z.string().nullable(),
+    title: z.string(),
+    snippet: z.string().nullable(),
+  })
+  .loose();
+export type BacklinkEntry = z.infer<typeof BacklinkEntrySchema>;
+const _BacklinkEntrySchemaIsStandard: StandardSchemaV1<unknown, BacklinkEntry> =
+  BacklinkEntrySchema;
+void _BacklinkEntrySchemaIsStandard;
+
+/** Success body for `GET /api/backlinks?docName=...`. */
+export const BacklinksSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+    backlinks: z.array(BacklinkEntrySchema),
+  })
+  .loose();
+export type BacklinksSuccess = z.infer<typeof BacklinksSuccessSchema>;
+const _BacklinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, BacklinksSuccess> =
+  BacklinksSuccessSchema;
+void _BacklinksSuccessSchemaIsStandard;
+
+/**
+ * Success body for `GET /api/backlink-counts?docNames=a,b,c`. Sparse map —
+ * docNames failing `isSafeDocName` are silently dropped (read-only enrichment
+ * for sidebar listings; failure is graceful).
+ */
+export const BacklinkCountsSuccessSchema = z
+  .object({
+    counts: z.record(z.string().min(1), z.number().int().nonnegative()),
+  })
+  .loose();
+export type BacklinkCountsSuccess = z.infer<typeof BacklinkCountsSuccessSchema>;
+const _BacklinkCountsSuccessSchemaIsStandard: StandardSchemaV1<unknown, BacklinkCountsSuccess> =
+  BacklinkCountsSuccessSchema;
+void _BacklinkCountsSuccessSchemaIsStandard;
+
+/**
+ * Single forward-link entry returned by `/api/forward-links`. Discriminated
+ * by `kind`: `'doc'` carries `docName` + optional `anchor`; `'external'`
+ * carries `url`. `title` falls back to the docName / URL when no
+ * page-title is available; `snippet` is the surrounding paragraph or null.
+ */
+export const ForwardLinkDocEntrySchema = z
+  .object({
+    kind: z.literal('doc'),
+    docName: z.string().min(1),
+    anchor: z.string().nullable(),
+    title: z.string(),
+    snippet: z.string().nullable(),
+  })
+  .loose();
+export type ForwardLinkDocEntry = z.infer<typeof ForwardLinkDocEntrySchema>;
+const _ForwardLinkDocEntrySchemaIsStandard: StandardSchemaV1<unknown, ForwardLinkDocEntry> =
+  ForwardLinkDocEntrySchema;
+void _ForwardLinkDocEntrySchemaIsStandard;
+
+export const ForwardLinkExternalEntrySchema = z
+  .object({
+    kind: z.literal('external'),
+    url: z.string().min(1),
+    title: z.string(),
+    snippet: z.string().nullable(),
+  })
+  .loose();
+export type ForwardLinkExternalEntry = z.infer<typeof ForwardLinkExternalEntrySchema>;
+const _ForwardLinkExternalEntrySchemaIsStandard: StandardSchemaV1<
+  unknown,
+  ForwardLinkExternalEntry
+> = ForwardLinkExternalEntrySchema;
+void _ForwardLinkExternalEntrySchemaIsStandard;
+
+export const ForwardLinkEntrySchema = z.discriminatedUnion('kind', [
+  ForwardLinkDocEntrySchema,
+  ForwardLinkExternalEntrySchema,
+]);
+export type ForwardLinkEntry = z.infer<typeof ForwardLinkEntrySchema>;
+const _ForwardLinkEntrySchemaIsStandard: StandardSchemaV1<unknown, ForwardLinkEntry> =
+  ForwardLinkEntrySchema;
+void _ForwardLinkEntrySchemaIsStandard;
+
+/** Success body for `GET /api/forward-links?docName=...`. */
+export const ForwardLinksSuccessSchema = z
+  .object({
+    docName: z.string().min(1),
+    forwardLinks: z.array(ForwardLinkEntrySchema),
+  })
+  .loose();
+export type ForwardLinksSuccess = z.infer<typeof ForwardLinksSuccessSchema>;
+const _ForwardLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, ForwardLinksSuccess> =
+  ForwardLinksSuccessSchema;
+void _ForwardLinksSuccessSchemaIsStandard;
+
+/**
+ * Single graph node in `/api/link-graph`. Discriminated by `kind`. Doc nodes
+ * carry frontmatter-derived metadata (`cluster`, `category`, `tags`) for
+ * graph coloring; external nodes carry only the URL + label.
+ */
+export const LinkGraphDocNodeSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.literal('doc'),
+    docName: z.string().min(1),
+    anchor: z.string().nullable(),
+    label: z.string(),
+    cluster: z.string().nullable(),
+    category: z.string().nullable(),
+    tags: z.array(z.string()).nullable(),
+  })
+  .loose();
+export type LinkGraphDocNode = z.infer<typeof LinkGraphDocNodeSchema>;
+const _LinkGraphDocNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphDocNode> =
+  LinkGraphDocNodeSchema;
+void _LinkGraphDocNodeSchemaIsStandard;
+
+export const LinkGraphExternalNodeSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.literal('external'),
+    url: z.string().min(1),
+    label: z.string(),
+  })
+  .loose();
+export type LinkGraphExternalNode = z.infer<typeof LinkGraphExternalNodeSchema>;
+const _LinkGraphExternalNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphExternalNode> =
+  LinkGraphExternalNodeSchema;
+void _LinkGraphExternalNodeSchemaIsStandard;
+
+export const LinkGraphNodeSchema = z.discriminatedUnion('kind', [
+  LinkGraphDocNodeSchema,
+  LinkGraphExternalNodeSchema,
+]);
+export type LinkGraphNode = z.infer<typeof LinkGraphNodeSchema>;
+const _LinkGraphNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphNode> =
+  LinkGraphNodeSchema;
+void _LinkGraphNodeSchemaIsStandard;
+
+/** Single edge in `/api/link-graph`. `source` / `target` are node ids. */
+export const LinkGraphEdgeSchema = z
+  .object({
+    source: z.string().min(1),
+    target: z.string().min(1),
+  })
+  .loose();
+export type LinkGraphEdge = z.infer<typeof LinkGraphEdgeSchema>;
+const _LinkGraphEdgeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphEdge> =
+  LinkGraphEdgeSchema;
+void _LinkGraphEdgeSchemaIsStandard;
+
+/** Success body for `GET /api/link-graph[?docName=...&degrees=N]`. */
+export const LinkGraphSuccessSchema = z
+  .object({
+    nodes: z.array(LinkGraphNodeSchema),
+    links: z.array(LinkGraphEdgeSchema),
+  })
+  .loose();
+export type LinkGraphSuccess = z.infer<typeof LinkGraphSuccessSchema>;
+const _LinkGraphSuccessSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphSuccess> =
+  LinkGraphSuccessSchema;
+void _LinkGraphSuccessSchemaIsStandard;

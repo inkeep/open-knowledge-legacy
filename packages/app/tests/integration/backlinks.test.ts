@@ -46,11 +46,9 @@ test('backlink endpoints update after persisted agent writes', async () => {
     await pollUntilAsync(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
       const data = (await res.json()) as {
-        ok: boolean;
         backlinks?: Array<{ source: string; snippet: string | null }>;
       };
       return (
-        data.ok &&
         Array.isArray(data.backlinks) &&
         data.backlinks.some(
           (entry) => entry.source === 'alpha' && entry.snippet === 'Links to beta.',
@@ -74,11 +72,9 @@ test('backlink endpoints update from live client edits before persistence deboun
       async () => {
         const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
         const data = (await res.json()) as {
-          ok: boolean;
           backlinks?: Array<{ source: string; snippet: string | null }>;
         };
         return (
-          data.ok &&
           Array.isArray(data.backlinks) &&
           data.backlinks.some(
             (entry) => entry.source === 'alpha' && entry.snippet === 'Links to beta.',
@@ -117,13 +113,10 @@ test('backlink endpoints update after external disk edits', async () => {
     await pollUntilAsync(async () => {
       const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
       const data = (await res.json()) as {
-        ok: boolean;
         backlinks?: Array<{ source: string }>;
       };
       return (
-        data.ok &&
-        Array.isArray(data.backlinks) &&
-        data.backlinks.some((entry) => entry.source === 'gamma')
+        Array.isArray(data.backlinks) && data.backlinks.some((entry) => entry.source === 'gamma')
       );
     });
   } finally {

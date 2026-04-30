@@ -1,3 +1,4 @@
+import { DocumentListSuccessSchema } from '@inkeep/open-knowledge-core';
 import { Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { OkBlob } from '@/components/OkBlob';
@@ -23,13 +24,11 @@ export function EmptyEditorState() {
     async function refresh() {
       const docsPromise = fetch('/api/documents')
         .then(async (res) => {
-          const data = (await res.json().catch(() => null)) as {
-            ok: boolean;
-            documents?: unknown[];
-          } | null;
+          const body = (await res.json().catch(() => null)) as unknown;
           if (cancelled) return;
-          if (res.ok && data?.ok && Array.isArray(data.documents)) {
-            setDocumentCount(data.documents.length);
+          const success = res.ok ? DocumentListSuccessSchema.safeParse(body) : null;
+          if (success?.success) {
+            setDocumentCount(success.data.documents.length);
             documentCountResolvedRef.current = true;
           } else if (!documentCountResolvedRef.current) {
             // Fallback on initial fetch failure — safer than pitching onboarding blind.
@@ -85,12 +84,11 @@ export function EmptyEditorState() {
     // Apply also creates log.md — refetch so the empty-state copy switches branches in sync.
     fetch('/api/documents')
       .then(async (res) => {
-        const data = (await res.json().catch(() => null)) as {
-          ok: boolean;
-          documents?: unknown[];
-        } | null;
-        if (res.ok && data?.ok && Array.isArray(data.documents)) {
-          setDocumentCount(data.documents.length);
+        const body = (await res.json().catch(() => null)) as unknown;
+        if (!res.ok) return;
+        const success = DocumentListSuccessSchema.safeParse(body);
+        if (success.success) {
+          setDocumentCount(success.data.documents.length);
         }
       })
       .catch(() => {

@@ -2237,324 +2237,429 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     { handler: 'agent-write-md', method: 'POST' },
   );
 
-  async function handleDocumentRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const rawDocName = url.searchParams.get('docName') || 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-
-      // Existing in-memory Y.Doc → read it directly; no need to round-trip
-      // through openDirectConnection (which would still resolve to the same
-      // doc but adds a connect/disconnect cycle).
-      const existing = hocuspocus.documents.get(docName);
-      if (existing) {
-        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
-        return;
-      }
-
-      // No in-memory doc → require an on-disk file before opening a
-      // connection. `openDirectConnection` on a missing path materializes
-      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
-      // suppressed for (PR #362's design). The persistence layer's
-      // phantom-doc guard blocks the eventual 0-byte file write, but any
-      // later code path that populates the lingering Y.Doc with content
-      // (a mis-routed agent write, the rename spine pulling it in via a
-      // stale backlink edge) would then land a phantom file because
-      // `reconciledBase` was never set. 404 here closes that whole class.
-      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-      if (!existsSync(filePath)) {
-        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
-        return;
-      }
-
-      // Read via a transient DirectConnection rather than sessionManager.getSession —
-      // this endpoint has no agent identity, and creating a cached session would
-      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
-      const dc = await hocuspocus.openDirectConnection(docName);
+  const handleDocumentRead = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
       try {
-        const document = dc.document;
-        if (!document) {
-          json(res, 500, { ok: false, error: 'Document not available' });
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const rawDocName = url.searchParams.get('docName') || 'test-doc';
+        if (!isSafeDocName(rawDocName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'document-read',
+          });
           return;
         }
-        const content = document.getText('source').toString();
-        json(res, 200, { ok: true, docName, content });
-      } finally {
-        await dc.disconnect();
-      }
-    } catch (e) {
-      console.error('[document-read]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        const docName = resolveAlias(rawDocName);
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'document-read' },
+          );
+          return;
+        }
 
-  async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const dir = url.searchParams.get('dir');
+        // Existing in-memory Y.Doc → read it directly; no need to round-trip
+        // through openDirectConnection (which would still resolve to the same
+        // doc but adds a connect/disconnect cycle).
+        const existing = hocuspocus.documents.get(docName);
+        if (existing) {
+          json(res, 200, { docName, content: existing.getText('source').toString() });
+          return;
+        }
 
-      // Validate dir parameter (reject traversal attempts)
-      if (dir) {
+        // No in-memory doc → require an on-disk file before opening a
+        // connection. `openDirectConnection` on a missing path materializes
+        // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
+        // suppressed for. The persistence layer's phantom-doc guard blocks
+        // the eventual 0-byte file write, but any later code path that
+        // populates the lingering Y.Doc with content (a mis-routed agent
+        // write, the rename spine pulling it in via a stale backlink edge)
+        // would then land a phantom file because `reconciledBase` was never
+        // set. 404 here closes that whole class.
+        const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+        if (!existsSync(filePath)) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:doc-not-found',
+            `Document not found: ${docName}`,
+            { handler: 'document-read' },
+          );
+          return;
+        }
+
+        // Read via a transient DirectConnection rather than sessionManager.getSession —
+        // this endpoint has no agent identity, and creating a cached session would
+        // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+        const dc = await hocuspocus.openDirectConnection(docName);
         try {
-          safeSubdir(contentDir, dir);
-        } catch {
-          json(res, 400, { ok: false, error: 'Invalid directory parameter' });
-          return;
+          const document = dc.document;
+          if (!document) {
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:document-not-available',
+              'Document is not available.',
+              { handler: 'document-read' },
+            );
+            return;
+          }
+          const content = document.getText('source').toString();
+          json(res, 200, { docName, content });
+        } finally {
+          await dc.disconnect();
         }
-      }
-
-      // Read from the watcher's in-memory file index (instant, no filesystem scan)
-      const index = getFileIndex();
-      const documents: {
-        docName: string;
-        docExt: string;
-        size: number;
-        modified: string;
-        isSymlink: boolean;
-        canonicalDocName: string | null;
-        targetPath: string | null;
-      }[] = [];
-
-      for (const [docName, entry] of index) {
-        // Filter by dir prefix if specified
-        if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
-
-        // Surfacing the registered on-disk extension lets the sidebar render
-        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
-        const docExt = getDocExtension(docName);
-
-        documents.push({
-          docName,
-          docExt,
-          size: entry.size,
-          modified: entry.modified,
-          isSymlink: false,
-          canonicalDocName: null,
-          targetPath: null,
+      } catch (e) {
+        console.error('[document-read]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read document.', {
+          handler: 'document-read',
+          cause: e,
         });
+      }
+    },
+    { handler: 'document-read', method: 'GET', skipBodyParse: true },
+  );
 
-        // Emit alias entries for this canonical file
-        for (const alias of entry.aliases) {
-          if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
-          const targetRelPath = relative(contentDir, entry.canonicalPath);
+  const handleDocumentList = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const dir = url.searchParams.get('dir');
+
+        // Validate dir parameter (reject traversal attempts)
+        if (dir) {
+          try {
+            safeSubdir(contentDir, dir);
+          } catch {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'Invalid directory parameter.',
+              {
+                handler: 'document-list',
+              },
+            );
+            return;
+          }
+        }
+
+        // Read from the watcher's in-memory file index (instant, no filesystem scan)
+        const index = getFileIndex();
+        const documents: {
+          docName: string;
+          docExt: string;
+          size: number;
+          modified: string;
+          isSymlink: boolean;
+          canonicalDocName: string | null;
+          targetPath: string | null;
+        }[] = [];
+
+        for (const [docName, entry] of index) {
+          // Filter by dir prefix if specified
+          if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
+
+          // getDocExtension() returns the registered on-disk extension for the
+          // docName (or `.md` by default when nothing is yet recorded). Surfacing
+          // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
+          // faithfully instead of hard-coding `.md`.
+          const docExt = getDocExtension(docName);
+
           documents.push({
-            docName: alias,
+            docName,
             docExt,
             size: entry.size,
             modified: entry.modified,
-            isSymlink: true,
-            canonicalDocName: docName,
-            targetPath: targetRelPath,
+            isSymlink: false,
+            canonicalDocName: null,
+            targetPath: null,
           });
+
+          // Emit alias entries for this canonical file
+          for (const alias of entry.aliases) {
+            if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
+            const targetRelPath = relative(contentDir, entry.canonicalPath);
+            documents.push({
+              docName: alias,
+              docExt,
+              size: entry.size,
+              modified: entry.modified,
+              isSymlink: true,
+              canonicalDocName: docName,
+              targetPath: targetRelPath,
+            });
+          }
         }
+
+        documents.sort((a, b) => a.docName.localeCompare(b.docName));
+        json(res, 200, { documents });
+      } catch (e) {
+        console.error('[document-list]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to list documents.', {
+          handler: 'document-list',
+          cause: e,
+        });
       }
+    },
+    { handler: 'document-list', method: 'GET', skipBodyParse: true },
+  );
 
-      documents.sort((a, b) => a.docName.localeCompare(b.docName));
-      json(res, 200, { ok: true, documents });
-    } catch (e) {
-      console.error('[document-list]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleBacklinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+  const handleBacklinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'backlinks' },
+        );
         return;
       }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'backlinks',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'backlinks',
+          });
+          return;
+        }
+        const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
+          source: entry.source,
+          anchor: entry.anchor,
+          title: readPageTitleForDocName(entry.source),
+          snippet: entry.snippet,
+        }));
+        json(res, 200, { docName, backlinks });
+      } catch (e) {
+        console.error('[backlinks]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read backlinks.', {
+          handler: 'backlinks',
+          cause: e,
+        });
       }
-      const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
-        source: entry.source,
-        anchor: entry.anchor,
-        title: readPageTitleForDocName(entry.source),
-        snippet: entry.snippet,
-      }));
-      json(res, 200, { ok: true, docName, backlinks });
-    } catch (e) {
-      console.error('[backlinks]', e);
-      json(res, 500, { ok: false, error: 'Failed to read backlinks' });
-    }
-  }
+    },
+    { handler: 'backlinks', method: 'GET', skipBodyParse: true },
+  );
 
   /**
    * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
-   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * returns `{ counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
    * (exec ls/grep/find slim enrichment) that need connection density per file
    * without N-amplifying the single-doc `/api/backlinks` endpoint.
    * docNames failing `isSafeDocName` are silently dropped from `counts`.
    */
-  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const raw = url.searchParams.get('docNames');
-      if (!raw) {
-        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
+  const handleBacklinkCounts = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'backlink-counts' },
+        );
         return;
       }
-      const counts: Record<string, number> = {};
-      for (const docName of raw.split(',')) {
-        const trimmed = docName.trim();
-        if (!trimmed || !isSafeDocName(trimmed)) continue;
-        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const raw = url.searchParams.get('docNames');
+        if (!raw) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docNames parameter.', {
+            handler: 'backlink-counts',
+          });
+          return;
+        }
+        const counts: Record<string, number> = {};
+        for (const docName of raw.split(',')) {
+          const trimmed = docName.trim();
+          if (!trimmed || !isSafeDocName(trimmed)) continue;
+          counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+        }
+        json(res, 200, { counts });
+      } catch (e) {
+        console.error('[backlink-counts]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read backlink counts.',
+          { handler: 'backlink-counts', cause: e },
+        );
       }
-      json(res, 200, { ok: true, counts });
-    } catch (e) {
-      console.error('[backlink-counts]', e);
-      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
-    }
-  }
+    },
+    { handler: 'backlink-counts', method: 'GET', skipBodyParse: true },
+  );
 
-  async function handleForwardLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+  const handleForwardLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'forward-links' },
+        );
         return;
       }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'forward-links',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'forward-links',
+          });
+          return;
+        }
+        json(res, 200, {
+          docName,
+          forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
+            entry.kind === 'doc'
+              ? {
+                  kind: 'doc' as const,
+                  docName: entry.target,
+                  anchor: entry.anchor,
+                  title: readPageTitleForDocName(entry.target),
+                  snippet: entry.snippet,
+                }
+              : {
+                  kind: 'external' as const,
+                  url: entry.url,
+                  title: entry.label ?? entry.url,
+                  snippet: entry.snippet,
+                },
+          ),
+        });
+      } catch (e) {
+        console.error('[forward-links]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read forward links.',
+          { handler: 'forward-links', cause: e },
+        );
+      }
+    },
+    { handler: 'forward-links', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleLinkGraph = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'link-graph' },
+        );
         return;
       }
-      json(res, 200, {
-        ok: true,
-        docName,
-        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
-          entry.kind === 'doc'
-            ? {
-                kind: 'doc' as const,
-                docName: entry.target,
-                anchor: entry.anchor,
-                title: readPageTitleForDocName(entry.target),
-                snippet: entry.snippet,
-              }
-            : {
-                kind: 'external' as const,
-                url: entry.url,
-                title: entry.label ?? entry.url,
-                snippet: entry.snippet,
-              },
-        ),
-      });
-    } catch (e) {
-      console.error('[forward-links]', e);
-      json(res, 500, { ok: false, error: 'Failed to read forward links' });
-    }
-  }
-
-  async function handleLinkGraph(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (docName && !isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-
-      const rawDegrees = url.searchParams.get('degrees');
-      if (rawDegrees && !docName) {
-        json(res, 400, { ok: false, error: 'docName is required when degrees is provided' });
-        return;
-      }
-
-      let nodes: IndexedGraphNode[];
-      let links: Array<{ source: string; target: string }>;
-
-      if (rawDegrees && docName) {
-        const degrees = Number.parseInt(rawDegrees, 10);
-        if (!Number.isFinite(degrees) || degrees < 0) {
-          json(res, 400, { ok: false, error: 'degrees must be a non-negative integer' });
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (docName && !isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'link-graph',
+          });
           return;
         }
 
-        ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
-      } else {
-        ({ nodes, links } = backlinkIndex.getLinkGraph());
-      }
+        const rawDegrees = url.searchParams.get('degrees');
+        if (rawDegrees && !docName) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'docName is required when degrees is provided.',
+            { handler: 'link-graph' },
+          );
+          return;
+        }
 
-      const enrichedNodes = nodes.map((node) => {
-        if (node.kind === 'doc') {
-          const meta = readFrontmatterMetadataForDocName(node.docName);
+        let nodes: IndexedGraphNode[];
+        let links: Array<{ source: string; target: string }>;
+
+        if (rawDegrees && docName) {
+          const degrees = Number.parseInt(rawDegrees, 10);
+          if (!Number.isFinite(degrees) || degrees < 0) {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'degrees must be a non-negative integer.',
+              { handler: 'link-graph' },
+            );
+            return;
+          }
+
+          ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
+        } else {
+          ({ nodes, links } = backlinkIndex.getLinkGraph());
+        }
+
+        const enrichedNodes = nodes.map((node) => {
+          if (node.kind === 'doc') {
+            const meta = readFrontmatterMetadataForDocName(node.docName);
+            return {
+              id: node.id,
+              kind: 'doc' as const,
+              docName: node.docName,
+              anchor: node.anchor ?? null,
+              label: readPageTitleForDocName(node.docName),
+              cluster: meta.cluster ?? null,
+              category: meta.category ?? null,
+              tags: meta.tags ?? null,
+            };
+          }
           return {
             id: node.id,
-            kind: 'doc' as const,
-            docName: node.docName,
-            anchor: node.anchor ?? null,
-            label: readPageTitleForDocName(node.docName),
-            cluster: meta.cluster ?? null,
-            category: meta.category ?? null,
-            tags: meta.tags ?? null,
+            kind: 'external' as const,
+            url: node.url,
+            label: node.label ?? node.url,
           };
-        }
-        return {
-          id: node.id,
-          kind: 'external' as const,
-          url: node.url,
-          label: node.label ?? node.url,
-        };
-      });
-      json(res, 200, { ok: true, nodes: enrichedNodes, links });
-    } catch (e) {
-      console.error('[link-graph]', e);
-      json(res, 500, { ok: false, error: 'Failed to read link graph' });
-    }
-  }
+        });
+        json(res, 200, { nodes: enrichedNodes, links });
+      } catch (e) {
+        console.error('[link-graph]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read link graph.',
+          {
+            handler: 'link-graph',
+            cause: e,
+          },
+        );
+      }
+    },
+    { handler: 'link-graph', method: 'GET', skipBodyParse: true },
+  );
 
   async function handleOrphans(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {

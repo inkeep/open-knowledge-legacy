@@ -1,6 +1,7 @@
 import {
   CreatePageSuccessSchema,
   DeletePathSuccessSchema,
+  DocumentListSuccessSchema,
   type HandoffOutcome,
   type HandoffTarget,
   type InstallState,
@@ -609,13 +610,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     async function refreshDocs() {
       try {
         const res = await fetch('/api/documents');
-        const data = await res.json().catch(() => null);
+        const parsed = await parseServerResponse(res, 'Failed to load documents');
         if (!active) return;
-        if (res.ok && data?.ok) {
-          setDocuments(data.documents);
-          setError(null);
+        if (!parsed.ok) {
+          setError(parsed.title);
         } else {
-          setError(data?.error ?? `Server error (HTTP ${res.status})`);
+          const success = DocumentListSuccessSchema.safeParse(parsed.body);
+          if (!success.success) {
+            setError('Documents response did not match expected shape.');
+          } else {
+            setDocuments(success.data.documents);
+            setError(null);
+          }
         }
       } catch (err) {
         if (active) setError('Could not reach server');

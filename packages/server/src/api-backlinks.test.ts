@@ -140,15 +140,14 @@ describe('graph endpoints', () => {
             backlinkIndex,
           )
         ).body,
-      ) as { ok: boolean; counts: Record<string, number> };
-      expect(counts.ok).toBe(true);
+      ) as { counts: Record<string, number> };
       expect(counts.counts).toEqual({ alpha: 0, beta: 1, gamma: 0, unknown: 0 });
 
       const countsMissing = JSON.parse(
         (await callRoute(contentDir, '/api/backlink-counts', fileIndex, backlinkIndex)).body,
-      ) as { ok: boolean; error: string };
-      expect(countsMissing.ok).toBe(false);
-      expect(countsMissing.error).toContain('Missing docNames');
+      ) as { type: string; title: string };
+      expect(countsMissing.type).toBe('urn:ok:error:invalid-request');
+      expect(countsMissing.title).toContain('Missing docNames');
 
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
@@ -203,12 +202,10 @@ describe('graph endpoints', () => {
       const linkGraph = JSON.parse(
         (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
       ) as {
-        ok: boolean;
         nodes: Array<{ id: string; label: string; anchor: string | null }>;
         links: Array<{ source: string; target: string }>;
       };
 
-      expect(linkGraph.ok).toBe(true);
       // Every scanned doc gets a forward entry (possibly empty), so nodes include pages
       // with no outbound wikilinks (e.g. gamma) as well as edge endpoints.
       expect(linkGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta', 'gamma']);
@@ -228,12 +225,10 @@ describe('graph endpoints', () => {
           )
         ).body,
       ) as {
-        ok: boolean;
         nodes: Array<{ id: string; label: string }>;
         links: Array<{ source: string; target: string }>;
       };
 
-      expect(oneHopGraph.ok).toBe(true);
       expect(oneHopGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta']);
       expect(oneHopGraph.links).toEqual([{ source: 'alpha', target: 'beta' }]);
 
@@ -244,10 +239,9 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(missingDocName.status).toBe(400);
-      expect(JSON.parse(missingDocName.body)).toEqual({
-        ok: false,
-        error: 'docName is required when degrees is provided',
-      });
+      const missingDocNameBody = JSON.parse(missingDocName.body) as { type: string; title: string };
+      expect(missingDocNameBody.type).toBe('urn:ok:error:invalid-request');
+      expect(missingDocNameBody.title).toContain('docName is required');
 
       const invalidDegrees = await callRoute(
         contentDir,
@@ -256,10 +250,9 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(invalidDegrees.status).toBe(400);
-      expect(JSON.parse(invalidDegrees.body)).toEqual({
-        ok: false,
-        error: 'degrees must be a non-negative integer',
-      });
+      const invalidDegreesBody = JSON.parse(invalidDegrees.body) as { type: string; title: string };
+      expect(invalidDegreesBody.type).toBe('urn:ok:error:invalid-request');
+      expect(invalidDegreesBody.title).toContain('degrees must be');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

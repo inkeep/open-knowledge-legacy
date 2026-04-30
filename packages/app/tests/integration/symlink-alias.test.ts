@@ -108,7 +108,6 @@ describe('QA-009: /api/documents symlink metadata', () => {
   test('returns canonical entry with isSymlink=false and alias entry with correct metadata', async () => {
     const res = await fetch(`http://localhost:${server.port}/api/documents`);
     const body = (await res.json()) as {
-      ok: boolean;
       documents: Array<{
         docName: string;
         size: number;
@@ -118,7 +117,7 @@ describe('QA-009: /api/documents symlink metadata', () => {
         targetPath: string | null;
       }>;
     };
-    expect(body.ok).toBe(true);
+    expect(Array.isArray(body.documents)).toBe(true);
 
     const target = body.documents.find((d) => d.docName === 'target');
     const foo = body.documents.find((d) => d.docName === 'foo');
@@ -151,15 +150,15 @@ describe('QA-010: document read via alias', () => {
 
     const [viaCan, viaAlias] = await Promise.all([
       fetch(`http://localhost:${server.port}/api/document?docName=target`).then(
-        (r) => r.json() as Promise<{ ok: boolean; content: string }>,
+        (r) => r.json() as Promise<{ docName: string; content: string }>,
       ),
       fetch(`http://localhost:${server.port}/api/document?docName=foo`).then(
-        (r) => r.json() as Promise<{ ok: boolean; content: string }>,
+        (r) => r.json() as Promise<{ docName: string; content: string }>,
       ),
     ]);
 
-    expect(viaCan.ok).toBe(true);
-    expect(viaAlias.ok).toBe(true);
+    expect(typeof viaCan.content).toBe('string');
+    expect(typeof viaAlias.content).toBe('string');
     expect(viaAlias.content).toBe(viaCan.content);
     expect(viaCan.content).toContain('Canonical Content');
   });
@@ -173,13 +172,13 @@ describe('QA-012: agent-write-md via alias', () => {
     await wait(300);
 
     const res = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    const body = (await res.json()) as { ok: boolean; content: string };
-    expect(body.ok).toBe(true);
+    const body = (await res.json()) as { docName: string; content: string };
+    expect(typeof body.content).toBe('string');
     expect(body.content).toContain('Via Alias');
 
     // Also verify through alias read
     const aliasRes = await fetch(`http://localhost:${server.port}/api/document?docName=foo`);
-    const aliasBody = (await aliasRes.json()) as { ok: boolean; content: string };
+    const aliasBody = (await aliasRes.json()) as { docName: string; content: string };
     expect(aliasBody.content).toBe(body.content);
   });
 });
@@ -197,8 +196,8 @@ describe('QA-011: agent-write via alias', () => {
     await wait(300);
 
     const readRes = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    const body = (await readRes.json()) as { ok: boolean; content: string };
-    expect(body.ok).toBe(true);
+    const body = (await readRes.json()) as { docName: string; content: string };
+    expect(typeof body.content).toBe('string');
     expect(body.content).toContain('agent raw write content');
   });
 });
@@ -221,7 +220,7 @@ describe('QA-013: agent-patch via alias', () => {
 
     // Verify via canonical read
     const readRes = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    const body = (await readRes.json()) as { ok: boolean; content: string };
+    const body = (await readRes.json()) as { docName: string; content: string };
     expect(body.content).toContain('new text here');
     expect(body.content).not.toContain('old text here');
   });
@@ -242,10 +241,10 @@ describe('QA-002: alias and canonical API reads resolve to same Y.Doc content', 
     // Read via both — API resolveAlias ensures they return the same content
     const [viaCan, viaAlias] = await Promise.all([
       fetch(`http://localhost:${server.port}/api/document?docName=target`).then(
-        (r) => r.json() as Promise<{ ok: boolean; content: string }>,
+        (r) => r.json() as Promise<{ docName: string; content: string }>,
       ),
       fetch(`http://localhost:${server.port}/api/document?docName=foo`).then(
-        (r) => r.json() as Promise<{ ok: boolean; content: string }>,
+        (r) => r.json() as Promise<{ docName: string; content: string }>,
       ),
     ]);
 
@@ -258,7 +257,7 @@ describe('QA-002: alias and canonical API reads resolve to same Y.Doc content', 
     await wait(300);
 
     const viaAlias = await fetch(`http://localhost:${server.port}/api/document?docName=foo`).then(
-      (r) => r.json() as Promise<{ ok: boolean; content: string }>,
+      (r) => r.json() as Promise<{ docName: string; content: string }>,
     );
     expect(viaAlias.content).toContain('From Canonical');
   });
@@ -299,14 +298,14 @@ describe('QA-015: self-write detection after symlink resolution', () => {
 
     // Read state immediately after persistence
     const res1 = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    const body1 = (await res1.json()) as { ok: boolean; content: string };
+    const body1 = (await res1.json()) as { docName: string; content: string };
 
     // Wait for any watcher-triggered re-import (which would be a bug)
     await wait(1500);
 
     // State should be unchanged — no echo loop
     const res2 = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    const body2 = (await res2.json()) as { ok: boolean; content: string };
+    const body2 = (await res2.json()) as { docName: string; content: string };
     expect(body2.content).toBe(body1.content);
   });
 });
