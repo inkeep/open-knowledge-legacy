@@ -39,7 +39,7 @@ import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
 import { getDescriptor } from '../registry/index.ts';
-import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.ts';
+import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.tsx';
 
 // Height of the handle element (matches .ok-block-controls button height: 20px in globals.css).
 const HANDLE_HEIGHT = 20;

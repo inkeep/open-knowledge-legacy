@@ -68,7 +68,7 @@ import {
   consumeAutoOpen,
   createChildNode,
   focusInsertedComponent,
-} from '../slash-command/component-items.ts';
+} from '../slash-command/component-items.tsx';
 import { formatContainerAriaLabel } from '../utils/editor-strings.ts';
 import { reconstructSource } from '../utils/reconstruct-source.ts';
 import { sanitizeComponentProps } from '../utils/sanitize-url.ts';

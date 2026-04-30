@@ -17,10 +17,52 @@
  */
 
 import type { Editor } from '@tiptap/react';
+import type { ReactNode } from 'react';
 import { resolveIcon } from '../registry/icons.ts';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
+import imagePreview from './preview-assets/image-preview.png';
+import videoPreview from './preview-assets/video-preview.png';
+
+/**
+ * Per-component hover-preview configuration. Each entry is rendered live via
+ * the descriptor's React component — props + children pass directly through,
+ * so previews stay in sync with the real component without screenshot drift.
+ *
+ * Keyed by descriptor name (case-sensitive, matches `componentMap` key).
+ * Components without an entry get no preview panel.
+ */
+interface PreviewConfig {
+  description: string;
+  props?: Record<string, unknown>;
+  children?: ReactNode;
+}
+
+const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
+  Callout: {
+    description: 'Highlight tips, warnings, and notes.',
+    props: { type: 'note', title: 'Heads up' },
+    children: 'Callouts draw attention to key information.',
+  },
+  Accordion: {
+    description: 'Collapsible section with a clickable summary.',
+    props: { title: 'Click to expand', defaultOpen: true },
+    children: 'Hidden content goes here.',
+  },
+  img: {
+    description: 'Embed an image with optional alt text.',
+    props: { src: imagePreview, alt: 'Sample image' },
+  },
+  video: {
+    description: 'Embed a video with native player controls.',
+    props: { controls: true, poster: videoPreview },
+  },
+  audio: {
+    description: 'Embed an audio file with native player controls.',
+    props: { controls: true },
+  },
+};
 
 /**
  * Compute default props for slash-inserted components.
@@ -202,13 +244,25 @@ function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Edito
 export function getComponentItems(): SlashCommandItem[] {
   const descriptors = getRegisteredDescriptors().filter((desc) => desc.surface === 'canonical');
 
-  return descriptors.map((desc) => ({
-    name: `component-${desc.name}`,
-    label: desc.displayName ?? desc.name,
-    icon: resolveIcon(desc.icon),
-    category: desc.category ?? 'content',
-    command: createInsertCommand(desc),
-    aliases: desc.searchTerms,
-    description: desc.description,
-  }));
+  return descriptors.map((desc) => {
+    const previewConfig = PREVIEW_CONFIG[desc.name];
+    const Component = desc.Component;
+    const preview: SlashCommandItem['preview'] = previewConfig
+      ? {
+          description: previewConfig.description,
+          render: () => <Component {...previewConfig.props}>{previewConfig.children}</Component>,
+        }
+      : undefined;
+
+    return {
+      name: `component-${desc.name}`,
+      label: desc.displayName ?? desc.name,
+      icon: resolveIcon(desc.icon),
+      category: desc.category ?? 'content',
+      command: createInsertCommand(desc),
+      aliases: desc.searchTerms,
+      description: desc.description,
+      preview,
+    };
+  });
 }
