@@ -13,6 +13,13 @@
  * colored bar on `'either'` fields whose value differs from the schema
  * default.
  *
+ * Form harness: a single `useForm<Config>` instance owned by
+ * `useConfigForm(binding)` (D64 LOCKED resolver-less); external Y.Text
+ * updates merge in via `binding.subscribe → form.reset({keepDirtyValues:
+ * true, keepDirty: true, keepTouched: true})` (D65 LOCKED). Each
+ * `SettingsField` wraps its body in a shadcn `FormField` whose
+ * render-prop dispatches on the schema-walker's type tag.
+ *
  * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
  * sonner toast + brief field flash.
  *
@@ -36,10 +43,20 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -56,6 +73,7 @@ import {
   readPath,
   resolveLeafSchema,
 } from './schema-walker';
+import { useConfigForm } from './use-config-form';
 
 interface SettingsPaneProps {
   scope: SettingsScope;
@@ -333,7 +351,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
         {connection === null || !connection.synced ? (
           <SettingsSkeleton />
         ) : (
-          <SettingsForm
+          <BoundSettingsForm
             scope={scope}
             binding={connection.binding}
             config={connection.config}
@@ -367,6 +385,30 @@ function SettingsSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+interface BoundSettingsFormProps {
+  scope: SettingsScope;
+  binding: ConfigBinding;
+  config: Config;
+  flashedPath: string | null;
+}
+
+/**
+ * Mounts the harness (`useConfigForm`) once per binding identity and
+ * wraps the form in shadcn's `<Form>` (which is RHF's `FormProvider`).
+ * Splitting from `SettingsPane` keeps the hook out of the loading branch
+ * (`connection === null || !synced`) so we don't `useForm` on a binding
+ * that hasn't synced yet.
+ */
+function BoundSettingsForm({ scope, binding, config, flashedPath }: BoundSettingsFormProps) {
+  const { form } = useConfigForm(binding);
+
+  return (
+    <Form {...form}>
+      <SettingsForm scope={scope} binding={binding} config={config} flashedPath={flashedPath} />
+    </Form>
   );
 }
 
@@ -444,12 +486,15 @@ interface SettingsFieldProps {
 }
 
 function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFieldProps) {
+  const form = useFormContext<Config>();
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
   const typeTag = leafSchema ? getLeafTypeTag(leafSchema) : undefined;
   const defaultValue = leafSchema ? getFieldDefault(leafSchema) : undefined;
   const currentValue = readPath(config, field.path);
   const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
   const enumOptions = leafSchema ? getEnumOptions(leafSchema) : undefined;
+
+  const dottedName = field.path.join('.') as FieldPath<Config>;
 
   // Modified indicator: field's resolved value differs from default. This
   // is an approximation of "set at this scope" semantics — full per-scope
@@ -459,19 +504,28 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
       ? currentValue !== undefined && currentValue !== null
       : !valuesEqual(currentValue, defaultValue);
 
-  const fieldId = field.path.join('-');
-  const errorId = `${fieldId}-error`;
+  const [savedTick, setSavedTick] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
-
+  /**
+   * Per-field commit. Routes through `binding.patch` directly (not the
+   * harness's `commitField`) so the reset path can pass an explicit
+   * `null`/default value rather than relying on `form.getValues`. Errors
+   * mirror into `formState.errors[name]` via `form.setError` so
+   * `<FormMessage>` renders them inline; success clears the error and
+   * fires the SavedIndicator flash.
+   */
   const commit = (value: unknown): boolean => {
     const patch = buildPatch(field.path, value);
     const result = binding.patch(patch);
     if (!result.ok) {
-      setError(humanFormatFirstIssue(result.error));
+      form.setError(dottedName, {
+        type: 'config-binding',
+        message: humanFormatFirstIssue(result.error),
+      });
       return false;
     }
-    setError(null);
+    form.clearErrors(dottedName);
+    flashSaved(setSavedTick);
     return true;
   };
 
@@ -484,6 +538,13 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
     }
   };
 
+  const readonlyReason: string | null =
+    meta?.scope === 'project' && scope !== 'project'
+      ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
+      : meta?.scope === 'user' && scope !== 'user'
+        ? "This field can only be set globally. Switch to the 'User' tab to edit it."
+        : null;
+
   const indicator = isModified ? (
     <span
       data-modified="true"
@@ -493,395 +554,280 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
   ) : null;
 
   const wrapperClass = `relative space-y-1 ${isFlashed ? 'animate-settings-flash' : ''}`;
+  const showResetButton =
+    !readonlyReason && (defaultValue !== undefined || currentValue !== undefined);
 
   return (
-    <div className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
-      {indicator}
-      <div className="flex items-baseline justify-between gap-2">
-        <label htmlFor={fieldId} className="text-sm font-medium">
-          {field.label}
-        </label>
-        {defaultValue !== undefined || currentValue !== undefined ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
-                onClick={reset}
-                aria-label={`Reset ${field.label} to default`}
-              >
-                <RotateCcw className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Reset to default</TooltipContent>
-          </Tooltip>
-        ) : null}
-      </div>
-      {field.description ? (
-        <p className="text-xs text-muted-foreground">{field.description}</p>
-      ) : null}
-      <FieldControl
-        field={field}
-        fieldId={fieldId}
-        errorId={error ? errorId : undefined}
-        typeTag={typeTag}
-        currentValue={currentValue}
-        enumOptions={enumOptions}
-        onCommit={commit}
-        readonlyReason={
-          meta?.scope === 'project' && scope !== 'project'
-            ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
-            : meta?.scope === 'user' && scope !== 'user'
-              ? "This field can only be set globally. Switch to the 'User' tab to edit it."
-              : null
-        }
-      />
-      {error ? (
-        <p
-          id={errorId}
-          role="alert"
-          className="text-xs text-destructive"
-          data-field-error={field.path.join('.')}
-        >
-          {error}
-        </p>
-      ) : null}
-    </div>
+    <FormField
+      control={form.control}
+      name={dottedName}
+      render={({ field: ctl }) => (
+        <FormItem className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
+          {indicator}
+          <div className="flex items-baseline justify-between gap-2">
+            <FormLabel className="text-sm font-medium">{field.label}</FormLabel>
+            {showResetButton ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
+                    onClick={reset}
+                    aria-label={`Reset ${field.label} to default`}
+                  >
+                    <RotateCcw className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Reset to default</TooltipContent>
+              </Tooltip>
+            ) : null}
+          </div>
+          {field.description ? (
+            <FormDescription className="text-xs text-muted-foreground">
+              {field.description}
+            </FormDescription>
+          ) : null}
+          {readonlyReason ? (
+            // `role="note"` so screen readers announce this as explanatory
+            // text rather than treating the dangling label as broken.
+            <div
+              role="note"
+              className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
+            >
+              {readonlyReason}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <FormControl>
+                <FieldControlBody
+                  field={field}
+                  ctl={ctl}
+                  typeTag={typeTag}
+                  enumOptions={enumOptions}
+                  onCommit={commit}
+                />
+              </FormControl>
+              <SavedIndicator visible={savedTick} />
+            </div>
+          )}
+          <FormMessage data-field-error={field.path.join('.')} />
+        </FormItem>
+      )}
+    />
   );
 }
 
-interface FieldControlProps {
+interface FieldControlBodyProps {
   field: FieldDef;
-  fieldId: string;
-  errorId?: string;
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   typeTag: string | undefined;
-  currentValue: unknown;
   enumOptions: readonly string[] | undefined;
   onCommit: (value: unknown) => boolean;
-  readonlyReason: string | null;
 }
 
-function FieldControl({
-  field,
-  fieldId,
-  errorId,
-  typeTag,
-  currentValue,
-  enumOptions,
-  onCommit,
-  readonlyReason,
-}: FieldControlProps) {
-  if (readonlyReason) {
-    // `id={fieldId}` so the parent `<label htmlFor={fieldId}>` resolves to
-    // something; `role="note"` so screen readers announce this as
-    // explanatory text rather than treating the dangling label as broken.
-    return (
-      <div
-        id={fieldId}
-        role="note"
-        className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
-      >
-        {readonlyReason}
-      </div>
-    );
-  }
-
+/**
+ * Type-tag-driven dispatch for the inner control element. Returns a
+ * single React element so the wrapping `<FormControl>` (Radix Slot)
+ * can forward `id`, `aria-describedby`, and `aria-invalid` to the
+ * underlying DOM input.
+ *
+ * `'use no memo'` opts out of React Compiler memoization because RHF's
+ * `ControllerRenderProps` exposes a `ref` field; the compiler heuristic
+ * flags every property access on objects with `ref` as ref-access during
+ * render. The control bodies below use the same opt-out for the same
+ * reason.
+ */
+function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldControlBodyProps) {
+  'use no memo';
   if (typeTag === 'boolean') {
     return (
-      <BooleanControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={Boolean(currentValue)}
-        onCommit={onCommit}
+      <Switch
+        checked={Boolean(ctl.value)}
+        ref={ctl.ref}
+        onCheckedChange={(next) => {
+          ctl.onChange(next);
+          onCommit(next);
+        }}
+        onBlur={ctl.onBlur}
       />
     );
   }
   if (typeTag === 'enum' && enumOptions && enumOptions.length > 0) {
     if (field.control === 'enum-toggle' || enumOptions.length <= 4) {
       return (
-        <EnumToggleControl
-          fieldId={fieldId}
-          errorId={errorId}
-          ariaLabel={field.label}
-          options={enumOptions}
-          value={typeof currentValue === 'string' ? currentValue : ''}
-          onCommit={onCommit}
-        />
+        <ToggleGroup
+          type="single"
+          value={typeof ctl.value === 'string' ? ctl.value : ''}
+          ref={ctl.ref}
+          onValueChange={(next) => {
+            if (!next) return;
+            ctl.onChange(next);
+            onCommit(next);
+          }}
+          onBlur={ctl.onBlur}
+          variant="segmented"
+          size="sm"
+          spacing={1}
+          className="bg-muted dark:bg-background p-0.5 rounded-lg"
+          aria-label={field.label}
+        >
+          {enumOptions.map((opt) => (
+            <ToggleGroupItem key={opt} value={opt} className="text-xs capitalize">
+              {opt}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       );
     }
   }
   if (typeTag === 'number' || typeTag === 'int') {
-    return (
-      <NumberControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={typeof currentValue === 'number' ? currentValue : 0}
-        onCommit={onCommit}
-      />
-    );
+    return <NumberControlBody ctl={ctl} onCommit={onCommit} />;
   }
   if (typeTag === 'array') {
-    return (
-      <StringArrayControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={Array.isArray(currentValue) ? (currentValue as string[]) : []}
-        onCommit={onCommit}
-      />
-    );
+    return <StringArrayControlBody ctl={ctl} onCommit={onCommit} />;
   }
-  // Default: string-like (text, url, regex-validated string).
+  return <StringControlBody ctl={ctl} onCommit={onCommit} />;
+}
+
+/**
+ * String-typed text input. Form value IS the displayed text — no local
+ * presentation buffer needed. Commits on blur or Enter.
+ */
+function StringControlBody({
+  ctl,
+  onCommit,
+}: {
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
+  onCommit: (value: unknown) => boolean;
+}) {
+  'use no memo';
   return (
-    <StringControl
-      fieldId={fieldId}
-      errorId={errorId}
-      value={typeof currentValue === 'string' ? currentValue : ''}
-      onCommit={onCommit}
+    <Input
+      value={typeof ctl.value === 'string' ? ctl.value : ''}
+      ref={ctl.ref}
+      onChange={(e) => ctl.onChange(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        onCommit(ctl.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(ctl.value);
+        }
+      }}
+      className="h-8 text-sm"
     />
   );
 }
 
-function StringControl({
-  fieldId,
-  errorId,
-  value,
+/**
+ * Number-typed input. Form value is a `number`; the textbox needs a
+ * string presentation buffer so the user can type intermediate text
+ * (`'1.'`, `'-'`) without it parsing prematurely. The local `pendingText`
+ * resyncs with `ctl.value` whenever the user isn't actively editing.
+ */
+function NumberControlBody({
+  ctl,
   onCommit,
 }: {
-  fieldId: string;
-  errorId?: string;
-  value: string;
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   onCommit: (value: unknown) => boolean;
 }) {
-  const [pending, setPending] = useState(value);
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(value);
+  'use no memo';
+  const [pendingText, setPendingText] = useState(ctl.value === undefined ? '' : String(ctl.value));
+  const lastSyncedValueRef = useRef(ctl.value);
 
   useEffect(() => {
-    // External update reflects in the input only if the user isn't editing
-    // (pending matches the previously-committed value).
-    if (pending === lastCommittedRef.current) {
-      setPending(value);
-      lastCommittedRef.current = value;
-    }
-  }, [value, pending]);
+    // Pull a remote update into the textbox iff the user isn't mid-edit
+    // (pendingText still matches the previously-synced value).
+    if (lastSyncedValueRef.current === ctl.value) return;
+    setPendingText(ctl.value === undefined ? '' : String(ctl.value));
+    lastSyncedValueRef.current = ctl.value;
+  }, [ctl.value]);
 
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    if (onCommit(pending)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        id={fieldId}
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="h-8 text-sm"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function NumberControl({
-  fieldId,
-  errorId,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  value: number;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [pending, setPending] = useState<string>(String(value));
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(String(value));
-
-  useEffect(() => {
-    if (pending === lastCommittedRef.current) {
-      setPending(String(value));
-      lastCommittedRef.current = String(value);
-    }
-  }, [value, pending]);
-
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    const parsed = Number(pending);
+  const commitText = () => {
+    const parsed = Number(pendingText);
     if (!Number.isFinite(parsed)) {
-      // Let L1 reject + show a typed error rather than silently swallow.
-      onCommit(pending);
+      // Let L1 reject + show a typed FormMessage error rather than silently swallow.
+      ctl.onChange(pendingText as unknown as number);
+      onCommit(pendingText);
       return;
     }
-    if (onCommit(parsed)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
+    ctl.onChange(parsed);
+    onCommit(parsed);
+    lastSyncedValueRef.current = parsed as unknown as Config[keyof Config];
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        id={fieldId}
-        type="number"
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="h-8 w-28 text-sm"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
+    <Input
+      type="number"
+      value={pendingText}
+      ref={ctl.ref}
+      onChange={(e) => setPendingText(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        commitText();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitText();
+        }
+      }}
+      className="h-8 w-28 text-sm"
+    />
   );
 }
 
-function BooleanControl({
-  fieldId,
-  errorId,
-  value,
+/**
+ * String-array textarea. Form value is `string[]`; the textarea displays
+ * a newline-joined string. Local `pendingText` resyncs with `ctl.value`
+ * whenever the user isn't actively editing. Commit splits on newlines,
+ * trims each entry, and filters empty lines.
+ */
+function StringArrayControlBody({
+  ctl,
   onCommit,
 }: {
-  fieldId: string;
-  errorId?: string;
-  value: boolean;
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   onCommit: (value: unknown) => boolean;
 }) {
-  const [savedTick, setSavedTick] = useState(false);
-  return (
-    <div className="flex items-center gap-2">
-      <Switch
-        id={fieldId}
-        checked={value}
-        aria-describedby={errorId}
-        onCheckedChange={(next) => {
-          if (onCommit(next)) flashSaved(setSavedTick);
-        }}
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function EnumToggleControl({
-  fieldId,
-  errorId,
-  ariaLabel,
-  options,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  ariaLabel: string;
-  options: readonly string[];
-  value: string;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [savedTick, setSavedTick] = useState(false);
-  return (
-    <div className="flex items-center gap-2" aria-describedby={errorId}>
-      <ToggleGroup
-        type="single"
-        value={value}
-        variant="segmented"
-        size="sm"
-        spacing={1}
-        className="bg-muted dark:bg-background p-0.5 rounded-lg"
-        aria-label={ariaLabel}
-        onValueChange={(v) => {
-          if (!v) return;
-          if (onCommit(v)) flashSaved(setSavedTick);
-        }}
-      >
-        {options.map((opt, idx) => (
-          // Put `id={fieldId}` on the first toggle button so the wrapping
-          // `<label htmlFor={fieldId}>` actually focuses something on click.
-          // (A label whose `htmlFor` points at a `<div>` is silently broken.)
-          <ToggleGroupItem
-            key={opt}
-            value={opt}
-            id={idx === 0 ? fieldId : undefined}
-            className="text-xs capitalize"
-          >
-            {opt}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function StringArrayControl({
-  fieldId,
-  errorId,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  value: readonly string[];
-  onCommit: (value: unknown) => boolean;
-}) {
-  const initial = value.join('\n');
-  const [pending, setPending] = useState(initial);
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(initial);
+  'use no memo';
+  const initial = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
+  const [pendingText, setPendingText] = useState(initial);
+  const lastSyncedRef = useRef(initial);
 
   useEffect(() => {
-    const incoming = value.join('\n');
-    if (pending === lastCommittedRef.current) {
-      setPending(incoming);
-      lastCommittedRef.current = incoming;
-    }
-  }, [value, pending]);
+    const incoming = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
+    if (incoming === lastSyncedRef.current) return;
+    setPendingText(incoming);
+    lastSyncedRef.current = incoming;
+  }, [ctl.value]);
 
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    const parsed = pending
+  const commitText = () => {
+    const parsed = pendingText
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    if (onCommit(parsed)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
+    ctl.onChange(parsed);
+    onCommit(parsed);
+    lastSyncedRef.current = parsed.join('\n');
   };
 
   return (
-    <div className="flex items-start gap-2">
-      <textarea
-        id={fieldId}
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        rows={Math.max(2, Math.min(6, pending.split('\n').length))}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="min-h-16 w-full rounded-md border bg-background px-3 py-1.5 font-mono text-xs"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
+    <textarea
+      value={pendingText}
+      ref={ctl.ref as unknown as React.Ref<HTMLTextAreaElement>}
+      onChange={(e) => setPendingText(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        commitText();
+      }}
+      rows={Math.max(2, Math.min(6, pendingText.split('\n').length))}
+      className="min-h-16 w-full rounded-md border bg-background px-3 py-1.5 font-mono text-xs"
+    />
   );
 }
 
