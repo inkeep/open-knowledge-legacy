@@ -41,6 +41,7 @@ import {
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  LocalOpCloneRequestSchema,
   type Principal,
   prependFrontmatter,
   readFmMap,
@@ -139,7 +140,7 @@ import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-tra
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
-import { errorResponse } from './http/error-response.ts';
+import { errorResponse, streamingProblemEvent } from './http/error-response.ts';
 import { validateBody } from './http/request-validation.ts';
 import {
   checkLocalOpSecurity,
@@ -5165,63 +5166,116 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Body: { url: string, dir: string }
    * Spawns: open-knowledge clone --json --dir <dir> <url>
    * Streams: NDJSON lines via chunked HTTP.
+   *
+   * Pre-stream errors (security gate, method, body shape, URL/path safety,
+   * concurrency) emit RFC 9457 problem+json via `errorResponse(...)` (D22).
+   * Mid-stream errors (clone subprocess failure, timeout, server-start
+   * chain) emit `{ type: 'error', problem: ProblemDetails }` events through
+   * `streamingProblemEvent(...)` (D36 c). The streaming protocol's outer
+   * `type` field stays the kind discriminator (`progress | complete |
+   * error`); the URN problem identifier lives nested under `problem.type`.
+   *
+   * CLI events are intercepted: complete events are swallowed and
+   * synthesized post-server-start; CLI error events are wrapped in the
+   * typed envelope so every mid-stream error has a `problem` payload.
    */
+  const HANDLE_LOCAL_OP_CLONE = 'local-op-clone';
   async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_CLONE })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    // Parse request body
-    let url: string;
-    let dir: string;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { url?: unknown; dir?: unknown };
-      if (typeof parsed.url !== 'string' || !parsed.url) {
-        json(res, 400, { ok: false, error: 'Missing or invalid url' });
-        return;
-      }
-      if (typeof parsed.dir !== 'string' || !parsed.dir) {
-        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
-        return;
-      }
-      url = parsed.url;
-      dir = parsed.dir;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-
-    // Security: URL protocol allowlist
-    if (!isAllowedGitUrl(url)) {
-      json(res, 400, { ok: false, error: 'URL protocol not allowed' });
-      return;
-    }
-
-    // Security: dir must be within user home dir (no traversal)
-    if (!isSafeLocalPath(dir)) {
-      json(res, 400, {
-        ok: false,
-        error: 'dir must be within the user home directory',
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_CLONE,
+        extraHeaders: { Allow: 'POST' },
       });
       return;
     }
 
-    // Concurrency guard: reject concurrent requests to this endpoint
-    if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
-      json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
+    // Manual body read + validateBody — the security check + method gate
+    // must run before we touch the body, so we don't wrap the entire
+    // handler with `withValidation()`.
+    let raw: Buffer;
+    try {
+      raw = await readBody(req);
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: HANDLE_LOCAL_OP_CLONE,
+        cause: err,
+      });
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString('utf-8'));
+    } catch (err) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Request body is not valid JSON.', {
+        handler: HANDLE_LOCAL_OP_CLONE,
+        cause: err,
+      });
+      return;
+    }
+    const validated = validateBody(LocalOpCloneRequestSchema, parsed, res, {
+      handler: HANDLE_LOCAL_OP_CLONE,
+    });
+    if (!validated.ok) return;
+    const { url, dir } = validated.value;
+
+    // Semantic checks (post-shape): protocol allowlist + path safety.
+    if (!isAllowedGitUrl(url)) {
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:url-not-allowed',
+        'URL protocol is not allowed for clone.',
+        { handler: HANDLE_LOCAL_OP_CLONE, detail: `url=${url}` },
+      );
+      return;
+    }
+    if (!isSafeLocalPath(dir)) {
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:dir-outside-home',
+        'Clone destination must be within the user home directory.',
+        { handler: HANDLE_LOCAL_OP_CLONE, detail: `dir=${dir}` },
+      );
       return;
     }
 
-    // Start chunked NDJSON response
+    // Concurrency guard: reject concurrent requests to this endpoint.
+    if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'A clone operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_CLONE },
+      );
+      return;
+    }
+
+    // Start chunked NDJSON response — past this point, errors emit inline
+    // streaming events via `streamingProblemEvent(...)`, not `errorResponse`.
     res.writeHead(200, {
       'Content-Type': 'application/x-ndjson',
       'Transfer-Encoding': 'chunked',
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-cache',
     });
+
+    /** Write a typed mid-stream error event and emit one telemetry+log line. */
+    const writeStreamError = (
+      status: number,
+      type: Parameters<typeof streamingProblemEvent>[1],
+      title: string,
+      options: { detail?: string; cause?: unknown } = {},
+    ): void => {
+      if (res.writableEnded) return;
+      const event = streamingProblemEvent(status, type, title, {
+        handler: HANDLE_LOCAL_OP_CLONE,
+        ...options,
+      });
+      res.write(`${JSON.stringify(event)}\n`);
+    };
 
     // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
     // Expand `~` here so the CLI doesn't treat it as a literal directory name.
@@ -5233,8 +5287,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     let settled = false;
     // The CLI emits `{type:'complete', dir}` on success, but the browser
     // client expects `{type:'complete', port}`. We intercept the CLI's
-    // complete event, boot a server at the cloned dir, then emit a rewritten
-    // complete with the port. Non-terminal events (progress / error) flow
+    // complete event, boot a server at the cloned dir, then emit a
+    // rewritten complete with the port. CLI `error` events are wrapped in
+    // a typed `problem` envelope; non-terminal `progress` events flow
     // through unchanged.
     let cloneCompleteDir: string | null = null;
     let stdoutBuffer = '';
@@ -5255,15 +5310,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       stdoutBuffer = lines.pop() ?? '';
       for (const line of lines) {
         if (!line.trim()) continue;
-        let parsed: { type?: unknown; dir?: unknown } | null = null;
+        let parsed: { type?: unknown; dir?: unknown; message?: unknown } | null = null;
         try {
-          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
+          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown; message?: unknown };
         } catch {
           /* non-JSON — ignore */
         }
         if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
           // Swallow this line; we'll emit our own complete after starting the server.
           cloneCompleteDir = parsed.dir;
+          continue;
+        }
+        if (parsed && parsed.type === 'error') {
+          // Wrap the CLI's untyped error into the canonical streaming envelope so
+          // every mid-stream error event carries a `problem: ProblemDetails`
+          // payload — clients read `event.problem.title`, not `event.message`.
+          const cliMessage = typeof parsed.message === 'string' ? parsed.message : undefined;
+          writeStreamError(
+            500,
+            'urn:ok:error:clone-failed',
+            'Clone subprocess reported an error.',
+            {
+              detail: cliMessage,
+            },
+          );
           continue;
         }
         if (!res.writableEnded) res.write(`${line}\n`);
@@ -5289,16 +5359,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       void (async () => {
         try {
           if (timedOut && !res.writableEnded) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
+            writeStreamError(
+              504,
+              'urn:ok:error:clone-timeout',
+              'Clone timed out after 10 minutes.',
+              { detail: stderrOutput || undefined },
             );
           } else if (code !== 0 && !res.writableEnded) {
             if (stderrOutput) {
               log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
             }
-            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
+            writeStreamError(
+              500,
+              'urn:ok:error:clone-failed',
+              `Clone subprocess exited with code ${code}.`,
+              { detail: stderrOutput || undefined },
             );
           } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
             // Chain into server-start so the client can redirect.
@@ -5307,7 +5382,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               if ('port' in result) {
                 res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
               } else {
-                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
+                writeStreamError(
+                  500,
+                  'urn:ok:error:server-start-failed',
+                  'Cloned successfully but failed to start the project server.',
+                  { detail: result.error },
+                );
               }
             }
           }
@@ -5323,7 +5403,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          writeStreamError(
+            500,
+            'urn:ok:error:clone-failed',
+            'Failed to spawn the clone subprocess.',
+            { detail: err.message, cause: err },
+          );
           res.end();
         }
       }
@@ -5433,7 +5518,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: { port: number }
    */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-open' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5500,7 +5585,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * The device-flow subprocess manages its own timeout.
    */
   async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-login' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5620,7 +5705,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: the single NDJSON line as parsed JSON.
    */
   async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-status' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5707,7 +5792,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Streams: NDJSON via chunked HTTP.
    */
   async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-repos' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5797,7 +5882,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-signout' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5859,7 +5944,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Returns: the NDJSON complete-event as parsed JSON.
    */
   async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-pat' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5956,7 +6041,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-identity' })) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -5992,7 +6077,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'local-op-auth-set-identity' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6055,7 +6140,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // ─── Sync endpoints ──────────────────────────────────────────────────────────
 
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-status' })) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6083,7 +6168,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-trigger' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6111,7 +6196,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-set-enabled' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6139,7 +6224,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflicts' })) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6153,7 +6238,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-resolve-conflict' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6200,7 +6285,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflict-content' })) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6255,7 +6340,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * the dialog can render the message without an HTTP failure.
    */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'seed-plan' })) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6286,7 +6371,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'seed-apply' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -6384,12 +6469,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // `checkLocalOpSecurity` confines the fingerprint to same-machine,
     // same-origin callers (the editor UI) and refuses cross-origin browser
     // contexts + DNS-rebinding attempts that would otherwise succeed.
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'installed-agents' })) return;
     return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
   }
 
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-abort-merge' })) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;

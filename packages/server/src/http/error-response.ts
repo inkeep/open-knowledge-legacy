@@ -23,6 +23,8 @@ import {
   type ProblemDetails,
   ProblemDetailsSchema,
   type ProblemType,
+  type StreamingProblemEvent,
+  StreamingProblemEventSchema,
 } from '@inkeep/open-knowledge-core';
 import type { Counter } from '@opentelemetry/api';
 import { getLogger } from '../logger.ts';
@@ -113,6 +115,68 @@ export function errorResponse(
     ...options.extraHeaders,
   });
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Build a typed mid-stream error event for NDJSON streaming endpoints
+ * (D36 c). The streaming protocol's `type` field discriminates event kinds
+ * (`progress` | `complete` | `error`); RFC 9457 `ProblemDetails` lives
+ * nested under `problem` so the streaming `type: 'error'` and the URN
+ * `problem.type` never collide.
+ *
+ * Like `errorResponse(...)`, this generates a UUID `instance`, validates
+ * the body against `StreamingProblemEventSchema`, increments the
+ * `ok.api.error.count{type, handler}` counter, and emits a Pino
+ * `log.error()` line with the same `instance` for grep correlation.
+ *
+ * The caller is responsible for writing the returned object to the stream
+ * (`res.write(`${JSON.stringify(event)}\n`)`) — separation keeps the
+ * helper synchronous and lets callers compose with their own
+ * `res.writableEnded` / cleanup logic.
+ *
+ * @param status - HTTP-equivalent status mirrored to `problem.status` (D22).
+ * @param type - URN problem type (`urn:ok:error:<kebab>` per D38).
+ * @param title - Required short human-readable summary (D14).
+ * @param options - Optional handler tag, instance UUID, detail, cause.
+ * @returns The `{ type: 'error', problem: ProblemDetails }` event ready for
+ *   `JSON.stringify` + `res.write` on the streaming response.
+ */
+export function streamingProblemEvent(
+  status: number,
+  type: ProblemType,
+  title: string,
+  options: ErrorResponseOptions = {},
+): StreamingProblemEvent {
+  const instance = options.instance ?? randomUUID();
+  const problem: ProblemDetails = {
+    type,
+    title,
+    status,
+    instance,
+    ...(options.detail ? { detail: options.detail } : {}),
+  };
+  const event: StreamingProblemEvent = { type: 'error', problem };
+  StreamingProblemEventSchema.parse(event);
+
+  apiErrorCounter().add(1, {
+    type,
+    ...(options.handler ? { handler: options.handler } : {}),
+  });
+
+  log.error(
+    {
+      event: 'api.streaming.error',
+      instance,
+      type,
+      status,
+      handler: options.handler,
+      detail: options.detail,
+      err: options.cause,
+    },
+    title,
+  );
+
+  return event;
 }
 
 /**

@@ -216,6 +216,8 @@ export type {
 } from './registry/types.ts';
 export {
   assertNeverProblemType,
+  type LocalOpCloneRequest,
+  LocalOpCloneRequestSchema,
   type PrincipalResponse,
   PrincipalResponseSchema,
   type ProblemDetails,
@@ -224,6 +226,8 @@ export {
   ProblemTypeSchema,
   type ServerInfoResponse,
   ServerInfoResponseSchema,
+  type StreamingProblemEvent,
+  StreamingProblemEventSchema,
   type UploadAssetSuccess,
   UploadAssetSuccessSchema,
   type UploadRequest,

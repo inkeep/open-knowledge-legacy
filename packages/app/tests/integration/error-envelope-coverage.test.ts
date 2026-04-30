@@ -61,7 +61,6 @@ const UNMIGRATED_HANDLERS = new Set([
   'handleLocalOpAuthSetIdentity',
   'handleLocalOpAuthSignout',
   'handleLocalOpAuthStatus',
-  'handleLocalOpClone',
   'handleLocalOpOpen',
   'handleMetricsAgentPresence',
   'handleMetricsParseHealth',

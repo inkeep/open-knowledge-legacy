@@ -14,6 +14,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { errorResponse } from './http/error-response.ts';
 
 // ─── Protocol checks ─────────────────────────────────────────────────────────
 
@@ -104,25 +105,38 @@ export function hasValidLocalOpOrigin(req: IncomingMessage): boolean {
 }
 
 /**
- * Convenience wrapper: runs loopback + origin checks, writes a 403 JSON error
- * if either fails, and returns false. Returns true when the request is allowed.
+ * Convenience wrapper: runs loopback + origin checks, emits an RFC 9457 403
+ * problem+json response if either fails (D22), and returns false. Returns
+ * true when the request is allowed.
  *
- * Callers pass a `sendError` compatible with the json() helper signature.
+ * The two failure modes use distinct URN tokens so operators can route on
+ * the typed `problem.type`: `urn:ok:error:loopback-required` (network-level)
+ * vs `urn:ok:error:invalid-origin` (header-level). `handler` is the
+ * route-name tag for the `ok.api.error.count{handler}` counter.
  */
 export function checkLocalOpSecurity(
   req: IncomingMessage,
   res: ServerResponse,
-  sendJson: (res: ServerResponse, status: number, data: unknown) => void,
+  options: { handler: string },
 ): boolean {
   if (!isLoopbackRequest(req)) {
-    sendJson(res, 403, {
-      ok: false,
-      error: 'Forbidden: local-op endpoints require loopback connection',
-    });
+    errorResponse(
+      res,
+      403,
+      'urn:ok:error:loopback-required',
+      'Local-op endpoints require a loopback connection.',
+      { handler: options.handler },
+    );
     return false;
   }
   if (!hasValidLocalOpOrigin(req)) {
-    sendJson(res, 403, { ok: false, error: 'Forbidden: invalid origin for local-op endpoint' });
+    errorResponse(
+      res,
+      403,
+      'urn:ok:error:invalid-origin',
+      'Origin header is not a permitted loopback origin.',
+      { handler: options.handler },
+    );
     return false;
   }
   return true;

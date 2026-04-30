@@ -144,6 +144,16 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:method-not-allowed',
   'urn:ok:error:invalid-request',
   'urn:ok:error:internal-server-error',
+  // /api/local-op/* security gate (shared by all local-op endpoints)
+  'urn:ok:error:loopback-required',
+  'urn:ok:error:invalid-origin',
+  // /api/local-op/clone (US-005)
+  'urn:ok:error:url-not-allowed',
+  'urn:ok:error:dir-outside-home',
+  'urn:ok:error:concurrent-operation',
+  'urn:ok:error:clone-failed',
+  'urn:ok:error:clone-timeout',
+  'urn:ok:error:server-start-failed',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -242,3 +252,47 @@ export type UploadAssetSuccess = z.infer<typeof UploadAssetSuccessSchema>;
 const _UploadAssetSuccessSchemaIsStandard: StandardSchemaV1<unknown, UploadAssetSuccess> =
   UploadAssetSuccessSchema;
 void _UploadAssetSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/local-op/clone`.
+ *
+ * `url` is the git remote URL (https/ssh/git/SCP-style); the server's
+ * `isAllowedGitUrl` check enforces the protocol allowlist after schema
+ * validation. `dir` is the local destination directory; `isSafeLocalPath`
+ * confines it to the user's home directory. Both fields are non-empty
+ * strings; protocol/path-safety failures emit `urn:ok:error:url-not-allowed`
+ * / `urn:ok:error:dir-outside-home` post-validation.
+ */
+export const LocalOpCloneRequestSchema = z
+  .object({
+    url: z.string().min(1),
+    dir: z.string().min(1),
+  })
+  .loose();
+export type LocalOpCloneRequest = z.infer<typeof LocalOpCloneRequestSchema>;
+const _LocalOpCloneRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpCloneRequest> =
+  LocalOpCloneRequestSchema;
+void _LocalOpCloneRequestSchemaIsStandard;
+
+/**
+ * Mid-stream error event emitted on NDJSON streaming endpoints (D36 c).
+ *
+ * The streaming protocol's `type` field discriminates event kinds
+ * (`progress` | `complete` | `error`) — preserved as the wire-level
+ * discriminator. Typed RFC 9457 `ProblemDetails` lives nested under
+ * `problem`, so the streaming `type: 'error'` and the URN `problem.type`
+ * never collide. Pre-stream errors continue to use `errorResponse(...)` +
+ * `application/problem+json` content-type per D22.
+ *
+ * See `handleLocalOpClone` for the canonical streaming-endpoint pattern.
+ */
+export const StreamingProblemEventSchema = z
+  .object({
+    type: z.literal('error'),
+    problem: ProblemDetailsSchema,
+  })
+  .loose();
+export type StreamingProblemEvent = z.infer<typeof StreamingProblemEventSchema>;
+const _StreamingProblemEventSchemaIsStandard: StandardSchemaV1<unknown, StreamingProblemEvent> =
+  StreamingProblemEventSchema;
+void _StreamingProblemEventSchemaIsStandard;

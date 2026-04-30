@@ -110,6 +110,13 @@ export interface CreateTestServerOptions {
   gitEnabled?: boolean;
   /** Git commit debounce in ms. Only relevant when gitEnabled: true. Default 200 for tests. */
   commitDebounceMs?: number;
+  /**
+   * CLI argv prefix for `/api/local-op/*` relay endpoints. Production default
+   * is `['open-knowledge']` (CLI on PATH). Tests can pass a deterministic
+   * non-existent binary to force `child.on('error', ENOENT)` and exercise
+   * the mid-stream error path without requiring a real CLI install.
+   */
+  localOpCliArgs?: string[];
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
@@ -148,6 +155,7 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
     // pathspec matches the single-directory layout tests use.
     contentRoot: options.gitEnabled === true ? '.' : undefined,
     enableTestRoutes: true,
+    localOpCliArgs: options.localOpCliArgs,
     // Skip the durable state-manifest pre-flight gate (specs/2026-04-24-cross-install-version-handshake
     // §6.2 + D14). Each test allocates a fresh tmpdir, so the gate has nothing
     // meaningful to assert; the writes would just generate noise across thousands
@@ -159,7 +167,11 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   // doesn't race the watcher startup
   await srv.ready;
 
-  // Wire up HTTP server + WebSocket (same pattern as packages/cli/src/commands/start.ts)
+  // Wire up HTTP server + WebSocket (mirrors `packages/server/src/boot.ts:269`).
+  // Both gates check `res.writableEnded || res.headersSent` so streaming
+  // handlers (e.g. /api/local-op/clone NDJSON) that have committed to a
+  // response head but haven't called `res.end()` yet aren't clobbered by the
+  // 404 / 500 fallback.
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
@@ -167,18 +179,19 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
-          if (res.writableEnded) return;
-          // Unhandled /api/* route — 404 JSON. Matches production CLI and
-          // dev-plugin behavior.
+          if (res.writableEnded || res.headersSent) return;
+          // Unhandled /api/* route — 404 JSON. Matches production boot.ts behavior.
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
         .catch((err) => {
           console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
+          if (!res.writableEnded && !res.headersSent) {
             res.writeHead(500);
             res.end('Internal server error');
+          } else if (!res.writableEnded) {
+            res.end();
           }
         });
       return;

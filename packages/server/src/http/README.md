@@ -113,17 +113,42 @@ if (!validated.ok) return; // 400 already emitted
 
 Pre-stream errors (response head not yet written) → emit via `errorResponse(...)` problem+json normally.
 
-Mid-stream errors (response head already written as `application/x-ndjson`) → emit an inline event in the stream:
+Mid-stream errors (response head already written as `application/x-ndjson`) → emit an inline event in the stream via the `streamingProblemEvent(...)` helper:
 
 ```ts
-const errorEvent = {
-  kind: 'error',
-  problem: { type, title, status, instance, detail }, // matches ProblemDetailsSchema
-};
-res.write(`${JSON.stringify(errorEvent)}\n`);
+import { streamingProblemEvent } from './http/error-response.ts';
+
+const event = streamingProblemEvent(
+  500,
+  'urn:ok:error:clone-failed',
+  'Clone subprocess exited with non-zero status.',
+  { handler: 'local-op-clone', detail: stderrOutput },
+);
+res.write(`${JSON.stringify(event)}\n`);
 ```
 
-The streaming protocol contract is preserved while the typed problem-details payload remains intact. See `handleLocalOpClone` for the canonical streaming example.
+Wire shape (matches `StreamingProblemEventSchema`):
+
+```jsonc
+{
+  "type": "error",                          // streaming protocol discriminator
+  "problem": {                              // RFC 9457 ProblemDetails (typed)
+    "type": "urn:ok:error:clone-failed",
+    "title": "Clone subprocess exited with non-zero status.",
+    "status": 500,
+    "instance": "01234567-89ab-4def-8123-456789abcdef",
+    "detail": "fatal: repository not found"
+  }
+}
+```
+
+The outer `type` field stays the streaming protocol's event-kind discriminator (`progress | complete | error`); the URN problem identifier lives nested under `problem.type`. The two `type` fields share a name but never collide because the streaming `type` is a fixed enum (3 values) while `problem.type` is the closed `ProblemTypeSchema` URN union.
+
+`streamingProblemEvent(...)` mirrors `errorResponse(...)`'s side effects: generates a UUID `instance`, validates against `StreamingProblemEventSchema`, increments `ok.api.error.count{type, handler}`, emits a Pino `log.error()` line with the same `instance`. The caller writes the returned event to the stream so the helper stays synchronous and composes with the caller's `res.writableEnded` / cleanup logic.
+
+CLI-emitted error events on subprocess streams should be intercepted and wrapped: don't pass through untyped `{ type: 'error', message: '…' }` lines. Wrap them in `streamingProblemEvent(...)` so every mid-stream error event carries a `problem: ProblemDetails` payload — clients read `event.problem.title`, not `event.message`.
+
+See `handleLocalOpClone` for the canonical streaming-endpoint pattern: pre-stream gates → `errorResponse(...)`; subprocess spawn + CLI event interception + mid-stream errors → `streamingProblemEvent(...)`.
 
 ## Telemetry
 

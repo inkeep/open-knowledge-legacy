@@ -8,7 +8,15 @@
  *   - Clone via POST /api/local-op/clone (NDJSON streaming progress)
  *   - Sign-in integration: onSignIn prop opens AuthModal (US-027)
  *   - On complete: redirect to the new server port
+ *
+ * Mid-stream error events use the canonical streaming envelope (US-005,
+ * D36 c): `{ type: 'error', problem: ProblemDetails }`. The dialog reads
+ * `event.problem.title` for the user-visible message; pre-stream errors
+ * (HTTP `application/problem+json`) surface via `res.ok === false` and
+ * read the same `problem.title` field after a `safeParse`.
  */
+import type { ProblemDetails } from '@inkeep/open-knowledge-core';
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
@@ -44,7 +52,7 @@ interface CloneCompleteEvent {
 
 interface CloneErrorEvent {
   type: 'error';
-  message: string;
+  problem: ProblemDetails;
 }
 
 type CloneEvent = CloneProgressEvent | CloneCompleteEvent | CloneErrorEvent;
@@ -211,8 +219,24 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
         signal: ac.signal,
       });
 
-      if (!res.ok || !res.body) {
-        toast.error('Clone failed — check the URL and try again', { id: toastId });
+      if (!res.ok) {
+        // Pre-stream error: server emitted RFC 9457 problem+json before
+        // committing to the NDJSON stream. Display the typed `title`.
+        let message = `Clone failed — check the URL and try again (${res.status})`;
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          if (result.success) message = `Clone failed: ${result.data.title}`;
+        } catch {
+          /* non-JSON body — keep the generic message */
+        }
+        toast.error(message, { id: toastId });
+        setCloning(false);
+        setAbortController(null);
+        return;
+      }
+      if (!res.body) {
+        toast.error('Clone failed — empty response body', { id: toastId });
         setCloning(false);
         setAbortController(null);
         return;
@@ -244,7 +268,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
               window.location.href = `http://localhost:${event.port}`;
               return;
             } else if (event.type === 'error') {
-              toast.error(`Clone failed: ${event.message}`, { id: toastId });
+              toast.error(`Clone failed: ${event.problem.title}`, { id: toastId });
               setCloning(false);
               setAbortController(null);
               return;

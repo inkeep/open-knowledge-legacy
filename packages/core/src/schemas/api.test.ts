@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  LocalOpCloneRequestSchema,
   PrincipalResponseSchema,
   ProblemDetailsSchema,
   ProblemTypeSchema,
+  StreamingProblemEventSchema,
   UploadAssetSuccessSchema,
   UploadRequestSchema,
 } from './api';
@@ -140,6 +142,29 @@ describe('ProblemTypeSchema', () => {
       'urn:ok:error:method-not-allowed',
       'urn:ok:error:invalid-request',
       'urn:ok:error:internal-server-error',
+    ];
+    for (const t of tokens) {
+      const result = ProblemTypeSchema.safeParse(t);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test('accepts the local-op security gate URN tokens', () => {
+    const tokens = ['urn:ok:error:loopback-required', 'urn:ok:error:invalid-origin'];
+    for (const t of tokens) {
+      const result = ProblemTypeSchema.safeParse(t);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test('accepts the local-op clone URN tokens (US-005)', () => {
+    const tokens = [
+      'urn:ok:error:url-not-allowed',
+      'urn:ok:error:dir-outside-home',
+      'urn:ok:error:concurrent-operation',
+      'urn:ok:error:clone-failed',
+      'urn:ok:error:clone-timeout',
+      'urn:ok:error:server-start-failed',
     ];
     for (const t of tokens) {
       const result = ProblemTypeSchema.safeParse(t);
@@ -338,6 +363,101 @@ describe('UploadRequestSchema', () => {
 
   test('fails when parentDocName is empty', () => {
     const result = UploadRequestSchema.safeParse({ parentDocName: '' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('LocalOpCloneRequestSchema (US-005)', () => {
+  test('parses a valid request with url + dir', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({
+      url: 'https://github.com/owner/repo',
+      dir: '~/Documents/repo',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.url).toBe('https://github.com/owner/repo');
+      expect(result.data.dir).toBe('~/Documents/repo');
+    }
+  });
+
+  test('preserves unknown fields for forward-compat (.loose())', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({
+      url: 'git@github.com:owner/repo',
+      dir: '~/work/repo',
+      branch: 'main',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('fails when url is missing', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({ dir: '~/Documents/repo' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when dir is missing', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({ url: 'https://github.com/owner/repo' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when url is empty', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({ url: '', dir: '~/Documents/repo' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when dir is empty', () => {
+    const result = LocalOpCloneRequestSchema.safeParse({
+      url: 'https://github.com/owner/repo',
+      dir: '',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('StreamingProblemEventSchema (US-005, D36 c)', () => {
+  test('parses a valid mid-stream error event with full ProblemDetails', () => {
+    const result = StreamingProblemEventSchema.safeParse({
+      type: 'error',
+      problem: {
+        type: 'urn:ok:error:clone-failed',
+        title: 'Clone subprocess exited with non-zero status.',
+        status: 500,
+        instance: '01234567-89ab-4def-8123-456789abcdef',
+        detail: 'fatal: repository not found',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('parses a minimal mid-stream error event (problem with required fields only)', () => {
+    const result = StreamingProblemEventSchema.safeParse({
+      type: 'error',
+      problem: {
+        type: 'urn:ok:error:clone-timeout',
+        title: 'Clone timed out after 10 minutes.',
+        status: 504,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test('fails when outer type is not "error" (streaming protocol discriminator)', () => {
+    const result = StreamingProblemEventSchema.safeParse({
+      type: 'progress',
+      problem: { type: 'urn:ok:error:clone-failed', title: 'foo', status: 500 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when problem field is missing', () => {
+    const result = StreamingProblemEventSchema.safeParse({ type: 'error' });
+    expect(result.success).toBe(false);
+  });
+
+  test('fails when problem field has invalid URN type', () => {
+    const result = StreamingProblemEventSchema.safeParse({
+      type: 'error',
+      problem: { type: 'urn:ok:error:fictional-token', title: 'foo', status: 500 },
+    });
     expect(result.success).toBe(false);
   });
 });
