@@ -69,6 +69,7 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
+        '@hookform/resolvers', // intentionally installed but uninstantiated per spec D64 (resolver-less); kept for parity with agents-private and future schema-bound dialogs
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
