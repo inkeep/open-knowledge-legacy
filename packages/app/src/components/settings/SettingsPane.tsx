@@ -66,11 +66,9 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
 import {
-  buildPatch,
   getEnumOptions,
   getFieldDefault,
   getLeafTypeTag,
-  readPath,
   resolveLeafSchema,
 } from './schema-walker';
 import { useConfigForm } from './use-config-form';
@@ -351,12 +349,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
         {connection === null || !connection.synced ? (
           <SettingsSkeleton />
         ) : (
-          <BoundSettingsForm
-            scope={scope}
-            binding={connection.binding}
-            config={connection.config}
-            flashedPath={flashedPath}
-          />
+          <BoundSettingsForm scope={scope} binding={connection.binding} flashedPath={flashedPath} />
         )}
       </div>
     </div>
@@ -391,7 +384,6 @@ function SettingsSkeleton() {
 interface BoundSettingsFormProps {
   scope: SettingsScope;
   binding: ConfigBinding;
-  config: Config;
   flashedPath: string | null;
 }
 
@@ -402,24 +394,23 @@ interface BoundSettingsFormProps {
  * (`connection === null || !synced`) so we don't `useForm` on a binding
  * that hasn't synced yet.
  */
-function BoundSettingsForm({ scope, binding, config, flashedPath }: BoundSettingsFormProps) {
-  const { form } = useConfigForm(binding);
+function BoundSettingsForm({ scope, binding, flashedPath }: BoundSettingsFormProps) {
+  const { form, commitField } = useConfigForm(binding);
 
   return (
     <Form {...form}>
-      <SettingsForm scope={scope} binding={binding} config={config} flashedPath={flashedPath} />
+      <SettingsForm scope={scope} commitField={commitField} flashedPath={flashedPath} />
     </Form>
   );
 }
 
 interface SettingsFormProps {
   scope: SettingsScope;
-  binding: ConfigBinding;
-  config: Config;
+  commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, binding, config, flashedPath }: SettingsFormProps) {
+function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
@@ -434,8 +425,7 @@ function SettingsForm({ scope, binding, config, flashedPath }: SettingsFormProps
                 key={field.path.join('.')}
                 field={field}
                 scope={scope}
-                binding={binding}
-                config={config}
+                commitField={commitField}
                 isFlashed={flashedPath === field.path.join('.')}
               />
             ))}
@@ -480,62 +470,47 @@ function SettingsSection({
 interface SettingsFieldProps {
   field: FieldDef;
   scope: SettingsScope;
-  binding: ConfigBinding;
-  config: Config;
+  commitField: (name: FieldPath<Config>) => boolean;
   isFlashed: boolean;
 }
 
-function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFieldProps) {
+function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldProps) {
+  'use no memo';
   const form = useFormContext<Config>();
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
   const typeTag = leafSchema ? getLeafTypeTag(leafSchema) : undefined;
   const defaultValue = leafSchema ? getFieldDefault(leafSchema) : undefined;
-  const currentValue = readPath(config, field.path);
   const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
   const enumOptions = leafSchema ? getEnumOptions(leafSchema) : undefined;
 
   const dottedName = field.path.join('.') as FieldPath<Config>;
 
-  // Modified indicator: field's resolved value differs from default. This
-  // is an approximation of "set at this scope" semantics — full per-scope
-  // detection would require a separate raw-YAML inspection.
-  const isModified =
-    defaultValue === undefined
-      ? currentValue !== undefined && currentValue !== null
-      : !valuesEqual(currentValue, defaultValue);
-
   const [savedTick, setSavedTick] = useState(false);
 
   /**
-   * Per-field commit. Routes through `binding.patch` directly (not the
-   * harness's `commitField`) so the reset path can pass an explicit
-   * `null`/default value rather than relying on `form.getValues`. Errors
-   * mirror into `formState.errors[name]` via `form.setError` so
-   * `<FormMessage>` renders them inline; success clears the error and
-   * fires the SavedIndicator flash.
+   * Run `commitField` (the harness-owned binding.patch + form.setError /
+   * form.clearErrors path) and flash the SavedIndicator on success. The
+   * value committed is whatever currently lives in the form at `name` —
+   * call sites are responsible for writing the desired value via
+   * `ctl.onChange` (per-control commits) or `form.setValue` (reset path)
+   * BEFORE invoking `runCommit`.
    */
-  const commit = (value: unknown): boolean => {
-    const patch = buildPatch(field.path, value);
-    const result = binding.patch(patch);
-    if (!result.ok) {
-      form.setError(dottedName, {
-        type: 'config-binding',
-        message: humanFormatFirstIssue(result.error),
-      });
-      return false;
-    }
-    form.clearErrors(dottedName);
-    flashSaved(setSavedTick);
-    return true;
+  const runCommit = (): boolean => {
+    const ok = commitField(dottedName);
+    if (ok) flashSaved(setSavedTick);
+    return ok;
   };
 
+  /**
+   * Reset writes the schema default (or `null` for fields with no
+   * default — null-as-clear preserves RFC 7396 semantics) into form
+   * state, then commits via the harness. `shouldDirty: false` so the
+   * field doesn't end up flagged as dirty after reset.
+   */
   const reset = () => {
-    if (defaultValue === undefined) {
-      // No schema default → clear the field via null-as-clear (RFC 7396 spirit).
-      commit(null);
-    } else {
-      commit(defaultValue);
-    }
+    const target = defaultValue === undefined ? null : defaultValue;
+    form.setValue(dottedName, target as never, { shouldDirty: false });
+    runCommit();
   };
 
   const readonlyReason: string | null =
@@ -545,75 +520,84 @@ function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFie
         ? "This field can only be set globally. Switch to the 'User' tab to edit it."
         : null;
 
-  const indicator = isModified ? (
-    <span
-      data-modified="true"
-      aria-hidden="true"
-      className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
-    />
-  ) : null;
-
   const wrapperClass = `relative space-y-1 ${isFlashed ? 'animate-settings-flash' : ''}`;
-  const showResetButton =
-    !readonlyReason && (defaultValue !== undefined || currentValue !== undefined);
 
   return (
     <FormField
       control={form.control}
       name={dottedName}
-      render={({ field: ctl }) => (
-        <FormItem className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
-          {indicator}
-          <div className="flex items-baseline justify-between gap-2">
-            <FormLabel className="text-sm font-medium">{field.label}</FormLabel>
-            {showResetButton ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
-                    onClick={reset}
-                    aria-label={`Reset ${field.label} to default`}
-                  >
-                    <RotateCcw className="size-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Reset to default</TooltipContent>
-              </Tooltip>
+      render={({ field: ctl }) => {
+        // Modified indicator + reset-button visibility derive from the
+        // form's reactive value (`ctl.value`) so they update in lockstep
+        // with user edits, external Y.Text updates, and resets.
+        const isModified =
+          defaultValue === undefined
+            ? ctl.value !== undefined && ctl.value !== null
+            : !valuesEqual(ctl.value, defaultValue);
+        const showResetButton =
+          !readonlyReason && (defaultValue !== undefined || ctl.value !== undefined);
+        const indicator = isModified ? (
+          <span
+            data-modified="true"
+            aria-hidden="true"
+            className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
+          />
+        ) : null;
+
+        return (
+          <FormItem className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
+            {indicator}
+            <div className="flex items-baseline justify-between gap-2">
+              <FormLabel className="text-sm font-medium">{field.label}</FormLabel>
+              {showResetButton ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
+                      onClick={reset}
+                      aria-label={`Reset ${field.label} to default`}
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Reset to default</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </div>
+            {field.description ? (
+              <FormDescription className="text-xs text-muted-foreground">
+                {field.description}
+              </FormDescription>
             ) : null}
-          </div>
-          {field.description ? (
-            <FormDescription className="text-xs text-muted-foreground">
-              {field.description}
-            </FormDescription>
-          ) : null}
-          {readonlyReason ? (
-            // `role="note"` so screen readers announce this as explanatory
-            // text rather than treating the dangling label as broken.
-            <div
-              role="note"
-              className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
-            >
-              {readonlyReason}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <FormControl>
-                <FieldControlBody
-                  field={field}
-                  ctl={ctl}
-                  typeTag={typeTag}
-                  enumOptions={enumOptions}
-                  onCommit={commit}
-                />
-              </FormControl>
-              <SavedIndicator visible={savedTick} />
-            </div>
-          )}
-          <FormMessage data-field-error={field.path.join('.')} />
-        </FormItem>
-      )}
+            {readonlyReason ? (
+              // `role="note"` so screen readers announce this as explanatory
+              // text rather than treating the dangling label as broken.
+              <div
+                role="note"
+                className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
+              >
+                {readonlyReason}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <FormControl>
+                  <FieldControlBody
+                    field={field}
+                    ctl={ctl}
+                    typeTag={typeTag}
+                    enumOptions={enumOptions}
+                    onCommit={runCommit}
+                  />
+                </FormControl>
+                <SavedIndicator visible={savedTick} />
+              </div>
+            )}
+            <FormMessage data-field-error={field.path.join('.')} />
+          </FormItem>
+        );
+      }}
     />
   );
 }
@@ -623,7 +607,12 @@ interface FieldControlBodyProps {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   typeTag: string | undefined;
   enumOptions: readonly string[] | undefined;
-  onCommit: (value: unknown) => boolean;
+  /**
+   * Commits the field's CURRENT form value via the harness's
+   * `commitField`. Call sites must write the desired value through
+   * `ctl.onChange` BEFORE invoking — the commit reads from form state.
+   */
+  onCommit: () => boolean;
 }
 
 /**
@@ -647,7 +636,7 @@ function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldC
         ref={ctl.ref}
         onCheckedChange={(next) => {
           ctl.onChange(next);
-          onCommit(next);
+          onCommit();
         }}
         onBlur={ctl.onBlur}
       />
@@ -663,7 +652,7 @@ function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldC
           onValueChange={(next) => {
             if (!next) return;
             ctl.onChange(next);
-            onCommit(next);
+            onCommit();
           }}
           onBlur={ctl.onBlur}
           variant="segmented"
@@ -699,7 +688,7 @@ function StringControlBody({
   onCommit,
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
-  onCommit: (value: unknown) => boolean;
+  onCommit: () => boolean;
 }) {
   'use no memo';
   return (
@@ -709,12 +698,12 @@ function StringControlBody({
       onChange={(e) => ctl.onChange(e.target.value)}
       onBlur={() => {
         ctl.onBlur();
-        onCommit(ctl.value);
+        onCommit();
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          onCommit(ctl.value);
+          onCommit();
         }
       }}
       className="h-8 text-sm"
@@ -733,7 +722,7 @@ function NumberControlBody({
   onCommit,
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
-  onCommit: (value: unknown) => boolean;
+  onCommit: () => boolean;
 }) {
   'use no memo';
   const [pendingText, setPendingText] = useState(ctl.value === undefined ? '' : String(ctl.value));
@@ -752,11 +741,11 @@ function NumberControlBody({
     if (!Number.isFinite(parsed)) {
       // Let L1 reject + show a typed FormMessage error rather than silently swallow.
       ctl.onChange(pendingText as unknown as number);
-      onCommit(pendingText);
+      onCommit();
       return;
     }
     ctl.onChange(parsed);
-    onCommit(parsed);
+    onCommit();
     lastSyncedValueRef.current = parsed as unknown as Config[keyof Config];
   };
 
@@ -792,7 +781,7 @@ function StringArrayControlBody({
   onCommit,
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
-  onCommit: (value: unknown) => boolean;
+  onCommit: () => boolean;
 }) {
   'use no memo';
   const initial = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
@@ -812,7 +801,7 @@ function StringArrayControlBody({
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     ctl.onChange(parsed);
-    onCommit(parsed);
+    onCommit();
     lastSyncedRef.current = parsed.join('\n');
   };
 
@@ -877,7 +866,7 @@ function valuesEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-function humanFormatFirstIssue(error: ConfigValidationError): string {
+function _humanFormatFirstIssue(error: ConfigValidationError): string {
   if (isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
     const first = error.issues[0];
     if (first) return first.message;

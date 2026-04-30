@@ -65,8 +65,12 @@ describe('SettingsPane source-level guards', () => {
 
   test('per-field reset writes default OR null-as-clear', () => {
     expect(SRC).toContain('Reset to default');
-    // null-as-clear when the field has no schema default (e.g. appearance.*)
-    expect(SRC).toContain('commit(null)');
+    // Post-RHF refactor: reset writes via form.setValue (defaultValue OR null
+    // for fields without a schema default — null-as-clear preserves RFC 7396
+    // semantics) followed by the harness's commitField.
+    expect(SRC).toMatch(/form\.setValue\(/);
+    expect(SRC).toContain('shouldDirty: false');
+    expect(SRC).toMatch(/defaultValue\s*===\s*undefined\s*\?\s*null/);
   });
 
   test('flash animation uses the settings-flash CSS keyframe', () => {
