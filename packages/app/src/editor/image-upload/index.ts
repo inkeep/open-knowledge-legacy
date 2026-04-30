@@ -170,6 +170,58 @@ interface InsertShape {
 }
 
 /**
+ * Build the PM `jsxComponent` node data for a freshly uploaded media asset
+ * (`<img>` / `<video>` / `<audio>`). Pure factory — no editor, no schema
+ * dependency — so the drop-time shape can be pinned by unit test against
+ * the parser's shape for the same source markdown.
+ *
+ * Invariant: this shape MUST be structurally compatible with what
+ * `mdManager.parse('<img src="/x.png" alt="" />')` etc. produces. Drift here
+ * fragments the editor between drop-time and reload-time PM trees — a
+ * prop-edit on a freshly dropped node would round-trip differently than a
+ * prop-edit on the same node after reload. The test in
+ * `media-drop-shape-invariant.test.ts` (in `packages/core`) pins both
+ * directions.
+ *
+ * `props` carries only the user-visible inputs that distinguish a fresh
+ * drop — `src` for everything, `alt: ""` for `<img>` (HTML accessibility
+ * semantic), `controls: true` for `<video>` / `<audio>` (mirrors the
+ * user-stated success criterion `<video src controls />`). Leaving the rest
+ * unset prevents `emitMdxJsx` from emitting a wall of `attr=""` defaults;
+ * the PropPanel still surfaces every canonical-prop field because it
+ * iterates `descriptor.props`, not `node.attrs.props`.
+ */
+export function buildMediaJsxNodeData(
+  kind: 'jsx-img' | 'jsx-video' | 'jsx-audio',
+  resolvedSrc: string,
+): {
+  type: 'jsxComponent';
+  attrs: {
+    componentName: 'img' | 'video' | 'audio';
+    kind: 'element';
+    attributes: never[];
+    sourceRaw: '';
+    sourceDirty: true;
+    props: Record<string, unknown>;
+  };
+} {
+  const componentName = kind === 'jsx-img' ? 'img' : kind === 'jsx-video' ? 'video' : 'audio';
+  const props: Record<string, unknown> =
+    kind === 'jsx-img' ? { src: resolvedSrc, alt: '' } : { src: resolvedSrc, controls: true };
+  return {
+    type: 'jsxComponent',
+    attrs: {
+      componentName,
+      kind: 'element',
+      attributes: [],
+      sourceRaw: '',
+      sourceDirty: true,
+      props,
+    },
+  };
+}
+
+/**
  * Choose the PM insert shape for a freshly uploaded file. Dispatches by
  * extension against the fixed media-extension constants
  * (`IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS` / `AUDIO_EXTENSIONS` /
@@ -349,38 +401,18 @@ export async function uploadAndInsert(
     // Image / video / audio drops all emit the OK-canonical lowercase JSX
     // shape (`<img>` / `<video>` / `<audio>`) so drag/drop/paste converges
     // with the slash-menu insert on `Image.tsx` / `Video.tsx` / `Audio.tsx`
-    // (zoom + PropPanel + full canonical-prop surface).
-    //
-    // `props` carries only the user-visible inputs that distinguish a fresh
-    // drop — `src` for everything, `alt: ""` for `<img>` (HTML accessibility
-    // semantic), `controls: true` for `<video>` / `<audio>` (mirrors the
-    // user-stated success criterion `<video src controls />`). Leaving the
-    // rest unset prevents `emitMdxJsx` from emitting a wall of `attr=""`
-    // defaults; the PropPanel still surfaces every canonical-prop field
-    // because it iterates `descriptor.props`, not `node.attrs.props`.
+    // (zoom + PropPanel + full canonical-prop surface). The shape construction
+    // is delegated to `buildMediaJsxNodeData` so the drop-time PM tree can be
+    // pinned against the parser's tree by unit test (precedent for clean
+    // shape-equivalence between drop-time and reload-time editor state).
     const jsxNode = state.schema.nodes.jsxComponent;
     if (!jsxNode) {
       console.error('[uploadAndInsert] jsxComponent node missing from schema');
       showError(editor, uploadId);
       return;
     }
-    const componentName =
-      shape.kind === 'jsx-img' ? 'img' : shape.kind === 'jsx-video' ? 'video' : 'audio';
-    const initialProps: Record<string, unknown> =
-      shape.kind === 'jsx-img'
-        ? { src: resolvedSrc, alt: '' }
-        : { src: resolvedSrc, controls: true };
-    const childData: Record<string, unknown> = {
-      type: 'jsxComponent',
-      attrs: {
-        componentName,
-        kind: 'element',
-        attributes: [],
-        sourceRaw: '',
-        sourceDirty: true,
-        props: initialProps,
-      },
-    };
+    const childData = buildMediaJsxNodeData(shape.kind, resolvedSrc);
+    const componentName = childData.attrs.componentName;
 
     // One-tx insert: `command()` clears the upload skeleton and
     // `insertContentAt` handles block-vs-inline positioning (drop pos may

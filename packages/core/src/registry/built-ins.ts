@@ -566,6 +566,30 @@ function escapeHtmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * Shared serialize for the WikiEmbed* compat descriptors (Image / Video /
+ * Audio). All three render `![[target|alias]]` source bytes via wiki-embed
+ * mdast — only `rendersAs` and `translateProps` differ across the three
+ * descriptors, the source-form emit is identical. Reads the prop bag from
+ * `node.attrs.props`; an absent / non-string `target` collapses to `''`,
+ * matching the wikiLinkEmbed parser's default.
+ */
+function serializeWikiEmbed(node: { attrs: { props?: unknown } }): MdastNodes {
+  const p = node.attrs.props as
+    | { target?: string; alias?: string | null; anchor?: string | null }
+    | undefined;
+  const target = p?.target ?? '';
+  const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+  const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+  const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+  return {
+    type: 'wikiLinkEmbed' as const,
+    value: label,
+    data: { target, anchor, alias },
+    children: [{ type: 'text' as const, value: label }],
+  } as unknown as MdastNodes;
+}
+
 // ── Manifest ─────────────────────────────────────────────────────────────────
 //
 // Rule for choosing canonical descriptor casing:
@@ -770,28 +794,14 @@ export const builtInComponents: JsxComponentMeta[] = [
         alt: alias ?? target,
       };
     },
-    serialize: (node) => {
-      const p = node.attrs.props as
-        | { target?: string; alias?: string | null; anchor?: string | null }
-        | undefined;
-      const target = p?.target ?? '';
-      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
-      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
-      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
-      return {
-        type: 'wikiLinkEmbed' as const,
-        value: label,
-        data: { target, anchor, alias },
-        children: [{ type: 'text' as const, value: label }],
-      } as unknown as MdastNodes;
-    },
+    serialize: serializeWikiEmbed,
   },
 
   // Video / audio sibling compats. Both canonicals (Video.tsx / Audio.tsx)
   // expose `title` as the user-visible authored string — neither HTML5 element
   // accepts an `alt` attribute. Alias maps to `title` for both. The serialize
-  // shape is identical to WikiEmbedImage's; only `rendersAs` and the prop
-  // mapping differ.
+  // shape is identical to WikiEmbedImage's (shared `serializeWikiEmbed`
+  // helper); only `rendersAs` and the prop mapping differ.
   {
     name: 'WikiEmbedVideo',
     surface: 'compat',
@@ -812,21 +822,7 @@ export const builtInComponents: JsxComponentMeta[] = [
         title: alias ?? target,
       };
     },
-    serialize: (node) => {
-      const p = node.attrs.props as
-        | { target?: string; alias?: string | null; anchor?: string | null }
-        | undefined;
-      const target = p?.target ?? '';
-      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
-      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
-      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
-      return {
-        type: 'wikiLinkEmbed' as const,
-        value: label,
-        data: { target, anchor, alias },
-        children: [{ type: 'text' as const, value: label }],
-      } as unknown as MdastNodes;
-    },
+    serialize: serializeWikiEmbed,
   },
 
   {
@@ -849,21 +845,7 @@ export const builtInComponents: JsxComponentMeta[] = [
         title: alias ?? target,
       };
     },
-    serialize: (node) => {
-      const p = node.attrs.props as
-        | { target?: string; alias?: string | null; anchor?: string | null }
-        | undefined;
-      const target = p?.target ?? '';
-      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
-      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
-      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
-      return {
-        type: 'wikiLinkEmbed' as const,
-        value: label,
-        data: { target, anchor, alias },
-        children: [{ type: 'text' as const, value: label }],
-      } as unknown as MdastNodes;
-    },
+    serialize: serializeWikiEmbed,
   },
 
   {
