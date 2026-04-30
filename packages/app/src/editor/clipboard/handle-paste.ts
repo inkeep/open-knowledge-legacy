@@ -1,30 +1,37 @@
 /**
- * WYSIWYG paste dispatcher — 5-branch router per FR-3 / D6.
+ * WYSIWYG paste dispatcher — 5-branch router per precedent #19(b).
  *
  * Branch A: `vscode-editor-data` MIME → fenced code block with language.
  * Branch B: `text/x-gfm` MIME → MarkdownManager.parse (markdown path).
+ * Markdown-first ambiguity tiebreak: both text/plain (markdown-shaped) and
+ *           text/html present → MarkdownManager.parse on text/plain. Runs
+ *           BEFORE Branch C so OK→OK paste of JSX descriptors (`<img/>`,
+ *           `<Callout>`) routes through the canonical text/plain markdown
+ *           path and preserves descriptor identity, instead of falling to
+ *           PM-native parseFromClipboard where TipTap's parseDOM rules can
+ *           win over `jsxComponent`.
  * Branch C: HTML contains `data-pm-slice` → PM native parseFromClipboard
- *           (return false and let PM handle).
+ *           (return false and let PM handle). Cross-PM-editor interop:
+ *           Linear/Outline/BlockNote also emit canonical markdown to
+ *           text/plain, so the markdown-first tiebreak above catches them
+ *           with equivalent results — Branch C remains the fallback for
+ *           PM payloads whose text/plain isn't markdown-shaped.
  * Branch D: generic HTML → htmlToMdast → remark-stringify → MarkdownManager.parse.
- * Branch E: text/plain only → markdown-first (FR-13) if isMarkdown
- *           threshold hit; else verbatim plain-text insert.
+ * Branch E: text/plain only → markdown-first if isMarkdown threshold hit;
+ *           else verbatim plain-text insert.
  *
- * Ambiguous case (both text/plain+markdown and text/html present): branch
- * B (markdown path) wins over branch D per FR-13 (markdown-first
- * hard-coded `true`, D15).
+ * codeBlock short-circuit: cursor inside a codeBlock → skip all branches,
+ * insert text/plain verbatim.
  *
- * FR-10 codeBlock short-circuit: cursor inside a codeBlock → skip all
- * branches, insert text/plain verbatim.
- *
- * FR-17 Cmd+Shift+V: detected via `pasteShiftHeld(event)` which checks the
+ * Cmd+Shift+V: detected via `pasteShiftHeld(event)` which checks the
  * most-recent keyboard event (real browsers don't set `shiftKey` on
  * ClipboardEvent) plus a Playwright-test-style injected property.
  *
- * FR-11 error-path: every conversion call is try/caught; on throw, fall
- * through to the next layer, never silently drop content. Per-stage
- * telemetry emitted as structured `clipboard-html-conversion-fail`
- * events (SPEC §7 Observability) so log aggregators see which stage
- * failed instead of a single bracket-prefixed string.
+ * Error-path: every conversion call is try/caught; on throw, fall through
+ * to the next layer, never silently drop content. Per-stage telemetry
+ * emitted as structured `clipboard-html-conversion-fail` events so log
+ * aggregators see which stage failed instead of a single bracket-prefixed
+ * string.
  */
 
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
@@ -92,7 +99,18 @@ export function createHandlePaste(deps: PasteDispatcherDeps) {
       return true;
     }
 
-    // Branch C: PM-origin slice → let PM handle natively.
+    // Markdown-first tiebreak: both text/plain (markdown-shaped) AND
+    // text/html present. Runs ahead of Branch C so OK→OK and cross-PM-editor
+    // paste preserves the canonical text/plain markdown bytes.
+    if (plain && html && isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'B', source)) {
+      logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
+      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'B', source });
+      return true;
+    }
+
+    // Branch C: PM-origin slice → let PM handle natively. Reached only when
+    // the markdown-first tiebreak above did not fire (text/plain absent or
+    // not markdown-shaped).
     if (html && /data-pm-slice/i.test(html)) {
       logSourceDetected({
         view: 'wysiwyg',
@@ -101,14 +119,6 @@ export function createHandlePaste(deps: PasteDispatcherDeps) {
       });
       logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'C', source });
       return false;
-    }
-
-    // FR-13: markdown-first on ambiguous paste (both text/plain-as-md
-    // AND text/html present).
-    if (plain && html && isMarkdown(plain) && tryBranchMarkdown(view, plain, deps, 'B', source)) {
-      logSourceDetected({ view: 'wysiwyg', branch: 'B', source });
-      logIfSlow(start, { op: 'paste', view: 'wysiwyg', branch: 'B', source });
-      return true;
     }
 
     // Branch D: generic HTML → shared htmlToMdast pipeline.

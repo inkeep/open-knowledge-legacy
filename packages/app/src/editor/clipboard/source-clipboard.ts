@@ -1,29 +1,33 @@
 /**
  * Source-view clipboard extension — `EditorView.domEventHandlers` for copy,
- * cut, and paste per FR-4 / FR-5 / D4 / D5.
+ * cut, and paste per precedent #19(c).
  *
  * CodeMirror 6 has no equivalent to PM's `clipboardTextSerializer` /
  * `clipboardSerializer` hooks, so we override the DOM events directly.
- * Per D14, this is the only view where DOM-level override is acceptable
- * (WYSIWYG uses PM's hooks instead). User-facing behavior is symmetric
- * across both views:
+ * This is the only view where DOM-level override is acceptable (WYSIWYG
+ * uses PM's hooks instead per precedent #19(b)). User-facing behavior is
+ * symmetric across both views:
  *
  *   - Copy/cut write text/plain = markdown source AND text/html = canonical
  *     rendered HTML (via the shared mdast-to-html module). Cross-view
- *     byte-identical output per D4.
+ *     byte-identical output.
  *
- *   - Paste routes through a 4-branch dispatcher (D5) parallel to the
- *     WYSIWYG 5-branch. Source's insertion IS markdown text, so branch B
- *     (text/x-gfm) collapses into CM6's text/plain default path.
+ *   - Paste routes through a 4-branch dispatcher parallel to WYSIWYG's
+ *     5-branch. Source's insertion IS markdown text, so the markdown-first
+ *     tiebreak and Branch E both resolve to "let CM6 default text/plain
+ *     verbatim insert run". The tiebreak fires AHEAD of Branch C for the
+ *     J3 narrow case (external markdown-with-rich-HTML-preview); without
+ *     it Branch D's `htmlToMdast` would normalize bytes that the user
+ *     pasted as canonical markdown.
  *
  *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
  *     tracker — ClipboardEvent does not expose shiftKey natively).
  *
- *   - FR-21 large-paste chunked insert: payloads >500KB bypass the CM6
- *     dispatch and land via `chunkedYTextInsert` directly. A Y.RelativePosition
- *     is pinned before the first chunk so concurrent peers writing at
- *     offsets ≤ writeIndex during rAF yields do not shift the target.
- *     Mid-stream failure surfaces as a structured `clipboard-chunked-insert-failed`
+ *   - Large-paste chunked insert: payloads >500KB bypass the CM6 dispatch
+ *     and land via `chunkedYTextInsert` directly. A Y.RelativePosition is
+ *     pinned before the first chunk so concurrent peers writing at offsets
+ *     ≤ writeIndex during rAF yields do not shift the target. Mid-stream
+ *     failure surfaces as a structured `clipboard-chunked-insert-failed`
  *     event with partial-progress fields.
  */
 
@@ -47,6 +51,7 @@ import {
   logSerializeFail,
   logSourceDetected,
 } from './instrument.ts';
+import { isMarkdown } from './is-markdown.ts';
 import { installShiftTracker, pasteShiftHeld } from './shift-tracker.ts';
 
 export interface SourceClipboardDeps {
@@ -142,6 +147,18 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
       logIfSlow(start, { op: 'paste', view: 'source', branch: 'A', source });
       return true;
     }
+  }
+
+  // Markdown-first tiebreak: both text/plain (markdown-shaped) AND text/html
+  // present. Source's insertion IS markdown, so let CM6 default text/plain
+  // verbatim insert run. Runs ahead of Branch C (data-pm-slice) and Branch
+  // D (htmlToMdast) so external markdown-with-rich-HTML-preview pastes
+  // (J3 narrow case) preserve the canonical text/plain bytes instead of
+  // being normalized through the htmlToMdast cleanup pipeline.
+  if (plain && html && isMarkdown(plain)) {
+    logSourceDetected({ view: 'source', branch: 'B', source });
+    logIfSlow(start, { op: 'paste', view: 'source', branch: 'B', source });
+    return false;
   }
 
   // Branch C: PM-origin slice — the data-pm-slice wrapper's inner content
