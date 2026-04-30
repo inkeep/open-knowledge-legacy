@@ -26,16 +26,31 @@
  *   verbatim but NEVER re-enters the HTML-parse world with special
  *   meaning.
  *
- * - `mdxJsxTextElement` → `<span class="mdx-inline">{escaped raw}</span>`,
- *   with the same lowercase HTML-primitive carve-out as the flow handler.
- *   Inline JSX appears as a readable-but-inert span in external
- *   destinations (Gmail, Slack); inline `<img>` emits as native `<img>`.
+ * - `mdxJsxTextElement` → `<span class="mdx-inline" data-jsx-inline="">
+ *   {escaped raw}</span>`, with the same lowercase HTML-primitive
+ *   carve-out as the flow handler. Inline JSX appears as a
+ *   readable-but-inert span in external destinations (Gmail, Slack);
+ *   inline `<img>` emits as native `<img>`. Outbound carries BOTH the
+ *   `mdx-inline` class AND the `data-jsx-inline` marker so the
+ *   `JsxInline` PM node's `parseHTML: span[data-jsx-inline]` matches on
+ *   OK→OK Branch C round-trip; cross-app destinations strip `data-*`
+ *   without rendering regression.
  *
  * - `rawMdxFallback` → `<!-- Parse error: {reason} -->` + `<pre class=
- *   "mdx-fallback"><code>{escaped raw}</code></pre>`. The leading
- *   comment makes the failure self-describing in View Source without
- *   cluttering the rendered surface; the `<pre>` preserves the raw
- *   content for manual recovery.
+ *   "mdx-fallback" data-raw-mdx-fallback="" data-reason="{reason}">
+ *   <code>{escaped raw}</code></pre>`. The leading comment makes the
+ *   failure self-describing in View Source without cluttering the
+ *   rendered surface; the `<pre>` preserves the raw content for manual
+ *   recovery and carries the `data-raw-mdx-fallback` marker so the
+ *   `RawMdxFallback` PM node's `parseHTML` matches on OK→OK Branch C
+ *   round-trip. Cross-app destinations strip `data-*` without
+ *   rendering regression.
+ *
+ * Outbound shape rule (set by both handlers above): outbound HTML for
+ * any custom-node descriptor MUST include the inbound `parseHTML`
+ * marker so OK→OK Branch C reconstruction has something to match on.
+ * Class names are additive cross-app readability; the `data-*` marker
+ * is the load-bearing reconstruction key.
  *
  * FR-20 contract: adversarial input (`<script>`, null bytes, XML
  * namespaces, HTML entities) MUST be entity-encoded on the way out.

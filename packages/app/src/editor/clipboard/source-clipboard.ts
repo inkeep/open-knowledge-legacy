@@ -12,13 +12,15 @@
  *     rendered HTML (via the shared mdast-to-html module). Cross-view
  *     byte-identical output.
  *
- *   - Paste routes through a 4-branch dispatcher parallel to WYSIWYG's
- *     5-branch. Source's insertion IS markdown text, so the markdown-first
- *     tiebreak and Branch E both resolve to "let CM6 default text/plain
- *     verbatim insert run". The tiebreak fires AHEAD of Branch C for the
- *     J3 narrow case (external markdown-with-rich-HTML-preview); without
- *     it Branch D's `htmlToMdast` would normalize bytes that the user
- *     pasted as canonical markdown.
+ *   - Paste routes through a 5-branch dispatcher parallel to WYSIWYG's
+ *     5-branch (A/B/C/D/E). Source's insertion IS markdown text, so the
+ *     markdown-first tiebreak (Branch B), the Branch C `data-pm-slice`
+ *     check, and Branch E all resolve to "let CM6 default text/plain
+ *     verbatim insert run" — the dispatcher's value here is structural,
+ *     not behavioral. The tiebreak fires AHEAD of Branch C and Branch D
+ *     for the narrow case where external markdown carries a rich-HTML
+ *     preview; without it Branch D's `htmlToMdast` would normalize bytes
+ *     that the user pasted as canonical markdown.
  *
  *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
  *     tracker — ClipboardEvent does not expose shiftKey natively).
