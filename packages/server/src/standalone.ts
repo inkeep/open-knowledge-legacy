@@ -1724,8 +1724,6 @@ export function createServer(options: ServerOptions): ServerInstance {
           const bufferedCount = eventBuffer.length;
           const newBranch = info.newBranch ?? 'main';
 
-          setBatchInProgress(false);
-
           log.info(
             {
               kind: info.batchKind,
@@ -1737,8 +1735,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           );
 
           if (info.batchKind === 'within-branch') {
+            setBatchInProgress(false);
             // Pull, merge, rebase on same branch — reconcile buffered events
             await drainEventBuffer();
+            await persistence.flushDeferredStores('within-branch');
           } else {
             // Cross-branch or detached-head — discard buffered events (wrong branch state)
             incrementBranchSwitch();
@@ -1966,6 +1966,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             // state transitions (Y.Doc reset, backlink rebuild, WIP restore,
             // detached-ref cleanup) so a client's recycle-triggered reconnect
             // synchronizes against the new branch's fully-settled state.
+            setBatchInProgress(false);
+            await persistence.flushDeferredStores('discard-stale');
             cc1Broadcaster?.emitBranchSwitched(newBranch);
           }
 
@@ -2019,7 +2021,14 @@ export function createServer(options: ServerOptions): ServerInstance {
         contentRoot,
         credentialArgs: syncCredentialArgs,
         cc1Broadcaster,
-        setBatchInProgress,
+        setBatchInProgress: (value) => {
+          setBatchInProgress(value);
+          if (!value) {
+            void persistence.flushDeferredStores('within-branch').catch((err) => {
+              log.error({ err }, '[persistence] deferred store drain failed after sync batch');
+            });
+          }
+        },
         onStateChange: (state) => {
           log.info({ state }, `[sync] state → ${state}`);
         },

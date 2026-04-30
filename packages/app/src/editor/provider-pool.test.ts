@@ -7,10 +7,11 @@
  * the pool's LRU logic, Map management, and eviction ordering are all
  * exercised without needing a running Hocuspocus server.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseHocuspocusAuthToken } from '@inkeep/open-knowledge-server';
+import type { ClientPersistenceProvider } from './client-persistence';
 import { buildAuthToken, ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
@@ -26,6 +27,11 @@ function uniqueDocName(prefix = 'pp-us003'): string {
 
 // Use a dummy URL — providers won't connect but pool logic still works
 const DUMMY_WS = 'ws://localhost:1/collab';
+
+// Persistence attaches only after a serverInstanceId is known
+// (epoch-scoped IDB DB names). Tests that depend on `entry.persistence`
+// being non-null must seed the live epoch before `pool.open()`.
+const TEST_SERVER_INSTANCE_ID = 'test-server-instance';
 
 let pool: ProviderPool;
 
@@ -987,104 +993,38 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     });
   });
 
-  // localStorage-persistence path for the server instance ID associated with
-  // hydrated IDB state. This is intentionally separate from
-  // `cachedServerInstanceId`, which tracks the live server. The page-reload
-  // duplication fix depends on preserving the stale IDB-associated ID even when
-  // the boot `/api/server-info` fetch observes the fresh server before open().
-  describe('server-instance-id localStorage persistence', () => {
-    const IDB_SYNCED_SERVER_INSTANCE_ID_KEY = 'ok-idb-synced-server-instance-id';
-
-    function makeStubStorage(): {
-      stub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-      store: Map<string, string>;
-    } {
-      const store = new Map<string, string>();
-      return {
-        stub: {
-          getItem: (k: string) => store.get(k) ?? null,
-          setItem: (k: string, v: string) => {
-            store.set(k, v);
-          },
-          removeItem: (k: string) => {
-            store.delete(k);
-          },
-        },
-        store,
-      };
-    }
-
-    test('setExpectedServerInstanceId does not overwrite IDB-associated storage', () => {
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
-      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('old-server');
-    });
-
-    test('pre-seeded storage value wins over fast boot fetch on first open()', () => {
-      // The core page-reload regression guard: session-1 persisted instance ID
-      // 'old-server', Vite restarts (new process → new instance ID), the page
-      // reloads, and the fast localhost `/api/server-info` boot fetch observes
-      // 'new-server' before the first document provider opens. The auth token
-      // must still carry `expectedServerInstanceId=old-server` so the server's
-      // onAuthenticate rejects on mismatch and triggers the IDB-clearing recycle.
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
+  // Auth-token claim sources `expectedServerInstanceId` from the live
+  // in-memory `cachedServerInstanceId`. The DB-name shape
+  // `ok-ydoc:${branch}:${serverInstanceId}:${docName}` carries the epoch
+  // structurally, so no separate localStorage marker is consulted or
+  // written.
+  describe('server-instance-id auth-claim derivation', () => {
+    test('open() carries the live server id as the auth-token claim', () => {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-current');
       const entry = pool.open('doc1');
       if (!entry) throw new Error('expected entry');
       const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
       if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('old-server');
+      expect(parsed.expectedServerInstanceId).toBe('server-current');
     });
 
-    test('clean synced provider writes current server ID to storage', () => {
-      const { stub, store } = makeStubStorage();
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('server-current');
-      const entry = pool.open('doc1');
-      if (!entry) throw new Error('expected entry');
-      entry.observerCleanup = () => {};
-      entry.provider.emit('synced', { state: true });
-      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('server-current');
-    });
-
-    test('server-instance-mismatch clears stale storage but preserves fresh current ID', async () => {
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
+    test('mismatch clears the cached id; next open() carries no claim', async () => {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
       const entry = pool.open('doc1');
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
       await wait(50);
 
-      expect(store.has(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe(false);
       const replaced = pool.getActive();
       if (!replaced) throw new Error('expected replaced entry');
-      const parsed = parseHocuspocusAuthToken(replaced.provider.configuration.token as string);
-      if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('new-server');
-    });
-
-    test('storage.setItem throw is non-fatal — in-memory current ID still works', () => {
-      const throwingStub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
-        getItem: () => null,
-        setItem: () => {
-          throw new Error('synthetic quota error');
-        },
-        removeItem: () => {},
-      };
-      pool = new ProviderPool(3, DUMMY_WS, { storage: throwingStub });
-      pool.setExpectedServerInstanceId('server-instance-abc');
-      const entry = pool.open('doc1');
-      if (!entry) throw new Error('expected entry');
-      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
-      if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+      const resolved = replaced.provider.configuration.token;
+      if (typeof resolved === 'string') {
+        const parsed = parseHocuspocusAuthToken(resolved);
+        expect(parsed?.expectedServerInstanceId).toBeUndefined();
+      }
     });
 
     test('null storage — pool runs without persistence', () => {
@@ -1205,23 +1145,48 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('second mismatch event is a no-op after cache is cleared (idempotence)', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry) throw new Error('expected entry');
-    pool.setActive('doc1');
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('telemetry-branch-idem');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      pool.setActive('doc1');
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
-    const postFirstEntry = pool.entries.get('doc1');
-    if (!postFirstEntry) throw new Error('expected post-first entry');
-    const postFirstProvider = postFirstEntry.provider;
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
+      const postFirstEntry = pool.entries.get('doc1');
+      if (!postFirstEntry) throw new Error('expected post-first entry');
+      const postFirstProvider = postFirstEntry.provider;
 
-    // A stale sibling's event arriving after cache is null must not churn.
-    postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
-    const postSecond = pool.entries.get('doc1');
-    expect(postSecond?.provider).toBe(postFirstProvider);
+      const epochSignals = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+        } catch {
+          return false;
+        }
+      });
+      expect(epochSignals.length).toBe(1);
+
+      postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
+      const epochAfterSecond = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+        } catch {
+          return false;
+        }
+      });
+      expect(epochAfterSecond.length).toBe(1);
+
+      const postSecond = pool.entries.get('doc1');
+      expect(postSecond?.provider).toBe(postFirstProvider);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
@@ -1271,43 +1236,99 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('active doc clearData failure exposes targeted recovery failure state', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry?.persistence) throw new Error('expected entry');
-    pool.setActive('doc1');
-    const originalProvider = entry.provider;
-    entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('clear-fail-branch');
+      const entry = pool.open('doc1');
+      if (!entry?.persistence) throw new Error('expected entry');
+      pool.setActive('doc1');
+      const originalProvider = entry.provider;
+      entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
 
-    expect(pool.getActive()?.provider).toBe(originalProvider);
-    expect(pool.getServerRestartRecoveryState()).toMatchObject({
-      kind: 'failed',
-      reason: 'clear-data-failed',
-      docNames: ['doc1'],
-      failedDocNames: ['doc1'],
-    });
+      expect(pool.getActive()?.provider).toBe(originalProvider);
+      expect(pool.getServerRestartRecoveryState()).toMatchObject({
+        kind: 'failed',
+        reason: 'clear-data-failed',
+        docNames: ['doc1'],
+        failedDocNames: ['doc1'],
+      });
+
+      const clearFailed = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-clear-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(clearFailed.length).toBe(1);
+      const payload = JSON.parse(clearFailed[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId?: string;
+        failureKind: string;
+        errorName?: string;
+        errorMessage?: string;
+      };
+      expect(payload.docName).toBe('doc1');
+      expect(payload.branch).toBe('clear-fail-branch');
+      expect(payload.serverInstanceId).toBe('server-old');
+      expect(payload.failureKind).toBe('rejected');
+      expect(payload.errorName).toBe('Error');
+      expect(payload.errorMessage).toBe('idb blocked');
+      expect(Object.keys(payload).every((k) => !['message', 'stack', 'reason'].includes(k))).toBe(
+        true,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('active doc clearData timeout exposes targeted timeout state', async () => {
-    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry?.persistence) throw new Error('expected entry');
-    pool.setActive('doc1');
-    entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('timeout-branch');
+      const entry = pool.open('doc1');
+      if (!entry?.persistence) throw new Error('expected entry');
+      pool.setActive('doc1');
+      entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(30);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(30);
 
-    expect(pool.getServerRestartRecoveryState()).toMatchObject({
-      kind: 'failed',
-      reason: 'clear-data-timeout',
-      docNames: ['doc1'],
-      failedDocNames: ['doc1'],
-    });
+      expect(pool.getServerRestartRecoveryState()).toMatchObject({
+        kind: 'failed',
+        reason: 'clear-data-timeout',
+        docNames: ['doc1'],
+        failedDocNames: ['doc1'],
+      });
+
+      const clearFailed = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-clear-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(clearFailed.length).toBe(1);
+      const payload = JSON.parse(clearFailed[0] ?? '{}') as { failureKind: string };
+      expect(payload.failureKind).toBe('timeout');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -1633,11 +1654,21 @@ describe('ProviderPool → V2 editor cache eviction coupling (Critical #2)', () 
 //
 // Uses unique doc names per test (randomUUID) so fake-indexeddb state from a
 // prior test doesn't leak across cases — different docNames map to different
-// IDB databases (named `ok-ydoc:${docName}`).
+// IDB databases (named `ok-ydoc:${branch}:${serverInstanceId}:${docName}`).
 // ---------------------------------------------------------------------------
 describe('ProviderPool client-persistence attachment (US-003)', () => {
+  function stubPersistence(): ClientPersistenceProvider {
+    return {
+      whenSynced: Promise.resolve(undefined as never),
+      synced: true,
+      destroy: mock(async () => {}),
+      clearData: mock(async () => {}),
+    } as ClientPersistenceProvider;
+  }
+
   test('open() attaches a ClientPersistenceProvider to the pool entry', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName();
     const entry = pool.open(docName);
     if (!entry) throw new Error('expected entry');
@@ -1648,8 +1679,51 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
     expect(typeof persistence.clearData).toBe('function');
   });
 
+  test('open() before serverInstanceId is known leaves persistence null', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const docName = uniqueDocName();
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    expect(entry.persistence).toBeNull();
+  });
+
+  test('deferred persistence attach continues after one entry throws', () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const badDoc = uniqueDocName('pp-deferred-throw');
+      const goodDoc = uniqueDocName('pp-deferred-ok');
+      const goodPersistence = stubPersistence();
+      const persistenceFactory = mock(({ docName }: { docName: string }) => {
+        if (docName === badDoc) {
+          throw new Error('idb unavailable');
+        }
+        return goodPersistence;
+      });
+
+      pool = new ProviderPool(3, DUMMY_WS, { persistenceFactory });
+      const badEntry = pool.open(badDoc);
+      const goodEntry = pool.open(goodDoc);
+      if (!badEntry || !goodEntry) throw new Error('expected entries');
+      expect(badEntry.persistence).toBeNull();
+      expect(goodEntry.persistence).toBeNull();
+
+      expect(() => pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID)).not.toThrow();
+
+      expect(badEntry.persistence).toBeNull();
+      expect(goodEntry.persistence).toBe(goodPersistence);
+      expect(persistenceFactory).toHaveBeenCalledTimes(2);
+      const events = warnSpy.mock.calls.map((call) => String(call[0] ?? ''));
+      expect(
+        events.some((event) => event.includes('"event":"ok-client-persistence-attach-failed"')),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   test('re-opening the same docName reuses the existing persistence instance', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName();
     const entry1 = pool.open(docName);
     const persistence1 = entry1?.persistence;
@@ -1659,6 +1733,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('prewarm() also attaches a persistence instance', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-prewarm');
     const entry = pool.prewarm(docName);
     if (!entry) throw new Error('expected prewarmed entry');
@@ -1667,6 +1742,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('close() destroys the persistence before the provider', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-close');
     const entry = pool.open(docName);
     if (!entry?.persistence) throw new Error('expected persistence');
@@ -1692,6 +1768,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('recycleDisconnectedEntry destroys the persistence before the provider', async () => {
     pool = new ProviderPool(3, DUMMY_WS, { recycleDebounceMs: 50 });
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const docName = uniqueDocName('pp-recycle');
     const entry = pool.open(docName);
     if (!entry?.persistence) throw new Error('expected persistence');
@@ -1726,6 +1803,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('evictLru destroys the persistence on the evicted entry', () => {
     pool = new ProviderPool(2, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const doc1 = uniqueDocName('pp-evict');
     const doc2 = uniqueDocName('pp-evict');
     const doc3 = uniqueDocName('pp-evict');
@@ -1746,6 +1824,7 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
   test('dispose() destroys every pool entry’s persistence', () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const doc1 = uniqueDocName('pp-dispose');
     const doc2 = uniqueDocName('pp-dispose');
     const e1 = pool.open(doc1);
@@ -2154,47 +2233,63 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
   // mid-drain duplication).
 
   test('handleServerInstanceMismatch uses lastDiskAckedSV when present', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const docName = uniqueDocName('pp-baseline');
-    const entry = pool.open(docName);
-    if (!entry) throw new Error('expected entry');
-    pool.setActive(docName);
-    entry.observerCleanup = () => {};
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      const docName = uniqueDocName('pp-baseline');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+      entry.observerCleanup = () => {};
 
-    // Two-phase baseline construction. Phase A's content is "already on
-    // disk + already in server memory" (both watermarks would advance
-    // past it under normal flow). Phase B is "in-memory-only" (server
-    // hasn't received the disk-ack yet).
-    const Y = await import('yjs');
-    const cp = await import('./client-persistence');
-    entry.provider.document.getText('source').insert(0, 'AAA');
-    const svAfterAAA = cp.captureStateVector(entry.provider.document);
-    entry.provider.document.getText('source').insert(3, 'BBB');
-    const svAfterAAABBB = cp.captureStateVector(entry.provider.document);
-    entry.provider.document.getText('source').insert(6, 'CCC');
+      // Two-phase baseline construction. Phase A's content is "already on
+      // disk + already in server memory" (both watermarks would advance
+      // past it under normal flow). Phase B is "in-memory-only" (server
+      // hasn't received the disk-ack yet).
+      const Y = await import('yjs');
+      const cp = await import('./client-persistence');
+      entry.provider.document.getText('source').insert(0, 'AAA');
+      const svAfterAAA = cp.captureStateVector(entry.provider.document);
+      entry.provider.document.getText('source').insert(3, 'BBB');
+      const svAfterAAABBB = cp.captureStateVector(entry.provider.document);
+      entry.provider.document.getText('source').insert(6, 'CCC');
 
-    // Set both SVs explicitly. lastDiskAckedSV (more conservative —
-    // server has durably persisted only 'AAA') must win as baseline.
-    entry.lastDiskAckedSV = svAfterAAA;
-    entry.lastServerSyncedSV = svAfterAAABBB;
+      // Set both SVs explicitly. lastDiskAckedSV (more conservative —
+      // server has durably persisted only 'AAA') must win as baseline.
+      entry.lastDiskAckedSV = svAfterAAA;
+      entry.lastServerSyncedSV = svAfterAAABBB;
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(100);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(100);
 
-    const buffered = pool.__test_getBufferedUpdate(docName);
-    if (!buffered) throw new Error('expected buffered update for active doc');
+      const noBaselineSkipped = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-buffer-replay-skipped-no-baseline';
+        } catch {
+          return false;
+        }
+      }).length;
 
-    // The buffered update MUST equal the unsynced-from-disk-ack delta
-    // (covering 'BBB' + 'CCC'), NOT the unsynced-from-server-synced
-    // delta (covering only 'CCC'). Compare byte-identity to encodeStateAsUpdate
-    // computed independently — proves which baseline was used.
-    const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
-    expect(buffered).toEqual(expected);
+      const buffered = pool.__test_getBufferedUpdate(docName);
+      if (!buffered) throw new Error('expected buffered update for active doc');
 
-    // Sanity: the alternative baseline produces a DIFFERENT (shorter) update.
-    const wrong = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAABBB);
-    expect(buffered.byteLength).toBeGreaterThan(wrong.byteLength);
+      expect(noBaselineSkipped).toBe(0);
+
+      // The buffered update MUST equal the unsynced-from-disk-ack delta
+      // (covering 'BBB' + 'CCC'), NOT the unsynced-from-server-synced
+      // delta (covering only 'CCC'). Compare byte-identity to encodeStateAsUpdate
+      // computed independently — proves which baseline was used.
+      const expected = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAA);
+      expect(buffered).toEqual(expected);
+
+      // Sanity: the alternative baseline produces a DIFFERENT (shorter) update.
+      const wrong = Y.encodeStateAsUpdate(entry.provider.document, svAfterAAABBB);
+      expect(buffered.byteLength).toBeGreaterThan(wrong.byteLength);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('handleServerInstanceMismatch falls back to lastServerSyncedSV when lastDiskAckedSV is null', async () => {
@@ -2228,24 +2323,332 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     expect(buffered).toEqual(expected);
   });
 
-  test('handleServerInstanceMismatch skips entries with both watermarks null', async () => {
+  test('handleServerInstanceMismatch skips buffer replay when both watermark SVs are null', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('no-baseline-branch');
+      const docName = uniqueDocName('pp-baseline');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+
+      entry.provider.document.getText('source').insert(0, 'unacked content');
+      expect(entry.lastServerSyncedSV).toBeNull();
+      expect(entry.lastDiskAckedSV).toBeNull();
+
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(100);
+
+      // No trusted baseline → no in-memory replay buffer; clearData + recycle still run downstream.
+      expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
+
+      const noBaselineCalls = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-buffer-replay-skipped-no-baseline';
+        } catch {
+          return false;
+        }
+      });
+      expect(noBaselineCalls.length).toBe(1);
+      const firstArg = noBaselineCalls[0]?.[0];
+      expect(typeof firstArg).toBe('string');
+      const payload = JSON.parse(firstArg) as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId: string;
+        reason: string;
+      };
+      expect(payload.event).toBe('ok-buffer-replay-skipped-no-baseline');
+      expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('no-baseline-branch');
+      expect(payload.serverInstanceId).toBe('server-old');
+      expect(payload.reason).toBe('no-disk-ack-or-server-sync-vector');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set(['event', 'docName', 'branch', 'serverInstanceId', 'reason']),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * Persistence tripwire blocks emit `ok-persistence-duplication-blocked` server-side only.
+ * There is no push channel delivering that signal to browsers, so
+ * ServerRestartRecoveryState does not expose a duplicated-write sentinel—the
+ * existing mismatch recovery spinner / failed-clear states remain the UX surface for
+ * client-observable cache recovery.
+ */
+describe('ProviderPool structured mismatch telemetry', () => {
+  test('replay applies corrupt buffer emits ok-buffer-replay-failed with bounded fields', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('epoch-replay-telemetry');
+      pool.setObservedBranch('replay-telemetry-branch');
+      const docName = uniqueDocName('replay-flush');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+      entry.observerCleanup = () => {};
+
+      const cp = await import('./client-persistence');
+      entry.provider.document.getText('source').insert(0, 'R');
+      const svDisk = cp.captureStateVector(entry.provider.document);
+      entry.lastDiskAckedSV = svDisk;
+
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(150);
+
+      const neo = pool.entries.get(docName);
+      if (!neo || neo.kind !== 'active') throw new Error('expected recycled active entry');
+
+      neo.observerCleanup = () => {};
+      pool.__test_seedBufferedUpdate(docName, new Uint8Array([255, 0, 254]));
+      neo.provider.emit('synced', { state: true });
+
+      await wait(20);
+
+      const replayFailedCalls = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-buffer-replay-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(replayFailedCalls.length).toBe(1);
+      const payload = JSON.parse(replayFailedCalls[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId?: string;
+        replayByteLength: number;
+        errorName: string;
+        errorMessage: string;
+      };
+      expect(payload.event).toBe('ok-buffer-replay-failed');
+      expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('replay-telemetry-branch');
+      expect(payload.serverInstanceId).toBe('epoch-replay-telemetry');
+      expect(payload.replayByteLength).toBe(3);
+      expect(typeof payload.errorName).toBe('string');
+      expect(typeof payload.errorMessage).toBe('string');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set([
+          'event',
+          'docName',
+          'branch',
+          'serverInstanceId',
+          'replayByteLength',
+          'errorName',
+          'errorMessage',
+        ]),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('epoch mismatch envelope uses active doc plus branch and stale instance claim', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('stale-epoch-telemetry');
+      pool.setObservedBranch('epoch-msg-branch');
+      const docName = uniqueDocName('epoch-msg');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(30);
+
+      const epochCalls = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+          } catch {
+            return false;
+          }
+        });
+      expect(epochCalls.length).toBe(1);
+      const payload = JSON.parse(epochCalls[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId: string;
+      };
+      expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('epoch-msg-branch');
+      expect(payload.serverInstanceId).toBe('stale-epoch-telemetry');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set(['event', 'docName', 'branch', 'serverInstanceId']),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('recovery state machine never reports blocked-suspicious-write labels', () => {
     pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const docName = uniqueDocName('pp-baseline');
+    const snapshot = JSON.stringify(pool.getServerRestartRecoveryState());
+    expect(snapshot).not.toContain('blocked-suspicious-write');
+    expect(snapshot).not.toContain('blocked_suspicious_write');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider-open gating: persistent IndexedDB attachment is deferred until
+// `setExpectedServerInstanceId` lands a non-null id. Until then,
+// `entry.persistence` is null and no DB handle is opened — preventing an
+// "unknown-epoch" DB from being created against a name the next session
+// could re-attach to. Once the id arrives, `attachDeferredPersistence`
+// retroactively wires up persistence on every active entry that was opened
+// during the cold-boot window.
+// ---------------------------------------------------------------------------
+describe('ProviderPool provider-open gating', () => {
+  test('whenServerInstanceKnown resolves immediately when id is already cached', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+    expect(await pool.whenServerInstanceKnown()).toBe(TEST_SERVER_INSTANCE_ID);
+  });
+
+  test('whenServerInstanceKnown returns the same pending promise for concurrent callers', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const p1 = pool.whenServerInstanceKnown();
+    const p2 = pool.whenServerInstanceKnown();
+    expect(p1).toBe(p2);
+  });
+
+  test('whenServerInstanceKnown resolves once setExpectedServerInstanceId lands a non-null id', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.setExpectedServerInstanceId('server-cold-boot');
+    expect(await pending).toBe('server-cold-boot');
+  });
+
+  test('setExpectedServerInstanceId(null) does not reject pending whenServerInstanceKnown', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.setExpectedServerInstanceId(null);
+    pool.setExpectedServerInstanceId('server-after-null');
+    expect(await pending).toBe('server-after-null');
+  });
+
+  test('a previously-resolved whenServerInstanceKnown promise is not re-resolved on a later id change', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-first');
+    const resolved = await pool.whenServerInstanceKnown();
+    expect(resolved).toBe('server-first');
+    pool.setExpectedServerInstanceId('server-second');
+    // Fresh call observes the new id; the previously-resolved value is stable.
+    expect(await pool.whenServerInstanceKnown()).toBe('server-second');
+    expect(resolved).toBe('server-first');
+  });
+
+  test('open() before serverInstanceId is known does not construct a stale-shape IDB database', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    const docName = uniqueDocName('pp-cold-boot');
     const entry = pool.open(docName);
     if (!entry) throw new Error('expected entry');
-    pool.setActive(docName);
+    expect(entry.persistence).toBeNull();
+    expect(entry.kind).toBe('active');
 
-    entry.provider.document.getText('source').insert(0, 'unacked content');
-    expect(entry.lastServerSyncedSV).toBeNull();
-    expect(entry.lastDiskAckedSV).toBeNull();
+    if (typeof indexedDB !== 'undefined') {
+      const dbs = await indexedDB.databases();
+      const staleShapeName = `ok-ydoc:main:${docName}`;
+      const newShapeUnknownEpoch = `ok-ydoc:main::${docName}`;
+      expect(dbs.find((d) => d.name === staleShapeName)).toBeUndefined();
+      expect(dbs.find((d) => d.name === newShapeUnknownEpoch)).toBeUndefined();
+    }
+  });
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(100);
+  test('setExpectedServerInstanceId retroactively attaches persistence with the new-shape DB name', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    const docA = uniqueDocName('pp-retro');
+    const docB = uniqueDocName('pp-retro');
+    const entryA = pool.open(docA);
+    const entryB = pool.open(docB);
+    if (!entryA || !entryB) throw new Error('expected entries');
+    expect(entryA.persistence).toBeNull();
+    expect(entryB.persistence).toBeNull();
 
-    // No baseline → drop unsynced state. The 50–500 ms cold-connect-then-
-    // immediate-mismatch window can lose keystrokes; accepted trade-off
-    // (SPEC §6).
-    expect(pool.__test_getBufferedUpdate(docName)).toBeUndefined();
+    pool.setExpectedServerInstanceId('server-retro-attach');
+
+    if (entryA.kind !== 'active' || entryB.kind !== 'active') {
+      throw new Error('expected entries to remain active');
+    }
+    expect(entryA.persistence).not.toBeNull();
+    expect(entryB.persistence).not.toBeNull();
+    expect(typeof entryA.persistence?.destroy).toBe('function');
+    expect(typeof entryA.persistence?.clearData).toBe('function');
+
+    if (typeof indexedDB !== 'undefined') {
+      await entryA.persistence?.whenSynced;
+      await entryB.persistence?.whenSynced;
+      const dbs = await indexedDB.databases();
+      const names = new Set(dbs.map((d) => d.name).filter((n): n is string => n !== undefined));
+      expect(names.has(`ok-ydoc:main:server-retro-attach:${docA}`)).toBe(true);
+      expect(names.has(`ok-ydoc:main:server-retro-attach:${docB}`)).toBe(true);
+      // Stale-shape (no epoch slot) and unknown-epoch (empty epoch slot)
+      // databases must NOT be created during the cold-boot window.
+      expect(names.has(`ok-ydoc:main:${docA}`)).toBe(false);
+      expect(names.has(`ok-ydoc:main::${docA}`)).toBe(false);
+    }
+  });
+
+  test('setExpectedServerInstanceId is a no-op for entries that already have persistence attached', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-warm');
+    const docName = uniqueDocName('pp-warm');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    const persistenceBefore = entry.persistence;
+    expect(persistenceBefore).not.toBeNull();
+
+    pool.setExpectedServerInstanceId('server-warm-update');
+    if (entry.kind !== 'active') throw new Error('expected entry to remain active');
+    expect(entry.persistence).toBe(persistenceBefore);
+  });
+
+  test('setExpectedServerInstanceId(null) does not detach already-attached persistence', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId('server-warm');
+    const docName = uniqueDocName('pp-no-detach');
+    const entry = pool.open(docName);
+    if (!entry) throw new Error('expected entry');
+    const persistenceBefore = entry.persistence;
+    expect(persistenceBefore).not.toBeNull();
+
+    pool.setExpectedServerInstanceId(null);
+    if (entry.kind !== 'active') throw new Error('expected entry to remain active');
+    expect(entry.persistence).toBe(persistenceBefore);
+  });
+
+  test('dispose() drops the pending whenServerInstanceKnown handle', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const pending = pool.whenServerInstanceKnown();
+    pool.dispose();
+
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await wait(10);
+    expect(settled).toBe(false);
+
+    // Re-create the pool so the afterEach dispose() targets a real instance.
+    pool = new ProviderPool(3, DUMMY_WS);
   });
 });

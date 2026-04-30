@@ -136,19 +136,21 @@ describe('ProviderPool reconnects', () => {
   // When the browser page reloads (Vite restarts the dev server), a fresh
   // ProviderPool is created with cachedServerInstanceId=null in-memory, IDB
   // still holds Y.Doc items from the prior session, and the server has a new
-  // instanceId. Without the localStorage fix, the client sends no claim, the
-  // server accepts unconditionally, and IDB merges with the freshly-loaded
-  // server Y.Doc → duplication. With the fix, the pool reads the stale ID
-  // from storage, sends it as expectedServerInstanceId, the server rejects
-  // with server-instance-mismatch, and clearData runs before any Yjs sync.
-  test('page reload after server restart: pool reads stale instance ID from storage and triggers recycle', async () => {
+  // instanceId. Epoch-scoped DB names — `ok-ydoc:${branch}:${serverInstanceId}:${docName}` —
+  // structurally prevent the prior session's IDB from hydrating into the
+  // post-reload provider: the new server epoch resolves to a different
+  // database name, so the stale Y.Doc items can never merge with the
+  // freshly-loaded server state.
+  test('page reload after server restart: epoch-scoped DB name prevents IDB hydration', async () => {
     let server = await createRestartableServer();
     cleanups.push(() => server.shutdown());
 
     const docName = 'page-reload-doc';
     writeFileSync(join(server.contentDir, `${docName}.md`), SMALL_FIXTURE, 'utf-8');
 
-    // Shared storage stub — simulates localStorage persisting across page loads.
+    // Shared storage stub — simulates localStorage persisting across page
+    // loads. Used by the pool's branch-tracking helper; epoch state lives
+    // structurally in the IDB DB name.
     const storageMap = new Map<string, string>();
     const storage = {
       getItem: (k: string) => storageMap.get(k) ?? null,
@@ -160,13 +162,11 @@ describe('ProviderPool reconnects', () => {
       },
     };
 
-    // Session 1: pool connects, syncs, persists the IDB-associated server ID
-    // to storage.
+    // Session 1: pool connects and syncs under the first server epoch.
     const firstPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`, { storage });
     const firstServerId = await seedPoolServerInstanceId(server, firstPool);
     await seedAndSyncSingleClient(server, firstPool, docName);
     await wait(300);
-    expect(storageMap.get('ok-idb-synced-server-instance-id')).toBe(firstServerId);
 
     const baseline = readFileSync(join(server.contentDir, `${docName}.md`), 'utf-8');
     const baselineHeadings = (baseline.match(/# Test Document/g) ?? []).length;
@@ -182,14 +182,13 @@ describe('ProviderPool reconnects', () => {
     server = await server.killAndRestartOnSamePort({ downtimeMs: 500 });
     cleanups.unshift(() => server.shutdown());
 
-    // Session 2: fresh pool simulating a post-reload page. Storage still has
-    // the old instanceId, but the boot `/api/server-info` fetch wins the race
-    // and observes the new instanceId before the document provider opens.
+    // Session 2: fresh pool simulating a post-reload page. The new epoch's
+    // DB name structurally diverges from the first session's, so no IDB
+    // hydration of stale Y.Doc items into the new provider is possible.
     const secondPool = new ProviderPool(3, `ws://localhost:${server.port}/collab`, { storage });
     cleanups.push(() => secondPool.dispose());
     const secondServerId = await seedPoolServerInstanceId(server, secondPool);
     expect(secondServerId).not.toBe(firstServerId);
-    expect(storageMap.get('ok-idb-synced-server-instance-id')).toBe(firstServerId);
     secondPool.open(docName);
     secondPool.setActive(docName);
     await pollUntil(() => secondPool.getActive()?.provider.isSynced === true, 10_000, 50);
