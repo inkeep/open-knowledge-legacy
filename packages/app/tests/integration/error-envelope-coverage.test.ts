@@ -33,17 +33,7 @@ const source = readFileSync(API_EXT_PATH, 'utf8');
  * Final PR (US-014) deletes the allowlist entirely and flips the test
  * into fail-on-any-occurrence mode.
  */
-const UNMIGRATED_HANDLERS = new Set([
-  'handleSeedApply',
-  'handleSeedPlan',
-  'handleSyncAbortMerge',
-  'handleSyncConflictContent',
-  'handleSyncConflicts',
-  'handleSyncResolveConflict',
-  'handleSyncSetEnabled',
-  'handleSyncStatus',
-  'handleSyncTrigger',
-]);
+const UNMIGRATED_HANDLERS = new Set<string>([]);
 
 function listAllHandlers(): string[] {
   // Handlers in `api-extension.ts` come in two shapes after the cluster

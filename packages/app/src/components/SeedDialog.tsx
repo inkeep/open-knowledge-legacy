@@ -1,3 +1,4 @@
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { FileCog, FileText, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -21,8 +22,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type {
+  OkScaffoldApplyResult,
   OkScaffoldPlan,
   OkSeedApplyResult,
+  OkSeedError,
   OkSeedPlanResult,
 } from '@/lib/desktop-bridge-types';
 
@@ -44,10 +47,39 @@ type DialogPhase =
 type RootChoice = 'project-root' | 'subfolder';
 
 /**
+ * Translates an HTTP response carrying an RFC 9457 problem+json (post-D22)
+ * to the in-process `OkSeedError` discriminated-union shape so the IPC and
+ * HTTP transports surface identical types to renderers. Maps the cluster-H
+ * URN tokens 1:1 to the `OkSeedError.kind` enum; everything else collapses
+ * to `kind: 'internal'`.
+ */
+async function translateSeedError(res: Response): Promise<OkSeedError> {
+  const body = (await res.json().catch(() => null)) as unknown;
+  const parsed = ProblemDetailsSchema.safeParse(body);
+  if (!parsed.success) {
+    return { kind: 'internal', message: `HTTP ${res.status}` };
+  }
+  const message = parsed.data.detail ?? parsed.data.title;
+  switch (parsed.data.type) {
+    case 'urn:ok:error:seed-prerequisite-missing':
+      return { kind: 'prerequisite-missing', message };
+    case 'urn:ok:error:seed-invalid-root':
+      return { kind: 'invalid-root', message };
+    case 'urn:ok:error:no-project-dir':
+      return { kind: 'no-project', message };
+    default:
+      return { kind: 'internal', message };
+  }
+}
+
+/**
  * Runtime adapter that returns the right transport for plan/apply — Electron
  * IPC when the desktop bridge is populated, otherwise HTTP fetch to the
  * Hocuspocus `/api/seed/*` endpoints. Either path hits the same underlying
- * `planSeed` / `applySeed` in `@inkeep/open-knowledge-server`.
+ * `planSeed` / `applySeed` in `@inkeep/open-knowledge-server`. The HTTP path
+ * post-D22 emits flat `{plan}` / `{result}` on success and RFC 9457
+ * problem+json on error; this adapter translates either back to the in-
+ * process discriminated union.
  */
 function seedClient() {
   const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
@@ -61,7 +93,14 @@ function seedClient() {
     plan: async (rootDir?: string): Promise<OkSeedPlanResult> => {
       const qs = rootDir ? `?rootDir=${encodeURIComponent(rootDir)}` : '';
       const res = await fetch(`/api/seed/plan${qs}`);
-      return (await res.json()) as OkSeedPlanResult;
+      if (!res.ok) {
+        return { ok: false, error: await translateSeedError(res) };
+      }
+      const body = (await res.json().catch(() => null)) as { plan?: OkScaffoldPlan } | null;
+      if (!body?.plan) {
+        return { ok: false, error: { kind: 'internal', message: 'Malformed plan response' } };
+      }
+      return { ok: true, plan: body.plan };
     },
     apply: async (plan: OkScaffoldPlan): Promise<OkSeedApplyResult> => {
       const res = await fetch('/api/seed/apply', {
@@ -69,7 +108,16 @@ function seedClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan }),
       });
-      return (await res.json()) as OkSeedApplyResult;
+      if (!res.ok) {
+        return { ok: false, error: await translateSeedError(res) };
+      }
+      const body = (await res.json().catch(() => null)) as {
+        result?: OkScaffoldApplyResult;
+      } | null;
+      if (!body?.result) {
+        return { ok: false, error: { kind: 'internal', message: 'Malformed apply response' } };
+      }
+      return { ok: true, result: body.result };
     },
   };
 }

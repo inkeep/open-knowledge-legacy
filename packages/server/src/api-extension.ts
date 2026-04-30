@@ -61,7 +61,11 @@ import {
   type RescueEntryTimeline,
   RollbackRequestSchema,
   SaveVersionRequestSchema,
+  SeedApplyRequestSchema,
   SYSTEM_DOC_NAME,
+  SyncResolveConflictRequestSchema,
+  SyncSetEnabledRequestSchema,
+  SyncTriggerRequestSchema,
   stripFrontmatter,
   UploadRequestSchema,
 } from '@inkeep/open-knowledge-core';
@@ -6685,96 +6689,166 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-status' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
-      // reads these fields unconditionally.
-      json(res, 200, {
-        state: 'dormant',
-        lastSyncUtc: null,
-        lastFetchUtc: null,
-        lastPushedSha: null,
-        ahead: 0,
-        behind: 0,
-        consecutiveFailures: 0,
-        conflictCount: 0,
-        hasRemote: false,
-        syncEnabled: false,
-        identityUnresolved: false,
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-status',
+        extraHeaders: { Allow: 'GET' },
       });
       return;
     }
-    json(res, 200, engine.getStatus());
+    try {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
+        // reads these fields unconditionally. Dormant fallback when the engine
+        // isn't constructed (no remote, sync disabled at boot).
+        json(res, 200, {
+          state: 'dormant',
+          lastSyncUtc: null,
+          lastFetchUtc: null,
+          lastPushedSha: null,
+          ahead: 0,
+          behind: 0,
+          consecutiveFailures: 0,
+          conflictCount: 0,
+          hasRemote: false,
+          syncEnabled: false,
+          identityUnresolved: false,
+        });
+        return;
+      }
+      json(res, 200, engine.getStatus());
+    } catch (e) {
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'sync-status',
+        cause: e,
+      });
+    }
   }
 
   async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-trigger' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-trigger',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+        handler: 'sync-trigger',
+      });
       return;
     }
+    // Body is optional — empty or absent = default 'sync'. Schema-validate
+    // when the body is non-empty so unknown `op` values fail loud rather
+    // than silently fall through to 'sync' (the legacy behavior).
     let op: 'sync' | 'push' | 'pull' = 'sync';
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      if (body.length > 0) {
-        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-        if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
-          op = parsed.op as 'push' | 'pull' | 'sync';
-        }
-      }
-    } catch {
-      // Ignore parse errors — use default op
+      raw = await readBody(req);
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: 'sync-trigger',
+        cause: e,
+      });
+      return;
     }
-    // Fire-and-return: 202 Accepted immediately, trigger runs in background
-    json(res, 202, { ok: true, op });
+    if (raw.length > 0) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw.toString());
+      } catch (e) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+          handler: 'sync-trigger',
+          cause: e,
+        });
+        return;
+      }
+      const validation = validateBody(SyncTriggerRequestSchema, parsed, res, {
+        handler: 'sync-trigger',
+      });
+      if (!validation.ok) return;
+      if (validation.value.op !== undefined) {
+        op = validation.value.op;
+      }
+    }
+    // Fire-and-return: 202 Accepted immediately, trigger runs in background.
+    json(res, 202, { op });
     void engine.trigger(op);
   }
 
   async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-set-enabled' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-set-enabled',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+        handler: 'sync-set-enabled',
+      });
       return;
     }
-    let enabled: boolean;
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-      if (typeof parsed.enabled !== 'boolean') {
-        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
-        return;
-      }
-      enabled = parsed.enabled;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: 'sync-set-enabled',
+        cause: e,
+      });
       return;
     }
-    await engine.setEnabled(enabled);
-    json(res, 200, { ok: true, status: engine.getStatus() });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString());
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        handler: 'sync-set-enabled',
+        cause: e,
+      });
+      return;
+    }
+    const validation = validateBody(SyncSetEnabledRequestSchema, parsed, res, {
+      handler: 'sync-set-enabled',
+    });
+    if (!validation.ok) return;
+    try {
+      await engine.setEnabled(validation.value.enabled);
+      json(res, 200, { status: engine.getStatus() });
+    } catch (e) {
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to toggle sync.', {
+        handler: 'sync-set-enabled',
+        cause: e,
+      });
+    }
   }
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflicts' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-conflicts',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
-    const engine = getSyncEngine?.();
-    const conflicts = engine ? engine.getConflicts() : [];
-    json(res, 200, { conflicts });
+    try {
+      const engine = getSyncEngine?.();
+      const conflicts = engine ? engine.getConflicts() : [];
+      json(res, 200, { conflicts });
+    } catch (e) {
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'sync-conflicts',
+        cause: e,
+      });
+    }
   }
 
   async function handleSyncResolveConflict(
@@ -6783,44 +6857,52 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   ): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-resolve-conflict' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-resolve-conflict',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
-      return;
-    }
-    let body: Record<string, unknown>;
-    try {
-      const raw = await readBody(req);
-      body = JSON.parse(raw.toString()) as Record<string, unknown>;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-    const { file, strategy, content } = body as {
-      file?: string;
-      strategy?: string;
-      content?: string;
-    };
-    if (!file || typeof file !== 'string') {
-      json(res, 400, { ok: false, error: 'Missing required field: file' });
-      return;
-    }
-    if (strategy !== 'mine' && strategy !== 'theirs' && strategy !== 'content') {
-      json(res, 400, {
-        ok: false,
-        error: "Invalid strategy: must be 'mine', 'theirs', or 'content'",
+      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+        handler: 'sync-resolve-conflict',
       });
       return;
     }
+    let raw: Buffer;
+    try {
+      raw = await readBody(req);
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: 'sync-resolve-conflict',
+        cause: e,
+      });
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString());
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        handler: 'sync-resolve-conflict',
+        cause: e,
+      });
+      return;
+    }
+    const validation = validateBody(SyncResolveConflictRequestSchema, parsed, res, {
+      handler: 'sync-resolve-conflict',
+    });
+    if (!validation.ok) return;
+    const { file, strategy, content } = validation.value;
     try {
       await engine.resolveConflict(file, strategy as ResolveStrategy, content);
-      json(res, 200, { ok: true });
+      json(res, 200, {});
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to resolve conflict.', {
+        handler: 'sync-resolve-conflict',
+        cause: e,
+      });
     }
   }
 
@@ -6830,22 +6912,41 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   ): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflict-content' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-conflict-content',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!projectDir) {
-      json(res, 503, { ok: false, error: 'Project repo not configured' });
+      errorResponse(
+        res,
+        503,
+        'urn:ok:error:project-repo-not-configured',
+        'Project repo not configured.',
+        { handler: 'sync-conflict-content' },
+      );
       return;
     }
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const file = url.searchParams.get('file');
     if (!file) {
-      json(res, 400, { ok: false, error: 'Missing required query param: file' });
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:invalid-request',
+        'Missing required query param: file.',
+        {
+          handler: 'sync-conflict-content',
+        },
+      );
       return;
     }
     // Reject obvious path-traversal; git itself rejects paths outside the index.
     if (file.includes('..') || file.startsWith('/')) {
-      json(res, 400, { ok: false, error: 'Invalid file path' });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid file path.', {
+        handler: 'sync-conflict-content',
+      });
       return;
     }
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
@@ -6860,88 +6961,133 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const [base, ours, theirs] = await Promise.all([showStage(1), showStage(2), showStage(3)]);
-      json(res, 200, { ok: true, file, base, ours, theirs });
+      json(res, 200, { file, base, ours, theirs });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(
+        res,
+        500,
+        'urn:ok:error:internal-server-error',
+        'Failed to read conflict content.',
+        {
+          handler: 'sync-conflict-content',
+          cause: e,
+        },
+      );
     }
   }
 
   // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
-  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
-  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
+  // GET /api/seed/plan  → 200 {plan} (RFC 9457 problem+json on error)
+  // POST /api/seed/apply with { plan } → 200 {result} (RFC 9457 problem+json on error)
   //
-  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
-  // three surfaces share `planSeed` / `applySeed` from the server seed module.
+  // Same `planSeed` / `applySeed` logic the CLI subcommand and Electron IPC
+  // handler use. The IPC bridge (`ok:seed:plan` / `ok:seed:apply`) keeps its
+  // in-process discriminated-union shape (`{ok: true, plan}` / `{ok: false,
+  // error: {kind, message}}`); the HTTP fallback in `seedClient()` translates
+  // RFC 9457 problem+json back to that shape at the renderer boundary so
+  // `SeedDialog` / `EmptyEditorState` are transport-agnostic.
   // Gated on `checkLocalOpSecurity` because the operation mutates the local
   // filesystem; same contract as /api/local-op/* and /api/installed-agents.
 
   /**
    * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
-   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
-   * (absolute path, escape segments) surface as `{ ok: false, error }` so
-   * the dialog can render the message without an HTTP failure.
+   * subfolder. `rootDir` defaults to `.` (project root). Prerequisite-missing
+   * (no git init) → 422 with `urn:ok:error:seed-prerequisite-missing`;
+   * invalid-root (escape segments, absolute path) → 400 with
+   * `urn:ok:error:seed-invalid-root`. Both surface a `detail` carrying the
+   * underlying message so renderers can echo it.
    */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'seed-plan' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'seed-plan',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     const url = new URL(req.url ?? '/', 'http://localhost');
     const rootDir = url.searchParams.get('rootDir') ?? undefined;
     try {
       const plan = await planSeed({ projectDir: contentDir, rootDir });
-      json(res, 200, { ok: true, plan });
+      json(res, 200, { plan });
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
-        json(res, 200, {
-          ok: false,
-          error: { kind: 'prerequisite-missing', message: err.message },
-        });
+        errorResponse(
+          res,
+          422,
+          'urn:ok:error:seed-prerequisite-missing',
+          'Seed prerequisite missing.',
+          { handler: 'seed-plan', detail: err.message, cause: err },
+        );
         return;
       }
       if (err instanceof SeedRootDirError) {
-        json(res, 200, {
-          ok: false,
-          error: { kind: 'invalid-root', message: err.message },
+        errorResponse(res, 400, 'urn:ok:error:seed-invalid-root', 'Invalid seed root directory.', {
+          handler: 'seed-plan',
+          detail: err.message,
+          cause: err,
         });
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'seed-plan',
+        cause: err,
+      });
     }
   }
 
   async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'seed-apply' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'seed-apply',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
-
-    let plan: ScaffoldPlan;
+    let raw: Buffer;
     try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { plan?: unknown };
-      if (!parsed.plan || typeof parsed.plan !== 'object') {
-        json(res, 400, { ok: false, error: 'Missing or invalid plan' });
-        return;
-      }
-      plan = parsed.plan as ScaffoldPlan;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      raw = await readBody(req);
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Failed to read request body.', {
+        handler: 'seed-apply',
+        cause: e,
+      });
       return;
     }
-
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw.toString());
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        handler: 'seed-apply',
+        cause: e,
+      });
+      return;
+    }
+    const validation = validateBody(SeedApplyRequestSchema, parsed, res, { handler: 'seed-apply' });
+    if (!validation.ok) return;
+    // SeedApplyRequestSchema accepts `plan: unknown` (forward-compat); reject
+    // non-object payloads here so applySeed sees a structured value.
+    const planValue = validation.value.plan;
+    if (!planValue || typeof planValue !== 'object') {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid plan payload.', {
+        handler: 'seed-apply',
+      });
+      return;
+    }
+    const plan = planValue as ScaffoldPlan;
     try {
       // The plan already has rootDir baked into its entries — apply only
       // needs projectDir.
       const result = await applySeed(plan, { projectDir: contentDir });
-      json(res, 200, { ok: true, result });
+      json(res, 200, { result });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to apply seed plan.', {
+        handler: 'seed-apply',
+        cause: err,
+      });
     }
   }
 
@@ -7034,20 +7180,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'sync-abort-merge' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-abort-merge',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+        handler: 'sync-abort-merge',
+      });
       return;
     }
     try {
       await engine.abortMerge();
-      json(res, 200, { ok: true });
+      json(res, 200, {});
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to abort merge.', {
+        handler: 'sync-abort-merge',
+        cause: e,
+      });
     }
   }
 
@@ -7216,11 +7369,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
         const peerAddress = request.socket?.remoteAddress;
         if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
-          json(response, 403, { ok: false, error: 'loopback-required' });
+          errorResponse(response, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+            handler: 'api-mutating-gate',
+          });
           return;
         }
         if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
-          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
+          errorResponse(
+            response,
+            403,
+            'urn:ok:error:host-not-allowed',
+            'Host header not allowed.',
+            { handler: 'api-mutating-gate' },
+          );
           return;
         }
       }

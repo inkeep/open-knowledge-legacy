@@ -207,6 +207,19 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:auth-failed',
   'urn:ok:error:no-project-dir',
   'urn:ok:error:server-open-failed',
+  // Cluster H: sync + seed handlers (US-013). `sync-not-active` flags the
+  // service-unavailable state when the sync engine isn't constructed yet
+  // (no remote, or sync subsystem disabled). `project-repo-not-configured`
+  // flags handleSyncConflictContent's projectDir guard. `seed-prerequisite-missing`
+  // covers SeedPrerequisiteError (e.g. project root not git-init'd);
+  // `seed-invalid-root` covers SeedRootDirError (rootDir contains '..' or
+  // absolute path). All other error paths reuse shared `invalid-request`,
+  // `method-not-allowed`, `internal-server-error`, plus cluster-G's
+  // `loopback-required` / `invalid-origin` from the shared local-op gate.
+  'urn:ok:error:sync-not-active',
+  'urn:ok:error:project-repo-not-configured',
+  'urn:ok:error:seed-prerequisite-missing',
+  'urn:ok:error:seed-invalid-root',
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -1808,3 +1821,271 @@ export type LocalOpAuthEmptySuccess = z.infer<typeof LocalOpAuthEmptySuccessSche
 const _LocalOpAuthEmptySuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthEmptySuccess> =
   LocalOpAuthEmptySuccessSchema;
 void _LocalOpAuthEmptySuccessSchemaIsStandard;
+
+// ---------------------------------------------------------------------------
+// Cluster H: sync + seed handlers (US-013)
+// ---------------------------------------------------------------------------
+//
+// Nine handlers: `handleSyncStatus`, `handleSyncTrigger`, `handleSyncSetEnabled`,
+// `handleSyncConflicts`, `handleSyncResolveConflict`, `handleSyncConflictContent`,
+// `handleSyncAbortMerge`, `handleSeedPlan`, `handleSeedApply`. All gated on
+// `checkLocalOpSecurity` (loopback + Origin). Sync handlers are HTTP-only — no
+// IPC mirror exists. Seed plan/apply are also IPC-mirrored (`ok:seed:plan` /
+// `ok:seed:apply` on the desktop bridge); their HTTP fallback in `seedClient()`
+// translates the RFC 9457 wire shape back to the in-process `OkSeedPlanResult` /
+// `OkSeedApplyResult` discriminated unions so renderers don't branch by
+// transport. The RFC 9457 path only carries the SUCCESS payload (`{plan}` /
+// `{result}`); error kinds (`prerequisite-missing` / `invalid-root` / `internal`)
+// arrive as URN tokens and are translated client-side.
+
+/**
+ * `SyncState` literal-union mirroring the in-process `SyncState` type from
+ * `sync-engine.ts`. Sourced here so wire consumers (UI, CLI) can branch on
+ * states without importing server-internal modules.
+ */
+export const SyncStateSchema = z.enum([
+  'dormant',
+  'idle',
+  'fetching',
+  'pulling',
+  'pushing',
+  'conflict',
+  'offline',
+  'auth-error',
+  'disabled',
+]);
+export type SyncStateWire = z.infer<typeof SyncStateSchema>;
+const _SyncStateSchemaIsStandard: StandardSchemaV1<unknown, SyncStateWire> = SyncStateSchema;
+void _SyncStateSchemaIsStandard;
+
+/**
+ * Full sync engine status — emitted as the flat success body of
+ * `GET /api/sync/status` AND as the nested `status` field of
+ * `POST /api/sync/set-enabled`. Mirrors the in-process `SyncStatus` interface
+ * in `sync-engine.ts`. `.loose()` for forward-compat (sync-engine may add
+ * fields without a wire migration).
+ */
+export const SyncStatusSchema = z
+  .object({
+    state: SyncStateSchema,
+    lastSyncUtc: z.string().nullable(),
+    lastFetchUtc: z.string().nullable(),
+    lastPushedSha: z.string().nullable(),
+    ahead: z.number().int().min(0),
+    behind: z.number().int().min(0),
+    consecutiveFailures: z.number().int().min(0),
+    conflictCount: z.number().int().min(0),
+    hasRemote: z.boolean(),
+    syncEnabled: z.boolean(),
+    identityUnresolved: z.boolean(),
+    error: z.string().optional(),
+    pausedReason: z.string().optional(),
+  })
+  .loose();
+export type SyncStatusWire = z.infer<typeof SyncStatusSchema>;
+const _SyncStatusSchemaIsStandard: StandardSchemaV1<unknown, SyncStatusWire> = SyncStatusSchema;
+void _SyncStatusSchemaIsStandard;
+
+/** Success body for `GET /api/sync/status`. Wire shape IS the status object. */
+export const SyncStatusSuccessSchema = SyncStatusSchema;
+export type SyncStatusSuccess = SyncStatusWire;
+
+/**
+ * Request body for `POST /api/sync/trigger`. `op` is optional — server defaults
+ * to `'sync'` when omitted. Pre-validation, the legacy handler accepted any
+ * unknown shape and silently fell through to `'sync'`; the schema-validated
+ * form rejects unknown `op` values explicitly with `urn:ok:error:invalid-request`.
+ */
+export const SyncTriggerRequestSchema = z
+  .object({
+    op: z.enum(['sync', 'push', 'pull']).optional(),
+  })
+  .loose();
+export type SyncTriggerRequest = z.infer<typeof SyncTriggerRequestSchema>;
+const _SyncTriggerRequestSchemaIsStandard: StandardSchemaV1<unknown, SyncTriggerRequest> =
+  SyncTriggerRequestSchema;
+void _SyncTriggerRequestSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/sync/trigger`. Returns 202 Accepted with the
+ * resolved `op` echo — the trigger runs in background.
+ */
+export const SyncTriggerSuccessSchema = z
+  .object({
+    op: z.enum(['sync', 'push', 'pull']),
+  })
+  .loose();
+export type SyncTriggerSuccess = z.infer<typeof SyncTriggerSuccessSchema>;
+const _SyncTriggerSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncTriggerSuccess> =
+  SyncTriggerSuccessSchema;
+void _SyncTriggerSuccessSchemaIsStandard;
+
+/** Request body for `POST /api/sync/set-enabled`. */
+export const SyncSetEnabledRequestSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .loose();
+export type SyncSetEnabledRequest = z.infer<typeof SyncSetEnabledRequestSchema>;
+const _SyncSetEnabledRequestSchemaIsStandard: StandardSchemaV1<unknown, SyncSetEnabledRequest> =
+  SyncSetEnabledRequestSchema;
+void _SyncSetEnabledRequestSchemaIsStandard;
+
+/** Success body for `POST /api/sync/set-enabled`. Echoes the post-toggle status. */
+export const SyncSetEnabledSuccessSchema = z
+  .object({
+    status: SyncStatusSchema,
+  })
+  .loose();
+export type SyncSetEnabledSuccess = z.infer<typeof SyncSetEnabledSuccessSchema>;
+const _SyncSetEnabledSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncSetEnabledSuccess> =
+  SyncSetEnabledSuccessSchema;
+void _SyncSetEnabledSuccessSchemaIsStandard;
+
+/**
+ * Single conflict entry shape. Mirrors `ConflictEntry` from
+ * `conflict-storage.ts`. SHAs are optional because git can produce
+ * delete/edit or add/add conflicts where some stages are missing.
+ */
+export const ConflictEntrySchema = z
+  .object({
+    file: z.string().min(1),
+    detectedAt: z.string().min(1),
+    oursSha: z.string().optional(),
+    theirsSha: z.string().optional(),
+    baseSha: z.string().optional(),
+  })
+  .loose();
+export type ConflictEntryWire = z.infer<typeof ConflictEntrySchema>;
+const _ConflictEntrySchemaIsStandard: StandardSchemaV1<unknown, ConflictEntryWire> =
+  ConflictEntrySchema;
+void _ConflictEntrySchemaIsStandard;
+
+/** Success body for `GET /api/sync/conflicts`. */
+export const SyncConflictsSuccessSchema = z
+  .object({
+    conflicts: z.array(ConflictEntrySchema),
+  })
+  .loose();
+export type SyncConflictsSuccess = z.infer<typeof SyncConflictsSuccessSchema>;
+const _SyncConflictsSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncConflictsSuccess> =
+  SyncConflictsSuccessSchema;
+void _SyncConflictsSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/sync/resolve-conflict`. `content` is required
+ * iff `strategy === 'content'`; the schema accepts an optional `content` and
+ * the handler asserts the conditional after schema parse (kept simple here
+ * to avoid an over-narrowed Zod refinement; the handler-level check produces
+ * a typed `urn:ok:error:invalid-request` if violated).
+ */
+export const SyncResolveConflictRequestSchema = z
+  .object({
+    file: z.string().min(1),
+    strategy: z.enum(['mine', 'theirs', 'content']),
+    content: z.string().optional(),
+  })
+  .loose();
+export type SyncResolveConflictRequest = z.infer<typeof SyncResolveConflictRequestSchema>;
+const _SyncResolveConflictRequestSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  SyncResolveConflictRequest
+> = SyncResolveConflictRequestSchema;
+void _SyncResolveConflictRequestSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/sync/resolve-conflict`. Empty — clients only
+ * branch on HTTP status. `.loose()` for forward-compat.
+ */
+export const SyncResolveConflictSuccessSchema = z.object({}).loose();
+export type SyncResolveConflictSuccess = z.infer<typeof SyncResolveConflictSuccessSchema>;
+const _SyncResolveConflictSuccessSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  SyncResolveConflictSuccess
+> = SyncResolveConflictSuccessSchema;
+void _SyncResolveConflictSuccessSchemaIsStandard;
+
+/**
+ * Success body for `GET /api/sync/conflict-content?file=<path>`. Each stage
+ * may be missing (delete/edit, add/add) — the handler tolerates by returning
+ * empty strings rather than 404, so consumers always see all four fields.
+ */
+export const SyncConflictContentSuccessSchema = z
+  .object({
+    file: z.string().min(1),
+    base: z.string(),
+    ours: z.string(),
+    theirs: z.string(),
+  })
+  .loose();
+export type SyncConflictContentSuccess = z.infer<typeof SyncConflictContentSuccessSchema>;
+const _SyncConflictContentSuccessSchemaIsStandard: StandardSchemaV1<
+  unknown,
+  SyncConflictContentSuccess
+> = SyncConflictContentSuccessSchema;
+void _SyncConflictContentSuccessSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/sync/abort-merge`. Empty — clients branch on
+ * HTTP status only. `.loose()` for forward-compat.
+ */
+export const SyncAbortMergeSuccessSchema = z.object({}).loose();
+export type SyncAbortMergeSuccess = z.infer<typeof SyncAbortMergeSuccessSchema>;
+const _SyncAbortMergeSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncAbortMergeSuccess> =
+  SyncAbortMergeSuccessSchema;
+void _SyncAbortMergeSuccessSchemaIsStandard;
+
+/**
+ * Success body for `GET /api/seed/plan`. The `plan` field is the in-process
+ * `ScaffoldPlan` shape from `@inkeep/open-knowledge-server` — deliberately
+ * unconstrained here (typed `unknown`) to avoid a parallel maintenance source
+ * for the rich nested structure. Consumers re-cast via `OkScaffoldPlan` (the
+ * canonical desktop-bridge type). The translation shim in `seedClient()`
+ * converts the flat wire `{plan}` to the in-process `{ok: true, plan}`
+ * discriminated union for shared consumption with the IPC bridge.
+ *
+ * The custom check forces presence — `z.unknown()` alone would accept
+ * `{plan: undefined}` (i.e. a missing-key body), defeating the request/
+ * response shape contract.
+ */
+export const SeedPlanSuccessSchema = z
+  .object({
+    plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
+  })
+  .loose();
+export type SeedPlanSuccess = z.infer<typeof SeedPlanSuccessSchema>;
+const _SeedPlanSuccessSchemaIsStandard: StandardSchemaV1<unknown, SeedPlanSuccess> =
+  SeedPlanSuccessSchema;
+void _SeedPlanSuccessSchemaIsStandard;
+
+/**
+ * Request body for `POST /api/seed/apply`. Carries the `ScaffoldPlan`
+ * returned by `/api/seed/plan` (or constructed offline). Same opaque
+ * `unknown`-with-presence-check pattern as `SeedPlanSuccessSchema` —
+ * `applySeed()` validates structurally during apply.
+ */
+export const SeedApplyRequestSchema = z
+  .object({
+    plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
+  })
+  .loose();
+export type SeedApplyRequest = z.infer<typeof SeedApplyRequestSchema>;
+const _SeedApplyRequestSchemaIsStandard: StandardSchemaV1<unknown, SeedApplyRequest> =
+  SeedApplyRequestSchema;
+void _SeedApplyRequestSchemaIsStandard;
+
+/**
+ * Success body for `POST /api/seed/apply`. The `result` field is the
+ * `ApplyResult` shape — same opaque `unknown`-with-presence-check pattern.
+ * Translation shim turns this into `{ok: true, result}` for the in-process
+ * discriminated union.
+ */
+export const SeedApplySuccessSchema = z
+  .object({
+    result: z.custom<unknown>((v) => v !== undefined, { message: 'result is required' }),
+  })
+  .loose();
+export type SeedApplySuccess = z.infer<typeof SeedApplySuccessSchema>;
+const _SeedApplySuccessSchemaIsStandard: StandardSchemaV1<unknown, SeedApplySuccess> =
+  SeedApplySuccessSchema;
+void _SeedApplySuccessSchemaIsStandard;
