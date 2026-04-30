@@ -20,7 +20,6 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { getLogger } from './logger.ts';
 import {
   addConfigSpanEvent,
   CONFIG_DOC_NAME_USER,
@@ -40,6 +39,7 @@ import {
   CONFIG_VALIDATION_REVERT_ORIGIN,
 } from './config-edit-origin.ts';
 import { tracedMkdir, tracedRename, tracedUnlinkSync, tracedWriteFile } from './fs-traced.ts';
+import { getLogger } from './logger.ts';
 
 /**
  * Map a documentName to the OTel `config.scope` enum attribute.

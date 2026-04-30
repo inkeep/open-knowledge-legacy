@@ -21,13 +21,13 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
-  type Config,
-  type ConfigBinding,
   CONFIG_DOC_NAME_USER,
   CONFIG_DOC_NAME_WORKSPACE,
+  type Config,
+  type ConfigBinding,
+  ConfigSchema,
   getLeafFieldMeta,
 } from '@inkeep/open-knowledge-core';
-import { ConfigSchema } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import * as Y from 'yjs';
@@ -87,7 +87,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setUserState({ binding: userScoped.binding, config: userScoped.config });
     setWorkspaceState({ binding: workspaceScoped.binding, config: workspaceScoped.config });
     const unsubUser = userScoped.binding.subscribe((next) => {
-      setUserState((prev) => (prev?.binding === userScoped.binding ? { ...prev, config: next } : prev));
+      setUserState((prev) =>
+        prev?.binding === userScoped.binding ? { ...prev, config: next } : prev,
+      );
     });
     const unsubWorkspace = workspaceScoped.binding.subscribe((next) => {
       setWorkspaceState((prev) =>
@@ -100,9 +102,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       userScoped.cleanup();
       workspaceScoped.cleanup();
       setUserState((prev) => (prev?.binding === userScoped.binding ? null : prev));
-      setWorkspaceState((prev) =>
-        prev?.binding === workspaceScoped.binding ? null : prev,
-      );
+      setWorkspaceState((prev) => (prev?.binding === workspaceScoped.binding ? null : prev));
     };
   }, [collabUrl]);
 

@@ -1,11 +1,18 @@
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel, type PanelTab } from '@/components/DocPanel';
 import { EditorSkeleton } from '@/components/EditorSkeleton';
 import { EmptyEditorState } from '@/components/EmptyEditorState';
 import { FolderOverview } from '@/components/FolderOverview';
-import { SettingsPane } from '@/components/settings/SettingsPane';
+
+// Lazy-load Settings — pulls ToggleGroup + the schema-driven form which add
+// ~330kB gzipped to the main bundle. Settings is opened on demand via Cmd-,
+// so the cold-mount cost is acceptable.
+const SettingsPane = lazy(() =>
+  import('@/components/settings/SettingsPane').then((m) => ({ default: m.SettingsPane })),
+);
+
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -129,11 +136,13 @@ function EditorAreaInner({
 
   if (settingsRoute.scope !== null) {
     return (
-      <SettingsPane
-        scope={settingsRoute.scope}
-        onClose={settingsRoute.close}
-        onScopeChange={settingsRoute.setScope}
-      />
+      <Suspense fallback={<EditorSkeleton />}>
+        <SettingsPane
+          scope={settingsRoute.scope}
+          onClose={settingsRoute.close}
+          onScopeChange={settingsRoute.setScope}
+        />
+      </Suspense>
     );
   }
 

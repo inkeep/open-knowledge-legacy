@@ -103,10 +103,11 @@ export function register(server: ServerInstance, deps: GetConfigDeps): void {
       // Surface the absence as a structured `exists: false` payload + a
       // human-readable text body.
       if (path.length > 0 && value === undefined) {
-        return textPlusStructured(
-          `(no value at ${path.join('.')})`,
-          { value: null, exists: false, path },
-        );
+        return textPlusStructured(`(no value at ${path.join('.')})`, {
+          value: null,
+          exists: false,
+          path,
+        });
       }
       return textPlusStructured(JSON.stringify(value, null, 2), { value, exists: true, path });
     },

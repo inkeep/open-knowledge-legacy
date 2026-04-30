@@ -13,7 +13,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useConfigContext } from '@/lib/config-provider';
 
-const themes: Array<{ value: 'light' | 'dark' | 'system'; label: string; icon: FC<ComponentProps<'svg'>> }> = [
+const themes: Array<{
+  value: 'light' | 'dark' | 'system';
+  label: string;
+  icon: FC<ComponentProps<'svg'>>;
+}> = [
   { value: 'light', label: 'Light', icon: Sun },
   { value: 'dark', label: 'Dark', icon: Moon },
   { value: 'system', label: 'System', icon: Contrast },
