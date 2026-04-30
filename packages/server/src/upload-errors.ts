@@ -20,11 +20,17 @@ export type UploadWriteReason =
 
 export class UploadWriteError extends Error {
   readonly reason: UploadWriteReason;
-  readonly cause?: unknown;
 
   constructor(reason: UploadWriteReason, cause?: unknown) {
-    super(`UploadWriteError: ${reason}`);
+    // ES2022 `Error(message, { cause })` populates `Error.cause` on the
+    // prototype chain so Pino's std serializer surfaces the underlying
+    // I/O error in structured logs. Setting `this.name` ensures
+    // `err.name === 'UploadWriteError'` for serializer routing and
+    // stack-trace identification, matching codebase parity with
+    // `HocuspocusAuthRejection`, `StateManifestError`, and
+    // `SuggestLinksTargetNotFoundError`.
+    super(`UploadWriteError: ${reason}`, { cause });
+    this.name = 'UploadWriteError';
     this.reason = reason;
-    this.cause = cause;
   }
 }

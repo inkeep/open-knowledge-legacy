@@ -105,6 +105,13 @@ export const EXECUTABLE_BLOCKLIST_EXTENSIONS: ReadonlySet<string> = new Set([
   'jse',
   'wsf',
   'wsh',
+  // `.hta` (HTML Application) executes via mshta.exe with full local
+  // privileges, bypassing browser sandbox (MITRE ATT&CK T1218.005,
+  // CVE-2017-0199 class). Long-standing RCE / phishing vector. Absent
+  // from Obsidian's reconstructed Windows blocklist (per
+  // `reports/electron-os-integration-patterns/evidence/d10-obsidian-limits.md`)
+  // — deliberate divergence for defense-in-depth.
+  'hta',
   // POSIX shells + Linux desktop launchers
   'sh',
   'command',
@@ -251,12 +258,24 @@ export const INLINE_RENDERABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   'tiff',
   'bmp',
   'ico',
-  // SVG: served as `<img src>` only (NFR-3). The `X-Content-Type-Options:
-  // nosniff` header + Content-Disposition: inline lets the browser render
-  // the vector but NOT execute embedded script when navigated to directly
-  // (Chrome treats top-level-nav SVG as scriptable; attachment for top-
-  // level would break the `<img>` embed use-case, so inline + nosniff is
-  // the compromise — matches Docmost's PNG/SVG posture).
+  // SVG: served as `<img src>` only (NFR-3). Top-level navigation to an
+  // SVG (`image/svg+xml`) executes embedded `<script>` regardless of
+  // `X-Content-Type-Options: nosniff` — nosniff blocks request-
+  // destinations of script/style and enables CORB, but `image/svg+xml`
+  // is explicitly excluded from CORB (per MDN + Chromium CORB
+  // explainer). The defenses that actually contain SVG XSS in this
+  // codebase are:
+  //   (a) `<img src>` embeds do NOT execute SVG scripts (only top-level
+  //       nav does), so the editor render path is safe by construction.
+  //   (b) `EXECUTABLE_BLOCKLIST_EXTENSIONS` blocks `.svg` from
+  //       `openAssetSafely` / `shell.openPath`
+  //       (`packages/desktop/src/main/asset-allowlist.ts`), so the
+  //       click-to-open path can't hand off to a top-level browser tab
+  //       in Electron.
+  // Aligns with Docmost's posture; cf. GHSA-rcg8-g69v-x23j (Plane SVG
+  // XSS) for the upstream class. nosniff stays on the response for
+  // additional defense against MIME confusion attacks even though it
+  // does not address the script-execution vector for SVG specifically.
   'svg',
   // PDF (Chromium built-in viewer; attachment would defeat it)
   'pdf',

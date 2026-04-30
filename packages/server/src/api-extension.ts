@@ -24,6 +24,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -426,7 +427,13 @@ async function findDuplicateAsset(
 ): Promise<string | null> {
   let entries: string[];
   try {
-    entries = readdirSync(destDir);
+    // Async `readdir` so the directory walk doesn't block the event
+    // loop during uploads — bun's loop is shared with WebSocket sync
+    // and CRDT updates, and a 1k-entry walk is observable on bursty
+    // upload traffic. The MAX_DEDUP_SCAN_CANDIDATES cap (line ~76)
+    // bounds the worst case at 1000 same-size siblings, but the
+    // pre-cap entry list can still be much larger.
+    entries = await readdir(destDir);
   } catch {
     return null;
   }
@@ -436,13 +443,13 @@ async function findDuplicateAsset(
     const ext = extname(entry).slice(1).toLowerCase();
     if (!ASSET_EXTENSIONS.has(ext)) continue;
     const fullPath = resolve(destDir, entry);
-    let stat: ReturnType<typeof statSync>;
+    let entryStat: Awaited<ReturnType<typeof stat>>;
     try {
-      stat = statSync(fullPath);
+      entryStat = await stat(fullPath);
     } catch {
       continue;
     }
-    if (!stat.isFile() || stat.size !== expectedSize) continue;
+    if (!entryStat.isFile() || entryStat.size !== expectedSize) continue;
     // Bounded scan: only count candidates that passed the cheap size
     // prefilter, since same-size siblings are the ones that cost a
     // full-file hash each (streaming now, not buffered).
@@ -547,6 +554,14 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     let parentDocName = '';
     let tempPath: string | undefined;
     let pipelineError: unknown;
+    // Track whether the 'file' event ever fired. busboy emits 'close' as
+    // soon as it finishes parsing the request body — but the file
+    // pipeline (createWriteStream + HashingPassThrough) is async and may
+    // still be running when 'close' fires. We must NOT resolve to an
+    // empty UploadResult on 'close' when a file IS being processed; the
+    // pipeline `.then()` is the legitimate resolver in that case. Only
+    // the no-file path needs the 'close' fallback.
+    let fileEventFired = false;
 
     // Mint the tempfile path lazily on the first 'file' event — busboy
     // can fire 'error' before any file arrives (e.g. missing boundary)
@@ -578,6 +593,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     });
 
     bb.on('file', (_fieldname, file, info) => {
+      fileEventFired = true;
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
@@ -612,18 +628,41 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       fail('malformed-upload', err);
     });
 
-    // busboy's 'close' fires after the request is fully parsed (success or
-    // abort). If no 'file' event ever arrived, we resolve with an empty
-    // upload that the handler rejects as "No file received" via the usual
-    // byteLength-zero path below. Handle the "req closed before any data"
-    // case explicitly — a client that disconnects before sending a file
-    // produces no 'file' and no 'error', and busboy stays open waiting
-    // for more data.
+    // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
+    // fires once busboy finishes parsing the request body. If by then
+    // no `file` event ever fired, the request was a well-formed
+    // multipart with fields-only (no file part) — resolve with a
+    // synthetic empty UploadResult so the route handler's
+    // `byteLength === 0` guard returns the standard 400 "No file
+    // received." Without this hook the Promise never settles on fields-
+    // only uploads and the connection hangs until Node's request
+    // timeout fires (DoS).
+    //
+    // CRUCIAL: gate on `!fileEventFired`. If a file part IS present,
+    // busboy emits 'close' as soon as it finishes parsing — but the
+    // async write/hash pipeline below may still be running. Resolving
+    // here would race the pipeline's legitimate resolveP and produce a
+    // spurious empty result. Pipeline resolves win in that case.
+    bb.on('close', () => {
+      if (settled || pipelineError) return;
+      if (fileEventFired) return;
+      settled = true;
+      resolveP({
+        filename: '',
+        mimeType: '',
+        parentDocName,
+        tempPath: '',
+        sha: '',
+        byteLength: 0,
+      });
+    });
+
+    // Guard the "client disconnected mid-stream" path. busboy never
+    // reaches `_final` if the request aborts before the closing boundary,
+    // so its `close` would not fire and the Promise would otherwise hang.
     req.on('close', () => {
       if (settled || pipelineError) return;
       if (!req.complete) {
-        // Client disconnected mid-request. Pipeline cleanup handles the
-        // write stream; we just need to fail the promise.
         fail('malformed-upload', new Error('client disconnected'));
       }
     });
@@ -4664,7 +4703,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
 
     // Identity extracted from query params (multipart body precludes JSON).
-    extractAgentIdentity(
+    // Capture agentId / agentName so structured upload logs carry
+    // attribution — mirrors precedent #24/#25 and lets operators trace
+    // unexpected file-creation events back to the originating agent
+    // during incident investigation. Both fields follow bounded shapes
+    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
+    // remain cardinality-safe for log indexing.
+    const { agentId, agentName } = extractAgentIdentity(
       Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
     );
 
@@ -4806,6 +4851,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           {
             event: 'upload',
             endpoint: req.url ?? '/api/upload',
+            agentId,
+            agentName,
             dedup: true,
             mime: detectedMime ?? null,
             size: byteLength,
@@ -4853,6 +4900,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         {
           event: 'upload',
           endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
           dedup: false,
           mime: detectedMime ?? null,
           size: byteLength,
@@ -4882,6 +4931,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         {
           event: 'upload',
           endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
           filename: finalFilename,
           size: byteLength,
           reason,

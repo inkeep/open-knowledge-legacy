@@ -31,9 +31,10 @@
  *    logs and continues on per-entry errors.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { Transform, type TransformCallback } from 'node:stream';
+import { tracedLinkSync, tracedMkdirSync, tracedUnlinkSync } from './fs-traced.ts';
 
 import { getLogger } from './logger.ts';
 import { UploadWriteError } from './upload-errors.ts';
@@ -93,7 +94,7 @@ export function tmpUploadDir(contentDir: string): string {
  */
 export function mintTempUploadPath(contentDir: string): string {
   const dir = tmpUploadDir(contentDir);
-  mkdirSync(dir, { recursive: true });
+  tracedMkdirSync(dir, { recursive: true });
   return resolve(dir, `upload-${randomUUID()}`);
 }
 
@@ -123,11 +124,11 @@ export function linkTempToFinalWithCollisionRetry(
   for (const name of candidates) {
     const destPath = resolve(destDir, name);
     try {
-      linkSync(tempPath, destPath);
+      tracedLinkSync(tempPath, destPath);
       // Link succeeded; tempfile is now consumed by the inode — unlink the
       // tmp name (the file survives via its second link at destPath).
       try {
-        unlinkSync(tempPath);
+        tracedUnlinkSync(tempPath);
       } catch {
         // Best-effort; if this throws the final file is already in place
         // and the tmp name will be reaped by the boot-time orphan sweep.
@@ -141,7 +142,7 @@ export function linkTempToFinalWithCollisionRetry(
       // and propagate a typed error. Best-effort unlink because the error
       // we're reporting (e.g. storage-full) takes priority.
       try {
-        unlinkSync(tempPath);
+        tracedUnlinkSync(tempPath);
       } catch {
         // silent — original err is the signal
       }
@@ -158,7 +159,7 @@ export function linkTempToFinalWithCollisionRetry(
 
   // Exhausted all 100 candidate names. Best-effort cleanup + signal.
   try {
-    unlinkSync(tempPath);
+    tracedUnlinkSync(tempPath);
   } catch {
     // tempfile will be reaped by boot-time orphan sweep
   }
@@ -212,7 +213,7 @@ export function cleanupOrphanUploadTempfiles(
         // process. Skip.
         continue;
       }
-      unlinkSync(full);
+      tracedUnlinkSync(full);
       result.deleted++;
     } catch (err) {
       log.warn({ err, path: full }, '[upload-tempfile-sweep] entry failed');

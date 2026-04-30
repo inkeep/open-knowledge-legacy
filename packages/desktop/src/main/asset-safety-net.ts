@@ -95,7 +95,25 @@ export function matchAssetUrl(url: string, editorOrigin: string): string | null 
   // plugin and the production sirv middleware both serve project-
   // relative paths unchanged, so this matches the same filesystem
   // layout openAssetSafely's containment checks against.
-  const path = parsed.pathname.startsWith('/') ? parsed.pathname.slice(1) : parsed.pathname;
+  //
+  // `URL.pathname` is percent-encoded per WHATWG URL — a file named
+  // `my photo.png` shows up as `my%20photo.png`. `openAssetSafely`
+  // calls `realpathSync` on the raw string, which would look for a
+  // literal `my%20photo.png` on disk and fail with ENOENT. Decode
+  // before forwarding so files with spaces / Unicode / other escaped
+  // characters resolve correctly. Containment (`isPathWithinProject`
+  // in `asset-allowlist.ts`) catches any `..` traversal that decoding
+  // re-introduces, so this does not widen the safety boundary.
+  const raw = parsed.pathname.startsWith('/') ? parsed.pathname.slice(1) : parsed.pathname;
+  let path: string;
+  try {
+    path = decodeURIComponent(raw);
+  } catch {
+    // Malformed percent-encoding (e.g. `%E0%A4` truncated, `%ZZ`).
+    // Refuse — a click that produces an undecodable URL has no
+    // realistic legitimate origin.
+    return null;
+  }
   if (!path) return null;
 
   // Only claim asset-extension paths. The app bundle (`/index.html`,

@@ -61,6 +61,34 @@ describe('matchAssetUrl', () => {
       'notes/meeting.pdf',
     );
   });
+
+  test('percent-encoded space in filename decodes to literal space', () => {
+    // `URL.pathname` percent-encodes spaces; openAssetSafely needs the
+    // decoded string for `realpathSync` to find the actual file.
+    expect(matchAssetUrl('http://localhost:5173/my%20photo.png', ORIGIN)).toBe('my photo.png');
+  });
+
+  test('percent-encoded Unicode (Japanese) decodes to literal characters', () => {
+    expect(matchAssetUrl('http://localhost:5173/%E6%97%A5%E6%9C%AC.pdf', ORIGIN)).toBe('日本.pdf');
+  });
+
+  test('malformed percent-encoding → null (no throw)', () => {
+    // `decodeURIComponent('%ZZ.png')` throws URIError — refuse rather
+    // than forward a partially-decoded string downstream.
+    expect(matchAssetUrl('http://localhost:5173/%ZZ.png', ORIGIN)).toBeNull();
+    expect(matchAssetUrl('http://localhost:5173/%E0%A4.png', ORIGIN)).toBeNull();
+  });
+
+  test('encoded traversal (`%2E%2E`) is canonicalized by the URL parser', () => {
+    // WHATWG URL parser resolves `.` / `..` segments during pathname
+    // canonicalization, so `/%2E%2E/secret.pdf` becomes `/secret.pdf`
+    // before our decode step ever sees it. The result is a clean,
+    // contained path — no traversal reaches downstream. (The
+    // `isPathWithinProject` containment check in `asset-allowlist.ts`
+    // is the second layer that catches any traversal that does slip
+    // through, e.g. via symlink at the destination.)
+    expect(matchAssetUrl('http://localhost:5173/%2E%2E/secret.pdf', ORIGIN)).toBe('secret.pdf');
+  });
 });
 
 describe('attachAssetSafetyNet — setWindowOpenHandler', () => {
