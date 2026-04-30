@@ -94,7 +94,13 @@ describe('media drop-shape ≡ parser-shape invariant', () => {
     expect(node?.attrs.props).toEqual(dropped.attrs.props);
   });
 
-  test('jsx-video drop shape round-trips through serialize → parse with identical props', () => {
+  test('jsx-video drop shape round-trips through serialize → parse', () => {
+    // Drop carries `controls: true` in its prop bag for the in-editor render
+    // (Video.tsx reads it from `attrs.props`). On serialize, the canonical
+    // descriptor omits `controls={true}` because `omitOnDefault: true` +
+    // `defaultValue: true` collapse the explicit-default form to absent —
+    // the renderer applies the true default whether the attribute is
+    // present on disk or not. Parsed shape: `{src}` only.
     const dropped = buildMediaJsxNodeData('jsx-video', '/clip.mp4');
     expect(dropped.attrs.componentName).toBe('video');
     expect(dropped.attrs.props).toEqual({ src: '/clip.mp4', controls: true });
@@ -102,16 +108,18 @@ describe('media drop-shape ≡ parser-shape invariant', () => {
     const md = mdManager.serialize(wrapInDoc(dropped));
     expect(md).toContain('<video');
     expect(md).toContain('src="/clip.mp4"');
-    expect(md).toContain('controls');
+    // `controls={true}` matches the descriptor default — omitted from emit.
+    expect(md).not.toMatch(/controls(=|\s|\/>|>)/);
 
     const reparsed = mdManager.parse(md);
     const node = findJsxNode(reparsed, 'video');
     expect(node).toBeDefined();
     expect(node?.attrs.componentName).toBe('video');
-    expect(node?.attrs.props).toEqual(dropped.attrs.props);
+    expect(node?.attrs.props).toEqual({ src: '/clip.mp4' });
   });
 
-  test('jsx-audio drop shape round-trips through serialize → parse with identical props', () => {
+  test('jsx-audio drop shape round-trips through serialize → parse', () => {
+    // Same canonicalization as video — `controls={true}` collapses to absent.
     const dropped = buildMediaJsxNodeData('jsx-audio', '/song.mp3');
     expect(dropped.attrs.componentName).toBe('audio');
     expect(dropped.attrs.props).toEqual({ src: '/song.mp3', controls: true });
@@ -119,12 +127,12 @@ describe('media drop-shape ≡ parser-shape invariant', () => {
     const md = mdManager.serialize(wrapInDoc(dropped));
     expect(md).toContain('<audio');
     expect(md).toContain('src="/song.mp3"');
-    expect(md).toContain('controls');
+    expect(md).not.toMatch(/controls(=|\s|\/>|>)/);
 
     const reparsed = mdManager.parse(md);
     const node = findJsxNode(reparsed, 'audio');
     expect(node).toBeDefined();
     expect(node?.attrs.componentName).toBe('audio');
-    expect(node?.attrs.props).toEqual(dropped.attrs.props);
+    expect(node?.attrs.props).toEqual({ src: '/song.mp3' });
   });
 });

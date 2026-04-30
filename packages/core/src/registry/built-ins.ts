@@ -201,6 +201,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'lazy',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Native img loading strategy (defaults to lazy)',
   },
   {
@@ -217,6 +218,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Hint for how the browser should decode the image',
   },
   {
@@ -226,6 +228,7 @@ const htmlImgProps: PropDef[] = [
     defaultValue: 'auto',
     required: false,
     advanced: true,
+    omitOnDefault: true,
     description: 'Resource fetch priority hint',
   },
   {
@@ -267,6 +270,7 @@ const htmlVideoProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 video controls (defaults to true)',
   },
   {
@@ -344,6 +348,7 @@ const htmlAudioProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    omitOnDefault: true,
     description: 'Show native HTML5 audio controls (defaults to true)',
   },
   {
@@ -616,7 +621,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'GFM alert / admonition with 5 type variants (note, tip, important, warning, caution)',
     searchTerms: ['note', 'warning', 'tip', 'important', 'caution', 'alert', 'admonition'],
-    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Callout', node, ctx, calloutProps),
   },
 
   // Media — lowercase per the rule above. HTML's `<img>` / `<video>` /
@@ -635,7 +640,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with click-to-zoom and HTML-native attributes',
     searchTerms: ['image', 'zoom', 'picture', 'photo'],
-    serialize: (node, ctx) => emitMdxJsx('img', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('img', node, ctx, htmlImgProps),
   },
   {
     name: 'video',
@@ -648,7 +653,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
-    serialize: (node, ctx) => emitMdxJsx('video', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('video', node, ctx, htmlVideoProps),
   },
   {
     name: 'audio',
@@ -661,7 +666,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
-    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('audio', node, ctx, htmlAudioProps),
   },
 
   // Content
@@ -676,7 +681,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     description:
       'Standalone expand/collapse via native HTML5 <details>/<summary>. Group siblings with the `name` prop for exclusive-accordion UX.',
     searchTerms: ['toggle', 'accordion', 'expandable', 'details', 'disclosure', 'collapse', 'fold'],
-    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Accordion', node, ctx, accordionProps),
   },
 
   // ── Compat descriptors ─────────────────────────────────────────────────────
