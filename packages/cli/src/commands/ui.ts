@@ -197,6 +197,19 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   const requestHandler = (req: import('node:http').IncomingMessage, res: ServerResponse) => {
     const url = req.url?.split('?')[0];
 
+    // Bare `/` and the empty path: rewrite to `/index.html` so sirv serves
+    // the SPA shell. The static handler is configured with `extensions: []`
+    // (a security choice — without it, `/foo` would transparently serve
+    // `/foo.html` and bypass the Content-Disposition dispatch which keys
+    // off the requested URL's extension). That suppression also disables
+    // sirv's implicit directory-index resolution, so `/` ends up as a 404
+    // even though `single: true` is set. The cleanest fix is to rewrite
+    // the entry path explicitly here, before any middleware runs, rather
+    // than re-enabling extension inference globally.
+    if (url === '/' || url === '') {
+      req.url = '/index.html';
+    }
+
     // GET /api/config — zero-ceremony bootstrap for the React app. Reads the
     // collab server.lock on demand so a later `ok start` shows up without
     // requiring a UI restart.
