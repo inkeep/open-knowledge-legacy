@@ -1,7 +1,7 @@
 /**
  * QA-004 / QA-005 — Real MCP rename tool roundtrip against a live OK server.
  *
- * The unit-level tests in packages/cli/src/mcp/tools/rename-folder.test.ts
+ * The unit-level tests in packages/server/src/mcp/tools/rename-folder.test.ts
  * and rename-document.test.ts mock globalThis.fetch — they verify the tool
  * builds the correct HTTP body but never round-trip through a real OK
  * server. This test:
@@ -23,10 +23,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { ConfigSchema } from '../../../cli/src/config/schema';
-import { register as registerRenameDocument } from '../../../cli/src/mcp/tools/rename-document';
-import { register as registerRenameFolder } from '../../../cli/src/mcp/tools/rename-folder';
-import type { ServerInstance } from '../../../cli/src/mcp/tools/shared';
+import { ConfigSchema } from '@inkeep/open-knowledge-server';
+import { register as registerRenameDocument } from '../../../server/src/mcp/tools/rename-document';
+import { register as registerRenameFolder } from '../../../server/src/mcp/tools/rename-folder';
+import type { ServerInstance } from '../../../server/src/mcp/tools/shared';
 import { createRestartableServer } from './test-harness';
 
 interface ToolResult {
