@@ -349,3 +349,72 @@ describe('managed rename recovery journal — v1 legacy support', () => {
     );
   });
 });
+
+describe('managed rename recovery journal — v2 parser validation', () => {
+  function writeRawJournal(dir: string, payload: unknown) {
+    mkdirSync(dirname(managedRenameJournalPath(dir)), { recursive: true });
+    writeFileSync(managedRenameJournalPath(dir), JSON.stringify(payload), 'utf-8');
+  }
+
+  test('rejects v2 journals missing fromPath', () => {
+    const dir = setupTmpDir();
+    writeRawJournal(dir, {
+      version: 2,
+      toPath: 'beta',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      affectedDocs: [{ from: 'alpha', to: 'beta' }],
+      snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+    });
+    expect(() => readManagedRenameJournal(dir)).toThrow(
+      'Managed rename journal v2 is missing fromPath',
+    );
+  });
+
+  test('rejects v2 journals with empty affectedDocs', () => {
+    const dir = setupTmpDir();
+    writeRawJournal(dir, {
+      version: 2,
+      fromPath: 'alpha',
+      toPath: 'beta',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      affectedDocs: [],
+      snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+    });
+    expect(() => readManagedRenameJournal(dir)).toThrow(
+      'Managed rename journal v2 has invalid affectedDocs',
+    );
+  });
+
+  test('rejects v2 journals where an affectedDoc lacks a matching snapshot', () => {
+    const dir = setupTmpDir();
+    writeRawJournal(dir, {
+      version: 2,
+      fromPath: 'alpha',
+      toPath: 'beta',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      affectedDocs: [
+        { from: 'alpha', to: 'beta' },
+        { from: 'orphan', to: 'orphan-renamed' },
+      ],
+      snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+    });
+    expect(() => readManagedRenameJournal(dir)).toThrow(
+      'Managed rename journal v2 is missing snapshot for affected doc: orphan',
+    );
+  });
+
+  test('rejects v2 journals with malformed snapshot entries', () => {
+    const dir = setupTmpDir();
+    writeRawJournal(dir, {
+      version: 2,
+      fromPath: 'alpha',
+      toPath: 'beta',
+      createdAt: '2026-04-30T00:00:00.000Z',
+      affectedDocs: [{ from: 'alpha', to: 'beta' }],
+      snapshots: [{ docName: 'alpha' }],
+    });
+    expect(() => readManagedRenameJournal(dir)).toThrow(
+      'Managed rename journal v2 has invalid snapshots',
+    );
+  });
+});

@@ -308,6 +308,105 @@ describe('file operation API routes', () => {
     });
   });
 
+  test('managed rename with kind:folder on an existing file returns 400 (type mismatch)', async () => {
+    // The path is used verbatim for kind:'folder', so passing a `.md` path
+    // resolves to the on-disk file. statSync says it's not a directory →
+    // ManagedRenameSourceTypeMismatchError → 400.
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'folder',
+        fromPath: 'notes.md',
+        toPath: 'renamed-notes',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: 'Source path is not a folder',
+    });
+  });
+
+  test('managed rename with kind:file on a .md-named directory returns 400 (type mismatch)', async () => {
+    // For kind:'file', the resolver keeps the path verbatim when it already
+    // carries a supported extension. A directory named `looks-like.md` then
+    // exists but stats as a directory → ManagedRenameSourceTypeMismatchError.
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'looks-like.md'));
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'file',
+        fromPath: 'looks-like.md',
+        toPath: 'renamed.md',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: 'Source path is not a file',
+    });
+  });
+
+  test('managed rename rejects .open-knowledge as a destination (reserved directory)', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'project'));
+    writeFileSync(join(dir, 'project', 'index.md'), '# Index\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'folder',
+        fromPath: 'project',
+        toPath: '.open-knowledge',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: '.open-knowledge is a reserved directory',
+    });
+  });
+
+  test('managed rename rejects .open-knowledge subpath as a destination', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename-path',
+      'POST',
+      {
+        kind: 'file',
+        fromPath: 'notes',
+        toPath: '.open-knowledge/secret',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: '.open-knowledge is a reserved directory',
+    });
+  });
+
   test('managed rename returns 404 when the source document is missing', async () => {
     const dir = setupTmpDir();
 

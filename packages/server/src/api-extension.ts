@@ -900,7 +900,7 @@ async function renameTrackedPathInGit(
     // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
     // so the caller falls back to `fs.renameSync`. Any other git failure
     // (permission denied, corrupted index) also falls through to fs rename
-    // rather than 500ing the /api/rename handler.
+    // rather than 500ing the /api/rename-path handler.
     let tracked = '';
     try {
       tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
@@ -1379,6 +1379,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (error.message.startsWith('symlink-escape:')) {
       return { status: 400, error: error.message };
+    }
+    if (error.message === 'Managed rename requires backlink index support') {
+      return { status: 503, error: error.message };
     }
     return { status: 500, error: 'Failed to rename document' };
   }
@@ -4348,7 +4351,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
         return;
       }
-      if (kind === 'file' && (isSystemDoc(fromPath) || isSystemDoc(toPath))) {
+      if (
+        kind === 'file' &&
+        (isSystemDoc(fromPath) ||
+          isSystemDoc(toPath) ||
+          isConfigDoc(fromPath) ||
+          isConfigDoc(toPath))
+      ) {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
@@ -4386,9 +4395,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       if (contentFilter) {
+        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
+        // a destination like `bar.mdx` is checked verbatim instead of as
+        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
         const excluded =
           kind === 'file'
-            ? contentFilter.isExcluded(`${toPath}${getDocExtension(fromPath)}`)
+            ? contentFilter.isExcluded(
+                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+              )
             : contentFilter.isDirExcluded(toPath);
         if (excluded) {
           json(res, 400, {
@@ -6213,7 +6227,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const MUTATING_ROUTES: ReadonlySet<string> = new Set([
     '/api/upload',
     '/api/create-page',
-    '/api/rename',
     '/api/rename-path',
     '/api/delete-path',
     '/api/agent-write',

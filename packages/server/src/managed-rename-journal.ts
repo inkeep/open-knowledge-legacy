@@ -244,13 +244,15 @@ function pruneEmptyAncestors(filePath: string, contentDir: string): void {
     let entries: string[];
     try {
       entries = readdirSync(cur);
-    } catch {
+    } catch (err) {
+      console.warn(`[managed-rename] pruneEmptyAncestors: cannot read ${cur}:`, err);
       return;
     }
     if (entries.length > 0) return;
     try {
       tracedRmdirSync(cur);
-    } catch {
+    } catch (err) {
+      console.warn(`[managed-rename] pruneEmptyAncestors: cannot rmdir ${cur}:`, err);
       return;
     }
     cur = dirname(cur);
