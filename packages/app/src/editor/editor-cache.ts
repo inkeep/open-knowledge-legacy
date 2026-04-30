@@ -628,7 +628,9 @@ export function mountCmEditor(params: MountCmParams): CmCacheEntry {
 
 /**
  * Park the CM6 editor — detach `view.dom`, save scrollTop, clear
- * activeMountKey. Does NOT call `view.destroy()`.
+ * activeMountKey. Does NOT call `view.destroy()` in the cached path.
+ * When CACHE_ENABLED=false (or entry is __uncached): destroys the view
+ * immediately, restoring pre-V2 destroy-on-unmount semantics.
  */
 export function parkCmEditor(entry: CmCacheEntry): void {
   if (!CACHE_ENABLED || entry.__uncached) {
@@ -658,10 +660,11 @@ export function parkCmEditor(entry: CmCacheEntry): void {
 }
 
 /**
- * Evict the CM6 editor — THE ONLY path that calls view.destroy() /
- * provider.destroy() / ydoc.destroy(). Emits `ok/cache/evict-failed` on
- * any sub-destroy throw so real memory/socket/Y.Doc leaks surface in
- * telemetry (review Major #12).
+ * Evict the CM6 editor — destroys provider + ydoc + view.
+ * `view.destroy()` is also called by `parkCmEditor`'s __uncached /
+ * kill-switch branch, but provider/ydoc destruction happens only here.
+ * Emits `ok/cache/evict-failed` on any sub-destroy throw so real
+ * memory/socket/Y.Doc leaks surface in telemetry.
  */
 export function evictCmEditor(docName: string): boolean {
   const entry = cmCache.get(docName);
