@@ -597,7 +597,23 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      const path = mintTempUploadPath(contentDir);
+      // `mintTempUploadPath` does `tracedMkdirSync(.., { recursive: true })`
+      // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
+      // uncaught throw here bubbles back through busboy's `_write` and
+      // re-emits as `'error'`, which the listener below classifies as
+      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
+      // a full disk into chasing a phantom client bug. Catch the sync
+      // throw, classify via the same table the pipeline rejection uses,
+      // and drain the file part so busboy can finish parsing the rest.
+      let path: string;
+      try {
+        path = mintTempUploadPath(contentDir);
+      } catch (err) {
+        const nodeErr = err as NodeJS.ErrnoException;
+        fail(classifyWriteError(nodeErr), err as Error);
+        file.resume();
+        return;
+      }
       tempPath = path;
       const hasher = new HashingPassThrough();
       const writeStream = createWriteStream(path);
