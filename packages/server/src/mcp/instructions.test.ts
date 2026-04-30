@@ -8,7 +8,8 @@ function defaultContent(): Config['content'] {
 
 test('buildInstructions carries the STOP rule on native tools for in-scope markdown', () => {
   const text = buildInstructions(defaultContent());
-  expect(text).toContain('STOP — native tools on in-scope');
+  expect(text).toContain('STOP');
+  expect(text).toContain('when `.open-knowledge/` exists');
   expect(text).toContain('write_document');
   expect(text).toContain('edit_document');
 });
@@ -41,6 +42,7 @@ test('buildInstructions documents the read tool routing (exec / read_document / 
 test('buildInstructions surfaces an explicit native-tool escape hatch', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('Escape hatch');
+  expect(text).toContain('no `.open-knowledge/`');
   expect(text).toContain('Open Knowledge MCP unavailable:');
 });
 
