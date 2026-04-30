@@ -273,34 +273,6 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   // controls and external file edits propagate to next-themes whether
   // Settings is open or not.
 
-  // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
-  // and triggers a brief red flash on the affected field.
-  const [flashedPath, setFlashedPath] = useState<string | null>(null);
-  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const unsubscribe = subscribeToConfigValidationRejected(
-      (event: CC1ConfigValidationRejectedPayload) => {
-        const isMatchingScope =
-          (scope === 'project' && event.docName === CONFIG_DOC_NAME_PROJECT) ||
-          (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
-        if (!isMatchingScope) return;
-
-        toast.error(humanFormat(event.error), { duration: 8000 });
-        const path = firstIssuePath(event.error);
-        if (path) {
-          setFlashedPath(path);
-          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-          flashTimerRef.current = setTimeout(() => setFlashedPath(null), 600);
-        }
-      },
-    );
-    return () => {
-      unsubscribe();
-      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-    };
-  }, [scope]);
-
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
@@ -349,7 +321,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
         {connection === null || !connection.synced ? (
           <SettingsSkeleton />
         ) : (
-          <BoundSettingsForm scope={scope} binding={connection.binding} flashedPath={flashedPath} />
+          <BoundSettingsForm scope={scope} binding={connection.binding} />
         )}
       </div>
     </div>
@@ -384,7 +356,6 @@ function SettingsSkeleton() {
 interface BoundSettingsFormProps {
   scope: SettingsScope;
   binding: ConfigBinding;
-  flashedPath: string | null;
 }
 
 /**
@@ -393,9 +364,48 @@ interface BoundSettingsFormProps {
  * Splitting from `SettingsPane` keeps the hook out of the loading branch
  * (`connection === null || !synced`) so we don't `useForm` on a binding
  * that hasn't synced yet.
+ *
+ * Owns the CC1 `'config-validation-rejected'` subscription (FR-39) and
+ * the per-field flash state, since both need access to the `form`
+ * instance — `form.setError` populates the inline FormMessage,
+ * `form.setFocus` puts focus on the offending field, and the flash
+ * triggers the `animate-settings-flash` CSS animation on the FormItem
+ * wrapper.
  */
-function BoundSettingsForm({ scope, binding, flashedPath }: BoundSettingsFormProps) {
+function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
   const { form, commitField } = useConfigForm(binding);
+  const [flashedPath, setFlashedPath] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToConfigValidationRejected(
+      (event: CC1ConfigValidationRejectedPayload) => {
+        const isMatchingScope =
+          (scope === 'workspace' && event.docName === CONFIG_DOC_NAME_WORKSPACE) ||
+          (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
+        if (!isMatchingScope) return;
+
+        const message = humanFormat(event.error);
+        toast.error(message, { duration: 8000 });
+
+        const path = firstIssuePath(event.error);
+        if (path) {
+          form.setError(path as FieldPath<Config>, {
+            type: 'config-validation-rejected',
+            message,
+          });
+          form.setFocus(path as FieldPath<Config>);
+          setFlashedPath(path);
+          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+          flashTimerRef.current = setTimeout(() => setFlashedPath(null), 600);
+        }
+      },
+    );
+    return () => {
+      unsubscribe();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, [scope, form]);
 
   return (
     <Form {...form}>
