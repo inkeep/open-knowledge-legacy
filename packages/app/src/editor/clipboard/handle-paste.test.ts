@@ -167,6 +167,36 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     );
   });
 
+  test('Branch A: malformed vscode-editor-data JSON falls through to a later branch', () => {
+    // The dispatcher's catch contract: when `JSON.parse` throws on
+    // malformed VS Code metadata, `tryBranchA` returns false (not throws),
+    // emits structured telemetry, and the dispatcher continues to the next
+    // branch. Without this contract, every paste from a misbehaving VS
+    // Code extension would die with an uncaught throw and lose the user's
+    // content. Pin the behavior so a refactor can't silently remove the
+    // catch.
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: fakeMdManager() as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      // Truncated / non-JSON metadata — `JSON.parse` throws.
+      'vscode-editor-data': '{not json',
+      'text/plain': 'fallback content',
+    });
+    // Returns true because a later branch (Branch E text/plain markdown
+    // tiebreak — `fallback content` is plain prose so isMarkdown returns
+    // false → CM6-default verbatim insert via Branch E) handles the
+    // payload. The exact branch isn't load-bearing here — the test pins
+    // that the catch path returned false so the dispatcher could continue
+    // (i.e., the throw didn't escape).
+    expect(() => paste(view, evt)).not.toThrow();
+    // Branch A's codeBlock.create must NOT have been called — the throw
+    // happened before dispatch.
+    expect(view.state.schema.nodes.codeBlock.create).not.toHaveBeenCalled();
+  });
+
   test('Branch C: data-pm-slice fingerprint returns false (PM handles)', () => {
     const paste = createHandlePaste({
       // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
