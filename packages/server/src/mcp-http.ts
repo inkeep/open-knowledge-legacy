@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Config } from './config/schema.ts';
 import { MCP_SERVER_NAME } from './constants.ts';
 import type { AgentIdentity } from './mcp/agent-identity.ts';
+import { buildInstructions } from './mcp/instructions.ts';
 import { registerAllTools } from './mcp/tools/index.ts';
 import { RUNTIME_VERSION } from './version-constants.ts';
 
@@ -43,22 +44,6 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function buildInstructions(config: Config): string {
-  const includeLine = config.content.include.map((p) => `\`${p}\``).join(', ');
-  const excludeLine =
-    config.content.exclude.length > 0
-      ? config.content.exclude.map((p) => `\`${p}\``).join(', ')
-      : '(none)';
-  return `# Open Knowledge (OK) — collaborative markdown via MCP
-
-**STOP — native tools on in-scope \`.md\` / \`.mdx\`.** Do NOT use host-native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on markdown inside the content dir. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
-
-Content dir: ${config.content.dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
-
-This MCP endpoint is served by the running \`ok start\` process. The stdio \`ok mcp\` command is only a transport shim to this HTTP endpoint.
-`;
-}
-
 function writePlain(res: ServerResponse, statusCode: number, message: string): void {
   if (res.writableEnded) return;
   res.statusCode = statusCode;
@@ -77,7 +62,7 @@ function createSessionServer(
       version: RUNTIME_VERSION,
     },
     {
-      instructions: buildInstructions(config),
+      instructions: buildInstructions(config.content),
     },
   );
 
