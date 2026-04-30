@@ -3,7 +3,7 @@
  *
  * The browser's native WebSocket API cannot set headers (unlike fetch), so
  * we inject the current trace context as a URL query parameter. The server's
- * `onConnect` hook (packages/server/src/standalone.ts, future wiring) extracts
+ * `onConnect` hook (packages/server/src/server-factory.ts, future wiring) extracts
  * `traceparent` from `requestParameters` and attaches it to the session
  * origin, so downstream spans (`persistence.onStoreDocument`,
  * `shadow.commitWip`, etc.) can parent back to the original browser trace.

@@ -1,7 +1,7 @@
 /**
  * T17 — branch-switched cross-branch reseed-ordering regression gate.
  *
- * The cross-branch path in `standalone.ts`'s `onBatchEnd` callback runs:
+ * The cross-branch path in `server-factory.ts`'s `onBatchEnd` callback runs:
  *   1. Discard buffered file-watcher events.
  *   2. Reset every open Y.Doc from the new branch's disk via `applyToDoc` →
  *      `applyExternalChange` → mdast→PM with `resolveEmbed`.
@@ -28,7 +28,7 @@
  *
  * Hermetic: per-test tmpdir + per-test git repo + per-test docName.
  *
- * @see packages/server/src/standalone.ts onBatchEnd cross-branch path
+ * @see packages/server/src/server-factory.ts onBatchEnd cross-branch path
  * @see packages/app/tests/integration/branch-switch-live-client.test.ts (T5)
  * @see packages/app/tests/integration/restart-with-embed-doc.test.ts (T15)
  */
@@ -102,7 +102,7 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     //   main    → photo.png  → '/photo.png'
     //   feature → photo.png  → '/assets/photo.png'
     //
-    // The cross-branch reseed at standalone.ts:1645 IS the only mechanism by
+    // The cross-branch reseed at server-factory.ts:1645 IS the only mechanism by
     // which the post-switch basenameIndex reflects 'assets/photo.png'
     // (line 1553 discards the file-watcher's buffered events). Before the
     // fix, the doc-reset at line 1559 runs with the stale main-branch
@@ -206,7 +206,7 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
 
     // Post-switch assertion (the regression gate): the wiki-embed
     // component's props.src reflects the FEATURE branch's resolved path.
-    // Under the bug, the doc-reset at standalone.ts:1559 runs BEFORE the
+    // Under the bug, the doc-reset at server-factory.ts:1559 runs BEFORE the
     // basenameIndex reseed at line 1645, so resolveEmbed returns
     // 'photo.png' (stale main-branch path) and props.src is '/photo.png'
     // instead of '/assets/photo.png'.

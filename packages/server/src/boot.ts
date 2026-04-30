@@ -27,7 +27,7 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
 import { isProcessAlive } from './process-alive.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
-import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** Default parent-death poll interval. Spec NFR2 — 5 s is well below CPU noise floor. */

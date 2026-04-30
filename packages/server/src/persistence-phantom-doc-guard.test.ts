@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
-import { createServer } from './standalone.ts';
+import { createServer } from './server-factory.ts';
 
 interface Fixture {
   tmpDir: string;
