@@ -52,6 +52,7 @@ const pipeAndInspect = (chunk, stream) => {
   const lines = lineBuffer.split(/\r?\n/);
   lineBuffer = lines.pop() ?? '';
   for (const line of lines) inspectLine(line);
+  if (lineBuffer.length > 0) inspectLine(lineBuffer);
 };
 
 child.stdout.on('data', (chunk) => pipeAndInspect(chunk, process.stdout));
