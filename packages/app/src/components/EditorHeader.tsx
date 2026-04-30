@@ -125,7 +125,6 @@ export function EditorHeader({
     else pin(activeDocName);
   }
 
-
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');

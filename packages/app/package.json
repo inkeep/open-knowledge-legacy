@@ -27,12 +27,12 @@
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
-  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB",
+  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB; PropertyPanel pulled date-fns + react-day-picker into the eager bundle (~24 kB) — follow-up should lazy-load DateWidget so the calendar/date-fns chunk only loads on first date-property edit",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "290 kB",
+      "limit": "320 kB",
       "gzip": true
     },
     {
