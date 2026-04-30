@@ -35,6 +35,7 @@ export default {
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
+    'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {

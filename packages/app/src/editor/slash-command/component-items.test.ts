@@ -40,8 +40,12 @@ describe('getComponentItems (descriptor-driven slash menu)', () => {
 describe('createChildNode — default props on slash insert', () => {
   test('img: only declared defaults are pre-populated, no synthetic 0 / "" / first-enum', () => {
     // The img descriptor declares defaults for `loading: 'lazy'`,
-    // `decoding: 'auto'`, `fetchpriority: 'auto'`, and `alt: ''`.
-    // Everything else (src, width, height, srcset, sizes, title,
+    // `decoding: 'auto'`, `fetchpriority: 'auto'`, `alt: ''`, and
+    // `src: ''` (the empty default is intentional — the placeholder
+    // predicate keys off `src === ''` to surface the "Add an image"
+    // pill on slash insert; authored markdown `<img />` parses to
+    // `src: undefined` and skips the pill).
+    // Everything else (width, height, srcset, sizes, title,
     // crossorigin, referrerpolicy) has no declared default and must
     // stay unset so PropPanel renders empty inputs and the next
     // serialize doesn't emit `<img width={0} crossorigin="anonymous"
@@ -52,8 +56,8 @@ describe('createChildNode — default props on slash insert', () => {
     expect(props.decoding).toBe('auto');
     expect(props.fetchpriority).toBe('auto');
     expect(props.alt).toBe('');
+    expect(props.src).toBe('');
     // Unset (no declared default):
-    expect(props.src).toBeUndefined();
     expect(props.width).toBeUndefined();
     expect(props.height).toBeUndefined();
     expect(props.srcset).toBeUndefined();
@@ -63,22 +67,22 @@ describe('createChildNode — default props on slash insert', () => {
     expect(props.referrerpolicy).toBeUndefined();
   });
 
-  test('video: controls=true (declared) is set; everything else undeclared stays unset', () => {
+  test('video: src="" (empty default for placeholder) and controls=true (declared); everything else unset', () => {
     const node = createChildNode('video');
     const props = (node.attrs as { props?: Record<string, unknown> }).props ?? {};
     expect(props.controls).toBe(true);
-    expect(props.src).toBeUndefined();
+    expect(props.src).toBe('');
     expect(props.poster).toBeUndefined();
     expect(props.width).toBeUndefined();
     expect(props.height).toBeUndefined();
     expect(props.title).toBeUndefined();
   });
 
-  test('audio: controls=true (declared) is set; everything else undeclared stays unset', () => {
+  test('audio: src="" (empty default for placeholder) and controls=true (declared); everything else unset', () => {
     const node = createChildNode('audio');
     const props = (node.attrs as { props?: Record<string, unknown> }).props ?? {};
     expect(props.controls).toBe(true);
-    expect(props.src).toBeUndefined();
+    expect(props.src).toBe('');
     expect(props.title).toBeUndefined();
   });
 });
