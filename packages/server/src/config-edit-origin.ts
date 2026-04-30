@@ -24,7 +24,7 @@ export const CONFIG_VALIDATION_REVERT_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: true,
   context: { origin: 'config-validation-revert' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Transaction origin for config-file-watcher → Y.Text writes.
@@ -47,4 +47,4 @@ export const CONFIG_FILE_WATCHER_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: true,
   context: { origin: 'config-file-watcher' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;

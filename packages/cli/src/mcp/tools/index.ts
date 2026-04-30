@@ -276,6 +276,17 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   });
 
   // Config tools — fs-direct (no Hocuspocus required).
+  //
+  // These three use `server.registerTool(name, {description, inputSchema,
+  // outputSchema, annotations}, handler)` — the modern MCP TS-SDK API that
+  // accepts a typed `outputSchema` and `annotations` (`readOnlyHint` /
+  // `idempotentHint` / `destructiveHint`). The older tools above call
+  // `server.tool(name, description, schema, handler)` — same registration
+  // semantics minus the structured-output + annotations channels. Both
+  // routes are wrapped by `createLoggedServer` (see tool-logging.ts).
+  // When touching an older tool, prefer migrating to `registerTool` so the
+  // outputSchema can be enforced; until every tool migrates, both APIs
+  // coexist intentionally.
   registerGetConfig(registrationServer, {
     config: opts.config,
     resolveCwd: named('get_config'),

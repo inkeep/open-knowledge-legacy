@@ -298,19 +298,7 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
           current: result.effective as unknown as Record<string, unknown>,
         },
       };
-      return textPlusStructured(
-        JSON.stringify(
-          {
-            ok: true,
-            applied: result.appliedPaths,
-            scope: inference.scope,
-            path: result.path,
-          },
-          null,
-          2,
-        ),
-        success,
-      );
+      return textPlusStructured(JSON.stringify(success.result, null, 2), success);
     },
   );
 }
