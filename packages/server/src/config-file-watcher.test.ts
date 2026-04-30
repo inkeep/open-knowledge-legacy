@@ -34,10 +34,11 @@ function makeFixture(): Fixture {
 /**
  * Wait until either `predicate()` returns true or `timeoutMs` elapses.
  * Polls every 25ms — fast enough that chokidar's awaitWriteFinish (100ms
- * stabilityThreshold) dominates the latency. Returns true on success,
- * false on timeout.
+ * stabilityThreshold) dominates the latency in normal runs. CI can delay
+ * polling-backed chokidar events under full-suite load, so keep the ceiling
+ * generous and let passing cases return as soon as the event arrives.
  */
-async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boolean> {
+async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (predicate()) return true;
