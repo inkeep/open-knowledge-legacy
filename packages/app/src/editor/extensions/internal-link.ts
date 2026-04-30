@@ -34,6 +34,7 @@
  * lives in PluginState / decoration attrs.
  */
 import {
+  assertNeverLinkTarget,
   classifyMarkdownHref,
   extractAssetExtension,
   LinkFidelity,
@@ -168,23 +169,29 @@ export const InternalLink = LinkFidelity.extend<InternalLinkOptions>({
           // by returning false).
           if (!newTab) return false;
           if (!target) return false;
-          if (target.kind === 'doc') {
-            openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
-            return true;
+          // `target.kind === 'asset'` is excluded by the isAssetShape
+          // early-return above, so TypeScript narrows `target` to the
+          // remaining three variants here.
+          switch (target.kind) {
+            case 'doc':
+              openInternalHashHrefInNewTab({ docName: target.docName, anchor: target.anchor });
+              return true;
+            case 'anchor':
+              // Anchor lives inside the current doc — "new tab" on an
+              // in-page anchor is an app-level concept, preserve it via the
+              // same hash-href helper.
+              openInternalHashHrefInNewTab({ docName, anchor: target.anchor });
+              return true;
+            case 'external':
+              // Refuse javascript:/data:/etc via scheme allowlist
+              // (review Major #13). Fall through if unsafe so the PropPanel
+              // still opens and surfaces the unsafe URL for the author to edit.
+              if (!isSafeNavigationUrl(target.url)) return false;
+              openHashHrefInNewTab(target.url);
+              return true;
+            default:
+              return assertNeverLinkTarget(target);
           }
-          if (target.kind === 'anchor') {
-            // Anchor lives inside the current doc — "new tab" on an
-            // in-page anchor is an app-level concept, preserve it via the
-            // same hash-href helper.
-            openInternalHashHrefInNewTab({ docName, anchor: target.anchor });
-            return true;
-          }
-          // External — refuse javascript:/data:/etc via scheme allowlist
-          // (review Major #13). Fall through if unsafe so the PropPanel
-          // still opens and surfaces the unsafe URL for the author to edit.
-          if (!isSafeNavigationUrl(target.url)) return false;
-          openHashHrefInNewTab(target.url);
-          return true;
         },
       }),
       // 2. data-mark-id decoration so the layer's event delegation can resolve
