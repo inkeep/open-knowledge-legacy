@@ -423,7 +423,12 @@ function extractTextFromMdastNodes(nodes: MdastNodes[]): string {
 // `WIKI_EMBED_EXTENSIONS` minus `IMAGE_EXTENSIONS` so widening the
 // canonical list (e.g. adding `heic`) flows here automatically — no
 // manual edit in this file.
-import { IMAGE_EXTENSIONS, WIKI_EMBED_EXTENSIONS } from '../constants/upload.ts';
+import {
+  AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  WIKI_EMBED_EXTENSIONS,
+} from '../constants/upload.ts';
 
 const WIKI_EMBED_IMAGE_EXTS = IMAGE_EXTENSIONS;
 const WIKI_EMBED_NON_IMAGE_EXTS: ReadonlySet<string> = new Set(
@@ -895,6 +900,40 @@ function buildMdastToPmHandlers(
           sourceRaw: '',
           sourceDirty: false,
           props: { src: srcOrTarget, alt: alias ?? target, target, anchor, alias },
+        });
+      }
+      // Block-context video-extension embed → jsxComponent(WikiEmbedVideo).
+      // Mirror of the WikiEmbedImage dispatch above. The descriptor maps
+      // alias to `title` (Video.tsx accepts `title` but not `alt`); inline
+      // mid-prose video embeds keep the link-mark fallback below.
+      if (
+        isBlockContext &&
+        VIDEO_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedVideo')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedVideo',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
+        });
+      }
+      if (
+        isBlockContext &&
+        AUDIO_EXTENSIONS.has(ext) &&
+        n.jsxComponent &&
+        registry.has('WikiEmbedAudio')
+      ) {
+        return n.jsxComponent.createAndFill({
+          componentName: 'WikiEmbedAudio',
+          kind: 'element',
+          attributes: [],
+          sourceRaw: '',
+          sourceDirty: false,
+          props: { src: srcOrTarget, title: alias ?? target, target, anchor, alias },
         });
       }
       // Inline-position image-extension embed (or a host without the

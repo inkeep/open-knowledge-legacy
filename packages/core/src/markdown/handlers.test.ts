@@ -350,7 +350,12 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
     expect(linkMark?.attrs?.href).toBe('/docs/sub/doc.pdf');
   });
 
-  test('video wiki-embed (MP4) emits server-absolute href on the link mark', () => {
+  test('video wiki-embed (MP4) emits server-absolute src on jsxComponent(WikiEmbedVideo)', () => {
+    // Pre-US-008 this test asserted a link-mark href because the video branch
+    // used the text+link-mark fallback. US-008 routes video extensions through
+    // the WikiEmbedVideo descriptor; the server-absolute path now lands on
+    // jsxComponent props.src instead. The contract is unchanged — `resolveEmbed`
+    // still produces a `/`-rooted URL for resolved embeds.
     const json = mdManager.parse('![[clip.mp4]]\n', {
       resolveEmbed: (target: string, _source: string) => {
         if (target === 'clip.mp4') return 'media/clip.mp4';
@@ -358,9 +363,10 @@ describe('handlers.wikiLinkEmbed — server-absolute URL contract (Bug B/C)', ()
       },
       sourcePath: 'notes.md',
     });
-    const linkMark = findMarkInJson(json, 'link');
-    expect(linkMark).not.toBeNull();
-    expect(linkMark?.attrs?.href).toBe('/media/clip.mp4');
+    const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/media/clip.mp4');
   });
 
   test('unresolved embed (resolveEmbed returns null) falls back to bare target', () => {
@@ -474,6 +480,147 @@ describe('handlers.wikiLinkEmbed — WikiEmbedImage dispatch (US-002)', () => {
 
   test('round-trip: ![[photo.png#frag|caption]] preserves anchor + alias byte-identical', () => {
     const md = '![[photo.png#frag|caption]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+});
+
+// US-008 — handlers.wikiLinkEmbed for video/audio extensions emits jsxComponent
+// dispatched to WikiEmbedVideo / WikiEmbedAudio compat descriptors. Mirrors the
+// US-002 image dispatch shape: block-context standalone embeds promote to
+// jsxComponent; mid-prose embeds keep the legacy text+link-mark fallback.
+describe('handlers.wikiLinkEmbed — WikiEmbedVideo dispatch (US-008)', () => {
+  test('![[clip.mp4]] → jsxComponent(WikiEmbedVideo) with target/alias/anchor on props', () => {
+    const json = mdManager.parse('![[clip.mp4]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('clip.mp4');
+    expect(props?.alias).toBeNull();
+    expect(props?.anchor).toBeNull();
+    // The link-mark fallback path must not fire for image/video/audio
+    // extensions when the descriptor is registered — the parser routes them
+    // exclusively through jsxComponent.
+    expect(findMarkInJson(json, 'link')).toBeNull();
+  });
+
+  test('![[clip.mp4|introduction]] → props.alias === "introduction"', () => {
+    const json = mdManager.parse('![[clip.mp4|introduction]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('clip.mp4');
+    expect(props?.alias).toBe('introduction');
+    expect(props?.anchor).toBeNull();
+  });
+
+  test('![[clip.mp4#t=10]] → props.anchor === "t=10"', () => {
+    const json = mdManager.parse('![[clip.mp4#t=10]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('clip.mp4');
+    expect(props?.anchor).toBe('t=10');
+    expect(props?.alias).toBeNull();
+  });
+
+  test('all video extensions (mp4/webm/mov/m4v/mkv) dispatch to WikiEmbedVideo', () => {
+    for (const ext of ['mp4', 'webm', 'mov', 'm4v', 'mkv']) {
+      const json = mdManager.parse(`![[clip.${ext}]]\n`);
+      const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+      expect(node, `${ext} should dispatch to WikiEmbedVideo`).not.toBeNull();
+    }
+  });
+
+  test('video dispatch carries server-absolute src when resolveEmbed returns a hit', () => {
+    const json = mdManager.parse('![[clip.mp4]]\n', {
+      resolveEmbed: (target: string) => (target === 'clip.mp4' ? 'media/clip.mp4' : null),
+      sourcePath: 'notes.md',
+    });
+    const node = findJsxComponentInJson(json, 'WikiEmbedVideo');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/media/clip.mp4');
+    expect(props?.target).toBe('clip.mp4');
+  });
+
+  test('round-trip: ![[clip.mp4]] is byte-identical', () => {
+    const md = '![[clip.mp4]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[clip.mp4|caption]] preserves alias byte-identical', () => {
+    const md = '![[clip.mp4|caption]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[clip.mp4#t=10]] preserves anchor byte-identical', () => {
+    const md = '![[clip.mp4#t=10]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+});
+
+describe('handlers.wikiLinkEmbed — WikiEmbedAudio dispatch (US-008)', () => {
+  test('![[song.mp3]] → jsxComponent(WikiEmbedAudio) with target/alias/anchor on props', () => {
+    const json = mdManager.parse('![[song.mp3]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedAudio');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('song.mp3');
+    expect(props?.alias).toBeNull();
+    expect(props?.anchor).toBeNull();
+    expect(findMarkInJson(json, 'link')).toBeNull();
+  });
+
+  test('![[song.mp3|jingle]] → props.alias === "jingle"', () => {
+    const json = mdManager.parse('![[song.mp3|jingle]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedAudio');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('song.mp3');
+    expect(props?.alias).toBe('jingle');
+  });
+
+  test('![[song.mp3#chorus]] → props.anchor === "chorus"', () => {
+    const json = mdManager.parse('![[song.mp3#chorus]]\n');
+    const node = findJsxComponentInJson(json, 'WikiEmbedAudio');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.target).toBe('song.mp3');
+    expect(props?.anchor).toBe('chorus');
+  });
+
+  test('all audio extensions (mp3/wav/ogg/m4a/flac/aac/opus) dispatch to WikiEmbedAudio', () => {
+    for (const ext of ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus']) {
+      const json = mdManager.parse(`![[song.${ext}]]\n`);
+      const node = findJsxComponentInJson(json, 'WikiEmbedAudio');
+      expect(node, `${ext} should dispatch to WikiEmbedAudio`).not.toBeNull();
+    }
+  });
+
+  test('audio dispatch carries server-absolute src when resolveEmbed returns a hit', () => {
+    const json = mdManager.parse('![[song.mp3]]\n', {
+      resolveEmbed: (target: string) => (target === 'song.mp3' ? 'media/song.mp3' : null),
+      sourcePath: 'notes.md',
+    });
+    const node = findJsxComponentInJson(json, 'WikiEmbedAudio');
+    expect(node).not.toBeNull();
+    const props = node?.attrs?.props as Record<string, unknown> | undefined;
+    expect(props?.src).toBe('/media/song.mp3');
+    expect(props?.target).toBe('song.mp3');
+  });
+
+  test('round-trip: ![[song.mp3]] is byte-identical', () => {
+    const md = '![[song.mp3]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[song.mp3|jingle]] preserves alias byte-identical', () => {
+    const md = '![[song.mp3|jingle]]\n';
+    expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
+  });
+
+  test('round-trip: ![[song.mp3#chorus]] preserves anchor byte-identical', () => {
+    const md = '![[song.mp3#chorus]]\n';
     expect(mdManager.serialize(mdManager.parse(md))).toBe(md);
   });
 });
