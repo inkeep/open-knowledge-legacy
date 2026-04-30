@@ -205,6 +205,16 @@ export function loadConfigDoc(
   }
 
   const validation = validateConfigYaml(raw);
+  if (!validation.ok && raw.length > 0) {
+    // Surface invalid disk content so operators see "your config has
+    // errors" at boot rather than discovering it only via the L3 hook
+    // when the next mutation triggers a revert. The Y.Text is still
+    // seeded with the raw content so a UI can display + repair it.
+    getLogger('config-persistence').warn(
+      { docName: documentName, path: filePath },
+      `[config-persistence] loadConfigDoc seeding invalid YAML for ${documentName} into Y.Text — first mutation will revert to LKG`,
+    );
+  }
 
   document.transact(() => {
     if (raw.length > 0) ytext.insert(0, raw);
