@@ -107,7 +107,7 @@ See [GitHub Sync](/guides/github-sync) for the engine's full behavior.
 | `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Overrides the `previewUrl` base emitted by every MCP tool. Wins over `ui.lock` discovery and `preview.baseUrl` config. Use for tunnels, CI, or cloud-deployed previews. |
 | `OPEN_KNOWLEDGE_GITHUB_CLIENT_ID` | `github.oauthAppClientId` — override the OAuth App client ID used for Device Flow                                                                                        |
 
-Precedence: **CLI flags > environment variables > workspace config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
+Precedence: **CLI flags > environment variables > project config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
 
 ## CLI flags
 
@@ -128,12 +128,12 @@ Open the Settings pane from anywhere in the editor:
 
 The pane has two sub-tabs:
 
-- **This project** — workspace-scope fields, persisted to `./.open-knowledge/config.yml`.
+- **This project** — project-scope fields, persisted to `./.open-knowledge/config.yml`.
 - **User** — user-scope fields, persisted to `~/.open-knowledge/config.yml`.
 
 Either-scope fields appear in both tabs with a "modified at this scope" indicator showing where the current value lives. Edits auto-save per field — text inputs commit on blur or Enter; toggles and selects commit on change. Hover any modified field for a "Reset to default" affordance.
 
-Editing is real-time: the pane is bound to two Hocuspocus Y.Text-only synthetic docs (`__config__/workspace` and `__user__/config.yml`) over the same WebSocket as the editor. External edits — from your IDE, an MCP tool, or another `ok start` instance — propagate via a chokidar file watcher into Y.Text and the open Settings pane refreshes within ~500ms. No reload needed.
+Editing is real-time: the pane is bound to two Hocuspocus Y.Text-only synthetic docs (`__config__/project` and `__user__/config.yml`) over the same WebSocket as the editor. External edits — from your IDE, an MCP tool, or another `ok start` instance — propagate via a chokidar file watcher into Y.Text and the open Settings pane refreshes within ~500ms. No reload needed.
 
 Validation runs in three places (defense-in-depth):
 
@@ -149,7 +149,7 @@ Settings is unavailable in the Electron Navigator window — it has no project c
 
 ```yaml title=".open-knowledge/config.yml"
 # yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@0.2/dist/config-schema.json
-# Open Knowledge — workspace configuration
+# Open Knowledge — project configuration
 content:
   include: ["**/*.md", "**/*.mdx"]
 ```

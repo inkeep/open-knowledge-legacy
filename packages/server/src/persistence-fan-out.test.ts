@@ -14,8 +14,8 @@ import { join } from 'node:path';
 import * as Y from 'yjs';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import { applyExternalChange } from './external-change.ts';
+import { createServer } from './server-factory.ts';
 import { FILE_SYSTEM_WRITER, initShadowRepo, shadowGit } from './shadow-repo.ts';
-import { createServer } from './standalone.ts';
 
 describe('persistence L2 fan-out (US-014)', () => {
   let tmpDir: string;

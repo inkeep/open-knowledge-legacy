@@ -60,7 +60,7 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `get_backlinks` / `get_forward_links`         | Both      | Wiki-link graph queries                                                                      |
 | `get_hubs` / `get_orphans` / `get_dead_links` | Both      | Link-graph diagnostics                                                                       |
 | `suggest_links`                               | Both      | Suggest missing wiki-links for a target page                                                 |
-| `get_config`                                  | Always    | Read the effective merged config (defaults → user → workspace)                              |
+| `get_config`                                  | Always    | Read the effective merged config (defaults → user → project)                              |
 | `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
 | `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
@@ -89,11 +89,11 @@ The four write tools — `write_document`, `edit_document`, `rename_document`, `
 
 ### Config tools
 
-`get_config`, `set_config`, and `set_folder_rule` operate directly on `.open-knowledge/config.yml` (workspace) and `~/.open-knowledge/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
+`get_config`, `set_config`, and `set_folder_rule` operate directly on `.open-knowledge/config.yml` (project) and `~/.open-knowledge/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
 
 #### `get_config`
 
-Read the full effective merged config (defaults → user → workspace), or a sub-path:
+Read the full effective merged config (defaults → user → project), or a sub-path:
 
 ```ts
 get_config()                              // full config
@@ -117,7 +117,7 @@ The allowlist is exactly five paths:
 
 Anything else returns `error.code: NOT_AGENT_SETTABLE`.
 
-There is no `scope` parameter — the server picks the write target (workspace vs user) per leaf via the inspect-ladder: existing-at-workspace → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
+There is no `scope` parameter — the server picks the write target (project vs user) per leaf via the inspect-ladder: existing-at-project → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
 
 Validation runs as a single Zod parse over the merged config before any disk write; on failure the response shape is `{ ok: false, error: ConfigValidationError }` (a discriminated union of `YAML_PARSE | SCHEMA_INVALID | SCOPE_VIOLATION | NOT_AGENT_SETTABLE | MIXED_SCOPE | WRITE_ERROR | UNKNOWN`) with a human-rendered error in `content[].text` that primes a retry. On success, the response includes `{ applied, scope, current }` so the agent can confirm the effective state without re-fetching.
 

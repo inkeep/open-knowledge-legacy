@@ -386,10 +386,10 @@ describe('ContentFilter', () => {
   describe('reserved config doc names', () => {
     // US-005: synthetic config-doc admission means the same content-filter
     // bypass that protects __system__.md must also reject any disk artifact
-    // named after the workspace or user-global config docs. Sidecars or
+    // named after the project or user-global config docs. Sidecars or
     // accidental collisions on those names would otherwise round-trip into
     // the user's content tree.
-    test('excludes __config__/workspace.md regardless of include patterns', () => {
+    test('excludes __config__/project.md regardless of include patterns', () => {
       const filter = createContentFilter({
         projectDir,
         contentDir: projectDir,
@@ -397,8 +397,8 @@ describe('ContentFilter', () => {
         excludePatterns: [],
       });
 
-      expect(filter.isExcluded('__config__/workspace.md')).toBe(true);
-      expect(filter.isExcluded('__config__/workspace.mdx')).toBe(true);
+      expect(filter.isExcluded('__config__/project.md')).toBe(true);
+      expect(filter.isExcluded('__config__/project.mdx')).toBe(true);
     });
 
     test('excludes __user__/config.yml.md regardless of include patterns', () => {

@@ -41,12 +41,12 @@ export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
 /**
  * Scope tag used by `SCOPE_VIOLATION` and `MIXED_SCOPE` payloads. Mirrors
  * `fieldRegistry` metadata: `'either'` means "valid at user OR
- * workspace"; `'user'` and `'workspace'` are scope-restricted.
+ * project"; `'user'` and `'project'` are scope-restricted.
  */
-export const FieldScopeSchema = z.enum(['user', 'workspace', 'either']);
+export const FieldScopeSchema = z.enum(['user', 'project', 'either']);
 export type FieldScope = z.infer<typeof FieldScopeSchema>;
 
-export const WriteScopeSchema = z.enum(['user', 'workspace']);
+export const WriteScopeSchema = z.enum(['user', 'project']);
 export type WriteScope = z.infer<typeof WriteScopeSchema>;
 
 export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [

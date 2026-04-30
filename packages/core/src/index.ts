@@ -86,8 +86,8 @@ export {
 } from './constants/activity.ts';
 export {
   CC1_CONTRACT_VERSION,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
   type ConfigDocName,
   SYSTEM_DOC_NAME,

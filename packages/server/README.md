@@ -175,7 +175,7 @@ Each channel's semantics are owned by its emitter. Adding a new `ch` value count
 
 | Channel            | Emitted from                                                                                              | Triggers                                                                                                                                                                              | Canonical refetch                                                                                              |
 | ------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `files`            | `standalone.ts` DiskEvent dispatch (V0-2, shipped)                                                        | Markdown `create \| delete \| rename` DiskEvents AND asset `asset-create \| asset-delete` events (editor-asset-embed-surface spec). `update` / `conflict` do not change the file list | `GET /api/documents` (and basename-index rebuild — see "Upload + asset-embed surface" below)                   |
+| `files`            | `server-factory.ts` DiskEvent dispatch (V0-2, shipped)                                                        | Markdown `create \| delete \| rename` DiskEvents AND asset `asset-create \| asset-delete` events (editor-asset-embed-surface spec). `update` / `conflict` do not change the file list | `GET /api/documents` (and basename-index rebuild — see "Upload + asset-embed surface" below)                   |
 | `backlinks`        | `persistence.ts` backlink-index update path (V0-3, pending)                                               | Content changes that invalidate the backlink index                                                                                                                                    | `GET /api/backlinks/:docName`                                                                                  |
 | `graph`            | TBD (V0-11, pending)                                                                                      | Graph-derived data changes                                                                                                                                                            | TBD                                                                                                            |
 | `session-activity` | `persistence.ts` L2 drain, after any successful `commitWipFromTree` whose `writerId.startsWith('agent-')` | Any agent-origin write that produced a shadow-repo commit                                                                                                                             | `GET /api/agent-activity?agentId=<connId>` — open Activity Panels re-fetch with a 500 ms hook-level debounce   |
@@ -255,7 +255,7 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 Two well-known synthetic docs back the in-app Settings pane and live-refresh of external edits:
 
-- `__config__/workspace` ↔ `<contentDir>/.open-knowledge/config.yml`
+- `__config__/project` ↔ `<contentDir>/.open-knowledge/config.yml`
 - `__user__/config.yml` ↔ `~/.open-knowledge/config.yml`
 
 Both are admitted at boot via `hocuspocus.openDirectConnection()` and are **Y.Text-only** — there is no Y.XmlFragment, no markdown bridge, no TipTap binding. The Settings pane wires its `HocuspocusProvider` directly at the Y.Text and renders a Zod-walker form on top.
@@ -356,7 +356,7 @@ Finder-style renames arrive as `asset-delete` + `asset-create` pairs. The basena
 
 ### Basename index runtime
 
-Constructed in `standalone.ts` via `createBasenameIndex()` (from `@inkeep/open-knowledge-core/path-resolve` — browser+Node compatible, no `node:fs` imports). Seeded at boot via `seedBasenameIndex` (`src/asset-walk.ts`) which walks `contentDir` after `startWatcher` primes the `ContentFilter`'s dir-count (so assets only index if a markdown sibling admits the subtree). `visitedInodes` set prevents symlink cycles.
+Constructed in `server-factory.ts` via `createBasenameIndex()` (from `@inkeep/open-knowledge-core/path-resolve` — browser+Node compatible, no `node:fs` imports). Seeded at boot via `seedBasenameIndex` (`src/asset-walk.ts`) which walks `contentDir` after `startWatcher` primes the `ContentFilter`'s dir-count (so assets only index if a markdown sibling admits the subtree). `visitedInodes` set prevents symlink cycles.
 
 The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 
@@ -366,7 +366,7 @@ The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 - `applyExternalChange` → disk→CRDT bridge (markdown reload)
 - `applyAgentMarkdownWrite` → agent write composition
 
-The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
+The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `server-factory.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
 
 `createApiExtension({ installedAgentsProbe })` accepts a probe override so unit tests and integration tests don't shell out. The default uses `createOsProbe(process.platform)` from `handoff-api.ts`.
 
@@ -442,7 +442,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
 4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
 
-**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `server-factory.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
 
 ### Composition with existing primitives
 
@@ -455,7 +455,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 - Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
 - Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
 - Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
-- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- Server-side auth: `packages/server/src/server-factory.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
 - CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
 - Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
 - End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.
@@ -494,7 +494,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
 4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
 
-**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `server-factory.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
 
 ### Composition with existing primitives
 
@@ -507,7 +507,7 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 - Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
 - Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
 - Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
-- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- Server-side auth: `packages/server/src/server-factory.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
 - CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
 - Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
 - End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.

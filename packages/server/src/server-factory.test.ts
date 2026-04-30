@@ -11,8 +11,8 @@ import {
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
 import { ensureProjectGit } from './project-git.ts';
+import { createServer, type ServerInstance } from './server-factory.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
-import { createServer, type ServerInstance } from './standalone.ts';
 
 // ─── CaptureLogger infrastructure ───────────────────────────────────────────
 // Uses loggerFactory.configure() pattern from logger.test.ts:27-36.
@@ -425,7 +425,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(elapsed).toBeLessThan(2_000);
 
     // Shutdown log still emitted — documentCount counts the boot-admitted
-    // synthetic docs (__system__, __config__/workspace, __user__/config.yml).
+    // synthetic docs (__system__, __config__/project, __user__/config.yml).
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
     expect(shutdownLogs[0].payload.documentCount).toBe(3);
@@ -489,7 +489,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 // ─── createServer() degraded signal tests (from PR #62) ─────────────────────
 // These verify that ServerInstance.degraded correctly reports which subsystems
 // failed to initialize. Combined into this file during the PR #62 ↔ PR #61
-// merge so both test suites share the `standalone.test.ts` filename.
+// merge so both test suites share the `server-factory.test.ts` filename.
 //
 /**
  * Tests for createServer() — degraded signal from initAsync.
@@ -561,7 +561,7 @@ describe('createServer() degraded signal', () => {
     // assertion — not as strong as a runtime test, but mock.module leaks
     // make runtime testing impractical without process isolation.
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
-    const src = readFileSync(resolve(dir, 'standalone.ts'), 'utf-8');
+    const src = readFileSync(resolve(dir, 'server-factory.ts'), 'utf-8');
 
     // Each subsystem's catch block should push to the degraded array
     expect(src).toContain("degraded.push('shadow-repo')");
@@ -622,7 +622,7 @@ describe('createServer() — config-doc admission (US-005)', () => {
     await srv.ready;
 
     expect(srv.hocuspocus.documents.has('__system__')).toBe(true);
-    expect(srv.hocuspocus.documents.has('__config__/workspace')).toBe(true);
+    expect(srv.hocuspocus.documents.has('__config__/project')).toBe(true);
     expect(srv.hocuspocus.documents.has('__user__/config.yml')).toBe(true);
     // Admission failures would surface as `degraded` entries — none expected
     // for a clean init.
@@ -641,7 +641,7 @@ describe('createServer() — config-doc admission (US-005)', () => {
 
     await srv.ready;
 
-    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    const configDoc = srv.hocuspocus.documents.get('__config__/project');
     expect(configDoc).toBeDefined();
     if (!configDoc) return;
 
@@ -682,7 +682,7 @@ describe('createServer() — config-doc admission (US-005)', () => {
     // openDirectConnection is the in-process equivalent of a client
     // attaching over the collab WS — it goes through the same auth
     // extension. No additional gating needed for config docs (D49).
-    const conn = await srv.hocuspocus.openDirectConnection('__config__/workspace');
+    const conn = await srv.hocuspocus.openDirectConnection('__config__/project');
     try {
       const document = conn.document;
       expect(document).toBeDefined();
@@ -725,7 +725,7 @@ describe('createServer() — config file watcher (US-007)', () => {
     rmSync(testHomedir, { recursive: true, force: true });
   });
 
-  test('external write to workspace config.yml propagates to Y.Text within 4s', async () => {
+  test('external write to project config.yml propagates to Y.Text within 4s', async () => {
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
     const srv = createServer({
       contentDir,
@@ -735,7 +735,7 @@ describe('createServer() — config file watcher (US-007)', () => {
     });
     await srv.ready;
 
-    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    const configDoc = srv.hocuspocus.documents.get('__config__/project');
     expect(configDoc).toBeDefined();
     if (!configDoc) {
       await srv.destroy();
@@ -746,7 +746,7 @@ describe('createServer() — config file watcher (US-007)', () => {
     // Y.Text starts empty (no prior config.yml on disk).
     expect(ytext.toString()).toBe('');
 
-    // Simulate a CLI / IDE / hand-edit creating the workspace config.
+    // Simulate a CLI / IDE / hand-edit creating the project config.
     const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
     mkdirSync(join(testProjectDir, '.open-knowledge'), { recursive: true });
     const newContent = 'mcp:\n  autoStart: false\n';
@@ -759,7 +759,7 @@ describe('createServer() — config file watcher (US-007)', () => {
   });
 
   test('external broken-YAML write keeps Y.Text at LKG and does not crash the server', async () => {
-    // Pre-seed a valid workspace config so the watcher's first read populates
+    // Pre-seed a valid project config so the watcher's first read populates
     // LKG with valid content; then write broken YAML and assert Y.Text stays.
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
     const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
@@ -775,7 +775,7 @@ describe('createServer() — config file watcher (US-007)', () => {
     });
     await srv.ready;
 
-    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    const configDoc = srv.hocuspocus.documents.get('__config__/project');
     expect(configDoc).toBeDefined();
     if (!configDoc) {
       await srv.destroy();
@@ -807,7 +807,7 @@ describe('createServer() — config file watcher (US-007)', () => {
     });
     await srv.ready;
 
-    const configDoc = srv.hocuspocus.documents.get('__config__/workspace');
+    const configDoc = srv.hocuspocus.documents.get('__config__/project');
     expect(configDoc).toBeDefined();
     if (!configDoc) {
       await srv.destroy();

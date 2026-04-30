@@ -3,7 +3,7 @@
  *
  * Before this module, the server package instantiated five independent
  * `new MarkdownManager({ extensions: sharedExtensions })` instances across
- * `standalone.ts`, `persistence.ts`, `backlink-index.ts`, `agent-sessions.ts`,
+ * `server-factory.ts`, `persistence.ts`, `backlink-index.ts`, `agent-sessions.ts`,
  * and `external-change.ts`, plus three independent `getSchema(sharedExtensions)`
  * calls. The constructions are identical — every site passes the same
  * `sharedExtensions` source of truth — so the independent instances produce

@@ -92,24 +92,7 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     const bar = page.locator('[data-slot="presence-bar"]');
     await expect(bar).toBeVisible();
 
-    // Pin docFoo before any agent writes — SystemDocSubscriber's auto-nav
-    // would otherwise follow the latest agent write (pickPrimary) and
-    // relocate the browser to docBar, inverting which section each agent
-    // lands in. Pin is respected unconditionally (DocumentContext.pin).
-    // Uses the dev-only `__test_setPin` hook rather than poking
-    // `localStorage['ok-pin-v1']` directly — keeps the test off the
-    // private storage-key shape. No reload needed: the hook writes to
-    // both React state and localStorage in one shot.
-    await page.evaluate(
-      ([doc]) => {
-        const setPin = (window as { __test_setPin?: (d: string | null) => void }).__test_setPin;
-        if (!setPin) throw new Error('__test_setPin dev hook missing');
-        setPin(doc);
-      },
-      [docFoo],
-    );
-
-    // Publish after navigation + pin so auto-nav is suppressed and TTL is fresh.
+    // Publish after navigation so the TTL is fresh.
     // Write order: Claude (current-doc) first, Cursor (cross-doc) last. Cursor
     // is the tighter constraint because its assertion runs LAST and its `ts`
     // ages linearly against the 5s TTL filter. Writing Cursor last puts its
@@ -188,16 +171,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     await page.goto(`/#/${docFoo}`);
     const bar = page.locator('[data-slot="presence-bar"]');
     await expect(bar).toBeVisible();
-
-    // Pin docFoo to prevent auto-nav chasing the Cursor-on-bar write.
-    await page.evaluate(
-      ([doc]) => {
-        const setPin = (window as { __test_setPin?: (d: string | null) => void }).__test_setPin;
-        if (!setPin) throw new Error('__test_setPin dev hook missing');
-        setPin(doc);
-      },
-      [docFoo],
-    );
 
     await api.writeAsAgent(docFoo, '# Claude on foo', {
       agentId: agentId('claude-nav-foo'),

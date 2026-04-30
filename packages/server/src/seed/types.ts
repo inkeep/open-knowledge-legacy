@@ -145,7 +145,7 @@ export class SeedRootDirError extends Error {
 }
 
 /**
- * Filename of the workspace config under `.open-knowledge/`. Duplicates the
+ * Filename of the project config under `.open-knowledge/`. Duplicates the
  * same literal defined in `packages/cli/src/constants.ts:CONFIG_FILENAME` —
  * kept local so the server-side seed module has no CLI dependency.
  */

@@ -28,7 +28,7 @@ describe('SettingsPane source-level guards', () => {
   });
 
   test('admits both well-known config doc names', () => {
-    expect(SRC).toContain('CONFIG_DOC_NAME_WORKSPACE');
+    expect(SRC).toContain('CONFIG_DOC_NAME_PROJECT');
     expect(SRC).toContain('CONFIG_DOC_NAME_USER');
   });
 

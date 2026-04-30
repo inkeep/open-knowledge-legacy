@@ -27,7 +27,7 @@
  *
  *  - cleanupOrphanUploadTempfiles: boot-time sweep for orphaned tempfiles
  *    older than the threshold. Mirrors the shape of
- *    recoverPendingManagedRename in standalone.ts — runs once at startup,
+ *    recoverPendingManagedRename in server-factory.ts — runs once at startup,
  *    logs and continues on per-entry errors.
  */
 import { createHash, randomUUID } from 'node:crypto';
@@ -169,7 +169,7 @@ export function linkTempToFinalWithCollisionRetry(
 /**
  * Boot-time sweep for orphaned upload tempfiles. Runs once at server
  * startup — mirrors the shape of recoverPendingManagedRename in
- * standalone.ts. Non-throwing: individual unlink failures are logged and
+ * server-factory.ts. Non-throwing: individual unlink failures are logged and
  * counted, never propagate.
  *
  * Default age threshold: 24h. Matches the grace window OK uses elsewhere

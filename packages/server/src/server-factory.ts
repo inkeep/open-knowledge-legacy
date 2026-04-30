@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
   type BasenameIndex,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
   createBasenameIndex,
   type Principal,
@@ -31,7 +31,7 @@ import {
 import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
-import { applyExternalChange } from './external-change.ts';
+import { applyDiskContentToDoc, applyExternalChange } from './external-change.ts';
 import {
   assertNeverDiskEvent,
   contentHash,
@@ -662,6 +662,96 @@ export function createServer(options: ServerOptions): ServerInstance {
   const applyToDoc = (docName: string, content: string): void =>
     applyExternalChange(hocuspocus, docName, content, resolveEmbed);
 
+  /**
+   * Re-render any open doc whose source contains `[[<assetBasename>]]` —
+   * fallback re-resolution when an asset is created or deleted outside of a
+   * cross-branch git operation. Without this, an open doc's PM image `src`
+   * stays frozen at the parse-time resolution: asset events update
+   * `basenameIndex` correctly, but documents whose markdown is byte-identical
+   * pre/post-event have no other re-render trigger.
+   *
+   * Why a substring scan instead of a reverse index: this fires only on
+   * asset create/delete (rare relative to text edits) and handles both
+   * `![[name.ext]]` (image embed) and `[[name.ext]]` (wiki-link with
+   * resolved href) shapes via the same `[[<name>]]` substring. A reverse
+   * index would buy throughput we don't need.
+   *
+   * Why Y.Text source instead of disk: the Y.Text already includes the user's
+   * pending edits within the persistence-debounce window. Reading disk content
+   * here would diff a stale tree against the live XmlFragment via
+   * `updateYFragment` — silently reverting unsaved edits. The pure CRDT helper
+   * `applyDiskContentToDoc` re-parses with the new resolveEmbed but doesn't
+   * call `recordContributor` or `setReconciledBase` (no actual disk write
+   * happened — only the embed resolution changed).
+   *
+   * Idempotent: `updateYFragment` diffs the computed PM tree against the live
+   * XmlFragment and only writes changed positions; re-parsing the same source
+   * with the same basenameIndex is a no-op on the Y.Doc.
+   */
+  const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    const needle = `[[${assetBasename}]]`;
+    for (const [docName] of hocuspocus.documents) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+      const document = hocuspocus.documents.get(docName);
+      if (!document) continue;
+      const source = document.getText('source').toString();
+      if (!source.includes(needle)) continue;
+      try {
+        applyDiskContentToDoc(document, source, resolveEmbed, docName);
+      } catch (err) {
+        log.error(
+          { err, docName, assetBasename },
+          `[asset-event] failed to re-render ${docName} for asset basename ${assetBasename}`,
+        );
+      }
+    }
+  };
+
+  /**
+   * Schedule a deduplicated rerender for an asset basename. Multiple events
+   * arriving in the same parcel-watcher batch (e.g. `asset-delete photo.png`
+   * + `asset-create assets/photo.png` from a single `mv`) collapse into ONE
+   * rerender pass per unique basename — eliminating the broken-ref flicker
+   * during the inter-event window and halving the parse cost on N-asset
+   * folder moves.
+   *
+   * `setImmediate` runs in Node's check phase, AFTER the current macrotask's
+   * for-loop over batched events completes (microtask drains between awaits
+   * leave the loop intact). All asset events in a single parcel callback
+   * therefore land in the same pending Set before the deferred render fires.
+   */
+  let pendingAssetRerenderBasenames: Set<string> | null = null;
+  const scheduleAssetRerender = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    if (pendingAssetRerenderBasenames === null) {
+      pendingAssetRerenderBasenames = new Set();
+      setImmediate(() => {
+        // Snapshot + reset BEFORE the try-block: these three lines are
+        // provably non-throwing (variable read, assignment, null check) and
+        // hoisting `toRender` out of the try makes it visible to the catch
+        // for log context.
+        const toRender = pendingAssetRerenderBasenames;
+        pendingAssetRerenderBasenames = null;
+        if (!toRender) return;
+        // Top-level catch — `setImmediate` runs outside the file-watcher's
+        // handleDiskEvent try-catch scope. The per-doc body inside
+        // `rerenderDocsReferencingAssetBasename` already guards each
+        // `applyDiskContentToDoc` call, but Set iteration + the inner
+        // function's scaffolding are technically reachable here. An uncaught
+        // throw would crash the server with no actionable log; logging the
+        // basenames in scope at crash-time keeps any future regression
+        // immediately diagnosable without timestamp correlation.
+        try {
+          for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
+        } catch (err) {
+          log.error({ err, basenames: [...toRender] }, '[asset-event] dedup rerender pass crashed');
+        }
+      });
+    }
+    pendingAssetRerenderBasenames.add(assetBasename);
+  };
+
   /** Helper to extract a logging label from any DiskEvent variant. */
   function diskEventLabel(event: DiskEvent): string {
     switch (event.kind) {
@@ -916,16 +1006,23 @@ export function createServer(options: ServerOptions): ServerInstance {
 
         // SPEC §6 FR-6 + D-H Option A: asset events update the basename
         // index and fire CC1 'files' only. They do NOT touch backlinkIndex
-        // (markdown-only) and do NOT touch hocuspocus.documents (assets
-        // aren't CRDT documents).
+        // (markdown-only). They DO trigger a fallback re-render of any open
+        // doc that references the changed basename via `[[name.ext]]` (see
+        // `rerenderDocsReferencingAssetBasename`) — without this, a doc
+        // whose markdown is unchanged across the asset move (e.g. the user
+        // organizes files into `assets/` while the doc still says
+        // `![[photo.png]]`) keeps its parse-time-resolved `src` and the
+        // rendered preview goes stale.
         case 'asset-create': {
           basenameIndex.add(event.relativePath);
           signalChannel('files');
+          scheduleAssetRerender(basename(event.relativePath));
           break;
         }
         case 'asset-delete': {
           basenameIndex.remove(event.relativePath);
           signalChannel('files');
+          scheduleAssetRerender(basename(event.relativePath));
           break;
         }
         default:
@@ -1554,7 +1651,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
     // it match LKG, and returns 'no-op' before mutating Y.Text.
     const configPathByDoc = new Map<string, string>([
-      [CONFIG_DOC_NAME_WORKSPACE, resolveConfigPath('workspace', projectDir)],
+      [CONFIG_DOC_NAME_PROJECT, resolveConfigPath('project', projectDir)],
       [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
     ]);
     for (const configDocName of CONFIG_DOC_NAMES) {

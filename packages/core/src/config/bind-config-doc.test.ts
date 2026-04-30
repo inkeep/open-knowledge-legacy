@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe('bindConfigDoc — current()', () => {
   test('empty Y.Text returns schema defaults', () => {
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
     const config = binding.current();
     // Defaults always include content/server/mcp/folders sections.
     expect(config.content).toBeDefined();
@@ -57,7 +57,7 @@ describe('bindConfigDoc — current()', () => {
   test('valid YAML in Y.Text parses to merged Config', () => {
     const yaml = 'mcp:\n  autoStart: false\n';
     doc.getText('source').insert(0, yaml);
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     const config = binding.current();
     expect(config.mcp.autoStart).toBe(false);
@@ -66,7 +66,7 @@ describe('bindConfigDoc — current()', () => {
 
   test('invalid YAML falls back to defaults (never throws)', () => {
     doc.getText('source').insert(0, 'mcp:\n  autoStart: [unclosed');
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     // Should not throw; should return defaults.
     expect(() => binding.current()).not.toThrow();
@@ -77,7 +77,7 @@ describe('bindConfigDoc — current()', () => {
   test('schema-failing YAML falls back to defaults', () => {
     // theme must be a string enum, not a number.
     doc.getText('source').insert(0, 'appearance:\n  theme: 42\n');
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     expect(() => binding.current()).not.toThrow();
     // Defaults — appearance.theme is UNSET, so it's undefined.
@@ -87,7 +87,7 @@ describe('bindConfigDoc — current()', () => {
 
   test('honors custom ytextKey override (test isolation)', () => {
     doc.getText('alt').insert(0, 'mcp:\n  autoStart: false\n');
-    const binding = bindConfigDoc(provider, 'workspace', { ytextKey: 'alt' });
+    const binding = bindConfigDoc(provider, 'project', { ytextKey: 'alt' });
 
     expect(binding.current().mcp.autoStart).toBe(false);
     binding.dispose();
@@ -114,7 +114,7 @@ describe('bindConfigDoc — patch()', () => {
   test('updates existing field + preserves comments via yaml@2 Document', () => {
     const initial = '# Project config\nmcp:\n  autoStart: false # disabled by default\n';
     doc.getText('source').insert(0, initial);
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     const result = binding.patch({ mcp: { autoStart: true } });
     expect(result.ok).toBe(true);
@@ -129,7 +129,7 @@ describe('bindConfigDoc — patch()', () => {
   test('rejects schema-invalid scalar; Y.Text untouched', () => {
     doc.getText('source').insert(0, 'mcp:\n  autoStart: true\n');
     const before = doc.getText('source').toString();
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     // theme must be 'light' | 'dark' | 'system'.
     const result = binding.patch({ appearance: { theme: 'midnight' as 'dark' } });
@@ -168,7 +168,7 @@ describe('bindConfigDoc — patch()', () => {
     // round-tripped. Self-heal mirrors L3's revert-to-LKG semantics for
     // the patch path.
     doc.getText('source').insert(0, 'theme: light\nappearance:\ntheme: light\n');
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     const result = binding.patch({ mcp: { autoStart: true } });
     expect(result.ok).toBe(true);
@@ -184,7 +184,7 @@ describe('bindConfigDoc — patch()', () => {
 
   test('self-heals from non-mapping top-level (e.g., scalar or array)', () => {
     doc.getText('source').insert(0, '- not a mapping\n- also not\n');
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
 
     const result = binding.patch({ mcp: { autoStart: true } });
     expect(result.ok).toBe(true);
@@ -196,7 +196,7 @@ describe('bindConfigDoc — patch()', () => {
   });
 
   test('after dispose, patch returns WRITE_ERROR', () => {
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
     binding.dispose();
 
     const result = binding.patch({ mcp: { autoStart: true } });
@@ -288,7 +288,7 @@ describe('bindConfigDoc — subscribe()', () => {
 
 describe('bindConfigDoc — dispose()', () => {
   test('clears Y.Text observer + provider listener + listeners set', () => {
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
     binding.subscribe(() => {});
 
     expect(provider.syncedListenerCount()).toBe(1);
@@ -306,7 +306,7 @@ describe('bindConfigDoc — dispose()', () => {
   });
 
   test('idempotent — calling dispose twice is safe', () => {
-    const binding = bindConfigDoc(provider, 'workspace');
+    const binding = bindConfigDoc(provider, 'project');
     binding.dispose();
     expect(() => binding.dispose()).not.toThrow();
   });
