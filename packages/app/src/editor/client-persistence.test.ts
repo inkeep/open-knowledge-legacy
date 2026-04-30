@@ -33,8 +33,18 @@ function uniqueDocName(prefix = 'cp-test'): string {
 // mostly only care that persistence works for SOME branch.
 const TEST_BRANCH = 'main';
 
-async function countPersistedUpdates(branch: string, docName: string): Promise<number> {
-  const dbName = `ok-ydoc:${branch}:${docName}`;
+// Server-instance epoch used by tests that don't exercise the cross-epoch
+// axis. Production callers thread the live `cachedServerInstanceId`; the
+// epoch is now part of the IDB DB name so stale CRDT state from a prior
+// server incarnation can't be hydrated into a fresh-server provider.
+const TEST_SERVER_INSTANCE_ID = 'test-server-instance';
+
+async function countPersistedUpdates(
+  branch: string,
+  serverInstanceId: string,
+  docName: string,
+): Promise<number> {
+  const dbName = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
   // Calling `indexedDB.open(dbName)` without a version on a DB that doesn't
   // exist creates a brand-new empty v1 DB with no object stores — which is
   // a destructive side effect for our test scenarios (the subsequent
@@ -84,6 +94,7 @@ describe('createClientPersistence', () => {
     const doc = new Y.Doc();
     const provider: ClientPersistenceProvider = createClientPersistence({
       branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
       docName,
       doc,
     });
@@ -103,7 +114,12 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
+    const providerA = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docA,
+    });
     await providerA.whenSynced;
     docA.getMap('m').set('greeting', 'hello-persistence');
     docA.getArray('a').push(['one', 'two']);
@@ -114,7 +130,12 @@ describe('createClientPersistence', () => {
     docA.destroy();
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
+    const providerB = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docB,
+    });
     await providerB.whenSynced;
 
     expect(docB.getMap('m').get('greeting')).toBe('hello-persistence');
@@ -134,7 +155,12 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
+    const providerA = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docA,
+    });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'a');
     docA.getText('t').insert(1, 'b');
@@ -144,15 +170,28 @@ describe('createClientPersistence', () => {
     await providerA.destroy();
     docA.destroy();
 
-    const countBeforeHydrate = await countPersistedUpdates(TEST_BRANCH, docName);
+    const countBeforeHydrate = await countPersistedUpdates(
+      TEST_BRANCH,
+      TEST_SERVER_INSTANCE_ID,
+      docName,
+    );
     expect(countBeforeHydrate).toBeGreaterThanOrEqual(4);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
+    const providerB = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docB,
+    });
     await providerB.whenSynced;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    const countAfterHydrate = await countPersistedUpdates(TEST_BRANCH, docName);
+    const countAfterHydrate = await countPersistedUpdates(
+      TEST_BRANCH,
+      TEST_SERVER_INSTANCE_ID,
+      docName,
+    );
     // Without the filter, the N hydrated updates would be re-written
     // (producing linear growth in N). With it, only the consolidation
     // snapshot from the patched `beforeApplyUpdatesCallback` is added.
@@ -167,20 +206,32 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
+    const providerA = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docA,
+    });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'will be wiped');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBeGreaterThan(0);
+    expect(
+      await countPersistedUpdates(TEST_BRANCH, TEST_SERVER_INSTANCE_ID, docName),
+    ).toBeGreaterThan(0);
 
     await providerA.clearData();
     docA.destroy();
 
-    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBe(0);
+    expect(await countPersistedUpdates(TEST_BRANCH, TEST_SERVER_INSTANCE_ID, docName)).toBe(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
+    const providerB = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docB,
+    });
     await providerB.whenSynced;
 
     expect(docB.getText('t').toString()).toBe('');
@@ -193,7 +244,12 @@ describe('createClientPersistence', () => {
     const docName = uniqueDocName();
 
     const docA = new Y.Doc();
-    const providerA = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docA });
+    const providerA = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docA,
+    });
     await providerA.whenSynced;
     docA.getText('t').insert(0, 'survive-destroy');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -201,15 +257,123 @@ describe('createClientPersistence', () => {
     docA.destroy();
 
     // Destroy is supposed to unhook without deleting — data must remain.
-    expect(await countPersistedUpdates(TEST_BRANCH, docName)).toBeGreaterThan(0);
+    expect(
+      await countPersistedUpdates(TEST_BRANCH, TEST_SERVER_INSTANCE_ID, docName),
+    ).toBeGreaterThan(0);
 
     const docB = new Y.Doc();
-    const providerB = createClientPersistence({ branch: TEST_BRANCH, docName, doc: docB });
+    const providerB = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc: docB,
+    });
     await providerB.whenSynced;
     expect(docB.getText('t').toString()).toBe('survive-destroy');
 
     await providerB.destroy();
     docB.destroy();
+  });
+
+  test('throws synchronously when serverInstanceId is empty', () => {
+    const docName = uniqueDocName();
+    const doc = new Y.Doc();
+    expect(() =>
+      createClientPersistence({
+        branch: TEST_BRANCH,
+        serverInstanceId: '',
+        docName,
+        doc,
+      }),
+    ).toThrow('serverInstanceId is required');
+    doc.destroy();
+  });
+
+  // Different (branch, serverInstanceId, docName) triples must map to
+  // distinct DB names — that's what gives the cache its cross-branch /
+  // cross-epoch isolation. Construct one provider per triple and confirm
+  // each produces an independent IDB whose name embeds all three keys.
+  test('DB-name derivation is unique per (branch, serverInstanceId, docName)', async () => {
+    const docName = uniqueDocName('db-name');
+    const triples = [
+      { branch: 'main', serverInstanceId: 'epoch-A' },
+      { branch: 'feature', serverInstanceId: 'epoch-A' },
+      { branch: 'main', serverInstanceId: 'epoch-B' },
+    ];
+
+    for (const { branch, serverInstanceId } of triples) {
+      const doc = new Y.Doc();
+      const provider = createClientPersistence({ branch, serverInstanceId, docName, doc });
+      await provider.whenSynced;
+      doc.getText('t').insert(0, `${branch}-${serverInstanceId}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await provider.destroy();
+      doc.destroy();
+    }
+
+    const dbs = await indexedDB.databases();
+    const observedNames = new Set(
+      dbs.map((d) => d.name).filter((n): n is string => n !== undefined),
+    );
+    for (const { branch, serverInstanceId } of triples) {
+      const expected = `ok-ydoc:${branch}:${serverInstanceId}:${docName}`;
+      expect(observedNames.has(expected)).toBe(true);
+    }
+  });
+
+  // Old-shape DBs (legacy `ok-ydoc:<branch>:<docName>`, missing the
+  // server epoch slot) MUST be ignored: the new shape mints a
+  // different DB name, so a fresh provider hydrates from empty rather
+  // than picking up stale CRDT items from a prior server epoch.
+  test('ignores legacy ok-ydoc:branch:docName DB shape — new shape hydrates empty', async () => {
+    const docName = uniqueDocName('legacy-shape');
+    const legacyDbName = `ok-ydoc:${TEST_BRANCH}:${docName}`;
+
+    // Hand-write a single update into a DB at the legacy name. The
+    // hydration path keys off the new DB-name shape, so this content
+    // must NOT appear in the new-shape provider's Y.Doc.
+    const stagingDoc = new Y.Doc();
+    stagingDoc.getText('t').insert(0, 'stale-from-legacy-shape');
+    const staleBytes = Y.encodeStateAsUpdate(stagingDoc);
+    stagingDoc.destroy();
+
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open(legacyDbName, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('updates')) {
+          db.createObjectStore('updates', { autoIncrement: true });
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction('updates', 'readwrite');
+        tx.objectStore('updates').add(staleBytes);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error);
+        };
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const doc = new Y.Doc();
+    const provider = createClientPersistence({
+      branch: TEST_BRANCH,
+      serverInstanceId: TEST_SERVER_INSTANCE_ID,
+      docName,
+      doc,
+    });
+    await provider.whenSynced;
+
+    expect(doc.getText('t').toString()).toBe('');
+
+    await provider.destroy();
+    doc.destroy();
   });
 });
 

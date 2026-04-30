@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import { getEditorDocName } from '../extensions/doc-context.ts';
 import { buildUnresolvedWikiLinkAttrs } from '../extensions/wiki-link-helpers.ts';
 import { getDescriptor } from '../registry/index.ts';
-import { focusInsertedComponent } from '../slash-command/component-items.ts';
+import { focusInsertedComponent } from '../slash-command/component-items.tsx';
 
 const uploadPluginKey = new PluginKey<UploadPluginState>('imageUpload');
 

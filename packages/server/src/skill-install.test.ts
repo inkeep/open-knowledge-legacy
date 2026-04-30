@@ -115,6 +115,22 @@ function sidecarPathFor(home: string): string {
   return join(home, ...SIDECAR_REL);
 }
 
+const CENTRAL_SKILL_REL = ['.agents', 'skills', 'open-knowledge'] as const;
+function centralSkillDirFor(home: string): string {
+  return join(home, ...CENTRAL_SKILL_REL);
+}
+
+/**
+ * Pretend the `skills` CLI already wrote the central source. Pairs with
+ * writeSidecar to simulate a real prior install — without both, the
+ * skip-current gate now correctly rejects the sidecar as stale.
+ */
+function writeCentralSkill(home: string): void {
+  const dir = centralSkillDirFor(home);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), '# stub\n', 'utf-8');
+}
+
 function writeSidecar(home: string, content: string): void {
   const dir = join(home, '.open-knowledge');
   mkdirSync(dir, { recursive: true });
@@ -165,9 +181,10 @@ describe('installUserSkill — fresh install', () => {
 });
 
 describe('installUserSkill — idempotency (skip-current)', () => {
-  test('sidecar matches current version → subprocess NOT invoked, returns "skip-current"', async () => {
+  test('sidecar matches current version + central skill present → subprocess NOT invoked, returns "skip-current"', async () => {
     const home = freshHome();
     writeSidecar(home, `${currentVersion}\n`);
+    writeCentralSkill(home);
     const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
 
     const result = await installUserSkill({ home, spawn });
@@ -180,11 +197,33 @@ describe('installUserSkill — idempotency (skip-current)', () => {
   test('sidecar without trailing newline still matches (tolerant parse)', async () => {
     const home = freshHome();
     writeSidecar(home, currentVersion);
+    writeCentralSkill(home);
     const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
 
     const result = await installUserSkill({ home, spawn });
     expect(result).toBe('skip-current');
     expect(calls.length).toBe(0);
+  });
+
+  test('sidecar matches but central skill dir is missing → reinstall fires, sidecar rewritten', async () => {
+    const home = freshHome();
+    writeSidecar(home, `${currentVersion}\n`);
+    // Deliberately do NOT call writeCentralSkill — simulates `npx skills remove -g`
+    // having nuked the skill while leaving the sidecar intact.
+    const { spawn, calls } = makeSpawnFake({ outcome: { kind: 'exit', code: 0 } });
+    const { logger, records } = makeRecordingLogger();
+
+    const result = await installUserSkill({ home, logger, spawn });
+
+    expect(result).toBe('installed');
+    expect(calls.length).toBe(1);
+    expect(readSidecarIfExists(home)).toBe(`${currentVersion}\n`);
+    const reinstallLog = records.find(
+      (r) =>
+        r.level === 'info' &&
+        (r.data as { event?: string }).event === 'skill-install.reinstall-missing',
+    );
+    expect(reinstallLog).toBeDefined();
   });
 });
 

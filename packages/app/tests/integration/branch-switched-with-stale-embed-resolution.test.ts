@@ -175,13 +175,16 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     // Execute the branch switch externally (simulates user `git checkout`).
     git(contentDir, 'checkout feature');
 
-    // Wait for the cross-branch path to settle: the head-watcher fires
-    // BatchBegin/BatchEnd, the doc-reset loop applies feature-branch disk
-    // content, and basenameIndex eventually reflects assets/photo.png. The
-    // server-side Y.XmlFragment's PM image src is the one the user-facing
-    // preview renders — the assertion target. Polling guards against
-    // arbitrary head-watcher debounce; the timeout is generous to absorb CI
-    // contention.
+    // Wait for the cross-branch path to settle. The post-switch invariant we
+    // care about is that PM image `src` reflects the NEW branch's resolved
+    // path; poll directly on that (rather than `embeds.length === 1`, which
+    // is true both pre- and post-switch and would let the assertion fire
+    // before the doc-reset loop has run). 15s timeout absorbs CI contention.
+    //
+    // RED case behavior: if the cross-branch path never runs (head-watcher
+    // missed the HEAD event), props.src stays at '/photo.png' indefinitely
+    // and pollUntil times out — the assertion below then fails with the
+    // pre-switch value, naming the actual failure mode.
     await pollUntil(
       () => {
         const state = getServerState(server, 'test-doc');
@@ -193,22 +196,13 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
         const embeds = collectNodes(json, 'jsxComponent').filter(
           (n) => n.attrs?.componentName === 'WikiEmbedImage',
         );
-        // First settlement gate: doc-reset has run (the wiki-embed component
-        // is present post-switch). Whether the src is correct is the actual
-        // assertion below; polling on src-correctness would loop until
-        // timeout in the RED case, masking the bug.
-        return embeds.length === 1;
+        if (embeds.length !== 1) return false;
+        const props = embeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+        return props?.src === '/assets/photo.png';
       },
       15_000,
       100,
     );
-
-    // Belt-and-suspenders settlement window — give post-batch file-watcher
-    // events time to land. If they update basenameIndex via the regular
-    // add/remove path, the bug is masked when later assertions read state.
-    // 800ms is well past the head-watcher's QUIET_WINDOW_MS (100ms) and
-    // parcel-watcher's typical event-delivery window.
-    await wait(800);
 
     // Post-switch assertion (the regression gate): the wiki-embed
     // component's props.src reflects the FEATURE branch's resolved path.
