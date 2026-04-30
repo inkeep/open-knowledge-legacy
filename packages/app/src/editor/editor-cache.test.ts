@@ -809,6 +809,32 @@ describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
     expect(undoManager.restore).toBeUndefined();
   });
 
+  test('evictTiptapEditor cleanup is resilient when editor.destroy() throws', () => {
+    // The evict path has its own inline cleanup (duplicated, not extracted) +
+    // emits ok/cache/evict-failed telemetry on editor.destroy() throws. This
+    // symmetric test guards against a refactor that moves restore-cleanup
+    // inside the destroy try-block on this path.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      throw new Error('throwing-proxy');
+    };
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
   test('no crash when editor.state throws (TipTap throwing-proxy mid-teardown)', () => {
     // editor.state is a throwing proxy in known TipTap mid-teardown windows.
     // Pre-destroy capture must defensive-noop in that case rather than

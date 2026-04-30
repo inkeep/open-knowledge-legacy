@@ -19,9 +19,10 @@
  *       semantic — the consumer's cleanup path still runs).
  *
  *   evict{Tiptap,Cm}Editor(docName)
- *     — THE ONLY PATH that calls editor.destroy() / view.destroy() /
- *       provider.destroy() / ydoc.destroy(). Called on LRU eviction
- *       (MAX_CACHE) or explicit tear-down.
+ *     — THE ONLY PATH that calls provider.destroy() / ydoc.destroy().
+ *       editor.destroy() / view.destroy() are also called on the
+ *       __uncached / kill-switch park branch (see park{Tiptap,Cm}Editor).
+ *       Called on LRU eviction (MAX_CACHE) or explicit tear-down.
  *
  * Why raw `editor.editorView.dom` reparent and NOT `Editor.mount()/unmount()`:
  *   @tiptap/extension-drag-handle@4.x captures the `editor` ref in a plugin
@@ -435,11 +436,7 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
       // already destroyed or proxy is in a throwing state — safe to ignore
     }
     if (undoManager) {
-      try {
-        undoManager.restore = undefined;
-      } catch {
-        // setter may throw on frozen objects — defensive
-      }
+      undoManager.restore = undefined;
     }
     entry.activeMountKey = null;
     return;
@@ -469,16 +466,18 @@ export function parkTiptapEditor(entry: TiptapCacheEntry): void {
 }
 
 /**
- * Evict the editor for `docName` — THE ONLY path that calls destroy()
- * on the editor / provider / ydoc. Safe no-op if docName is not cached.
- * Returns true if an entry was destroyed, false otherwise.
+ * Evict the editor for `docName` — destroys provider + ydoc + editor.
+ * `editor.destroy()` is also called by `parkTiptapEditor`'s __uncached /
+ * kill-switch branch, but provider/ydoc destruction happens only here.
+ * Safe no-op if docName is not cached. Returns true if an entry was
+ * destroyed, false otherwise.
  *
  * Each sub-destroy is wrapped in try/catch because destroy can throw in
  * known mid-teardown states (e.g. TipTap's throwing proxy). But a
  * genuine memory / socket / Y.Doc leak would manifest as a silent cache
  * bloat with no observable signal. Every catch emits
  * `ok/cache/evict-failed` so a developer profiling V2 in Chrome DevTools
- * Extensibility can see real eviction failures (review Major #12).
+ * Extensibility can see real eviction failures.
  */
 export function evictTiptapEditor(docName: string): boolean {
   const entry = tiptapCache.get(docName);
@@ -498,11 +497,7 @@ export function evictTiptapEditor(docName: string): boolean {
     });
   }
   if (undoManager) {
-    try {
-      undoManager.restore = undefined;
-    } catch {
-      // defensive — setter may throw on frozen objects
-    }
+    undoManager.restore = undefined;
   }
   try {
     entry.provider.destroy();
