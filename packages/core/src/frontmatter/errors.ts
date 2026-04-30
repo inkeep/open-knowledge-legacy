@@ -49,9 +49,9 @@ export function toFrontmatterIssue(zIssue: z.core.$ZodIssue): FrontmatterIssue {
 }
 
 /** Build a `fieldErrors: Record<key, message>` map from a SCHEMA_INVALID
- *  error — convenience for UI consumers that key error messages by the
- *  affected frontmatter field. Multi-issue keys are concatenated with `'; '`
- *  to match the existing `/api/frontmatter-patch` envelope shape. */
+ *  error — convenience for UI consumers (PropertyPanel) that key error
+ *  messages by the affected frontmatter field. Multi-issue keys are
+ *  concatenated with `'; '`. */
 export function fieldErrorsFromError(error: FrontmatterValidationError): Record<string, string> {
   if (error.code !== 'SCHEMA_INVALID') return {};
   const out: Record<string, string> = {};

@@ -328,7 +328,10 @@ interface SessionRecord {
   /**
    * Per-session form-write origin. NOT paired — single-root writer (touches
    * only `Y.Map('metadata')`); Observer A must fire normally to recompose
-   * YAML+body and propagate to Y.Text. Used by `handleFrontmatterPatch`.
+   * YAML+body and propagate to Y.Text. Reserved for future server-side form
+   * paths (e.g. an MCP-driven DirectConnection write); browser form writes
+   * now go through `bindFrontmatterDoc` (`@inkeep/open-knowledge-core/bridge`)
+   * directly under `FORM_WRITE_ORIGIN`, not via per-session bookkeeping.
    */
   formOrigin: LocalTransactionOrigin;
   /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
