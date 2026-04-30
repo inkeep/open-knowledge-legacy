@@ -16,8 +16,10 @@ import {
   useDocumentContext,
   useDocumentTransition,
 } from '@/editor/DocumentContext';
+import { ConfigProvider } from '@/lib/config-provider';
 import { docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
+import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that resolves the active navigation target
@@ -96,6 +98,45 @@ function InstallInClaudeDesktopTrigger() {
   return <InstallInClaudeDesktopDialog open={open} onOpenChange={handleOpenChange} />;
 }
 
+/**
+ * Cmd-, / Ctrl-, opens the Settings pane (US-010 / FR-1 / D54). Sibling to
+ * `NewItemShortcutHandler` — global keydown listener at App scope, suppresses
+ * inside text inputs (`isSettingsShortcut`), routes to the canonical hash so
+ * `useSettingsRoute` (mounted by EditorArea) reacts and renders SettingsPane.
+ *
+ * Browser-mode-only in practice: Electron's menu accelerator (`CmdOrCtrl+,`
+ * on the App / File menu Settings… item) captures the keypress before it
+ * reaches the renderer, so this handler firing inside Electron is a no-op
+ * because the menu's executeJavaScript already set the same hash. Both code
+ * paths produce identical end state.
+ */
+function SettingsShortcutHandler() {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+      if (
+        isSettingsShortcut({
+          target,
+          metaKey: e.metaKey,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          key: e.key,
+        })
+      ) {
+        e.preventDefault();
+        if (window.location.hash !== SETTINGS_OPEN_HASH) {
+          window.location.hash = SETTINGS_OPEN_HASH;
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  return null;
+}
+
 function NewItemShortcutHandler() {
   const { activeDocName, activeTarget } = useDocumentContext();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -147,25 +188,28 @@ export function App() {
   return (
     <ProfilerBoundary name="app">
       <DocumentProvider>
-        <ConnectingBanner />
-        <PageListProvider>
-          <SystemDocSubscriber />
-          <NavigationHandler />
-          <NewItemShortcutHandler />
-          <InstallInClaudeDesktopTrigger />
-          {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
-              Self-gates on the shared `mcpConsentStore` snapshot; renders
-              nothing until main fires `ok:mcp-wiring:show`. Mounted
-              identically in NavigatorApp. */}
-          <McpConsentDialog />
-          {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
-          <SidebarProvider className="h-screen overflow-hidden">
-            <FileSidebar />
-            <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-              <EditorPane />
-            </SidebarInset>
-          </SidebarProvider>
-        </PageListProvider>
+        <ConfigProvider>
+          <ConnectingBanner />
+          <PageListProvider>
+            <SystemDocSubscriber />
+            <NavigationHandler />
+            <NewItemShortcutHandler />
+            <SettingsShortcutHandler />
+            <InstallInClaudeDesktopTrigger />
+            {/* M6b first-launch consent dialog — host-agnostic per D-M6-R10.
+                Self-gates on the shared `mcpConsentStore` snapshot; renders
+                nothing until main fires `ok:mcp-wiring:show`. Mounted
+                identically in NavigatorApp. */}
+            <McpConsentDialog />
+            {desktopBridge ? <CommandPalette bridge={desktopBridge} /> : null}
+            <SidebarProvider className="h-screen overflow-hidden">
+              <FileSidebar />
+              <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+                <EditorPane />
+              </SidebarInset>
+            </SidebarProvider>
+          </PageListProvider>
+        </ConfigProvider>
       </DocumentProvider>
     </ProfilerBoundary>
   );

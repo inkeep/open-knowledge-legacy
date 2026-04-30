@@ -11,7 +11,7 @@ import { dirname, extname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import ignore, { type Ignore } from 'ignore';
 import picomatch from 'picomatch';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 /**
@@ -196,9 +196,10 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   return {
     isExcluded(relativePath: string): boolean {
-      // (0) Reserved system doc names are always excluded (e.g. __system__.md / __system__.mdx)
+      // (0) Reserved system + config doc names are always excluded
+      // (e.g. __system__.md / __config__/workspace.md / __user__/config.yml.md)
       const docName = stripDocExtension(relativePath);
-      if (isSystemDoc(docName)) return true;
+      if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
 
       // D11 4-step ordered logic:
       // (1) gitignore/exclude wins — but skip when contentDir is outside projectDir

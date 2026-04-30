@@ -251,6 +251,31 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 **If a new subsystem forgets this check,** the L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) will fail its zero-state assertion after 10 broadcasts.
 
+### Synthetic config-doc admission
+
+Two well-known synthetic docs back the in-app Settings pane and live-refresh of external edits:
+
+- `__config__/workspace` ↔ `<contentDir>/.open-knowledge/config.yml`
+- `__user__/config.yml` ↔ `~/.open-knowledge/config.yml`
+
+Both are admitted at boot via `hocuspocus.openDirectConnection()` and are **Y.Text-only** — there is no Y.XmlFragment, no markdown bridge, no TipTap binding. The Settings pane wires its `HocuspocusProvider` directly at the Y.Text and renders a Zod-walker form on top.
+
+A new predicate `isConfigDoc(documentName: string): boolean` is the sibling of `isSystemDoc` and MUST be called at every documentName-keyed callsite that already checks `isSystemDoc`. The two predicates compose: most callsites short-circuit on `isSystemDoc(name) || isConfigDoc(name)`. The single load-bearing site is the markdown observer bridge in `server-observer-extension.ts`: gating it with both predicates is what keeps the bridge out of the config-doc data path.
+
+Live-refresh + persistence loop:
+
+1. **External edit** → `config-file-watcher.ts` (chokidar, single-file watch with `awaitWriteFinish: { stabilityThreshold: 100 }`) detects the change, reads the file, replaces the Y.Text content under `CONFIG_FILE_WATCHER_ORIGIN`. An LKG-equality short-circuit prevents the persistence-hook self-write feedback loop (a write we just did to disk shouldn't ripple back through the watcher).
+2. **In-app edit** → Settings pane patches Y.Text via `ConfigBinding.patch` (yaml@2 `Document` round-trip preserves comments + structure). Yjs delta propagates to all connected clients including any other open Settings panes.
+3. **Persistence hook** (`onStoreDocument` config-doc branch) parses Y.Text → YAML → `ConfigSchema.safeParse`. On success: atomic tmp+rename via `tracedRename` / `tracedWriteFile`, update LKG cache, no broadcast. On failure: revert Y.Text via a server-origin transaction marked with `CONFIG_VALIDATION_REVERT_ORIGIN` (frozen object literal — `skipStoreHooks: true` + an entry-gate guard at the hook top, belt-and-suspenders), emit a CC1 `'config-validation-rejected'` broadcast carrying `{ error: ConfigValidationError, docName }` so open Settings panes can toast the user and flash the offending field.
+
+`ConfigValidationError` is the discriminated union shared with the `set_config` MCP tool and `ok config validate`: `YAML_PARSE | SCHEMA_INVALID | SCOPE_VIOLATION | NOT_AGENT_SETTABLE | MIXED_SCOPE | WRITE_ERROR | UNKNOWN`. One source of truth in `@inkeep/open-knowledge-core`; one render-per-consumer helper (`humanFormat` for CLI/MCP; the pane has its own toast renderer).
+
+Cold-start recovery (`readConfigSafely`): if a config file fails to parse on boot, the server attempts to rename it aside as `config.yml.invalid-<ISO>`, falls back to schema defaults + the magic-comment header, and queues a `'config-validation-rejected'` broadcast that fires when the first Settings pane connects.
+
+`ContentFilter` and `POST /api/create-page` reject the `__config__/` and `__user__/` prefixes at admit time with the same 400 path that `__system__` uses — these are reserved.
+
+Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](../../specs/2026-04-25-config-edit-paths/SPEC.md) §6 FR-29 through FR-40.
+
 ### Observability
 
 `src/metrics.ts` exposes three CC1 counters, returned by `GET /api/metrics/reconciliation`:

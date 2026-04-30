@@ -104,7 +104,7 @@ import {
   type GraphNode as IndexedGraphNode,
   isOrphanMode,
 } from './backlink-index.ts';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
@@ -1746,7 +1746,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -1877,7 +1877,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const resolvedDocName = resolveAlias(effectiveDocName);
-      if (isSystemDoc(resolvedDocName)) {
+      if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
@@ -2009,7 +2009,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2444,7 +2444,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(effectivePatchDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2660,7 +2660,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -2814,7 +2814,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
@@ -4070,7 +4070,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const candidateDocName = stripDocExtension(filePath);
-      if (isSystemDoc(candidateDocName)) {
+      if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
         json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
       }
@@ -4210,7 +4210,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
         return;
       }
-      if (isSystemDoc(docName) || isSystemDoc(newDocName)) {
+      if (
+        isSystemDoc(docName) ||
+        isSystemDoc(newDocName) ||
+        isConfigDoc(docName) ||
+        isConfigDoc(newDocName)
+      ) {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
@@ -4602,7 +4607,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
-      if (isSystemDoc(docName)) {
+      if (isSystemDoc(docName) || isConfigDoc(docName)) {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }

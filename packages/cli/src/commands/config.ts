@@ -1,0 +1,278 @@
+/**
+ * `ok config` command — inspect and maintain Open Knowledge config files.
+ *
+ * Subcommands:
+ *   - `validate` — load merged config (defaults → user → workspace) and report
+ *     conformance. Exit 0 on success, exit 1 with source-located errors on
+ *     failure. Success message goes to stderr (stdout is reserved for
+ *     structured CI output, of which we emit none).
+ *   - `migrate` — codemod removing deprecated fields (`sync.*`,
+ *     `persistence.{debounceMs,maxDebounceMs}`, `server.port`) idempotently.
+ *     Funnels through `writeConfigPatch` so atomic-write + Zod safeParse
+ *     invariants apply automatically.
+ */
+
+import { existsSync, readFileSync } from 'node:fs';
+import { type ConfigPatch, humanFormat } from '@inkeep/open-knowledge-core';
+import { resolveConfigPath, writeConfigPatch } from '@inkeep/open-knowledge-core/server';
+import { Command } from 'commander';
+import { parseDocument } from 'yaml';
+import { loadConfig } from '../config/loader.ts';
+
+/**
+ * Dotted-path tuples the engine no longer reads. `sync` collapses to a
+ * single key delete (the entire section is gone, all 7 subfields with it).
+ * `persistence.{debounceMs, maxDebounceMs}` and `server.port` are
+ * field-level deletes that leave their parent sections intact.
+ */
+export const DROPPED_FIELD_PATHS: ReadonlyArray<readonly string[]> = [
+  ['sync'],
+  ['persistence', 'debounceMs'],
+  ['persistence', 'maxDebounceMs'],
+  ['server', 'port'],
+];
+
+interface ValidateRunOpts {
+  cwd?: string;
+  loadConfigFn?: typeof loadConfig;
+  log?: (msg: string) => void;
+  error?: (msg: string) => void;
+}
+
+interface ValidateOutcome {
+  ok: boolean;
+}
+
+export function runValidate(opts: ValidateRunOpts = {}): ValidateOutcome {
+  const log = opts.log ?? ((msg) => console.error(msg));
+  const error = opts.error ?? ((msg) => console.error(msg));
+  const load = opts.loadConfigFn ?? loadConfig;
+  try {
+    const { sources } = load(opts.cwd);
+    const renderedSources = sources.length === 0 ? 'defaults only' : sources.join(', ');
+    log(`✓ Configuration valid (sources: ${renderedSources})`);
+    return { ok: true };
+  } catch (e) {
+    error(e instanceof Error ? e.message : String(e));
+    return { ok: false };
+  }
+}
+
+interface MigrateRunOpts {
+  cwd?: string;
+  scope?: 'workspace' | 'user' | 'both';
+  dryRun?: boolean;
+  homedirOverride?: string;
+  log?: (msg: string) => void;
+  error?: (msg: string) => void;
+  writeConfigPatchFn?: typeof writeConfigPatch;
+}
+
+interface MigrateFileOutcome {
+  path: string;
+  scope: 'workspace' | 'user';
+  /** Dotted paths that exist in the file. */
+  found: string[];
+  /** Dotted paths actually removed (== found unless dry-run or write failed). */
+  removed: string[];
+  /** Set when the file is unparseable or writeConfigPatch returned an error. */
+  error?: string;
+}
+
+interface MigrateOutcome {
+  outcomes: MigrateFileOutcome[];
+  ok: boolean;
+}
+
+/**
+ * Discover which dropped field paths exist in a YAML file via parseDocument's
+ * `hasIn`. Returns the dotted-path strings for fields that ARE present (so
+ * the migrator can build a patch only for those — keeps `appliedPaths` honest
+ * + lets the run summary report exact counts). Throws on unparseable YAML —
+ * the user must fix the file before migration runs.
+ */
+function findDroppedFields(absPath: string): string[] {
+  const raw = readFileSync(absPath, 'utf-8');
+  const doc = parseDocument(raw);
+  if (doc.errors.length > 0) {
+    throw new Error(`Could not parse ${absPath}: ${doc.errors.map((e) => e.message).join('; ')}`);
+  }
+  const present: string[] = [];
+  for (const path of DROPPED_FIELD_PATHS) {
+    if (doc.hasIn(path)) {
+      present.push(path.join('.'));
+    }
+  }
+  return present;
+}
+
+function isMutableObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+
+/**
+ * Build the null-clear patch for a list of dropped paths. Cast to `ConfigPatch`
+ * because the dropped fields are intentionally out-of-schema. At the runtime
+ * layer, `applyPatchToDocument`'s null-walker calls `deleteIn` for each leaf
+ * — works regardless of whether the path is in the schema.
+ */
+/**
+ * Test-only re-export. Internal helper; subject to change without notice.
+ */
+export const buildClearPatchForTest = (paths: ReadonlyArray<readonly string[]>): ConfigPatch =>
+  buildClearPatch(paths);
+
+function buildClearPatch(paths: ReadonlyArray<readonly string[]>): ConfigPatch {
+  const root: Record<string, unknown> = {};
+  for (const path of paths) {
+    let cur: Record<string, unknown> = root;
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i] as string;
+      const existing = cur[key];
+      const next = isMutableObject(existing) ? existing : {};
+      cur[key] = next;
+      cur = next;
+    }
+    cur[path[path.length - 1] as string] = null;
+  }
+  return root as unknown as ConfigPatch;
+}
+
+export async function runMigrate(opts: MigrateRunOpts = {}): Promise<MigrateOutcome> {
+  const log = opts.log ?? ((msg) => console.log(msg));
+  const error = opts.error ?? ((msg) => console.error(msg));
+  const scope = opts.scope ?? 'both';
+  const dryRun = opts.dryRun ?? false;
+  const cwd = opts.cwd ?? process.cwd();
+  const writePatch = opts.writeConfigPatchFn ?? writeConfigPatch;
+
+  const targets: Array<{ scope: 'workspace' | 'user'; absPath: string }> = [];
+  if (scope === 'workspace' || scope === 'both') {
+    targets.push({
+      scope: 'workspace',
+      absPath: resolveConfigPath('workspace', cwd, opts.homedirOverride),
+    });
+  }
+  if (scope === 'user' || scope === 'both') {
+    targets.push({
+      scope: 'user',
+      absPath: resolveConfigPath('user', cwd, opts.homedirOverride),
+    });
+  }
+
+  const outcomes: MigrateFileOutcome[] = [];
+  let allOk = true;
+
+  for (const { scope: targetScope, absPath } of targets) {
+    if (!existsSync(absPath)) {
+      outcomes.push({ path: absPath, scope: targetScope, found: [], removed: [] });
+      continue;
+    }
+    let found: string[];
+    try {
+      found = findDroppedFields(absPath);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      outcomes.push({ path: absPath, scope: targetScope, found: [], removed: [], error: msg });
+      allOk = false;
+      continue;
+    }
+    if (found.length === 0 || dryRun) {
+      outcomes.push({
+        path: absPath,
+        scope: targetScope,
+        found,
+        removed: [],
+      });
+      continue;
+    }
+    const presentTuples = DROPPED_FIELD_PATHS.filter((p) => found.includes(p.join('.')));
+    const patch = buildClearPatch(presentTuples);
+    const result = await writePatch({
+      cwd,
+      scope: targetScope,
+      patch,
+      homedirOverride: opts.homedirOverride,
+    });
+    if (!result.ok) {
+      outcomes.push({
+        path: absPath,
+        scope: targetScope,
+        found,
+        removed: [],
+        error: humanFormat(result.error),
+      });
+      allOk = false;
+      continue;
+    }
+    outcomes.push({ path: absPath, scope: targetScope, found, removed: found });
+  }
+
+  // Errors always surface (even when no fields were found across other files);
+  // missing them when totalFound === 0 would silently swallow parse failures.
+  for (const o of outcomes) {
+    if (o.error) {
+      error(`✗ ${o.path}: ${o.error}`);
+    }
+  }
+
+  const hasErrors = outcomes.some((o) => o.error !== undefined);
+  const totalFound = outcomes.reduce((s, o) => s + o.found.length, 0);
+  if (totalFound === 0 && !hasErrors) {
+    log('No deprecated fields found.');
+  } else if (totalFound > 0) {
+    for (const o of outcomes) {
+      if (o.error) continue; // already reported above
+      if (o.found.length === 0) {
+        log(`  ${o.path}: no deprecated fields`);
+      } else if (dryRun) {
+        log(`[dry-run] ${o.path}: would remove ${o.found.length} field(s): ${o.found.join(', ')}`);
+      } else {
+        log(`✓ ${o.path}: removed ${o.removed.length} field(s): ${o.removed.join(', ')}`);
+      }
+    }
+  }
+
+  return { outcomes, ok: allOk };
+}
+
+export function configCommand(): Command {
+  const cmd = new Command('config').description(
+    'Inspect and maintain Open Knowledge configuration files',
+  );
+
+  cmd
+    .command('validate')
+    .description('Validate the merged config (defaults → user → workspace)')
+    .action(() => {
+      const outcome = runValidate({});
+      if (!outcome.ok) {
+        process.exitCode = 1;
+      }
+    });
+
+  cmd
+    .command('migrate')
+    .description(
+      'Remove deprecated config fields (sync.*, persistence.{debounceMs,maxDebounceMs}, server.port) idempotently',
+    )
+    .option('--scope <scope>', 'Which scope to migrate: workspace | user | both', 'both')
+    .option('--dry-run', 'Preview without writing', false)
+    .action(async (subOpts) => {
+      const scope = subOpts.scope as 'workspace' | 'user' | 'both';
+      if (scope !== 'workspace' && scope !== 'user' && scope !== 'both') {
+        console.error(`Invalid --scope: ${scope}. Expected: workspace | user | both`);
+        process.exitCode = 2;
+        return;
+      }
+      const outcome = await runMigrate({
+        scope,
+        dryRun: subOpts.dryRun as boolean,
+      });
+      if (!outcome.ok) {
+        process.exitCode = 1;
+      }
+    });
+
+  return cmd;
+}

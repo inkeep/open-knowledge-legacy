@@ -59,6 +59,7 @@ export {
 export {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
+  isConfigDoc,
   isSystemDoc,
   SYSTEM_DOC_NAME,
 } from './cc1-broadcast.ts';

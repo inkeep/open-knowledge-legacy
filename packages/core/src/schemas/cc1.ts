@@ -23,6 +23,7 @@
  */
 
 import { z } from 'zod';
+import { ConfigValidationErrorSchema } from '../config/errors.ts';
 import { CC1_CONTRACT_VERSION } from '../constants/cc1.ts';
 
 /** CC1 channel identifier for the per-process `serverInstanceId` broadcast. */
@@ -49,6 +50,25 @@ export const CC1_CHANNEL_BRANCH_SWITCHED = 'branch-switched' as const;
  * is scoped to a single document.
  */
 export const CC1_CHANNEL_DISK_ACK = 'disk-ack' as const;
+
+/**
+ * CC1 channel identifier for the config-doc persistence-time validation
+ * rejection broadcast (D45 Layer 3).
+ *
+ * Fired synchronously (no debounce) when `onStoreDocument`'s config-doc
+ * branch parses Y.Text → YAML and the merged config fails
+ * `ConfigSchema.safeParse`. The hook reverts Y.Text to LKG via
+ * `CONFIG_VALIDATION_REVERT_ORIGIN` and then emits this broadcast so any
+ * open Settings pane shows a toast + briefly flashes the affected field.
+ *
+ * Per-document: `docName` carries the target config doc (`__config__/workspace`
+ * or `__user__/config.yml`) because `__system__` is the stateless carrier.
+ *
+ * The original `'config'` derived-view channel (D6 — pre-pivot draft) is
+ * NOT introduced — Y.Text observers on the config docs themselves replace
+ * the broadcast-driven refresh. Only this rejection channel survives.
+ */
+export const CC1_CHANNEL_CONFIG_VALIDATION_REJECTED = 'config-validation-rejected' as const;
 
 /**
  * Channels that carry derived-view invalidation hints (file list,
@@ -131,3 +151,26 @@ export const CC1DiskAckPayloadSchema = z
   })
   .loose();
 export type CC1DiskAckPayload = z.infer<typeof CC1DiskAckPayloadSchema>;
+
+/** `config-validation-rejected` broadcast shape (FR-14b / D45 L3 / D56).
+ *
+ * Fired when the persistence-hook config-doc branch rejects a Y.Text
+ * mutation that produces a syntactically broken or schema-failing
+ * config document. The Settings pane subscribes to this channel and
+ * surfaces a toast + flashes the affected field (mapped from
+ * `error.issues[].path` for `SCHEMA_INVALID`).
+ *
+ * `error` carries the full `ConfigValidationError` envelope so consumers
+ * can render the same `humanFormat` text that CLI / MCP do. */
+export const CC1ConfigValidationRejectedPayloadSchema = z
+  .object({
+    v: z.literal(CC1_CONTRACT_VERSION),
+    ch: z.literal(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED),
+    seq: z.number(),
+    docName: z.string().min(1),
+    error: ConfigValidationErrorSchema,
+  })
+  .loose();
+export type CC1ConfigValidationRejectedPayload = z.infer<
+  typeof CC1ConfigValidationRejectedPayloadSchema
+>;

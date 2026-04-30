@@ -5,10 +5,14 @@ import type { Document, Extension } from '@hocuspocus/server';
 import { Hocuspocus, IncomingMessage, MessageType } from '@hocuspocus/server';
 import {
   type BasenameIndex,
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAMES,
   createBasenameIndex,
   type Principal,
   prependFrontmatter,
 } from '@inkeep/open-knowledge-core';
+import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -19,7 +23,12 @@ import { createApiExtension } from './api-extension.ts';
 import { seedBasenameIndex } from './asset-walk.ts';
 import { HocuspocusAuthRejection, parseHocuspocusAuthToken } from './auth-token-schema.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import { CC1Broadcaster, isConfigDoc, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import {
+  type ConfigFileWatcherUnsubscribe,
+  startConfigFileWatcher,
+} from './config-file-watcher.ts';
+import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
@@ -157,6 +166,13 @@ export interface ServerOptions {
    * (Resolves SPEC Q3 under D14.)
    */
   skipStateManifestCheck?: boolean;
+  /**
+   * Override `os.homedir()` for config-doc persistence + file watching
+   * (US-006 / US-007). Tests scope user-global writes (`__user__/config.yml`)
+   * to a tempdir; if unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   * Production callers leave this undefined.
+   */
+  configHomedirOverride?: string;
 }
 
 export interface ServerInstance {
@@ -231,6 +247,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     gitEnabled = true,
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
+    configHomedirOverride,
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
@@ -351,6 +368,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       contentRoot,
       backlinkIndex,
+      configHomedirOverride,
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       resolveEmbed,
       getPrincipal: () => loadedPrincipal,
@@ -364,6 +382,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       // pattern as `onAgentCommit` — broadcaster is initialized after
       // persistence but captured by reference.
       onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
+      // L3 validation rejection (D45 / FR-34). Fired when the config-doc
+      // branch reverts Y.Text to LKG; the broadcast tells any open
+      // Settings pane to surface the rejection toast + flash the
+      // affected field. Same closure-deferred pattern.
+      onConfigRejected: (docName, error) =>
+        cc1Broadcaster?.emitConfigValidationRejected(docName, error),
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -594,6 +618,24 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
+  // Config doc connections (US-005, D39/D40/FR-29). Held open for the
+  // server's lifetime so the synthetic Y.Docs stay materialized — clients
+  // (Settings pane + chrome controls) attach via WS. The bridge bypass
+  // (D41) is in `server-observer-extension.ts`; persistence/file-watcher/
+  // agent-sessions short-circuits in their respective modules.
+  const configDocConnections = new Map<
+    string,
+    Awaited<ReturnType<Hocuspocus['openDirectConnection']>>
+  >();
+
+  // Config file-watcher unsubscribes (US-007 / FR-15 / D52). One per admitted
+  // config doc whose on-disk file exists at startup (or appears via lazy
+  // first-write per D51). Drained at server shutdown phase-1 alongside the
+  // content-watcher cleanup; failures during startup degrade but never block.
+  const configFileWatcherCleanups: Array<{
+    docName: string;
+    cleanup: ConfigFileWatcherUnsubscribe;
+  }> = [];
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
@@ -995,7 +1037,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         const rescueFailed: string[] = [];
         if (shadowRef.current) {
           for (const docName of stillLoaded) {
-            if (isSystemDoc(docName)) continue;
+            if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
@@ -1112,6 +1154,20 @@ export function createServer(options: ServerOptions): ServerInstance {
               await watcher.unsubscribe();
               watcher = null;
             }
+            // Config file watchers (US-007). Independent of the content
+            // watcher; teardown failures per-doc shouldn't block other
+            // cleanups, so each cleanup is wrapped in its own try/catch.
+            for (const { docName, cleanup } of configFileWatcherCleanups) {
+              try {
+                await cleanup();
+              } catch (cfgErr) {
+                log.warn(
+                  { err: cfgErr, docName },
+                  `[server] failed to stop config-file-watcher for ${docName}`,
+                );
+              }
+            }
+            configFileWatcherCleanups.length = 0;
           } catch (err) {
             phaseErrors.push({
               phase: 'watcher-unsubscribe',
@@ -1133,6 +1189,17 @@ export function createServer(options: ServerOptions): ServerInstance {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
             }
+            for (const [docName, connection] of configDocConnections) {
+              try {
+                await connection.disconnect();
+              } catch (configErr) {
+                log.warn(
+                  { err: configErr, docName },
+                  `[server] failed to disconnect ${docName} during shutdown`,
+                );
+              }
+            }
+            configDocConnections.clear();
           } catch (err) {
             phaseErrors.push({
               phase: 'cc1-teardown',
@@ -1454,6 +1521,79 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('cc1-push');
     }
 
+    // Pre-materialize config Y.Docs (D39/D40/FR-29 — US-005). One per
+    // well-known synthetic name. Connections held for the server's
+    // lifetime so the docs stay loaded — Settings pane + chrome controls
+    // attach via the existing collab WS. Bridge bypass + agent-session
+    // short-circuits live in the respective modules; admission failure
+    // is non-fatal (Settings pane's first connect would re-materialize).
+    for (const configDocName of CONFIG_DOC_NAMES) {
+      try {
+        const connection = await hocuspocus.openDirectConnection(configDocName);
+        configDocConnections.set(configDocName, connection);
+      } catch (err) {
+        log.error(
+          { err, docName: configDocName },
+          `[server] failed to open ${configDocName} direct connection — config bind degraded`,
+        );
+        degraded.push(`config-doc:${configDocName}`);
+      }
+    }
+
+    // Config file watchers (US-007 / FR-15 / D52). Watch both well-known
+    // config paths so external edits (CLI, IDE hand-edit, MCP from another
+    // instance) propagate to any open Settings pane via Y.Text observer.
+    // Workspace path is created lazily via `applyConfigPatch`; user-global
+    // path is created lazily via `writeConfigPatch` (D51). chokidar's
+    // single-file watch handles non-existent paths by waiting for them, so
+    // we start watchers unconditionally — `add` events fire when a lazy
+    // first-write lands.
+    //
+    // Self-write feedback loop is broken by `applyExternalConfigChange`'s
+    // LKG-equality short-circuit: when persistence writes content `C` to
+    // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
+    // it match LKG, and returns 'no-op' before mutating Y.Text.
+    const configPathByDoc = new Map<string, string>([
+      [CONFIG_DOC_NAME_WORKSPACE, resolveConfigPath('workspace', projectDir)],
+      [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
+    ]);
+    for (const configDocName of CONFIG_DOC_NAMES) {
+      const absPath = configPathByDoc.get(configDocName);
+      if (!absPath) continue;
+      try {
+        log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] starting');
+        const cleanup = await startConfigFileWatcher(absPath, (content) => {
+          const document = hocuspocus.documents.get(configDocName);
+          log.info(
+            {
+              docName: configDocName,
+              hasDocument: document !== undefined,
+              contentLength: content.length,
+            },
+            '[config-file-watcher] file changed',
+          );
+          const outcome = applyExternalConfigChange(
+            document ?? null,
+            configDocName,
+            content,
+            persistence.configPersistenceCtx,
+          );
+          log.info(
+            { docName: configDocName, outcome },
+            '[config-file-watcher] applyExternalConfigChange outcome',
+          );
+        });
+        configFileWatcherCleanups.push({ docName: configDocName, cleanup });
+        log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] started');
+      } catch (err) {
+        log.warn(
+          { err, docName: configDocName, path: absPath },
+          `[config-file-watcher] failed to start for ${configDocName}`,
+        );
+        degraded.push(`config-file-watcher:${configDocName}`);
+      }
+    }
+
     // Reset branch-scoped state to match THIS project's current HEAD before
     // anything reads/writes it. `persistence.activeBranch` and the
     // `BacklinkIndex.activeBranch` are mutable state; in single-process test
@@ -1546,7 +1686,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               : currentBranch;
             const docs: ParkableDoc[] = [];
             for (const [docName, document] of hocuspocus.documents) {
-              if (isSystemDoc(docName)) continue;
+              if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
               // Wrap in doc.transact so Y.js serializes snapshot capture atomically
               // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
               let markdown: string | null = null;
@@ -1672,7 +1812,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
-              if (isSystemDoc(docName)) continue;
+              if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
               try {
                 const filePath = safeContentPath(docName, contentDir);
                 if (!existsSync(filePath)) {
@@ -1742,7 +1882,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
-                if (isSystemDoc(docName)) continue;
+                if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
                 try {
                   const parked = await readParkedState(
                     shadowRef.current,

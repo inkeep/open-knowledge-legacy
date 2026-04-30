@@ -19,7 +19,7 @@
  * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
  */
 
-import { Download, FolderOpen, LayoutGrid, Sparkles } from 'lucide-react';
+import { Download, FolderOpen, LayoutGrid, Settings, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   CommandDialog,
@@ -36,6 +36,7 @@ import type { OkDesktopBridge, RecentProjectEntry } from '@/lib/desktop-bridge-t
 import { SWITCH_PROJECT_LABEL_WITH_ELLIPSIS } from '@/lib/desktop-labels';
 import { runWithToast as runWithToastBase } from '@/lib/error-state';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
+import { SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 import { useWorkspace } from '@/lib/use-workspace';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
@@ -152,6 +153,23 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
             <LayoutGrid />
             <span>{SWITCH_PROJECT_LABEL_WITH_ELLIPSIS}</span>
             <CommandShortcut>⌘⇧N</CommandShortcut>
+          </CommandItem>
+          <CommandItem
+            value="settings preferences config"
+            onSelect={() => {
+              // Hash-routed open — App.tsx's SettingsShortcutHandler /
+              // EditorArea's useSettingsRoute listen for SETTINGS_OPEN_HASH
+              // and render the Settings pane in the editor area (US-010).
+              setOpen(false);
+              if (window.location.hash !== SETTINGS_OPEN_HASH) {
+                window.location.hash = SETTINGS_OPEN_HASH;
+              }
+            }}
+            data-testid="command-palette-settings"
+          >
+            <Settings />
+            <span>Settings…</span>
+            <CommandShortcut>⌘,</CommandShortcut>
           </CommandItem>
           <CommandItem
             onSelect={() => {

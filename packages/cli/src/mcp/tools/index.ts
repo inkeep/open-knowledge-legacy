@@ -39,6 +39,10 @@ import {
   register as registerGetBacklinks,
 } from './get-backlinks.ts';
 import {
+  DESCRIPTION as GET_CONFIG_DESCRIPTION,
+  register as registerGetConfig,
+} from './get-config.ts';
+import {
   DESCRIPTION as GET_DEAD_LINKS_DESCRIPTION,
   register as registerGetDeadLinks,
 } from './get-dead-links.ts';
@@ -78,6 +82,14 @@ import {
   DESCRIPTION as SAVE_VERSION_DESCRIPTION,
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
+import {
+  register as registerSetConfig,
+  DESCRIPTION as SET_CONFIG_DESCRIPTION,
+} from './set-config.ts';
+import {
+  register as registerSetFolderRule,
+  DESCRIPTION as SET_FOLDER_RULE_DESCRIPTION,
+} from './set-folder-rule.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   register as registerSuggestLinks,
@@ -109,6 +121,9 @@ const _TOOL_DESCRIPTIONS = {
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
+  get_config: GET_CONFIG_DESCRIPTION,
+  set_config: SET_CONFIG_DESCRIPTION,
+  set_folder_rule: SET_FOLDER_RULE_DESCRIPTION,
 } as const;
 
 /**
@@ -258,5 +273,30 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('get_dead_links'),
+  });
+
+  // Config tools — fs-direct (no Hocuspocus required).
+  //
+  // These three use `server.registerTool(name, {description, inputSchema,
+  // outputSchema, annotations}, handler)` — the modern MCP TS-SDK API that
+  // accepts a typed `outputSchema` and `annotations` (`readOnlyHint` /
+  // `idempotentHint` / `destructiveHint`). The older tools above call
+  // `server.tool(name, description, schema, handler)` — same registration
+  // semantics minus the structured-output + annotations channels. Both
+  // routes are wrapped by `createLoggedServer` (see tool-logging.ts).
+  // When touching an older tool, prefer migrating to `registerTool` so the
+  // outputSchema can be enforced; until every tool migrates, both APIs
+  // coexist intentionally.
+  registerGetConfig(registrationServer, {
+    config: opts.config,
+    resolveCwd: named('get_config'),
+  });
+  registerSetConfig(registrationServer, {
+    config: opts.config,
+    resolveCwd: named('set_config'),
+  });
+  registerSetFolderRule(registrationServer, {
+    config: opts.config,
+    resolveCwd: named('set_folder_rule'),
   });
 }

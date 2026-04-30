@@ -547,6 +547,19 @@ function refreshApplicationMenu() {
         "window.location.hash = '#install-claude-desktop'; undefined",
       );
     },
+    // US-010 — App menu (macOS) / File menu (Windows/Linux) Settings…
+    // navigates the focused window's URL hash to `#settings` so the
+    // renderer's `useSettingsRoute` hook renders the Settings pane in the
+    // editor area. Same hash-routed pattern as `openInstallSkillDialog` so
+    // every entry point (menu / Cmd-, / HelpPopover / CommandPalette)
+    // funnels through the same client-side mount path. Silent no-op when
+    // the focused window is the Navigator (renderer is NavigatorApp, not
+    // App, and does not mount `useSettingsRoute`).
+    openSettings: () => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (!target) return;
+      target.webContents.executeJavaScript("window.location.hash = '#settings'; undefined");
+    },
   }).catch((err) => {
     console.error('[main] installApplicationMenu failed', { err: (err as Error).message });
   });

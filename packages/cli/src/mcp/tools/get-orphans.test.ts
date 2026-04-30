@@ -8,8 +8,7 @@ import type { ServerInstance } from './shared.ts';
 
 const BASE_CONFIG: Config = {
   content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
-  server: { port: 3000, host: 'localhost', openOnAgentEdit: false },
-  persistence: { debounceMs: 2000, maxDebounceMs: 10000 },
+  server: { host: 'localhost', openOnAgentEdit: false },
   mcp: {
     tools: {
       read_document: { historyDepth: 5 },

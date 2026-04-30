@@ -1,10 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CONTRACT_VERSION,
   dispatchCC1Stateless,
   parseCC1BranchSwitched,
+  parseCC1ConfigValidationRejected,
   parseCC1DerivedView,
   parseCC1DiskAck,
 } from './cc1';
@@ -356,5 +358,66 @@ describe('dispatchCC1Stateless', () => {
     );
     expect(diskAckFired).toBe(true);
     expect(derivedFired).toBe(false);
+  });
+});
+
+describe('parseCC1ConfigValidationRejected', () => {
+  test('exports the channel literal', () => {
+    expect(CC1_CHANNEL_CONFIG_VALIDATION_REJECTED).toBe('config-validation-rejected');
+  });
+
+  test('parses a YAML_PARSE rejection payload', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+      seq: 5,
+      docName: '__config__/workspace',
+      error: { code: 'YAML_PARSE', detail: 'unexpected token at line 12' },
+    };
+    expect(parseCC1ConfigValidationRejected(JSON.stringify(payload))).toMatchObject({
+      ch: 'config-validation-rejected',
+      docName: '__config__/workspace',
+      error: { code: 'YAML_PARSE' },
+    });
+  });
+
+  test('parses a SCHEMA_INVALID rejection with structured issues', () => {
+    const payload = {
+      v: CC1_CONTRACT_VERSION,
+      ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+      seq: 6,
+      docName: '__user__/config.yml',
+      error: {
+        code: 'SCHEMA_INVALID',
+        issues: [
+          {
+            path: ['mcp', 'tools', 'search', 'maxResults'],
+            message: 'Expected number',
+            issueCode: 'invalid_type',
+          },
+        ],
+      },
+    };
+    const result = parseCC1ConfigValidationRejected(JSON.stringify(payload));
+    expect(result?.error.code).toBe('SCHEMA_INVALID');
+  });
+
+  test('returns null for malformed JSON', () => {
+    expect(parseCC1ConfigValidationRejected('{')).toBeNull();
+  });
+
+  test('dispatchCC1Stateless routes config-validation-rejected to its handler', () => {
+    const handler = mock(() => {});
+    dispatchCC1Stateless(
+      JSON.stringify({
+        v: CC1_CONTRACT_VERSION,
+        ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
+        seq: 1,
+        docName: '__config__/workspace',
+        error: { code: 'YAML_PARSE', detail: 'broken' },
+      }),
+      { onConfigValidationRejected: handler },
+    );
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

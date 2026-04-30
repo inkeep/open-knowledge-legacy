@@ -18,7 +18,7 @@ import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'no
 import { readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
-import { isSystemDoc } from './cc1-broadcast.ts';
+import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
   type DocExtension,
@@ -599,7 +599,7 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
     return;
   }
   const docName = event.kind === 'rename' ? event.newDocName : event.docName;
-  if (isSystemDoc(docName)) return;
+  if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   switch (event.kind) {
     case 'create':
     case 'update':

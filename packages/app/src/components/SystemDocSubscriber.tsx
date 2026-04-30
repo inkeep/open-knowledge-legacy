@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { dispatchCC1Stateless, SYSTEM_DOC_NAME } from '@/lib/cc1';
+import { emitConfigValidationRejected } from '@/lib/config-validation-events';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { createSyncedReconnectGate } from '@/lib/server-info-refresh';
 
@@ -67,6 +68,9 @@ export function SystemDocSubscriber() {
           },
           onDerivedView: (p) => {
             emitDocumentsChanged([p.ch]);
+          },
+          onConfigValidationRejected: (p) => {
+            emitConfigValidationRejected(p);
           },
           onUnknown: (raw) => {
             console.warn('[CC1] Unparseable stateless payload, skipping:', raw.slice(0, 100));

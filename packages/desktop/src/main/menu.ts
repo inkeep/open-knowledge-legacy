@@ -90,6 +90,18 @@ export interface MenuDeps {
    * menu renders even in contexts that don't wire it (unit tests).
    */
   openInstallSkillDialog?(): void;
+  /**
+   * US-010 / FR-1 / D54 — Cmd-, "Settings…" click handler. Navigates the
+   * focused window's URL hash to `#settings` so the renderer's
+   * `useSettingsRoute` hook (mounted by `EditorArea`) renders the Settings
+   * pane in the main editor area. Optional for the same reason as
+   * `openInstallSkillDialog` — unit tests build the menu without wiring this.
+   *
+   * In Navigator window mode (the renderer is `NavigatorApp`, not `App`),
+   * the hash change is a silent no-op since `useSettingsRoute` is not
+   * mounted there — same precedent as `openInstallSkillDialog`.
+   */
+  openSettings?(): void;
 }
 
 /**
@@ -141,6 +153,17 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
             label: deps.appName,
             submenu: [
               { role: 'about' as const },
+              { type: 'separator' as const },
+              // US-010 — Apple HIG places "Settings…" / "Preferences…"
+              // immediately after About, before the services group. The
+              // CmdOrCtrl+, accelerator is OS-captured: Electron routes the
+              // keypress to this menu item before it reaches the renderer's
+              // keydown handler.
+              {
+                label: 'Settings…',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => deps.openSettings?.(),
+              },
               { type: 'separator' as const },
               { role: 'services' as const },
               { type: 'separator' as const },
@@ -205,6 +228,19 @@ export function buildMenuTemplate(deps: MenuDeps): MenuItemConstructorOptions[] 
                 click: () => {
                   void deps.reconfigureMcpWiring?.();
                 },
+              },
+              { type: 'separator' as const },
+            ] satisfies MenuItemConstructorOptions[])
+          : []),
+        // US-010 — On Windows/Linux Settings… belongs in the File menu (Apple
+        // HIG only governs macOS; on macOS the Settings entry lives in the
+        // App menu above). Placed above the trailing close/quit role.
+        ...(!isMac
+          ? ([
+              {
+                label: 'Settings…',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => deps.openSettings?.(),
               },
               { type: 'separator' as const },
             ] satisfies MenuItemConstructorOptions[])
