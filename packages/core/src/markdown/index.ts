@@ -1340,6 +1340,22 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.mathInline) {
     nodeHandlers.mathInline = (pmNode: PmNode) => {
       const formula = typeof pmNode.attrs.formula === 'string' ? pmNode.attrs.formula : '';
+      const id = typeof pmNode.attrs.id === 'string' && pmNode.attrs.id ? pmNode.attrs.id : null;
+      // Conditional emit: only the `<InlineMath>` MDX form can carry an
+      // id; the `$$x$$` shorthand has no attribute syntax. Without this
+      // branch, parse→serialize would drop the id every save and negate
+      // the parse-side preservation in `mdxJsxTextElement` above.
+      if (id) {
+        return {
+          type: 'mdxJsxTextElement' as const,
+          name: 'InlineMath',
+          attributes: [
+            { type: 'mdxJsxAttribute' as const, name: 'formula', value: formula },
+            { type: 'mdxJsxAttribute' as const, name: 'id', value: id },
+          ],
+          children: [],
+        } as unknown as MdastNodes;
+      }
       return {
         type: 'inlineMath' as const,
         value: formula,

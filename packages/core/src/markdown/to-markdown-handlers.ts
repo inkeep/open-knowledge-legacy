@@ -393,7 +393,13 @@ export const toMarkdownHandlers = {
     const raw = node.data?.sourceRaw;
     if (typeof raw === 'string') return raw;
     const name = node.name ?? '';
-    return `<${name}/>`;
+    // Structural reconstruction when sourceRaw is absent. Mirrors the
+    // mdxJsxFlowElement handler: emit the JSX form with attributes so a
+    // PM-synthesized inline JSX node (e.g. `<InlineMath>` from the math
+    // serialize handler) round-trips with its attrs intact, instead of
+    // collapsing to a bare `<Name/>` and losing every attribute.
+    const attrs = serializeMdxJsxAttrs(node.attributes ?? []);
+    return attrs ? `<${name} ${attrs} />` : `<${name}/>`;
   },
 
   /**

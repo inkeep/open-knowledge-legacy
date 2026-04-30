@@ -41,7 +41,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
-import { consumeAutoOpen } from '../slash-command/component-items.ts';
+import { consumeAutoOpen } from '../slash-command/component-items.tsx';
 
 /**
  * Synthetic descriptor used to drive the inline-math PropPanel. `mathInline`
