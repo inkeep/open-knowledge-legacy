@@ -102,10 +102,11 @@ describe('uploadFile', () => {
     expect(calls[0]?.url).toBe('/api/upload');
   });
 
-  test('returns { url } from the server path field on success', async () => {
-    // `path` is contentDir-relative — honors `attachmentFolderPath`. Prefer
-    // it over `src` (bare basename) for accuracy under non-default attachment
-    // paths.
+  test('returns server-absolute { url } from the server path field on success', async () => {
+    // `path` is contentDir-relative (no leading slash from `relative()`);
+    // upload-file.ts prefixes `/` so the URL is rooted at origin and
+    // resolves correctly under hash routing for any subdir doc. Mirror of
+    // the drop path's `resolvedSrc = `/${assetContentPath}``.
     const { fetch } = captureFetch(() =>
       jsonResponse(200, {
         ok: true,
@@ -118,16 +119,29 @@ describe('uploadFile', () => {
 
     const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
 
-    expect(result).toEqual({ url: 'docs/photo-1.png' });
+    expect(result).toEqual({ url: '/docs/photo-1.png' });
   });
 
-  test('falls back to src when path is omitted', async () => {
+  test('falls back to src when path is omitted; still server-absolute', async () => {
     const { fetch } = captureFetch(() => jsonResponse(200, { ok: true, src: 'photo.png' }));
     const file = new File(['x'], 'photo.png', { type: 'image/png' });
 
     const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
 
-    expect(result).toEqual({ url: 'photo.png' });
+    expect(result).toEqual({ url: '/photo.png' });
+  });
+
+  test('preserves an already-server-absolute path without double-slashing', async () => {
+    // Defensive: if the server starts emitting `/`-prefixed paths in a
+    // future iteration, the client must not produce `//foo.png`.
+    const { fetch } = captureFetch(() =>
+      jsonResponse(200, { ok: true, src: 'photo.png', path: '/docs/photo.png' }),
+    );
+    const file = new File(['x'], 'photo.png', { type: 'image/png' });
+
+    const result = await uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME });
+
+    expect(result).toEqual({ url: '/docs/photo.png' });
   });
 
   test('HTTP error response surfaces server-supplied error message', async () => {

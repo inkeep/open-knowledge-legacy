@@ -75,7 +75,19 @@ export async function uploadFile(
   // Server response shape: `{ ok: true, src, path, deduped }`. Prefer `path`
   // (contentDir-relative; honors a non-default `attachmentFolderPath`) over
   // `src` (bare basename — co-located-with-parent assumption that breaks
-  // under Obsidian-style global attachment paths). Both POSIX-normalized.
+  // under Obsidian-style global attachment paths). Both POSIX-normalized,
+  // no leading slash from the server side.
+  //
+  // Prefix `/` to root the URL at origin. The editor runs under hash routing
+  // so `location.pathname === '/'` always; a relative `<img src="foo.png">`
+  // resolves identically to a server-absolute one ONLY when the asset and
+  // doc are co-located at content root. For any subdir doc referencing a
+  // peer-dir asset (or any asset path that includes a directory segment
+  // distinct from the doc's), the relative form 404s into Vite's SPA
+  // fallback (`text/html` response → broken images + blank PDF tabs).
+  // Mirrors the drop path's `resolvedSrc = `/${assetContentPath}`` in
+  // `image-upload/index.ts`. Emitted MDX carries the same server-absolute
+  // shape, so byte-identity round-trips through parser → render.
   let url: string;
   try {
     const body = (await res.json()) as { src?: string; path?: string };
@@ -83,7 +95,7 @@ export async function uploadFile(
     if (typeof resolved !== 'string') {
       throw new Error('Server response missing "path"/"src" field');
     }
-    url = resolved;
+    url = resolved.startsWith('/') ? resolved : `/${resolved}`;
   } catch (parseError) {
     const message = parseError instanceof Error ? parseError.message : String(parseError);
     throw new Error(`Upload response parse error: ${message}`);

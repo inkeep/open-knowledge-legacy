@@ -200,13 +200,13 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     const srcAfterFirst = await waitForSrcChange(page, c.tag, c.initialSrc);
     expect(srcAfterFirst).not.toBe(c.initialSrc);
     // Server returns the contentDir-relative `path` (POSIX-normalized, no
-    // leading slash from `relative()`). Both `sidebar-folder/foo.png` and
-    // `/sidebar-folder/foo.png` resolve to the same browser fetch URL since
-    // the page is served at root and the hash fragment doesn't shift the
-    // base, but the canonical wire shape is no-leading-slash.
+    // leading slash from `relative()`); the upload-file.ts client helper
+    // prefixes `/` to root the URL at origin so subdir docs referencing
+    // peer-dir assets resolve correctly under hash routing. Mirror of the
+    // drop path's `resolvedSrc = `/${assetContentPath}``.
+    expect(srcAfterFirst.startsWith('/')).toBe(true);
     expect(srcAfterFirst).toContain(c.payloads[0].name.replace(/\.\w+$/, ''));
-    // Strip a leading `/` defensively before joining (covers both shapes
-    // without relying on POSIX `path.join`'s leading-separator stripping).
+    // Strip the leading `/` before joining with the contentDir.
     expect(existsSync(join(workerServer.contentDir, srcAfterFirst.replace(/^\//, '')))).toBe(true);
 
     // Second upload — first payload → second payload. Same wiring path,
@@ -218,6 +218,7 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     });
     const srcAfterSecond = await waitForSrcChange(page, c.tag, srcAfterFirst);
     expect(srcAfterSecond).not.toBe(srcAfterFirst);
+    expect(srcAfterSecond.startsWith('/')).toBe(true);
     expect(srcAfterSecond).toContain(c.payloads[1].name.replace(/\.\w+$/, ''));
     expect(existsSync(join(workerServer.contentDir, srcAfterSecond.replace(/^\//, '')))).toBe(true);
   });
