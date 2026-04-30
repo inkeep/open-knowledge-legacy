@@ -769,6 +769,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           const classification = classifyDuplication(markdown, currentBase);
           if (classification.kind === 'block') {
             if (tripwireResetFailedDocs.has(documentName)) {
+              log.warn({ documentName }, `[persistence] Tripwire breaker active — skipping duplicate store for ${documentName}`);
               return;
             }
             const fragmentChildren = document.getXmlFragment('default').length;
