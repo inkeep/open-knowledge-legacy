@@ -992,104 +992,38 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
     });
   });
 
-  // localStorage-persistence path for the server instance ID associated with
-  // hydrated IDB state. This is intentionally separate from
-  // `cachedServerInstanceId`, which tracks the live server. The page-reload
-  // duplication fix depends on preserving the stale IDB-associated ID even when
-  // the boot `/api/server-info` fetch observes the fresh server before open().
-  describe('server-instance-id localStorage persistence', () => {
-    const IDB_SYNCED_SERVER_INSTANCE_ID_KEY = 'ok-idb-synced-server-instance-id';
-
-    function makeStubStorage(): {
-      stub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-      store: Map<string, string>;
-    } {
-      const store = new Map<string, string>();
-      return {
-        stub: {
-          getItem: (k: string) => store.get(k) ?? null,
-          setItem: (k: string, v: string) => {
-            store.set(k, v);
-          },
-          removeItem: (k: string) => {
-            store.delete(k);
-          },
-        },
-        store,
-      };
-    }
-
-    test('setExpectedServerInstanceId does not overwrite IDB-associated storage', () => {
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
-      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('old-server');
-    });
-
-    test('pre-seeded storage value wins over fast boot fetch on first open()', () => {
-      // The core page-reload regression guard: session-1 persisted instance ID
-      // 'old-server', Vite restarts (new process → new instance ID), the page
-      // reloads, and the fast localhost `/api/server-info` boot fetch observes
-      // 'new-server' before the first document provider opens. The auth token
-      // must still carry `expectedServerInstanceId=old-server` so the server's
-      // onAuthenticate rejects on mismatch and triggers the IDB-clearing recycle.
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
+  // Auth-token claim sources `expectedServerInstanceId` from the live
+  // in-memory `cachedServerInstanceId`. The DB-name shape
+  // `ok-ydoc:${branch}:${serverInstanceId}:${docName}` carries the epoch
+  // structurally, so no separate localStorage marker is consulted or
+  // written.
+  describe('server-instance-id auth-claim derivation', () => {
+    test('open() carries the live server id as the auth-token claim', () => {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-current');
       const entry = pool.open('doc1');
       if (!entry) throw new Error('expected entry');
       const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
       if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('old-server');
+      expect(parsed.expectedServerInstanceId).toBe('server-current');
     });
 
-    test('clean synced provider writes current server ID to storage', () => {
-      const { stub, store } = makeStubStorage();
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('server-current');
-      const entry = pool.open('doc1');
-      if (!entry) throw new Error('expected entry');
-      entry.observerCleanup = () => {};
-      entry.provider.emit('synced', { state: true });
-      expect(store.get(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe('server-current');
-    });
-
-    test('server-instance-mismatch clears stale storage but preserves fresh current ID', async () => {
-      const { stub, store } = makeStubStorage();
-      store.set(IDB_SYNCED_SERVER_INSTANCE_ID_KEY, 'old-server');
-      pool = new ProviderPool(3, DUMMY_WS, { storage: stub });
-      pool.setExpectedServerInstanceId('new-server');
+    test('mismatch clears the cached id; next open() carries no claim', async () => {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
       const entry = pool.open('doc1');
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
       await wait(50);
 
-      expect(store.has(IDB_SYNCED_SERVER_INSTANCE_ID_KEY)).toBe(false);
       const replaced = pool.getActive();
       if (!replaced) throw new Error('expected replaced entry');
-      const parsed = parseHocuspocusAuthToken(replaced.provider.configuration.token as string);
-      if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('new-server');
-    });
-
-    test('storage.setItem throw is non-fatal — in-memory current ID still works', () => {
-      const throwingStub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
-        getItem: () => null,
-        setItem: () => {
-          throw new Error('synthetic quota error');
-        },
-        removeItem: () => {},
-      };
-      pool = new ProviderPool(3, DUMMY_WS, { storage: throwingStub });
-      pool.setExpectedServerInstanceId('server-instance-abc');
-      const entry = pool.open('doc1');
-      if (!entry) throw new Error('expected entry');
-      const parsed = parseHocuspocusAuthToken(entry.provider.configuration.token as string);
-      if (!parsed) throw new Error('expected valid token');
-      expect(parsed.expectedServerInstanceId).toBe('server-instance-abc');
+      const resolved = replaced.provider.configuration.token;
+      if (typeof resolved === 'string') {
+        const parsed = parseHocuspocusAuthToken(resolved);
+        expect(parsed?.expectedServerInstanceId).toBeUndefined();
+      }
     });
 
     test('null storage — pool runs without persistence', () => {
