@@ -184,8 +184,8 @@ function parseManagedRenameRecoveryJournal(value: unknown): ManagedRenameRecover
 export function readManagedRenameJournal(contentDir: string): ManagedRenameRecoveryJournal | null {
   const path = managedRenameJournalPath(contentDir);
   if (!existsSync(path)) return null;
-  const raw = readFileSync(path, 'utf-8');
   try {
+    const raw = readFileSync(path, 'utf-8');
     return parseManagedRenameRecoveryJournal(JSON.parse(raw) as unknown);
   } catch (err) {
     throw new Error(

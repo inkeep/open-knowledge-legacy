@@ -1374,6 +1374,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (error.message.startsWith('Cannot rename missing document:')) {
       return { status: 404, error: error.message };
     }
+    if (error.message.startsWith('Cannot snapshot missing document:')) {
+      return { status: 404, error: error.message };
+    }
     if (error.message.startsWith('symlink-escape:')) {
       return { status: 400, error: error.message };
     }
@@ -2206,6 +2209,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const index = getFileIndex();
       const documents: {
         docName: string;
+        docExt: string;
         size: number;
         modified: string;
         isSymlink: boolean;
@@ -2217,8 +2221,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
+        // Surfacing the registered on-disk extension lets the sidebar render
+        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
+        const docExt = getDocExtension(docName);
+
         documents.push({
           docName,
+          docExt,
           size: entry.size,
           modified: entry.modified,
           isSymlink: false,
@@ -2232,6 +2241,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const targetRelPath = relative(contentDir, entry.canonicalPath);
           documents.push({
             docName: alias,
+            docExt,
             size: entry.size,
             modified: entry.modified,
             isSymlink: true,
@@ -3750,7 +3760,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rollback]', e);
-      json(res, 500, { ok: false, error: 'Failed to roll back document' });
+      const message = e instanceof Error ? e.message : 'Failed to roll back document';
+      json(res, 500, { ok: false, error: message });
     }
   }
 
@@ -4577,17 +4588,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const index = getFileIndex();
-      const pages: { docName: string; title: string; size: number; modified: string }[] = [];
+      const pages: {
+        docName: string;
+        title: string;
+        docExt: string;
+        size: number;
+        modified: string;
+      }[] = [];
       for (const [docName, entry] of index) {
         let title = docName;
+        const docExt = getDocExtension(docName);
         try {
-          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
+          const filePath = resolve(contentDir, `${docName}${docExt}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
           console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
-        pages.push({ docName, title, size: entry.size, modified: entry.modified });
+        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
       }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
