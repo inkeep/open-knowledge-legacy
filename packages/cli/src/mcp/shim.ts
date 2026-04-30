@@ -323,8 +323,13 @@ export async function bridgeStdioToHttpMcp(
     });
   };
 
-  await http.start();
-  await stdio.start();
+  try {
+    await http.start();
+    await stdio.start();
+  } catch (err) {
+    await closeBoth();
+    throw err;
+  }
 
   return { close: closeBoth };
 }
