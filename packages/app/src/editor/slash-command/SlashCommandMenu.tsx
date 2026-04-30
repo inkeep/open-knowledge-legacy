@@ -100,7 +100,9 @@ export function SlashCommandMenu({
           activedescendant on the focused element.
         */}
         <span className="sr-only" aria-live="polite" aria-atomic="true">
-          {selectedItem ? selectedItem.label : ''}
+          {selectedItem
+            ? `${selectedItem.label}${selectedItem.preview ? `. ${selectedItem.preview.description}` : ''}`
+            : ''}
         </span>
         {categories.map((cat) => (
           // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox pattern requires role="group" for option groups — <fieldset> is non-standard inside role="listbox"

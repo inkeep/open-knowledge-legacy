@@ -42,7 +42,7 @@ interface PreviewConfig {
 const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
   Callout: {
     description: 'Highlight tips, warnings, and notes.',
-    props: { type: 'info', title: 'Heads up' },
+    props: { type: 'note', title: 'Heads up' },
     children: 'Callouts draw attention to key information.',
   },
   Accordion: {
