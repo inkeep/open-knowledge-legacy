@@ -21,7 +21,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 
-export const ICON_COMPONENTS: Record<string, LucideIcon> = {
+const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronRight,
   Film,
   MessageSquareWarning,
