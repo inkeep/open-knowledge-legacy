@@ -5,7 +5,7 @@
 **Last updated:** 2026-04-29
 **Links:**
 
-- Evidence: [`./evidence/current-system-trace.md`](./evidence/current-system-trace.md), [`./evidence/incident-shape.md`](./evidence/incident-shape.md), [`./evidence/test-coverage-gap.md`](./evidence/test-coverage-gap.md)
+- Evidence: [`./evidence/current-system-trace.md`](./evidence/current-system-trace.md), [`./evidence/incident-shape.md`](./evidence/incident-shape.md), [`./evidence/test-coverage-gap.md`](./evidence/test-coverage-gap.md), [`./evidence/batch-gated-persistence-drop.md`](./evidence/batch-gated-persistence-drop.md)
 - Related commit: `627a5c52` (`Fix/dupe text (#362)`)
 
 ---
@@ -311,3 +311,67 @@ Scope hypothesis:
 ### Noted
 
 - **Browser storage garbage collection** — Old epoch-scoped IndexedDB/localStorage entries may accumulate. Correctness does not depend on cleanup, but storage hygiene may matter later.
+
+## 16) Amendment — Batch-gated L1 persistence must defer, not drop
+
+**Status:** Draft addendum 2026-04-29  
+**Evidence:** [`./evidence/batch-gated-persistence-drop.md`](./evidence/batch-gated-persistence-drop.md)
+
+### Problem
+
+The head watcher opens short git batches when `.git/index.lock` appears. These batches are meant to protect coordinated git operations, but `persistence.onStoreDocument` currently returns immediately while `batchInProgress` is true. If the Hocuspocus L1 store debounce fires during one of those windows, the CRDT-to-disk write is discarded rather than delayed.
+
+Observed user impact: the browser and live server Y.Doc retained `asass!!!!!!!!!!!!!!!`, page refresh preserved it, but `.changeset/init-gitignore-consolidation.md` on disk still ended with `asass!!`. `/api/server-info` also reported no `currentDiskAckSVs`, confirming no successful disk flush for the dirty state.
+
+### Goals
+
+- **G6 — Batch windows may delay L1 persistence, never discard it.** Browser/WYSIWYG/source edits that reach the server must eventually flush to Markdown after a batch ends.
+- **G7 — Keep branch-switch safety intact.** Cross-branch and detached-head batches must still prevent writes into the wrong branch state.
+- **G8 — Reduce noise from index-only batches.** Frequent `index.lock` refreshes with `headMoved=false` should not behave like high-risk branch operations.
+
+### Proposed solution
+
+Primary fix: introduce a deferred L1 store queue.
+
+- When `onStoreDocument` fires during `batchInProgress`, record the `documentName` in a process-local deferred-store set and return without writing.
+- On batch end, after `setBatchInProgress(false)`, force-flush each deferred doc's Hocuspocus store debounce or otherwise re-run the normal persistence path for still-loaded docs.
+- For `within-branch` batches, drain disk watcher events and deferred CRDT stores in a deterministic order that preserves disk reconciliation semantics.
+- For cross-branch or detached-head batches, do not blindly flush stale-branch deferred stores. Reset/reconcile loaded docs from the target branch first, then clear or re-evaluate the deferred set against the new branch state.
+- Preserve disk-ack semantics: emit `onDiskFlush(docName, sv)` only after the actual deferred write succeeds, never when the store is merely queued.
+
+Secondary cleanup: narrow `index.lock` severity.
+
+- Keep watching `index.lock`, but treat batches that end with `headMoved=false` and no buffered disk doc events as low-risk within-branch batches.
+- This is not a substitute for the deferred-store invariant; it only reduces unnecessary interference from IDE/git status activity.
+
+### Requirements
+
+| Priority | Requirement                                                             | Acceptance criteria                                                                                                     |
+| -------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Must     | Batch-gated `onStoreDocument` calls are deferred.                       | A doc edited under `setBatchInProgress(true)` flushes to disk after the batch ends without requiring another user edit. |
+| Must     | Deferred L1 writes update disk-ack only after durable write.            | `currentDiskAckSVs` remains unchanged while queued and advances only after `tracedRename` succeeds.                     |
+| Must     | Cross-branch safety remains intact.                                     | A deferred write from the old branch cannot overwrite target-branch disk content after checkout.                        |
+| Must     | Regression test covers browser-style edit during batch.                 | Test fails on the current early-return behavior and passes when the deferred store drains after batch end.              |
+| Should   | `index.lock`-only batches stop causing user-visible persistence stalls. | Repeated `index.lock` batches with `headMoved=false` do not leave live CRDT state ahead of disk after the quiet window. |
+
+### Decision log addendum (D9-D11)
+
+| ID  | Decision                                                                       | Type (P/T/X) | 1-way door? | Status             | Rationale                                                                                                                                                       | Evidence / links                                                                           | Implications                                                               |
+| --- | ------------------------------------------------------------------------------ | ------------ | ----------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| D9  | Make batch-gated L1 stores deferred, not dropped.                              | T            | Reversible  | Decided 2026-04-29 | Dropping a store violates the durability contract: the server accepted CRDT state but never wrote Markdown or disk-ack.                                         | [`./evidence/batch-gated-persistence-drop.md`](./evidence/batch-gated-persistence-drop.md) | Requires a deferred-store set and batch-end drain path.                    |
+| D10 | Keep L2/git commit gating separate from L1 Markdown durability.                | T            | Reversible  | Decided 2026-04-29 | Shadow/history commits may be delayed during git operations, but real Markdown persistence must not depend on shadow repo availability or index-lock quietness. | [`./evidence/batch-gated-persistence-drop.md`](./evidence/batch-gated-persistence-drop.md) | Prevents worktree shadow repo failures from masking L1 content durability. |
+| D11 | Treat `index.lock`-only, no-HEAD-move batches as low-risk within-branch noise. | T            | Reversible  | Decided 2026-04-29 | IDE/git status activity can create frequent `index.lock` windows. These should not be equivalent to checkout/rebase branch transitions.                         | [`./evidence/batch-gated-persistence-drop.md`](./evidence/batch-gated-persistence-drop.md) | Noise reduction complements D9 but does not replace it.                    |
+
+### Test plan
+
+- Add a focused persistence integration test: load a doc, apply a connection-origin browser-style edit, set `batchInProgress(true)` before the store runs, end the batch, then assert disk contains the edit and disk-ack advances.
+- Add a cross-branch guard test: queue a deferred store on branch A, simulate branch switch to branch B, and assert branch A content is not flushed into branch B's file.
+- Add a head-watcher behavior test for repeated `index.lock` events with `headMoved=false` and no doc events to confirm they do not leave deferred stores stranded.
+
+### Risks
+
+| Risk                                                      | Mitigation                                                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Deferred stores flush in the wrong branch after checkout. | Scope deferred stores by active branch or clear/re-evaluate them on cross-branch batch end after loaded docs reset. |
+| Forced flush recursively trips batch handling.            | Clear `batchInProgress` before drain and protect the drain with an explicit in-flight flag.                         |
+| Shadow repo failures obscure L1 success/failure.          | Keep L1 disk write result and disk-ack independent from L2 shadow commit scheduling.                                |
