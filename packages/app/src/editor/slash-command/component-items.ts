@@ -20,11 +20,11 @@ import type { Editor } from '@tiptap/react';
 import {
   Box,
   ChevronRight,
-  Film,
+  Image,
   type LucideIcon,
   MessageSquareWarning,
+  SquarePlay,
   Volume2,
-  ZoomIn,
 } from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
@@ -44,16 +44,16 @@ import type { SlashCommandItem } from './items';
  * ListOrdered, PanelTop, Square, SquareMousePointer, Table) plus the
  * dangling `GitGraph` import (Mermaid was cut 2026-04-21 per the manifest
  * header). New descriptors in the 5-pack each add exactly one icon: Callout
- * → MessageSquareWarning, Image → ZoomIn, Video → Film, Audio → Volume2,
+ * → MessageSquareWarning, Image → Image, Video → SquarePlay, Audio → Volume2,
  * Accordion → ChevronRight. `Box` is the wildcard fallback for the `'*'`
  * descriptor.
  */
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronRight,
-  Film,
+  SquarePlay,
   MessageSquareWarning,
   Volume2,
-  ZoomIn,
+  Image,
 };
 
 /**

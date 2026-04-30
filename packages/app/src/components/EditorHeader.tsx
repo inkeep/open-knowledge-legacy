@@ -1,4 +1,4 @@
-import { Columns2, FolderOpen, GitFork, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import { FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -21,8 +21,6 @@ import { emitDocumentsChanged } from '@/lib/documents-events';
 import { useWorkspace } from '@/lib/use-workspace';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
-import type { DiffLayout } from './DiffView';
-import type { PanelTab } from './DocPanel';
 import type { EditorMode } from './EditorPane';
 import { HelpPopover } from './HelpPopover';
 import { OpenInAgentMenu } from './handoff/OpenInAgentMenu';
@@ -71,9 +69,6 @@ interface EditorHeaderProps {
   onModeChange: (mode: EditorModeValue) => void;
   onSaveVersion: () => void;
   saving: boolean;
-  activeTab: PanelTab;
-  diffLayout: DiffLayout;
-  onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
   onSetIdentity?: () => void;
   onOpenConflictResolver?: () => void;
@@ -85,9 +80,6 @@ export function EditorHeader({
   onModeChange,
   onSaveVersion,
   saving,
-  activeTab,
-  diffLayout,
-  onDiffLayoutChange,
   onSignIn,
   onSetIdentity,
   onOpenConflictResolver,
@@ -493,45 +485,6 @@ export function EditorHeader({
             )}
           </Tooltip>
         </ToggleGroup>
-      )}
-
-      {activeTab === 'timeline' && (
-        <div className="flex items-center gap-2 shrink-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <ToggleGroup
-                type="single"
-                value={diffLayout}
-                onValueChange={(v) => {
-                  if (v) onDiffLayoutChange(v as DiffLayout);
-                }}
-                aria-label="Diff layout"
-                variant="segmented"
-                size="sm"
-                spacing={1}
-                className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
-              >
-                <ToggleGroupItem
-                  value="unified"
-                  aria-label="Unified diff"
-                  className="gap-1 text-xs px-2"
-                >
-                  <Rows2 className="size-3.5" />
-                  <span className="hidden md:inline">Unified</span>
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="split"
-                  aria-label="Split diff"
-                  className="gap-1 text-xs px-2"
-                >
-                  <Columns2 className="size-3.5" />
-                  <span className="hidden md:inline">Split</span>
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </TooltipTrigger>
-            <TooltipContent>Layout for expanded Timeline diffs</TooltipContent>
-          </Tooltip>
-        </div>
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">

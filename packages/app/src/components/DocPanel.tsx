@@ -1,5 +1,5 @@
 import { Clock, CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import type { DiffLayout } from '@/components/DiffView';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
@@ -48,7 +48,6 @@ interface DocPanelProps {
   isSourceMode: boolean;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
-  diffLayout?: DiffLayout;
   /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
   mode: DocPanelMode;
 }
@@ -58,9 +57,11 @@ export function DocPanel({
   isSourceMode,
   activeTab,
   onActiveTabChange,
-  diffLayout,
   mode,
 }: DocPanelProps) {
+  // Lifted from TimelineContent so the choice survives sub-tab switches —
+  // TimelineContent unmounts when activeTab leaves 'timeline'.
+  const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   return (
     <>
       {/* In `'doc'` mode: the 5 info sub-tabs render as the panel header.
@@ -123,7 +124,11 @@ export function DocPanel({
             </Suspense>
           )}
           {activeTab === 'timeline' && (
-            <TimelineContent docName={docName} diffLayout={diffLayout ?? 'unified'} />
+            <TimelineContent
+              docName={docName}
+              diffLayout={diffLayout}
+              onDiffLayoutChange={setDiffLayout}
+            />
           )}
         </div>
       ) : (
