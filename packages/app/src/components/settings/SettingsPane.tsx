@@ -51,6 +51,7 @@ import {
 } from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
+import { EnableSyncConfirmDialog } from '@/components/EnableSyncConfirmDialog';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -68,6 +69,8 @@ import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
+import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
 import { FoldersSection } from './FoldersSection';
@@ -480,8 +483,70 @@ function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormPro
           </SettingsSection>
         );
       })}
+      {scope === 'workspace' ? <SyncSection /> : null}
       <IntegrationsSection />
     </div>
+  );
+}
+
+/**
+ * Sync section — surface the git auto-sync toggle in Settings so users have
+ * a deliberate path to re-enable when the header badge is hidden (state ===
+ * 'disabled' hides the badge).
+ *
+ * The toggle isn't config-backed: `syncEnabled` is runtime state on the
+ * SyncEngine (`/api/sync/set-enabled` + `/api/sync/status`). This section
+ * intentionally bypasses `binding.patch` and POSTs directly.
+ */
+function SyncSection() {
+  const status = useGitSyncStatus();
+  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm();
+
+  // Hide the row entirely when there's no git remote — toggling sync on
+  // would only error out. (Matches the badge's `dormant && !hasRemote` hide.)
+  if (status && !status.hasRemote && status.state === 'dormant') return null;
+
+  const enabled = status?.syncEnabled ?? false;
+  const disabledControl = status === null || toggling;
+
+  return (
+    <section aria-labelledby="settings-sync-title" className="space-y-3">
+      <div className="space-y-1">
+        <h2 id="settings-sync-title" className="text-base font-semibold">
+          Sync
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Auto-sync pushes/pulls commits to your git remote on intervals and on save. Toggling on
+          requires confirmation.
+        </p>
+      </div>
+      <div className="rounded-md border p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium">Git auto-sync</div>
+            <p className="text-xs text-muted-foreground">
+              {enabled
+                ? 'Auto-sync is on — your commits push and remote changes pull on intervals.'
+                : 'Auto-sync is off — your edits stay local until you commit and push manually.'}
+            </p>
+          </div>
+          <Switch
+            checked={enabled}
+            disabled={disabledControl}
+            onCheckedChange={onToggleRequest}
+            aria-label={enabled ? 'Disable git auto-sync' : 'Enable git auto-sync'}
+            data-testid="settings-sync-toggle"
+          />
+        </div>
+      </div>
+      <EnableSyncConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        isSubmitting={toggling}
+        onConfirm={() => void onConfirm()}
+      />
+    </section>
   );
 }
 

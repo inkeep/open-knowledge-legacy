@@ -7,10 +7,10 @@
  * Click opens a popover with last-sync details and action buttons.
  */
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
-import { useState } from 'react';
-import { toast } from 'sonner';
+import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
+import { EnableSyncConfirmDialog } from './EnableSyncConfirmDialog';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
@@ -33,19 +33,6 @@ async function triggerSync(op: 'sync' | 'push' | 'pull'): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op }),
   });
-}
-
-async function setSyncEnabled(enabled: boolean): Promise<void> {
-  const res = await fetch('/api/sync/set-enabled', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    // Surface as a thrown error so the caller can toast and avoid leaving
-    // the UI in a state where the switch flipped but the server didn't.
-    throw new Error(`set-enabled failed: HTTP ${res.status}`);
-  }
 }
 
 // ── inner: icon + color per state ────────────────────────────────────────────
@@ -178,21 +165,9 @@ function PopoverBody({
   onOpenConflictResolver,
   onSetIdentity,
 }: PopoverBodyProps) {
-  const [toggling, setToggling] = useState(false);
   const enabled = status.syncEnabled;
-
-  async function handleToggle(next: boolean) {
-    setToggling(true);
-    try {
-      await setSyncEnabled(next);
-    } catch (e) {
-      // The switch animated but the server rejected the request — tell the
-      // user so they can retry instead of thinking sync silently flipped.
-      console.error('[sync] toggle failed', e);
-      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
-    }
-    setToggling(false);
-  }
+  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm();
 
   return (
     <div className="flex flex-col gap-2">
@@ -204,10 +179,16 @@ function PopoverBody({
         <Switch
           checked={enabled}
           disabled={toggling}
-          onCheckedChange={(next) => void handleToggle(next)}
+          onCheckedChange={onToggleRequest}
           aria-label={enabled ? 'Disable sync' : 'Enable sync'}
         />
       </div>
+      <EnableSyncConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        isSubmitting={toggling}
+        onConfirm={() => void onConfirm()}
+      />
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}
       {status.pausedReason && (
@@ -337,6 +318,12 @@ export function SyncStatusBadge({
 
   // Hide when dormant with no remote (truly no git remote)
   if (status.state === 'dormant' && !status.hasRemote) return null;
+
+  // Hide when sync is explicitly disabled — the user opted out, so there's
+  // nothing actionable to surface in the header. Re-enabling goes through
+  // Settings → Sync, which gates with a confirmation dialog. (Unsafe states
+  // like auth-error / conflict / offline still render — they need attention.)
+  if (status.state === 'disabled') return null;
 
   const label = badgeLabel(status);
   const showIdentityDot = Boolean(status.identityUnresolved);
