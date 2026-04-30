@@ -151,7 +151,7 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     });
   });
 
-  test('QA-002: real MP4 → <video src="/test.mp4" controls /> + byte-exact on-disk', async ({
+  test('QA-002: real MP4 → <video src="/test.mp4" /> + byte-exact on-disk (controls omitted on emit)', async ({
     page,
     workerServer,
   }) => {
@@ -162,12 +162,15 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
       .toMatch(/<video\s+src="\/?test\.mp4"/);
     const text = await getSourceText(page);
-    expect(text).toContain('controls');
+    // `controls={true}` matches the descriptor default — emit-time
+    // omit-on-default strips the attr; renderer applies the default at
+    // load. See `serialize-helpers.ts` reconstructAttrs.
+    expect(text).not.toMatch(/controls(=|\s|\/>|>)/);
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'test.mp4');
     expect(sha256(onDisk)).toBe(expectedSha);
   });
 
-  test('QA-003: real MP3 → <audio src="/test.mp3" controls /> + byte-exact on-disk', async ({
+  test('QA-003: real MP3 → <audio src="/test.mp3" /> + byte-exact on-disk (controls omitted on emit)', async ({
     page,
     workerServer,
   }) => {
@@ -178,7 +181,7 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
       .toMatch(/<audio\s+src="\/?test\.mp3"/);
     const text = await getSourceText(page);
-    expect(text).toContain('controls');
+    expect(text).not.toMatch(/controls(=|\s|\/>|>)/);
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'test.mp3');
     expect(sha256(onDisk)).toBe(expectedSha);
   });

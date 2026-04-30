@@ -475,7 +475,11 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     // Video.tsx). Server-absolute src so the browser resolves it against
     // origin under hash routing, not against the doc's hash fragment.
     expect(text).toMatch(/<video\s+src="\/docs\/sub-[^/]+\/clip\.m4v"/);
-    expect(text).toContain('controls');
+    // `controls={true}` matches the canonical `<video>` descriptor's
+    // declared default; emit-time omit-on-default strips the attribute on
+    // the canonical serialize path. Renderer applies controls=true on
+    // load regardless. See `serialize-helpers.ts` reconstructAttrs.
+    expect(text).not.toMatch(/controls(=|\s|\/>|>)/);
 
     // The Video NodeView renders the lowercase `<video>` element. Pin its
     // server-absolute src — pre-fix it was doc-relative (broken under

@@ -193,3 +193,98 @@ describe('emitMdxJsx — omitOnDefault behavior', () => {
     expect(names).toContain('loading');
   });
 });
+
+describe('emitMdxJsx — empty-string-omission for optional strings', () => {
+  test('omits empty string for optional prop without explicit defaultValue', () => {
+    // `srcset` / `sizes` / `title` etc. — empty string ≡ absent; clean noise.
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'srcset', type: 'string', required: false },
+      { name: 'sizes', type: 'string', required: false },
+      { name: 'title', type: 'string', required: false },
+    ];
+    const node = makeNode({ src: '/x.png', srcset: '', sizes: '', title: '' });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('src');
+    expect(names).not.toContain('srcset');
+    expect(names).not.toContain('sizes');
+    expect(names).not.toContain('title');
+  });
+
+  test('preserves empty string for prop with explicit defaultValue: "" (alt="" WCAG decorative)', () => {
+    // `alt=""` is semantically distinct from absent alt — screen-readers
+    // skip decorative images on `alt=""` but announce filename on absent.
+    // Explicit `defaultValue: ''` opts the prop out of empty-string-omit.
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'alt', type: 'string', required: false, defaultValue: '' },
+    ];
+    const node = makeNode({ src: '/x.png', alt: '' });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('alt');
+  });
+
+  test('keeps empty string for required string prop (validation-loud failure)', () => {
+    // Required props with empty value should round-trip the empty value
+    // so the descriptor's runtime validation can fire (or the user can
+    // see the validation error in the editor).
+    const props: PropDef[] = [{ name: 'src', type: 'string', required: true }];
+    const node = makeNode({ src: '' });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('src');
+  });
+
+  test('keeps non-empty string regardless of defaultValue', () => {
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'srcset', type: 'string', required: false },
+    ];
+    const node = makeNode({ src: '/x.png', srcset: '/x@2x.png 2x' });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('srcset');
+  });
+
+  test('strips empty string from preserved attrs (re-save stability)', () => {
+    // Existing on-disk `<img srcset="">` from a prior dirty round-trip
+    // gets canonicalized away on the next emit.
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'srcset', type: 'string', required: false },
+    ];
+    const node = schema.nodes.jsxComponent.create({
+      componentName: 'img',
+      kind: 'element',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: '/x.png' },
+        { type: 'mdxJsxAttribute', name: 'srcset', value: '' },
+      ],
+      sourceRaw: '',
+      sourceDirty: true,
+      props: { src: '/x.png', srcset: '' },
+    });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('src');
+    expect(names).not.toContain('srcset');
+  });
+
+  test('numeric 0 and boolean false are NOT stripped (only empty strings on string PropDefs)', () => {
+    // `width={0}` is semantically distinct from absent width (renders as
+    // collapsed image, vs absent which renders at intrinsic size).
+    // `controls={false}` is the explicit "no chrome" choice for video.
+    const props: PropDef[] = [
+      { name: 'src', type: 'string', required: true },
+      { name: 'width', type: 'number', required: false },
+      { name: 'controls', type: 'boolean', required: false, defaultValue: true },
+    ];
+    const node = makeNode({ src: '/x.png', width: 0, controls: false });
+    const result = emitMdxJsx('img', node, stubCtx, props);
+    const names = result.attributes.map((a) => ('name' in a ? a.name : '<expr>'));
+    expect(names).toContain('width');
+    expect(names).toContain('controls');
+  });
+});

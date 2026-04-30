@@ -50,15 +50,29 @@ function reconstructAttrs(
     : [];
   const structuredProps: Record<string, unknown> = pmNode.attrs.props ?? {};
 
-  // Build a default-emit-omission lookup if descriptor props provided.
-  // Only props that declare BOTH `omitOnDefault: true` and a `defaultValue`
-  // participate — without an explicit defaultValue there's no equality
-  // baseline to test against.
+  // Build per-prop omission rules from the descriptor:
+  //   1. `omitDefaults` — opt-in default-equivalence (loading="lazy",
+  //      controls={true}). Skip when value strictly equals defaultValue.
+  //   2. `stringPropsOmittingEmpty` — string PropDefs that do NOT declare
+  //      an explicit `defaultValue: ''`. Empty string on these is "absent"
+  //      noise (srcset="", sizes="", title="", referrerpolicy="") — the
+  //      attribute carries no semantic vs being absent. Stripped on emit.
+  //
+  // The string rule is NOT opt-in because semantically-meaningful empty
+  // string props (alt="" decorative-image per WCAG) declare
+  // `defaultValue: ''` explicitly, which excludes them from this set —
+  // their empty value is preserved on emit. Numbers / booleans / enums
+  // never participate in this rule (number `0`, boolean `false`, enum
+  // first-value are all distinct from "absent" in HTML semantics).
   const omitDefaults = new Map<string, unknown>();
+  const stringPropsOmittingEmpty = new Set<string>();
   if (props) {
     for (const p of props) {
       if (p.omitOnDefault === true && 'defaultValue' in p && p.defaultValue !== undefined) {
         omitDefaults.set(p.name, p.defaultValue);
+      }
+      if (p.type === 'string' && p.required === false && p.defaultValue === undefined) {
+        stringPropsOmittingEmpty.add(p.name);
       }
     }
   }
@@ -71,6 +85,15 @@ function reconstructAttrs(
     // populated from a prior parse of the same prop attribute and would
     // re-emit otherwise).
     if (omitDefaults.has(key) && Object.is(omitDefaults.get(key), value)) {
+      if (existingIdx >= 0) preserved.splice(existingIdx, 1);
+      continue;
+    }
+
+    // Empty-string-omit: optional string props with no explicit default.
+    // Catches PropPanel-driven empty-attr drift (`srcset=""` / `sizes=""`
+    // / `title=""`) without affecting WCAG-semantic `alt=""` (which
+    // declares `defaultValue: ''` and is excluded from this set).
+    if (stringPropsOmittingEmpty.has(key) && value === '') {
       if (existingIdx >= 0) preserved.splice(existingIdx, 1);
       continue;
     }
