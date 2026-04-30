@@ -98,7 +98,6 @@ describe('GET /api/suggest-links', () => {
 
       expect(response.status).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
-        ok: true,
         target: {
           docName: 'project-alpha',
           title: 'Project Alpha',
@@ -135,7 +134,6 @@ describe('GET /api/suggest-links', () => {
 
       expect(response.status).toBe(200);
       expect(JSON.parse(response.body)).toEqual({
-        ok: true,
         target: {
           docName: 'project-alpha',
           title: 'Project Alpha',
@@ -149,7 +147,7 @@ describe('GET /api/suggest-links', () => {
     }
   });
 
-  test('returns graph-style errors for missing, invalid, reserved, and unknown docName inputs', async () => {
+  test('returns RFC 9457 problem details for missing, invalid, reserved, and unknown docName inputs', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-api-suggest-links-'));
     const contentDir = join(projectDir, 'content');
 
@@ -161,10 +159,9 @@ describe('GET /api/suggest-links', () => {
 
       const missingDocName = await callRoute(contentDir, '/api/suggest-links', fileIndex);
       expect(missingDocName.status).toBe(400);
-      expect(JSON.parse(missingDocName.body)).toEqual({
-        ok: false,
-        error: 'Missing docName parameter',
-      });
+      const missingBody = JSON.parse(missingDocName.body) as { type: string; title: string };
+      expect(missingBody.type).toBe('urn:ok:error:invalid-request');
+      expect(missingBody.title).toContain('Missing docName');
 
       const invalidDocName = await callRoute(
         contentDir,
@@ -172,10 +169,9 @@ describe('GET /api/suggest-links', () => {
         fileIndex,
       );
       expect(invalidDocName.status).toBe(400);
-      expect(JSON.parse(invalidDocName.body)).toEqual({
-        ok: false,
-        error: 'Invalid docName',
-      });
+      const invalidBody = JSON.parse(invalidDocName.body) as { type: string; title: string };
+      expect(invalidBody.type).toBe('urn:ok:error:invalid-request');
+      expect(invalidBody.title).toContain('Invalid docName');
 
       const reservedDocName = await callRoute(
         contentDir,
@@ -183,10 +179,9 @@ describe('GET /api/suggest-links', () => {
         fileIndex,
       );
       expect(reservedDocName.status).toBe(400);
-      expect(JSON.parse(reservedDocName.body)).toEqual({
-        ok: false,
-        error: "'__system__' is a reserved document name",
-      });
+      const reservedBody = JSON.parse(reservedDocName.body) as { type: string; title: string };
+      expect(reservedBody.type).toBe('urn:ok:error:reserved-docname');
+      expect(reservedBody.title).toContain('__system__');
 
       const missingPage = await callRoute(
         contentDir,
@@ -194,10 +189,9 @@ describe('GET /api/suggest-links', () => {
         fileIndex,
       );
       expect(missingPage.status).toBe(404);
-      expect(JSON.parse(missingPage.body)).toEqual({
-        ok: false,
-        error: 'Page not found',
-      });
+      const missingPageBody = JSON.parse(missingPage.body) as { type: string; title: string };
+      expect(missingPageBody.type).toBe('urn:ok:error:doc-not-found');
+      expect(missingPageBody.title).toContain('Page not found');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

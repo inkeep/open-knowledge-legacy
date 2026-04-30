@@ -2661,103 +2661,143 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     { handler: 'link-graph', method: 'GET', skipBodyParse: true },
   );
 
-  async function handleOrphans(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const mode = url.searchParams.get('mode') ?? 'both';
-      if (!isOrphanMode(mode)) {
-        json(res, 400, {
-          ok: false,
-          error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
+  const handleOrphans = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'orphans' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const mode = url.searchParams.get('mode') ?? 'both';
+        if (!isOrphanMode(mode)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Invalid orphan mode. Allowed values: incoming, outgoing, both.',
+            { handler: 'orphans' },
+          );
+          return;
+        }
+
+        const orphans = backlinkIndex
+          .getOrphans([...getFileIndex().keys()], mode)
+          .map((docName) => ({
+            docName,
+            title: readPageTitleForDocName(docName),
+          }));
+        json(res, 200, { orphans });
+      } catch (e) {
+        console.error('[orphans]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read orphan pages.',
+          { handler: 'orphans', cause: e },
+        );
+      }
+    },
+    { handler: 'orphans', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleHubs = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'hubs' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const rawLimit = url.searchParams.get('limit');
+        const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
+        const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+        const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
+          docName: hub.docName,
+          title: readPageTitleForDocName(hub.docName),
+          count: hub.count,
+        }));
+        json(res, 200, { hubs });
+      } catch (e) {
+        console.error('[hubs]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read hub pages.', {
+          handler: 'hubs',
+          cause: e,
         });
+      }
+    },
+    { handler: 'hubs', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleDeadLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'dead-links' },
+        );
         return;
       }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const sourceDocNames = url.searchParams.getAll('sourceDocName');
+        if (sourceDocNames.some((docName) => docName.length === 0 || !isSafeDocName(docName))) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid sourceDocName.', {
+            handler: 'dead-links',
+          });
+          return;
+        }
 
-      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()], mode).map((docName) => ({
-        docName,
-        title: readPageTitleForDocName(docName),
-      }));
-      json(res, 200, { ok: true, orphans });
-    } catch (e) {
-      console.error('[orphans]', e);
-      json(res, 500, { ok: false, error: 'Failed to read orphan pages' });
-    }
-  }
+        const sourceDocNameFilter = sourceDocNames.length
+          ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
+          : undefined;
+        const deadLinks = backlinkIndex.getDeadLinks(
+          collectAdmittedDocNames(),
+          sourceDocNameFilter,
+        );
 
-  async function handleHubs(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const rawLimit = url.searchParams.get('limit');
-      const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
-      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
-      const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
-        docName: hub.docName,
-        title: readPageTitleForDocName(hub.docName),
-        count: hub.count,
-      }));
-      json(res, 200, { ok: true, hubs });
-    } catch (e) {
-      console.error('[hubs]', e);
-      json(res, 500, { ok: false, error: 'Failed to read hub pages' });
-    }
-  }
-
-  async function handleDeadLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const sourceDocNames = url.searchParams.getAll('sourceDocName');
-      if (sourceDocNames.some((docName) => docName.length === 0 || !isSafeDocName(docName))) {
-        json(res, 400, { ok: false, error: 'Invalid sourceDocName' });
-        return;
-      }
-
-      const sourceDocNameFilter = sourceDocNames.length
-        ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
-        : undefined;
-      const deadLinks = backlinkIndex.getDeadLinks(collectAdmittedDocNames(), sourceDocNameFilter);
-
-      const response = {
-        ok: true,
-        deadLinks: deadLinks.map((entry) => ({
-          target: entry.target,
-          sources: entry.sources.map((sourceEntry) => ({
-            source: sourceEntry.source,
-            title: readPageTitleForDocName(sourceEntry.source),
-            snippet: sourceEntry.snippet,
+        json(res, 200, {
+          deadLinks: deadLinks.map((entry) => ({
+            target: entry.target,
+            sources: entry.sources.map((sourceEntry) => ({
+              source: sourceEntry.source,
+              title: readPageTitleForDocName(sourceEntry.source),
+              snippet: sourceEntry.snippet,
+            })),
           })),
-        })),
-      };
-
-      json(res, 200, response);
-    } catch (e) {
-      console.error('[dead-links]', e);
-      json(res, 500, { ok: false, error: 'Failed to read dead links' });
-    }
-  }
+        });
+      } catch (e) {
+        console.error('[dead-links]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read dead links.',
+          { handler: 'dead-links', cause: e },
+        );
+      }
+    },
+    { handler: 'dead-links', method: 'GET', skipBodyParse: true },
+  );
 
   const handleAgentPatch = withValidation(
     AgentPatchRequestSchema,
@@ -4848,43 +4888,58 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     { handler: 'pages', method: 'GET', skipBodyParse: true },
   );
 
+  const handleSuggestLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'suggest-links',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'suggest-links',
+          });
+          return;
+        }
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-docname',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'suggest-links' },
+          );
+          return;
+        }
 
-  async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
+        const result = await suggestLinks({
+          hocuspocus,
+          fileIndex: getFileIndex(),
+          docName,
+        });
+        json(res, 200, result);
+      } catch (error) {
+        if (error instanceof SuggestLinksTargetNotFoundError) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', 'Page not found.', {
+            handler: 'suggest-links',
+            cause: error,
+          });
+          return;
+        }
+        console.error('[suggest-links]', error);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to suggest links.', {
+          handler: 'suggest-links',
+          cause: error,
+        });
       }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-
-      const result = await suggestLinks({
-        hocuspocus,
-        fileIndex: getFileIndex(),
-        docName,
-      });
-      json(res, 200, { ok: true, ...result });
-    } catch (error) {
-      if (error instanceof SuggestLinksTargetNotFoundError) {
-        json(res, 404, { ok: false, error: 'Page not found' });
-        return;
-      }
-      console.error('[suggest-links]', error);
-      json(res, 500, { ok: false, error: 'Failed to suggest links' });
-    }
-  }
+    },
+    { handler: 'suggest-links', method: 'GET', skipBodyParse: true },
+  );
 
   async function handleUploadAsset(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {

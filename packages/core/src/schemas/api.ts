@@ -182,6 +182,10 @@ export const ProblemTypeSchema = z.enum([
   // errors during read.
   'urn:ok:error:document-not-available',
   'urn:ok:error:backlink-index-not-configured',
+  // Cluster D: orphans / hubs / dead-links / suggest-links (US-009).
+  // No new tokens — reuses cluster-C `backlink-index-not-configured`,
+  // cluster-B `doc-not-found` (suggest-links target missing), shared
+  // `invalid-request` (orphan-mode / docName validation) and `internal-server-error`.
 ]);
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
 const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
@@ -1024,3 +1028,136 @@ export type LinkGraphSuccess = z.infer<typeof LinkGraphSuccessSchema>;
 const _LinkGraphSuccessSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphSuccess> =
   LinkGraphSuccessSchema;
 void _LinkGraphSuccessSchemaIsStandard;
+
+// -----------------------------------------------------------------------------
+// Cluster D: orphans / hubs / dead-links / suggest-links (US-009).
+// All four are GET endpoints — request schemas are EmptyRequestSchema (query
+// params parsed manually inside the handler; their validity is enforced
+// inline via errorResponse `urn:ok:error:invalid-request` emits).
+// -----------------------------------------------------------------------------
+
+/**
+ * Single entry in the orphans response. `title` is the H1 / frontmatter title
+ * pulled from the corresponding markdown file; falls back to `docName` if no
+ * usable heading exists.
+ */
+export const OrphanEntrySchema = z
+  .object({
+    docName: z.string().min(1),
+    title: z.string(),
+  })
+  .loose();
+export type OrphanEntry = z.infer<typeof OrphanEntrySchema>;
+const _OrphanEntrySchemaIsStandard: StandardSchemaV1<unknown, OrphanEntry> = OrphanEntrySchema;
+void _OrphanEntrySchemaIsStandard;
+
+/** Success body for `GET /api/orphans[?mode=incoming|outgoing|both]`. */
+export const OrphansSuccessSchema = z
+  .object({
+    orphans: z.array(OrphanEntrySchema),
+  })
+  .loose();
+export type OrphansSuccess = z.infer<typeof OrphansSuccessSchema>;
+const _OrphansSuccessSchemaIsStandard: StandardSchemaV1<unknown, OrphansSuccess> =
+  OrphansSuccessSchema;
+void _OrphansSuccessSchemaIsStandard;
+
+/** Single entry in the hubs response. `count` is the inbound-backlink count. */
+export const HubEntrySchema = z
+  .object({
+    docName: z.string().min(1),
+    title: z.string(),
+    count: z.number().int().nonnegative(),
+  })
+  .loose();
+export type HubEntry = z.infer<typeof HubEntrySchema>;
+const _HubEntrySchemaIsStandard: StandardSchemaV1<unknown, HubEntry> = HubEntrySchema;
+void _HubEntrySchemaIsStandard;
+
+/** Success body for `GET /api/hubs[?limit=N]`. */
+export const HubsSuccessSchema = z
+  .object({
+    hubs: z.array(HubEntrySchema),
+  })
+  .loose();
+export type HubsSuccess = z.infer<typeof HubsSuccessSchema>;
+const _HubsSuccessSchemaIsStandard: StandardSchemaV1<unknown, HubsSuccess> = HubsSuccessSchema;
+void _HubsSuccessSchemaIsStandard;
+
+/**
+ * Single source-pointer for a dead-link entry — references the page that
+ * contains the broken link plus a short snippet for context.
+ */
+export const DeadLinkSourceSchema = z
+  .object({
+    source: z.string().min(1),
+    title: z.string(),
+    snippet: z.string().nullable(),
+  })
+  .loose();
+export type DeadLinkSource = z.infer<typeof DeadLinkSourceSchema>;
+const _DeadLinkSourceSchemaIsStandard: StandardSchemaV1<unknown, DeadLinkSource> =
+  DeadLinkSourceSchema;
+void _DeadLinkSourceSchemaIsStandard;
+
+/** Single dead-link entry — one missing target plus the sources that point at it. */
+export const DeadLinkEntrySchema = z
+  .object({
+    target: z.string().min(1),
+    sources: z.array(DeadLinkSourceSchema),
+  })
+  .loose();
+export type DeadLinkEntry = z.infer<typeof DeadLinkEntrySchema>;
+const _DeadLinkEntrySchemaIsStandard: StandardSchemaV1<unknown, DeadLinkEntry> =
+  DeadLinkEntrySchema;
+void _DeadLinkEntrySchemaIsStandard;
+
+/** Success body for `GET /api/dead-links[?sourceDocName=...&sourceDocName=...]`. */
+export const DeadLinksSuccessSchema = z
+  .object({
+    deadLinks: z.array(DeadLinkEntrySchema),
+  })
+  .loose();
+export type DeadLinksSuccess = z.infer<typeof DeadLinksSuccessSchema>;
+const _DeadLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, DeadLinksSuccess> =
+  DeadLinksSuccessSchema;
+void _DeadLinksSuccessSchemaIsStandard;
+
+/** Target page metadata in a `/api/suggest-links` response. */
+export const SuggestLinksTargetSchema = z
+  .object({
+    docName: z.string().min(1),
+    title: z.string(),
+    aliases: z.array(z.string()),
+  })
+  .loose();
+export type SuggestLinksTarget = z.infer<typeof SuggestLinksTargetSchema>;
+const _SuggestLinksTargetSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksTarget> =
+  SuggestLinksTargetSchema;
+void _SuggestLinksTargetSchemaIsStandard;
+
+/** Single mention discovered while scanning the corpus. */
+export const SuggestLinksMentionSchema = z
+  .object({
+    source: z.string().min(1),
+    excerpt: z.string(),
+    offset: z.number().int().nonnegative(),
+  })
+  .loose();
+export type SuggestLinksMention = z.infer<typeof SuggestLinksMentionSchema>;
+const _SuggestLinksMentionSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksMention> =
+  SuggestLinksMentionSchema;
+void _SuggestLinksMentionSchemaIsStandard;
+
+/** Success body for `GET /api/suggest-links?docName=...`. */
+export const SuggestLinksSuccessSchema = z
+  .object({
+    target: SuggestLinksTargetSchema,
+    mentions: z.array(SuggestLinksMentionSchema),
+    truncated: z.boolean(),
+  })
+  .loose();
+export type SuggestLinksSuccess = z.infer<typeof SuggestLinksSuccessSchema>;
+const _SuggestLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksSuccess> =
+  SuggestLinksSuccessSchema;
+void _SuggestLinksSuccessSchemaIsStandard;

@@ -1,4 +1,13 @@
-import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
+import {
+  type HubEntry,
+  HubsSuccessSchema,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanEntry,
+  type OrphanMode,
+  OrphansSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -60,29 +69,6 @@ function saveBoolPref(key: string, value: boolean): void {
 
 type FullscreenGraphMode = 'explore' | 'orphans' | 'hubs';
 
-interface OrphanEntry {
-  docName: string;
-  title: string;
-}
-
-interface HubEntry {
-  docName: string;
-  title: string;
-  count: number;
-}
-
-interface OrphansResponse {
-  ok: boolean;
-  orphans?: OrphanEntry[];
-  error?: string;
-}
-
-interface HubsResponse {
-  ok: boolean;
-  hubs?: HubEntry[];
-  error?: string;
-}
-
 const FULLSCREEN_MODE_LABELS: Record<FullscreenGraphMode, string> = {
   explore: 'Explore',
   orphans: 'Orphans',
@@ -97,18 +83,30 @@ const ORPHAN_MODE_LABELS: Record<OrphanMode, string> = {
 
 async function fetchOrphans(mode: OrphanMode): Promise<OrphanEntry[]> {
   const res = await fetch(`/api/orphans?mode=${encodeURIComponent(mode)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as OrphansResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load orphan pages');
-  return data.orphans ?? [];
+  const body: unknown = await res.json();
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    throw new Error(
+      problem.success ? problem.data.title : `Server error: ${res.status} ${res.statusText}`,
+    );
+  }
+  const success = OrphansSuccessSchema.safeParse(body);
+  if (!success.success) throw new Error('Failed to load orphan pages');
+  return success.data.orphans;
 }
 
 async function fetchHubs(limit: number): Promise<HubEntry[]> {
   const res = await fetch(`/api/hubs?limit=${encodeURIComponent(String(limit))}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as HubsResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load hub pages');
-  return data.hubs ?? [];
+  const body: unknown = await res.json();
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    throw new Error(
+      problem.success ? problem.data.title : `Server error: ${res.status} ${res.statusText}`,
+    );
+  }
+  const success = HubsSuccessSchema.safeParse(body);
+  if (!success.success) throw new Error('Failed to load hub pages');
+  return success.data.hubs;
 }
 
 function navigateToDoc(docName: string) {

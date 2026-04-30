@@ -326,13 +326,11 @@ describe('graph endpoints', () => {
       );
       expect(globalResponse.status).toBe(200);
       const globalBody = JSON.parse(globalResponse.body) as {
-        ok: boolean;
         deadLinks: Array<{
           target: string;
           sources: Array<{ source: string; title: string; snippet: string | null }>;
         }>;
       };
-      expect(globalBody.ok).toBe(true);
       expect(globalBody.deadLinks).toEqual([
         {
           target: 'missing-target',
@@ -359,7 +357,6 @@ describe('graph endpoints', () => {
       );
       expect(scopedResponse.status).toBe(200);
       const scopedBody = JSON.parse(scopedResponse.body) as {
-        ok: boolean;
         deadLinks: Array<{
           target: string;
           sources: Array<{ source: string; title: string; snippet: string | null }>;
@@ -386,7 +383,7 @@ describe('graph endpoints', () => {
         backlinkIndex,
       );
       expect(emptyResponse.status).toBe(200);
-      expect(JSON.parse(emptyResponse.body)).toEqual({ ok: true, deadLinks: [] });
+      expect(JSON.parse(emptyResponse.body)).toEqual({ deadLinks: [] });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -400,10 +397,9 @@ describe('graph endpoints', () => {
       const fileIndex = new Map<string, FileIndexEntry>();
       const response = await callRoute(contentDir, '/api/dead-links', fileIndex);
       expect(response.status).toBe(503);
-      expect(JSON.parse(response.body)).toEqual({
-        ok: false,
-        error: 'Backlink index not configured',
-      });
+      const body = JSON.parse(response.body) as { type: string; title: string; status: number };
+      expect(body.type).toBe('urn:ok:error:backlink-index-not-configured');
+      expect(body.status).toBe(503);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -431,10 +427,9 @@ describe('graph endpoints', () => {
       );
 
       expect(response.status).toBe(400);
-      expect(JSON.parse(response.body)).toEqual({
-        ok: false,
-        error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
-      });
+      const body = JSON.parse(response.body) as { type: string; title: string };
+      expect(body.type).toBe('urn:ok:error:invalid-request');
+      expect(body.title).toContain('Invalid orphan mode');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

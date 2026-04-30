@@ -1,10 +1,15 @@
-import type { HeadingEntry } from '@inkeep/open-knowledge-core';
+import {
+  type HeadingEntry,
+  PageHeadingsSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import type { ResolvedPos } from '@tiptap/pm/model';
 import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import fuzzysort from 'fuzzysort';
+import { HttpResponseParseError } from '../http-client';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
 import {
   createSuggestionPopup,
@@ -143,9 +148,24 @@ export async function fetchPages(): Promise<PageItem[]> {
 
 export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const r = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
-  if (!r.ok) throw new Error(`/api/page-headings responded with ${r.status}`);
-  const data = (await r.json()) as { ok: boolean; headings?: HeadingEntry[] };
-  return data.ok && Array.isArray(data.headings) ? data.headings : [];
+  let body: unknown;
+  try {
+    body = await r.json();
+  } catch (cause) {
+    throw new HttpResponseParseError('Page headings response was not JSON', {
+      cause,
+      status: r.status,
+    });
+  }
+  if (!r.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    throw new Error(
+      problem.success ? problem.data.title : `/api/page-headings responded with ${r.status}`,
+    );
+  }
+  const success = PageHeadingsSuccessSchema.safeParse(body);
+  if (!success.success) return [];
+  return success.data.headings ?? [];
 }
 
 /**
