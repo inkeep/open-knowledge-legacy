@@ -23,6 +23,7 @@ import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
 import imagePreview from './preview-assets/image-preview.png';
+import videoPreview from './preview-assets/video-preview.png';
 
 /**
  * Per-component hover-preview configuration. Each entry is rendered live via
@@ -55,7 +56,7 @@ const PREVIEW_CONFIG: Record<string, PreviewConfig> = {
   },
   video: {
     description: 'Embed a video with native player controls.',
-    props: { controls: true },
+    props: { controls: true, poster: videoPreview },
   },
   audio: {
     description: 'Embed an audio file with native player controls.',
