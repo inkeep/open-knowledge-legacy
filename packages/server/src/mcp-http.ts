@@ -81,14 +81,9 @@ function createSessionServer(
     },
   );
 
-  // Per-session identity (US-008, D-10):
-  //   * `connectionId` is the per-session UUID — the only stable disambiguator
-  //     when multiple clients report the same `clientInfo.name` (e.g. two
-  //     Claude Code instances on the same `ok start`).
-  //   * `displayName` / `colorSeed` derive from `clientInfo.name` once the
-  //     MCP `initialize` handshake completes; before that the connectionId
-  //     stands in. `clientInfo.name` is mandatory in the MCP
-  //     `InitializeRequestSchema`, so the post-init branch always has a name.
+  // `connectionId` is the only stable per-session disambiguator when multiple
+  // clients report the same MCP `clientInfo.name`, such as two Claude Code
+  // instances connected to the same `ok start` server.
   const connectionId = randomUUID();
   const identityRef: { current: AgentIdentity } = {
     current: {

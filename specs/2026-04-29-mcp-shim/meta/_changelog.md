@@ -1,11 +1,11 @@
 # Changelog — 2026-04-29 mcp-shim spec
 
-## 2026-04-29 — Initial spec drafted from todo.txt
+## 2026-04-29 — Initial spec drafted from planning notes
 
-- Structured the existing analysis in `todo.txt` into `SPEC.md` (sections 1–14).
+- Structured the existing planning analysis into `SPEC.md` (sections 1–14).
 - Pre-decisions from the todo recorded in §9 Decision Log: D-1..D-8.
 - Remaining judgment calls surfaced in §10 Open Questions: OQ-1..OQ-5.
-- Verified the load-bearing claims in the todo against the codebase before structuring:
+- Verified the load-bearing planning claims against the codebase before structuring:
   - `mcp-http.ts:6-8` does the cross-package import — confirmed.
   - `preview-url.ts:29` carries the relative-path workaround — confirmed.
   - `decideAutoStart` / `ensureServerRunning` / `createProjectServerUrlResolver` /
@@ -15,7 +15,7 @@
     `server-discovery.ts:209-260` — confirmed.
   - `computeForce` / `isHistoricalNpxVariant` / `isPriorCliPathShape` exist in
     `desktop/src/main/mcp-wiring.ts` — confirmed.
-- LOC numbers in the todo (cli/src/mcp/server.ts ~395; server-discovery.ts ~637;
+- LOC numbers from planning (cli/src/mcp/server.ts ~395; server-discovery.ts ~637;
   shim.ts 260; mcp-http.ts 221) verified via `wc -l`.
 
 ## 2026-04-29 — OQ-1..OQ-4 resolved

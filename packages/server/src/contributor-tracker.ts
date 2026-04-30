@@ -27,11 +27,9 @@ interface ActorMetadata {
   /** MCP `clientInfo.version`. */
   clientVersion?: string;
   /**
-   * Optional free-form label propagated through the request body when an
-   * upstream caller (currently no live caller; kept on the actor tuple for
-   * future API-boundary use) wants to disambiguate a writer beyond
-   * `clientInfo.name`. Per-session identity now derives from `clientInfo.name`
-   * + `connectionId` (US-008 / D-10), so this field stays nullable.
+   * Optional free-form label from API request bodies. MCP session identity
+   * already combines `clientInfo.name` with a stable `connectionId`, so this
+   * stays nullable for callers that do not need an extra disambiguator.
    */
   label?: string;
 }

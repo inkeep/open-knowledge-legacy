@@ -1,9 +1,9 @@
 # MCP Shim — Cleanup and Layering Refactor
 
-**Status:** Draft (initial structuring from `todo.txt`)
+**Status:** Draft
 **Owner:** mike.r
 **Date:** 2026-04-29
-**Source:** `specs/2026-04-29-mcp-shim/todo.txt`
+**Source:** Prior planning analysis consolidated into this spec
 
 ---
 
@@ -176,7 +176,7 @@ Each item lists acceptance criteria the implementer can verify.
 
 ## 9. Decision Log
 
-The user pre-decided most of these in `todo.txt`; recording them as the spec's commitments.
+The user pre-decided most of these during planning; recording them as the spec's commitments.
 
 | # | Type | Reversibility | Decision |
 |---|---|---|---|
@@ -222,7 +222,7 @@ The user pre-decided most of these in `todo.txt`; recording them as the spec's c
 
 ## 12. Implementation Phasing
 
-This is the sequencing from `todo.txt`, ratified.
+This is the ratified implementation sequencing.
 
 | Phase | Items | Why this order |
 |---|---|---|
@@ -253,6 +253,5 @@ The refactor is complete when:
 
 ## 14. References
 
-- Source todo: `specs/2026-04-29-mcp-shim/todo.txt`
 - Verified files: `packages/server/src/mcp-http.ts`, `packages/cli/src/mcp/shim.ts`, `packages/cli/src/mcp/tools/preview-url.ts`, `packages/cli/src/mcp/server-discovery.ts`, `packages/desktop/src/main/mcp-wiring.ts`
 - Related spec to sweep: `specs/2026-04-24-cross-install-version-handshake/SPEC.md` (G6/G7 sections become superseded)
