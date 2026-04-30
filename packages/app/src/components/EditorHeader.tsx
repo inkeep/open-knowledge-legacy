@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, Pin, PinOff, Save } from 'lucide-react';
+import { FolderOpen, GitFork, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -85,8 +85,7 @@ export function EditorHeader({
   onOpenConflictResolver,
   onOpenClone,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
-    useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, closeDocument } = useDocumentContext();
   const { pageMeta } = usePageList();
   const { state: sidebarState } = useSidebar();
   const workspace = useWorkspace();
@@ -117,13 +116,7 @@ export function EditorHeader({
   const pathPrefix =
     activeDocName && index !== -1 ? `${activeDocName.substring(0, index + 1)}` : '';
   const fileBaseName = activeDocName ? activeDocName.substring(index + 1) : '';
-  const isPinned = pinnedDoc !== null;
 
-  function togglePin() {
-    if (!activeDocName) return;
-    if (isPinned) unpin();
-    else pin(activeDocName);
-  }
   // --- Inline rename state ---
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -398,36 +391,6 @@ export function EditorHeader({
           </div>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
-        )}
-        {activeDocName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground"
-                onClick={togglePin}
-                aria-label={
-                  isPinned
-                    ? 'Unpin — resume following agent'
-                    : 'Pin this doc — stop following agent'
-                }
-                aria-pressed={isPinned}
-                data-pinned={isPinned ? 'true' : 'false'}
-              >
-                {isPinned ? (
-                  <Pin className="size-4 text-foreground" fill="currentColor" />
-                ) : (
-                  <PinOff className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isPinned
-                ? 'Pinned — click to resume following agent navigation'
-                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
-            </TooltipContent>
-          </Tooltip>
         )}
         {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
