@@ -73,7 +73,10 @@ function makeFetchWithTimeout(
       return globalThis.fetch(url as URL, init);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(
+      () => controller.abort(new Error(`MCP request timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
     const signal =
       init?.signal instanceof AbortSignal
         ? AbortSignal.any([init.signal, controller.signal])

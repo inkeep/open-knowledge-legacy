@@ -380,8 +380,12 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     await runStep(
       'httpServer.close',
       () =>
-        new Promise<void>((resolveClose) => {
-          httpServer.close(() => resolveClose());
+        new Promise<void>((resolveClose, rejectClose) => {
+          httpServer.close((err) =>
+            err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+              ? rejectClose(err)
+              : resolveClose(),
+          );
         }),
     );
     await runStep('destroyHocuspocus', () => destroyHocuspocus());
