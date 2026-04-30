@@ -13,13 +13,28 @@ describe('pickInsertShape — emit-dispatch by extension', () => {
     expect(pickInsertShape('avatar.webp').kind).toBe('jsx-img');
   });
 
-  test('non-image wikiembed extension emits wikiembed (PDF / video / audio)', () => {
+  test('video extension emits jsx-video (canonical <video> JSX shape)', () => {
+    expect(pickInsertShape('clip.mp4').kind).toBe('jsx-video');
+    expect(pickInsertShape('reel.webm').kind).toBe('jsx-video');
+    expect(pickInsertShape('demo.mov').kind).toBe('jsx-video');
+    expect(pickInsertShape('preview.m4v').kind).toBe('jsx-video');
+    expect(pickInsertShape('master.mkv').kind).toBe('jsx-video');
+  });
+
+  test('audio extension emits jsx-audio (canonical <audio> JSX shape)', () => {
+    expect(pickInsertShape('song.mp3').kind).toBe('jsx-audio');
+    expect(pickInsertShape('voice.wav').kind).toBe('jsx-audio');
+    expect(pickInsertShape('podcast.ogg').kind).toBe('jsx-audio');
+    expect(pickInsertShape('clip.m4a').kind).toBe('jsx-audio');
+    expect(pickInsertShape('master.flac').kind).toBe('jsx-audio');
+    expect(pickInsertShape('jingle.aac').kind).toBe('jsx-audio');
+    expect(pickInsertShape('vox.opus').kind).toBe('jsx-audio');
+  });
+
+  test('non-image-non-video-non-audio wikiembed extension emits wikiembed (PDF only)', () => {
     // pdf stays on wiki-embed (no descriptor → keep wiki-link semantic per
-    // the "no descriptor → fallback" principle). video/audio currently
-    // remain on wikiembed until US-009 introduces jsx-video / jsx-audio.
+    // the "no descriptor → fallback" principle).
     expect(pickInsertShape('draft.pdf').kind).toBe('wikiembed');
-    expect(pickInsertShape('clip.mp4').kind).toBe('wikiembed');
-    expect(pickInsertShape('song.mp3').kind).toBe('wikiembed');
   });
 
   test('opaque extension emits markdown-link', () => {
@@ -30,7 +45,9 @@ describe('pickInsertShape — emit-dispatch by extension', () => {
 
   test('extension matching is case-insensitive', () => {
     expect(pickInsertShape('PHOTO.PNG').kind).toBe('jsx-img');
-    expect(pickInsertShape('Clip.MP4').kind).toBe('wikiembed');
+    expect(pickInsertShape('Clip.MP4').kind).toBe('jsx-video');
+    expect(pickInsertShape('Song.MP3').kind).toBe('jsx-audio');
+    expect(pickInsertShape('DRAFT.PDF').kind).toBe('wikiembed');
   });
 
   // .md / .mdx are first-class OK docs, not opaque assets. The drop surface

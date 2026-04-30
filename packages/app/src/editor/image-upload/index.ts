@@ -1,8 +1,10 @@
 import {
+  AUDIO_EXTENSIONS,
   DEFAULT_DEDUP_UI,
   DEFAULT_EMIT_FORMAT,
   extensionOf,
   IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
   WIKI_EMBED_EXTENSIONS,
 } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
@@ -156,21 +158,30 @@ function docNameFromEditor(editor: Editor): string | null {
 }
 
 interface InsertShape {
-  kind: 'wikiembed' | 'image' | 'jsx-img' | 'markdown-link' | 'wiki-link';
+  kind:
+    | 'wikiembed'
+    | 'image'
+    | 'jsx-img'
+    | 'jsx-video'
+    | 'jsx-audio'
+    | 'markdown-link'
+    | 'wiki-link';
   ext: string;
 }
 
 /**
  * Choose the PM insert shape for a freshly uploaded file. Dispatches by
- * extension against `WIKI_EMBED_EXTENSIONS` + `IMAGE_EXTENSIONS` — both
- * fixed constants (zero user-facing upload config). Markdown files are
- * OK docs (wiki-link semantic), not assets.
+ * extension against the fixed media-extension constants
+ * (`IMAGE_EXTENSIONS` / `VIDEO_EXTENSIONS` / `AUDIO_EXTENSIONS` /
+ * `WIKI_EMBED_EXTENSIONS`) — zero user-facing upload config. Markdown
+ * files are OK docs (wiki-link semantic), not assets.
  *
- * Image extensions emit `jsx-img` (canonical lowercase `<img>` JSX shape) so
- * drag/drop/paste converges with the slash-menu insert path on `Image.tsx`
- * (zoom, PropPanel, full htmlImgProps surface). Non-image wiki-embed
- * extensions (pdf today; video/audio until US-009) keep the wiki-embed
- * fallback — the `keep as wiki-link if no descriptor` principle.
+ * Image / video / audio extensions emit the canonical lowercase JSX shapes
+ * (`<img>` / `<video>` / `<audio>`) so drag/drop/paste converges with the
+ * slash-menu insert path on `Image.tsx` / `Video.tsx` / `Audio.tsx` (zoom +
+ * PropPanel + full canonical-prop surface). Remaining wiki-embed extensions
+ * (pdf — no descriptor) keep the wiki-embed fallback per the
+ * "keep as wiki-link if no descriptor" principle.
  */
 export function pickInsertShape(filename: string): InsertShape {
   const ext = extensionOf(filename);
@@ -182,6 +193,12 @@ export function pickInsertShape(filename: string): InsertShape {
   }
   if (IMAGE_EXTENSIONS.has(ext)) {
     return { kind: 'jsx-img', ext };
+  }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-video', ext };
+  }
+  if (AUDIO_EXTENSIONS.has(ext)) {
+    return { kind: 'jsx-audio', ext };
   }
   if (WIKI_EMBED_EXTENSIONS.has(ext)) {
     if (DEFAULT_EMIT_FORMAT === 'wikiembed') return { kind: 'wikiembed', ext };
@@ -328,29 +345,40 @@ export async function uploadAndInsert(
   // absolute URL shape.
   const resolvedSrc = `/${assetContentPath}`;
 
-  if (shape.kind === 'jsx-img') {
-    // Image-extension drops emit the OK-canonical `<img>` JSX shape so the
-    // drag/drop/paste path converges with the slash-menu insert on the
-    // `Image.tsx` renderer (zoom, PropPanel, full htmlImgProps surface).
-    // Only `src` + `alt` are populated in `props` — leaving the rest unset
-    // so `emitMdxJsx` doesn't emit a wall of `attr=""` defaults; the
-    // PropPanel still surfaces every htmlImgProps field for the user to
-    // fill in (it reads from descriptor.props, not from node.attrs.props).
+  if (shape.kind === 'jsx-img' || shape.kind === 'jsx-video' || shape.kind === 'jsx-audio') {
+    // Image / video / audio drops all emit the OK-canonical lowercase JSX
+    // shape (`<img>` / `<video>` / `<audio>`) so drag/drop/paste converges
+    // with the slash-menu insert on `Image.tsx` / `Video.tsx` / `Audio.tsx`
+    // (zoom + PropPanel + full canonical-prop surface).
+    //
+    // `props` carries only the user-visible inputs that distinguish a fresh
+    // drop — `src` for everything, `alt: ""` for `<img>` (HTML accessibility
+    // semantic), `controls: true` for `<video>` / `<audio>` (mirrors the
+    // user-stated success criterion `<video src controls />`). Leaving the
+    // rest unset prevents `emitMdxJsx` from emitting a wall of `attr=""`
+    // defaults; the PropPanel still surfaces every canonical-prop field
+    // because it iterates `descriptor.props`, not `node.attrs.props`.
     const jsxNode = state.schema.nodes.jsxComponent;
     if (!jsxNode) {
       console.error('[uploadAndInsert] jsxComponent node missing from schema');
       showError(editor, uploadId);
       return;
     }
+    const componentName =
+      shape.kind === 'jsx-img' ? 'img' : shape.kind === 'jsx-video' ? 'video' : 'audio';
+    const initialProps: Record<string, unknown> =
+      shape.kind === 'jsx-img'
+        ? { src: resolvedSrc, alt: '' }
+        : { src: resolvedSrc, controls: true };
     const childData: Record<string, unknown> = {
       type: 'jsxComponent',
       attrs: {
-        componentName: 'img',
+        componentName,
         kind: 'element',
         attributes: [],
         sourceRaw: '',
         sourceDirty: true,
-        props: { src: resolvedSrc, alt: '' },
+        props: initialProps,
       },
     };
 
@@ -367,7 +395,7 @@ export async function uploadAndInsert(
       .focus()
       .insertContentAt(mappedPos, childData)
       .run();
-    focusInsertedComponent(editor, mappedPos, getDescriptor('img'));
+    focusInsertedComponent(editor, mappedPos, getDescriptor(componentName));
     return;
   }
 

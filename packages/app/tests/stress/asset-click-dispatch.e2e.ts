@@ -429,27 +429,26 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await expect(page.getByText('Page not found')).not.toBeVisible();
   });
 
-  test('P9.21: `.m4v` drop renders through FR-A5 NodeView + chip dispatches on click (2026-04-24b)', async ({
+  test('P9.21: `.m4v` drop renders through Video JSX + server serves video/mp4 inline (2026-04-24b)', async ({
     page,
     api,
   }) => {
-    // SPEC §Post-finalization amendment (2026-04-24b) regression guard.
-    // Pre-fix: user dropped `.m4v`, click opened a new tab whose URL fell
-    // through to Vite's SPA fallback as text/html (editor shell rendered
-    // inside the tab). Three defects underlay the symptom:
+    // SPEC §Post-finalization amendment (2026-04-24b) regression guard,
+    // post-WikiEmbed-convergence reshaped: video extensions now drop as
+    // `<video src>` JSX (descriptor-rendered via Video.tsx) instead of a
+    // wiki-embed `<a>` chip. The original three defects this guarded:
     //   (1) `.m4v` NOT in `ASSET_EXTENSIONS` → content-filter refused
-    //       serve → SPA fallback.
-    //   (2) FR-A5 `createNodeInteractionBridgePlugin` never landed → the
-    //       drop-time wikiLinkEmbed chip had no renderer-side dispatcher
-    //       wiring; click fell through to browser default.
-    //   (3) `classifyMarkdownHref` treated `/vale_15.m4v` as `external`
-    //       not `asset` → post-reload clicks opened PropPanel instead of
-    //       the file.
-    // This test exercises the drop-time path (defect 2). The chip MUST
-    // render via the app-layer `wiki-link-embed.ts` NodeView with a
-    // `data-node-id` InteractionLayer-addressable attribute AND a server-
-    // absolute `href`. Serve-side + classifier fixes covered by P9.17 +
-    // P9.20 respectively; cycle 14 E2E hardening carries this set.
+    //       serve → SPA fallback.        [STILL LOAD-BEARING — `<video>`
+    //                                     fetches the resource itself]
+    //   (2) FR-A5 InteractionLayer wiring (chip dispatch on click).
+    //                                     [SUPERSEDED — JSX has no chip;
+    //                                      P9.18 (PDF) covers chip path]
+    //   (3) `classifyMarkdownHref` asset classification.
+    //                                     [SUPERSEDED — same as (2)]
+    // This test now pins defect (1): the URL embedded in `<video src>`
+    // MUST be server-absolute and the asset-serve middleware MUST stream
+    // the bytes with `Content-Disposition: inline` + `Content-Type:
+    // video/mp4`. Without those, in-page playback fails on Chromium.
     const subdirDoc = `docs/sub-${randomUUID().slice(0, 6)}/notes`;
     await api.createPage(`${subdirDoc}.md`);
     await api.replaceDoc(subdirDoc, '# Video doc\n');
@@ -471,33 +470,29 @@ test.describe('asset-click dispatcher — P9 E2E scenarios (SPEC 2026-04-23)', (
     await expect
       .poll(async () => await getSourceText(page), { timeout: 5_000 })
       .toContain('clip.m4v');
+    const text = await getSourceText(page);
+    // Source emits the lowercase `<video>` JSX shape (descriptor render via
+    // Video.tsx). Server-absolute src so the browser resolves it against
+    // origin under hash routing, not against the doc's hash fragment.
+    expect(text).toMatch(/<video\s+src="\/docs\/sub-[^/]+\/clip\.m4v"/);
+    expect(text).toContain('controls');
 
-    // The FR-A5 NodeView renders the non-image chip as `<a data-wiki-embed>`
-    // with `data-node-id` (InteractionLayer-addressable). Pre-FR-A5, the
-    // chip had `data-wiki-embed` but no `data-node-id` — layer couldn't
-    // route clicks to `handlePrimary`. This selector pins both.
-    const chip = page.locator('a[data-wiki-embed][data-node-id]').first();
-    await chip.waitFor({ state: 'visible', timeout: 5_000 });
+    // The Video NodeView renders the lowercase `<video>` element. Pin its
+    // server-absolute src — pre-fix it was doc-relative (broken under
+    // hash routing).
+    const videoEl = page.locator('.ProseMirror video[src*="/clip.m4v"]').first();
+    await videoEl.waitFor({ state: 'visible', timeout: 5_000 });
+    const src = await videoEl.getAttribute('src');
+    expect(src).toMatch(/^\/docs\/sub-[^/]+\/clip\.m4v$/);
 
-    // Href must be server-absolute (`/docs/sub-xxx/clip.m4v`). Pre-
-    // 2026-04-24a, it was doc-relative (broken under hash routing). The
-    // `data-node-id` has the `wiki-link-embed-` prefix from the
-    // app-layer NodeView's counter — this distinguishes FR-A5-landed
-    // from the pre-fix `<a>` that had no data-node-id at all.
-    const href = await chip.getAttribute('href');
-    expect(href).toMatch(/^\//);
-    expect(href).toMatch(/\/clip\.m4v$/);
-    const nodeId = await chip.getAttribute('data-node-id');
-    expect(nodeId).toMatch(/^wiki-link-embed-/);
-
-    // Full round-trip: fetching the chip's URL streams the file bytes
+    // Full round-trip: fetching the embedded URL streams the file bytes
     // with `Content-Disposition: inline` + `Content-Type: video/mp4`
     // (mrmime gap closed in `asset-serve-middleware.ts` at module load).
     // Pre-2026-04-24b, the server served `text/html` SPA fallback.
     // Pre-mrmime-patch (between 2026-04-24b initial landing and this
     // commit), the Content-Type was empty → Chromium rendered the bytes
     // as garbled text. This assertion pins both fixes together.
-    const res = await page.request.get(href ?? '');
+    const res = await page.request.get(src ?? '');
     expect(res.status()).toBe(200);
     expect(res.headers()['content-disposition']).toBe('inline');
     expect(res.headers()['x-content-type-options']).toBe('nosniff');

@@ -151,24 +151,34 @@ test.describe('asset-embed — real-fidelity byte-identity (QA-001/002/003/004/0
     });
   });
 
-  test('QA-002: real MP4 → ![[test.mp4]] + byte-exact on-disk', async ({ page, workerServer }) => {
+  test('QA-002: real MP4 → <video src="/test.mp4" controls /> + byte-exact on-disk', async ({
+    page,
+    workerServer,
+  }) => {
     const mp4 = readFileSync(join(FIXTURES_DIR, 'real-video.mp4'));
     const expectedSha = sha256(mp4);
     await dropFileBytesIntoEditor(page, mp4, 'test.mp4', 'video/mp4');
     await expect
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
-      .toContain('![[test.mp4]]');
+      .toMatch(/<video\s+src="\/?test\.mp4"/);
+    const text = await getSourceText(page);
+    expect(text).toContain('controls');
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'test.mp4');
     expect(sha256(onDisk)).toBe(expectedSha);
   });
 
-  test('QA-003: real MP3 → ![[test.mp3]] + byte-exact on-disk', async ({ page, workerServer }) => {
+  test('QA-003: real MP3 → <audio src="/test.mp3" controls /> + byte-exact on-disk', async ({
+    page,
+    workerServer,
+  }) => {
     const mp3 = readFileSync(join(FIXTURES_DIR, 'real-sound.mp3'));
     const expectedSha = sha256(mp3);
     await dropFileBytesIntoEditor(page, mp3, 'test.mp3', 'audio/mpeg');
     await expect
       .poll(async () => await getSourceText(page), { timeout: 10_000 })
-      .toContain('![[test.mp3]]');
+      .toMatch(/<audio\s+src="\/?test\.mp3"/);
+    const text = await getSourceText(page);
+    expect(text).toContain('controls');
     const onDisk = await waitForDiskFile(workerServer.contentDir, 'test.mp3');
     expect(sha256(onDisk)).toBe(expectedSha);
   });
