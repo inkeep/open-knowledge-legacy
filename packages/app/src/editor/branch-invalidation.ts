@@ -60,9 +60,12 @@ type BranchSwitchedClearFailedLog = z.infer<typeof BranchSwitchedClearFailedLogS
 export async function handleBranchSwitched(pool: ProviderPool, branch: string): Promise<void> {
   const clears: Promise<void>[] = [];
   for (const [docName, entry] of pool.entries) {
-    // Discriminated-union narrows persistence to non-null on Active.
     // TearingDown entries are transient and don't carry persistence.
+    // Active entries opened before the live server epoch was known
+    // also have null persistence (no persistent IDB attached) — skip
+    // them; there's nothing to clear.
     if (entry.kind !== 'active') continue;
+    if (entry.persistence === null) continue;
     clears.push(
       entry.persistence.clearData().catch((err: unknown) => {
         const log: BranchSwitchedClearFailedLog = {

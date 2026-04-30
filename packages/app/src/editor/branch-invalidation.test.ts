@@ -9,6 +9,12 @@ import { ProviderPool } from './provider-pool';
 // — we care about clearData / recycleAllEntries dispatch, not wire behavior.
 const DUMMY_WS = 'ws://localhost:1/collab';
 
+// Persistence attaches only after a serverInstanceId is known
+// (epoch-scoped IDB DB names). Tests that mock `entry.persistence.*`
+// must seed the live epoch before `pool.open()` so the pool actually
+// constructs an `IndexeddbPersistence`.
+const TEST_SERVER_INSTANCE_ID = 'test-server-instance';
+
 let pool: ProviderPool;
 
 afterEach(() => {
@@ -22,6 +28,7 @@ function docName(prefix = 'branch-inv'): string {
 describe('handleBranchSwitched', () => {
   test("calls clearData on every entry's persistence", async () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const d1 = docName('d1');
     const d2 = docName('d2');
     const e1 = pool.open(d1);
@@ -42,6 +49,7 @@ describe('handleBranchSwitched', () => {
 
   test('recycles all entries after clearData resolves', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const d1 = docName('d1');
     const d2 = docName('d2');
     const e1 = pool.open(d1);
@@ -78,12 +86,14 @@ describe('handleBranchSwitched', () => {
 
   test('skips entries that are tearing down', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const d1 = docName('d1');
     const d2 = docName('d2');
     const e1 = pool.open(d1);
     const e2 = pool.open(d2);
     if (!e1 || !e2) throw new Error('pool.open returned null');
     if (e1.kind !== 'active' || e2.kind !== 'active') throw new Error('expected active');
+    if (!e1.persistence || !e2.persistence) throw new Error('entry missing persistence');
 
     const clear1 = mock(() => Promise.resolve());
     const clear2 = mock(() => Promise.resolve());
@@ -115,6 +125,7 @@ describe('handleBranchSwitched', () => {
 
   test('swallows clearData failures and still recycles', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
     const d1 = docName('d1');
     const e1 = pool.open(d1);
     if (!e1?.persistence) throw new Error('pool.open returned null');

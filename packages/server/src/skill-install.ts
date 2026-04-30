@@ -1,5 +1,5 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,14 @@ export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
 /** Sidecar filename — plain version string + trailing newline. SPEC D5/FR7. */
 const SIDECAR_FILENAME = 'skill-installed-version';
 
+/**
+ * Central source directory the `skills` CLI writes when invoked with
+ * `add … -g --copy`. The skip-current gate verifies this exists alongside the
+ * sidecar version match — sidecar presence alone is not proof the skill is
+ * still on disk (e.g. after a manual `npx skills remove -g`).
+ */
+const CENTRAL_SKILL_DIR_REL = ['.agents', 'skills', 'open-knowledge'] as const;
+
 /** Pinned patch-range for the `skills` CLI. SPEC D16. */
 const SKILLS_CLI_SPEC = 'skills@~1.5.0';
 
@@ -95,6 +103,19 @@ async function writeSidecarVersion(home: string, version: string): Promise<void>
   const path = sidecarPath(home);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${version}\n`, 'utf-8');
+}
+
+function centralSkillDir(home: string): string {
+  return join(home, ...CENTRAL_SKILL_DIR_REL);
+}
+
+async function centralSkillExists(home: string): Promise<boolean> {
+  try {
+    const info = await stat(centralSkillDir(home));
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 interface SpawnOutcome {
@@ -162,9 +183,14 @@ function runSpawn(
  * via `npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy`.
  *
  * Idempotency: a plain version-string sidecar at
- * `${home}/.open-knowledge/skill-installed-version` gates re-install. If the
- * sidecar matches the current `@inkeep/open-knowledge-server` package version,
- * the subprocess is NOT invoked and `'skip-current'` is returned.
+ * `${home}/.open-knowledge/skill-installed-version` gates re-install. The
+ * subprocess is NOT invoked (and `'skip-current'` is returned) only when BOTH
+ * the sidecar matches the current `@inkeep/open-knowledge-server` package
+ * version AND the central skill source directory at
+ * `${home}/.agents/skills/open-knowledge` is still on disk. The disk-presence
+ * check exists because a manual `npx skills remove -g` (or equivalent rm)
+ * leaves the sidecar untouched, which would otherwise wedge the next `ok init`
+ * into a no-op despite the skill being gone.
  *
  * Always resolves (never throws). Non-zero exit, timeout, or spawn error logs
  * a warning via `opts.logger` (or `console.warn`) and returns `'failed'`.
@@ -196,11 +222,21 @@ export async function installUserSkill(
 
   const existingVersion = await readSidecarVersion(home).catch(() => null);
   if (existingVersion !== null && existingVersion === currentVersion) {
+    if (await centralSkillExists(home)) {
+      logger.info?.(
+        { event: 'skill-install.skip-current', version: currentVersion },
+        'Open Knowledge skill already installed at current version; skipping.',
+      );
+      return 'skip-current';
+    }
     logger.info?.(
-      { event: 'skill-install.skip-current', version: currentVersion },
-      'Open Knowledge skill already installed at current version; skipping.',
+      {
+        event: 'skill-install.reinstall-missing',
+        version: currentVersion,
+        path: centralSkillDir(home),
+      },
+      'Sidecar matches current version but skill files are missing; reinstalling.',
     );
-    return 'skip-current';
   }
 
   let bundledDir: string;

@@ -67,17 +67,19 @@ describe('T13: cold start with empty IDB after server restart', () => {
     server = await server.killAndRestartOnSamePort({ downtimeMs: 400 });
     cleanups.unshift(() => server.shutdown());
 
-    // 2. Precondition: IDB is empty for `ok-ydoc:test-doc` — no prior client
-    //    session ever wrote to it.
-    await assertIDBEmpty('test-doc');
-
     // 3. Construct a fresh pool and seed its serverInstanceId from the
     //    POST-restart server. Mirrors the browser's DocumentContext boot
     //    flow: `/api/server-info` → `pool.setExpectedServerInstanceId(id)`.
     //    The claim will match, so no `authenticationFailed` should fire.
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
-    await seedPoolServerInstanceId(server, pool);
+    const serverInstanceId = await seedPoolServerInstanceId(server, pool);
+
+    // 2. Precondition: IDB is empty under the post-restart epoch's DB
+    //    name — no prior client session ever wrote to that name. The
+    //    epoch-scoped DB shape is `ok-ydoc:${branch}:${serverInstanceId}:${docName}`,
+    //    so the post-restart epoch's slot is fresh by construction.
+    await assertIDBEmpty('test-doc', serverInstanceId);
 
     pool.open('test-doc');
     pool.setActive('test-doc');
