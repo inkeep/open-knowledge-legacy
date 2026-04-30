@@ -68,7 +68,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "bun --conditions=development test src/",
+    "test": "bun test src/",
     "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
     "test:perf:fallback": "RUN_BENCH=1 bun test src/markdown/parse-with-fallback.test.ts",
     "test:perf:r15-guard": "RUN_BENCH=1 bun test src/markdown/autolink-void-html-guard.perf.test.ts",
