@@ -12,15 +12,14 @@ let sawNonzeroFailures = false;
 let forcedExitTimer;
 
 const terminateChildGroup = () => {
-  if (child.exitCode !== null) return;
   if (child.pid === undefined) {
-    child.kill('SIGTERM');
+    if (child.exitCode === null) child.kill('SIGKILL');
     return;
   }
   try {
-    process.kill(-child.pid, 'SIGTERM');
+    process.kill(-child.pid, 'SIGKILL');
   } catch {
-    child.kill('SIGTERM');
+    if (child.exitCode === null) child.kill('SIGKILL');
   }
 };
 
@@ -29,6 +28,7 @@ const scheduleExitAfterSummary = () => {
   if (!sawZeroFailures && !sawNonzeroFailures) return;
 
   forcedExitTimer = setTimeout(() => {
+    console.error('cli test runner completed summary; terminating remaining test process group');
     terminateChildGroup();
     process.exit(sawZeroFailures && !sawNonzeroFailures ? 0 : 1);
   }, 5000);
