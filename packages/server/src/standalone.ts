@@ -125,12 +125,6 @@ export interface ServerOptions {
    */
   lockKind?: 'interactive' | 'mcp-spawned';
   /**
-   * Pid of the spawning process, written into the lock metadata. For
-   * `mcp-spawned`: the MCP server's pid. For `interactive`: the user-facing
-   * host pid. Optional — desktop's parent-liveness gate skips when absent.
-   */
-  parentPid?: number;
-  /**
    * Skip the durable state-manifest pre-flight gate
    * (`assertCompatibleStateManifest` from `state-manifest.ts`). Default `false`.
    *
@@ -246,7 +240,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
     kind: options.lockKind ?? 'interactive',
-    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
     // Every server booted through `createServer` wires Hocuspocus + WS
     // upgrade in `boot.ts`. The capability flag lets future variants
     // (e.g. an HTTP-only relay) advertise differently.

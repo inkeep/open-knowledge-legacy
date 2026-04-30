@@ -48,13 +48,6 @@ export interface ProcessLockMetadata {
    */
   kind?: LockKind;
   /**
-   * Pid of the *spawner* — not `process.ppid` (which gets reparented to
-   * launchd when the spawn is detached). For `mcp-spawned`: the MCP server's
-   * pid. For `interactive`: the user-facing host (CLI shell, Electron main).
-   * Optional for legacy-lock tolerance.
-   */
-  parentPid?: number;
-  /**
    * Protocol/feature surfaces this server exposes. v1: `["http", "ws"]`
    * for any server booted via `bootServer`. Forward-compat for variants
    * that lack one or the other.
@@ -182,7 +175,6 @@ export function acquireProcessLock(opts: {
     port: number;
     worktreeRoot: string;
     kind?: LockKind;
-    parentPid?: number;
     capabilities?: string[];
     /** Override the auto-populated runtimeVersion. Primarily for tests. */
     runtimeVersion?: string;
@@ -201,7 +193,6 @@ export function acquireProcessLock(opts: {
     startedAt: new Date().toISOString(),
     worktreeRoot: init.worktreeRoot,
     ...(init.kind !== undefined && { kind: init.kind }),
-    ...(init.parentPid !== undefined && { parentPid: init.parentPid }),
     ...(init.capabilities !== undefined && { capabilities: init.capabilities }),
     runtimeVersion: init.runtimeVersion ?? RUNTIME_VERSION,
   };

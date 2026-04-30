@@ -26,15 +26,11 @@ import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts'
 import { getLogger, type PinoLogger } from './logger.ts';
 import { createMcpHttpHandler } from './mcp-http.ts';
 import { mountMcpAndApi } from './mcp-mount.ts';
-import { isProcessAlive } from './process-alive.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
 import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
-/** Default parent-death poll interval. Spec NFR2 — 5 s is well below CPU noise floor. */
-const DEFAULT_PARENT_DEATH_POLL_MS = 5_000;
-
-/** 30 minutes — matches SPEC §9 default threshold. */
+/** 30 minutes — default idle threshold. */
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
 
 export interface BootServerOptions
@@ -59,7 +55,6 @@ export interface BootServerOptions
     | 'shadowRepo'
     | 'enableTestRoutes'
     | 'lockKind'
-    | 'parentPid'
   > {
   /**
    * The project's loaded `Config` (parsed from `.open-knowledge/config.yml`,
@@ -125,20 +120,6 @@ export interface BootServerOptions
    */
   keepaliveGraceMs?: number;
   /**
-   * Poll interval for the parent-death watch (the loop that exits the server
-   * when the spawning process is gone). Default 5 000 ms. Tests may pass a
-   * smaller value (e.g. 25 ms) to drive convergence quickly. Has no effect
-   * unless `parentPid` (or `OK_PARENT_PID` env) is set.
-   */
-  parentDeathPollMs?: number;
-  /**
-   * Injectable liveness check for the parent-death watch. Defaults to
-   * `isProcessAlive` from `./process-alive.ts`. Tests pass a closure they
-   * can flip from `true` to `false` mid-run to assert graceful shutdown
-   * without launching real child processes.
-   */
-  parentAliveCheck?: (pid: number) => boolean;
-  /**
    * Skip the durable state-manifest pre-flight gate
    * (`assertCompatibleStateManifest`). Default `false`.
    *
@@ -190,22 +171,17 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   const idleMsOption = opts.idleShutdownMs;
   const log = opts.log ?? getLogger('boot');
 
-  // Lock-kind + parent-pid resolution. Explicit options win over env. Env
-  // (`OK_LOCK_KIND`, `OK_PARENT_PID`) is the contract used by the MCP
-  // detach-spawn path in `packages/cli/src/mcp/shim.ts` — direct callers
-  // (CLI `ok start`, Electron utility) leave both unset. Default kind is
-  // `interactive` so omitted-everywhere boots are user-facing servers.
+  // Lock-kind resolution. Explicit option wins over env. `OK_LOCK_KIND` is
+  // the contract used by the MCP detach-spawn path in
+  // `packages/cli/src/mcp/shim.ts` — direct callers (CLI `ok start`,
+  // Electron utility) leave it unset. Default `interactive` so
+  // omitted-everywhere boots are user-facing servers. Idle-shutdown is the
+  // sole teardown trigger; there is no parent-death watch.
   const envLockKind =
     process.env.OK_LOCK_KIND === 'mcp-spawned' || process.env.OK_LOCK_KIND === 'interactive'
       ? process.env.OK_LOCK_KIND
       : undefined;
-  const envParentPidRaw = process.env.OK_PARENT_PID;
-  const envParentPid =
-    typeof envParentPidRaw === 'string' && /^[0-9]+$/.test(envParentPidRaw)
-      ? Number.parseInt(envParentPidRaw, 10)
-      : undefined;
   const lockKind = opts.lockKind ?? envLockKind ?? 'interactive';
-  const parentPid = opts.parentPid ?? envParentPid;
 
   // Initialize OpenTelemetry before any spans could be emitted. No-op when
   // OTEL_SDK_DISABLED != 'false' (default — zero overhead when disabled).
@@ -258,7 +234,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,
     lockKind,
-    parentPid,
     skipStateManifestCheck: opts.skipStateManifestCheck,
   });
 
@@ -353,16 +328,9 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   }
 
   let destroyed = false;
-  // Parent-death poll handle — declared here so `destroy` can clear it. The
-  // interval is only set when `parentPid` is configured (see below).
-  let parentDeathPoll: ReturnType<typeof setInterval> | null = null;
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
-    if (parentDeathPoll !== null) {
-      clearInterval(parentDeathPoll);
-      parentDeathPoll = null;
-    }
     idleHandle?.detach();
     // Cancel any pending keepalive-grace timers + await in-flight cleanup
     // promises so Hocuspocus teardown doesn't race with an in-flight
@@ -377,38 +345,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     // observable. shutdownTelemetry is idempotent and has a 5s timeout.
     await shutdownTelemetry();
   };
-
-  // Parent-death watch. When this server was spawned by an MCP (the
-  // `OK_PARENT_PID` env contract from `server-discovery.ts`) and the
-  // spawning MCP exits, we lose any reason to keep running — but the
-  // detach-spawn made us reparent to launchd, so we cannot rely on
-  // `process.ppid`. Poll the captured pid instead and shut down on
-  // disappearance. No-op when no parent pid is configured (interactive
-  // CLI / test boots).
-  //
-  // Pid-reuse caveat (spec FR-C4): a dead pid could in principle be
-  // recycled into a different process between polls. macOS pid space is
-  // ~99 998 with slow turnover; reuse within a 5 s tick is rare in
-  // practice. v1 trusts `isProcessAlive` only; if we observe spurious
-  // shutdowns, capture (pid, startTime) at boot and compare on each tick.
-  if (parentPid !== undefined) {
-    const pollMs = opts.parentDeathPollMs ?? DEFAULT_PARENT_DEATH_POLL_MS;
-    const aliveCheck = opts.parentAliveCheck ?? isProcessAlive;
-    parentDeathPoll = setInterval(() => {
-      if (destroyed) return;
-      if (aliveCheck(parentPid)) return;
-      log.warn(
-        { parentPid, lockKind },
-        '[boot] parent process gone — initiating graceful shutdown',
-      );
-      // Fire-and-forget: destroy is idempotent and the timer cleanup
-      // inside destroy() handles re-entry.
-      void destroy().catch((err) => {
-        log.error({ err, parentPid }, '[boot] parent-death shutdown failed');
-      });
-    }, pollMs);
-    parentDeathPoll.unref?.();
-  }
 
   return {
     httpServer,

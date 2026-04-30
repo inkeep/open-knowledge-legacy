@@ -4676,7 +4676,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Explicit `interactive` — `OK_LOCK_KIND` may be inherited from a
       // surrounding MCP-spawn parent and we don't want a user-driven
       // local-op/open relay to mark its child server as `mcp-spawned`.
-      env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
+      env: { ...process.env, OK_LOCK_KIND: 'interactive' },
     });
 
     const stderrChunks: Buffer[] = [];

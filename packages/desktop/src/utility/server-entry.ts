@@ -80,8 +80,8 @@ export interface UtilityErrorMessage {
   kind?: 'lock-collision' | 'mcp-server-stuck' | 'mcp-server-killed';
   /**
    * Present only on `kind: 'lock-collision'`. Lets the main process
-   * inspect the colliding lock's `kind` / `parentPid` / `port` and decide
-   * whether to auto-kill (mcp-spawned) or surface a dialog (interactive).
+   * inspect the colliding lock's `kind` / `port` and decide whether to
+   * auto-kill (mcp-spawned) or surface a dialog (interactive).
    */
   existingLock?: {
     pid: number;
@@ -90,7 +90,6 @@ export interface UtilityErrorMessage {
     startedAt: string;
     worktreeRoot: string;
     kind?: 'interactive' | 'mcp-spawned';
-    parentPid?: number;
     capabilities?: string[];
   };
 }

@@ -182,7 +182,6 @@ export async function resolveMcpHttpUrl(opts: ResolveMcpHttpUrlOptions): Promise
         env: {
           ...process.env,
           OK_LOCK_KIND: 'mcp-spawned',
-          OK_PARENT_PID: String(process.pid),
         },
       });
       child.on('error', (err) => {

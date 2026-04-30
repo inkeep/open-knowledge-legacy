@@ -149,10 +149,10 @@ export interface UtilityProcessLike {
  * to keep this module runtime-independent of the server package — the real
  * shape is `ServerLockMetadata` from process-lock.ts and is type-compatible.
  *
- * `kind`, `parentPid`, and `capabilities` are optional for legacy-lock
- * tolerance — locks written by older binaries omit them, and the desktop
- * conservatively refuses to attach when any are absent (forces a fresh
- * spawn rather than risk attaching to a server with unknown semantics).
+ * `kind` and `capabilities` are optional for legacy-lock tolerance — locks
+ * written by older binaries omit them, and the desktop conservatively
+ * refuses to attach when any are absent (forces a fresh spawn rather than
+ * risk attaching to a server with unknown semantics).
  */
 export interface ServerLockMetadataLike {
   pid: number;
@@ -161,7 +161,6 @@ export interface ServerLockMetadataLike {
   startedAt: string;
   worktreeRoot: string;
   kind?: 'interactive' | 'mcp-spawned';
-  parentPid?: number;
   capabilities?: string[];
 }
 
@@ -788,10 +787,6 @@ export class WindowManager {
    *     alive: they exist for the agent's convenience and the desktop is
    *     the user-facing surface that takes precedence on cold start.
    *   - `capabilities` includes `"ws"` when the field is present.
-   *   - `parentPid` is alive when present (stranded servers whose spawning
-   *     process has died are refused even though their own pid is still
-   *     up; the parent-death poll in `bootServer` should reap these but
-   *     the desktop guards belt-and-suspenders).
    *
    * The async WS-upgrade probe is deliberately a separate step
    * (`probeAttachableLock`) so this function stays synchronous — the
@@ -822,9 +817,6 @@ export class WindowManager {
     if (lock.kind === 'mcp-spawned') return refuse('kind-mcp-spawned');
     if (lock.capabilities !== undefined && !lock.capabilities.includes('ws')) {
       return refuse('capabilities-missing-ws');
-    }
-    if (lock.parentPid !== undefined && !alive(lock.parentPid)) {
-      return refuse('parent-pid-dead');
     }
     return lock;
   }

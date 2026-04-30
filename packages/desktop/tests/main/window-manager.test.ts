@@ -471,7 +471,6 @@ describe('WindowManager', () => {
       worktreeRoot: '/tmp/dragon',
       // New contract — same-version interactive server with full collab.
       kind: 'interactive',
-      parentPid: 65000,
       capabilities: ['http', 'ws'],
     };
 
@@ -650,17 +649,6 @@ describe('WindowManager', () => {
       await p;
     });
 
-    test('parentPid dead falls through (stranded server defense)', async () => {
-      const isAlive = mock((pid: number) => pid !== liveLock.parentPid);
-      enableAttachProbe({ isProcessAlive: isAlive });
-      const wm = new WindowManager(env.deps);
-      const p = wm.createProjectWindow({ projectPath: '/tmp/dragon' });
-      await new Promise((r) => setTimeout(r, 5));
-      expect(env.utilities.length).toBe(1);
-      env.utilities[0]?.fire({ type: 'ready', port: 40013, apiOrigin: 'http://localhost:40013' });
-      await p;
-    });
-
     test('WS-upgrade probe failure falls through to spawn mode', async () => {
       const probe = mock(() => Promise.resolve(false));
       enableAttachProbe({ probeWsUpgrade: probe });
@@ -686,7 +674,7 @@ describe('WindowManager', () => {
     });
 
     test('WS probe undefined → final gate skipped (back-compat for tests)', async () => {
-      // Explicitly do NOT wire probeWsUpgrade — same liveLock, alive pid + parentPid.
+      // Explicitly do NOT wire probeWsUpgrade — same liveLock, alive pid.
       env.deps.readServerLock = () => liveLock;
       env.deps.isProcessAlive = () => true;
       env.deps.hostname = () => 'my-host';
@@ -706,7 +694,6 @@ describe('WindowManager', () => {
       startedAt: '2026-04-27T22:00:00.000Z',
       worktreeRoot: '/tmp/collision',
       kind: 'mcp-spawned',
-      parentPid: 4040,
       capabilities: ['http', 'ws'],
     };
 
@@ -1121,7 +1108,6 @@ describe('WindowManager — pendingDeepLinkDoc dom-ready gate (M4 US-007 / Findi
       startedAt: '2026-04-21T10:00:00.000Z',
       worktreeRoot: '/tmp/attach-deep-link',
       kind: 'interactive',
-      parentPid: 65000,
       capabilities: ['http', 'ws'],
     };
     env.deps.readServerLock = () => liveLock;

@@ -225,7 +225,7 @@ describe('acquireProcessLock', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test('round-trips kind/parentPid/capabilities when provided', () => {
+  test('round-trips kind/capabilities when provided', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
@@ -233,17 +233,15 @@ describe('acquireProcessLock', () => {
         port: 4242,
         worktreeRoot: '/wt',
         kind: 'mcp-spawned',
-        parentPid: 99999,
         capabilities: ['http', 'ws'],
       },
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.kind).toBe('mcp-spawned');
-    expect(md.parentPid).toBe(99999);
     expect(md.capabilities).toEqual(['http', 'ws']);
   });
 
-  test('omits kind/parentPid/capabilities when not provided (legacy lock shape)', () => {
+  test('omits kind/capabilities when not provided (legacy lock shape)', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
@@ -251,7 +249,6 @@ describe('acquireProcessLock', () => {
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.kind).toBeUndefined();
-    expect(md.parentPid).toBeUndefined();
     expect(md.capabilities).toBeUndefined();
   });
 
@@ -263,7 +260,6 @@ describe('acquireProcessLock', () => {
         port: 0,
         worktreeRoot: '/wt',
         kind: 'interactive',
-        parentPid: 12345,
         capabilities: ['http', 'ws'],
       },
     });
@@ -271,7 +267,6 @@ describe('acquireProcessLock', () => {
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.port).toBe(8080);
     expect(md.kind).toBe('interactive');
-    expect(md.parentPid).toBe(12345);
     expect(md.capabilities).toEqual(['http', 'ws']);
   });
 
