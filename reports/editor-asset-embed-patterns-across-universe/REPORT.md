@@ -2,10 +2,11 @@
 title: "Editor Asset + Embed Patterns Across the Content-Editor Universe"
 description: "Cross-editor comparison of file drop, embed syntax, wiki-link parsing, dedup, vault import, basename resolution, rename rewrite, and asset folder conventions across 14 editors (AFFiNE, Docmost, Outline, Logseq, SilverBullet, Foam, Dendron, Zettlr, HedgeDoc, Fumadocs, BlockNote, TipTap, Milkdown, Plate, BlockSuite, TinaCMS). Source-code grounded with file:line citations."
 createdAt: 2026-04-16
-updatedAt: 2026-04-16
+updatedAt: 2026-04-23
 revisions:
   - 2026-04-16: initial pass (14 editors)
   - 2026-04-16: Path C update — added Docmost + SilverBullet + Zettlr via cloned source read; closed 17 UNCERTAIN dimensions
+  - 2026-04-23: Path C update — added D9 (click behavior / open semantics web vs Electron) across 10 editors; informs OK's post-drop click UX decision for non-inline-viewable assets
 subjects:
   - AFFiNE
   - BlockSuite
@@ -246,6 +247,32 @@ Per-editor file:line citations live in [evidence/per-editor-findings.md](evidenc
 **Implications for OK D-J + FR-5 + F7:**
 - OK's shipped default (co-located with note via `dirname(parentDocName)`) matches Fumadocs's convention and Obsidian's `"./"` and `"./subdir"` patterns.
 - D-J's recommendation of free-form `attachmentFolderPath` string (matching Obsidian exactly) handles every surveyed convention cleanly: `"/"` = vault root (Logseq-like), `"./"` = co-located with note (OK-shipped), `"./subdir"` = co-located + subdir (Fumadocs-like), any other string = global folder path (Logseq + Dendron-like).
+
+### D9 — Click behavior / open semantics (web vs Electron)
+
+**Added 2026-04-23 via Path C update.** Evidence: [evidence/d9-click-behavior.md](evidence/d9-click-behavior.md).
+
+**Finding: Four distinct behavior clusters; `shell.openPath` on click is a minority pattern.**
+
+| Editor | Build type | Web click | Desktop/Electron click | Parity? |
+|---|---|---|---|---|
+| **Obsidian** | Electron-only | N/A | PDF inline in preview; left-click stays in-app; `shell.openPath` only via right-click. Top forum FRs ask for click-to-default-app; not shipped. | N/A |
+| **Zettlr** | Electron-only | N/A | Renderables inline; opaque types → `shell.openPath(filePath)` ([open-attachment.ts:87,127](https://github.com/Zettlr/Zettlr/blob/96ef480b/source/app/service-providers/commands/open-attachment.ts)). Only Electron editor with extension-split click. | N/A |
+| **SilverBullet** | Web-first + desktop beta | Relative URLs → Chromium's native handler per `Content-Type`. | Desktop is a WebView around the same server. Identical to web. | Yes |
+| **Docmost** | Web + desktop | Extension-gated `Content-Disposition`: images/PDF/video → `inline`; everything else → `attachment`. | Desktop embeds the web app — same behavior. | Yes |
+| **AFFiNE** | Electron + web | Attachment block → blob download. | `will-navigate` + `setWindowOpenHandler` intercept URLs for `shell.openExternal` allowlist (http/https/mailto only); local file click still downloads — NO `shell.openPath`. | Yes |
+| **Logseq** | Electron + web | Web: `![[pdf]]` doesn't resolve (community reports). | Electron opens via OS default for most types; reveal-in-folder not built-in. Exact call site not located. | Divergent |
+| **Outline** | Web-only (hosted) | Click → S3 signed-URL download for opaque types. Images: inline + download button. | N/A | N/A |
+| **HedgeDoc** | Web-only | All uploads served `Content-Disposition: attachment` after [GHSA-x74j-jmf9-534w](https://github.com/hedgedoc/hedgedoc/security/advisories/GHSA-x74j-jmf9-534w). Force download. | N/A | N/A |
+| **Foam, Dendron** | VSCode extensions | N/A | VSCode link provider, not editor-owned. Out of scope. | N/A |
+
+**Clusters:**
+1. **Browser-native pass-through** (Docmost, SilverBullet, HedgeDoc) — server sets `Content-Disposition` per extension; Chromium handles the rest. Web↔desktop parity is free (desktop = WebView).
+2. **OS-delegation via `shell.openPath`** (Zettlr alone) — Electron intercepts click, branches on extension. Only editor in this cluster.
+3. **Inline-preview-first, opt-in OS delegation** (Obsidian) — bundled PDF viewer; `shell.openPath` is right-click-only. Users asking for left-click delegation; Obsidian has not shipped it.
+4. **Download-only** (Outline, AFFiNE, HedgeDoc) — multi-tenant web + AFFiNE desktop reuses web path.
+
+**Implications for OK:** the closest-shape peer (Obsidian — local-first markdown + `![[...]]`) explicitly does NOT delegate to OS on click. The closest-architecture peer for a web+Electron product (Docmost) unifies behavior via `Content-Disposition`. Zettlr's `shell.openPath` is a single-editor outlier. OK is better served by Docmost's pattern than Zettlr's — unifies web and Electron, no new IPC surface, no OS-delegation security cost. Track `shell.openPath`-on-click as Future Work gated on concrete user demand.
 
 ---
 

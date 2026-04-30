@@ -60,13 +60,15 @@ describe('T14: populated IDB meets stale server instance', () => {
     // 2. Pre-populate IDB with stale content — simulating "tab had an
     //    earlier session against a previous server instance that crashed."
     //    Construct the update bytes off a throwaway Y.Doc so we pass Yjs-
-    //    valid bytes to `seedClientPersistenceState`.
+    //    valid bytes to `seedClientPersistenceState`. The DB-name epoch
+    //    here is the CRASHED prior session's id, not the current one.
+    const STALE_INSTANCE_ID = 't14-stale-instance-id-mismatch-xyz';
     const seedDoc = new Y.Doc();
     seedDoc.getText('source').insert(0, STALE_MARKER);
     const staleBytes = Y.encodeStateAsUpdate(seedDoc);
     seedDoc.destroy();
 
-    await seedClientPersistenceState('test-doc', [staleBytes]);
+    await seedClientPersistenceState('test-doc', [staleBytes], STALE_INSTANCE_ID);
 
     // 3. Construct the pool with a WRONG serverInstanceId claim. The pool
     //    will include this in its auth token and the server's
@@ -75,7 +77,7 @@ describe('T14: populated IDB meets stale server instance', () => {
     //    CURRENT server's id, which is exactly what we're trying to avoid.
     const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
     cleanups.push(() => pool.dispose());
-    pool.setExpectedServerInstanceId('t14-stale-instance-id-mismatch-xyz');
+    pool.setExpectedServerInstanceId(STALE_INSTANCE_ID);
 
     pool.open('test-doc');
     pool.setActive('test-doc');

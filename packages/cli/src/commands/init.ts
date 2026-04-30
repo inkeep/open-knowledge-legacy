@@ -14,11 +14,13 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import type {
+  InstallUserSkillOptions,
+  InstallUserSkillResult,
+} from '@inkeep/open-knowledge-server';
 import {
   detectClaudeDesktopPresence,
   ensureProjectGit,
-  type InstallUserSkillOptions,
-  type InstallUserSkillResult,
   installUserSkill,
   ProjectGitInitError,
 } from '@inkeep/open-knowledge-server';
@@ -28,7 +30,7 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
-import { accent, warning } from '../ui/colors.ts';
+import { accent, error, info, success, warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -831,7 +833,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
   if (result.contentCreated.length > 0 || result.contentUpdated.length > 0) {
-    lines.push(`Content scaffolded at ${okDir}/`);
+    lines.push(accent(`Content scaffolded at ${okDir}/`));
     if (result.contentCreated.length > 0) {
       lines.push(`  Created: ${result.contentCreated.join(', ')}`);
     }
@@ -839,7 +841,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push(`  Updated: ${result.contentUpdated.join(', ')}`);
     }
   } else {
-    lines.push(`Content already present at ${okDir}/`);
+    lines.push(accent(`Content already present at ${okDir}/`));
   }
   if (result.contentSkipped.length > 0) {
     lines.push(`  Skipped (already exist): ${result.contentSkipped.join(', ')}`);
@@ -851,7 +853,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   if (result.mcpError && result.editors.length === 0) {
     lines.push(`Warning: ${result.mcpError}`);
   } else if (result.editors.length === 0) {
-    lines.push('MCP server configuration:');
+    lines.push(accent('MCP server configuration:'));
     if (result.mcpAction === 'skipped-flag') {
       lines.push('  MCP config not written — use without --no-mcp to configure editors');
     } else if (
@@ -867,10 +869,10 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   } else if (allSkippedFlag) {
     lines.push('MCP config not written — use without --no-mcp to configure editors');
   } else if (allSkippedMissing) {
-    lines.push('MCP server configuration:');
+    lines.push(accent('MCP server configuration:'));
     lines.push('  No supported editor config directories detected; skipped MCP registration');
   } else {
-    lines.push('MCP server configuration:');
+    lines.push(accent('MCP server configuration:'));
     for (const editor of result.editors) {
       const displayPath = editor.configPath.startsWith(cwd)
         ? relative(cwd, editor.configPath)
@@ -887,19 +889,21 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       switch (editor.action) {
         case 'written':
           lines.push(
-            `  ${labelWithScope}${pad}${displayPath}  registered${serverNameNote}${restartHint}`,
+            `  ${labelWithScope}${pad}${displayPath}  ${success('registered')}${serverNameNote}${restartHint}`,
           );
           break;
         case 'overwritten':
           lines.push(
-            `  ${labelWithScope}${pad}${displayPath}  updated${serverNameNote}${restartHint}`,
+            `  ${labelWithScope}${pad}${displayPath}  ${success('updated')}${serverNameNote}${restartHint}`,
           );
           break;
         case 'skipped-missing':
           lines.push(`  ${labelWithScope}${pad}${displayPath}  config root missing; skipped`);
           break;
         case 'failed':
-          lines.push(`  ${labelWithScope}${pad}${displayPath}  FAILED: ${editor.error}`);
+          lines.push(
+            `  ${labelWithScope}${pad}${displayPath}  ${error('FAILED')}: ${editor.error}`,
+          );
           break;
         case 'skipped-flag':
           break;
@@ -941,13 +945,15 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   // User-global skill install summary (SPEC 2026-04-22 FR6 / D17)
   if (result.skillInstall) {
     lines.push('');
-    lines.push('User-global skill:');
+    lines.push(accent('User-global skill:'));
     switch (result.skillInstall) {
       case 'installed':
-        lines.push('  open-knowledge  installed to detected agent hosts via `npx skills`');
+        lines.push(
+          `  open-knowledge  ${success('installed to detected agent hosts')} via \`npx skills\``,
+        );
         break;
       case 'skip-current':
-        lines.push('  open-knowledge  already installed at current version');
+        lines.push(`  open-knowledge  ${success('already installed at current version')}`);
         break;
       case 'failed':
         lines.push(
@@ -993,15 +999,19 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       .map((e) => e.label);
 
     lines.push('');
-    lines.push('Next steps:');
-    lines.push(`  1. Open your editor (${configuredLabels.join(' / ')})`);
+    lines.push(`${success('✓')} ${accent('Next steps:')}`);
+    lines.push(`  1. Open your editor (${info(configuredLabels.join(' / '))})`);
     lines.push('  2. Approve the MCP server when prompted');
     lines.push('  3. (Optional) scaffold the starter knowledge-base structure:');
-    lines.push('     - ok seed');
+    lines.push(`     - ${info('ok seed')}`);
     lines.push('  4. Use the three MCP workflow tools as you build the wiki:');
-    lines.push('     - mcp__open-knowledge__ingest      — capture an external source');
-    lines.push('     - mcp__open-knowledge__research    — gather sources and write findings');
-    lines.push('     - mcp__open-knowledge__consolidate — promote research to canonical articles');
+    lines.push(`     - ${info('mcp__open-knowledge__ingest')}      — capture an external source`);
+    lines.push(
+      `     - ${info('mcp__open-knowledge__research')}    — gather sources and write findings`,
+    );
+    lines.push(
+      `     - ${info('mcp__open-knowledge__consolidate')} — promote research to canonical articles`,
+    );
   }
 
   return lines.join('\n');

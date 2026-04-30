@@ -163,3 +163,344 @@ Auditor findings were all pure corrections (applied). Challenger surfaced 3 STRO
 - **MODERATE-4 (D-A rejection UX):** CSV/TXT dropped → no actionable path.
 
 These are surfaced to user in-chat — not auto-resolved.
+
+---
+
+## 2026-04-21 — Session 2: Finalize close-out (Step 5)
+
+### Context
+
+Re-entry after session 1's Audit/assess-findings pass. Spec was pushed to origin/main as artifact `2ad0177a` (spec document landed; implementation work NOT shipped). User's goal: close Step 5 iterative loop + re-run Step 6 Audit + Step 7 Assess + Step 8 Finalize so implementation can begin.
+
+Baseline commit updated from `432a834b` → `2ad0177a` to reflect the current spec-on-main state.
+
+### Scope changes (reopened under "no deferred tech debt on greenfield" principle)
+
+- **F8 (shortestImageRef relative emit) absorbed** from §15 Identified into FR-1a acceptance criteria. One-line fix at `packages/app/src/editor/image-upload/index.ts:91` + dirname-matrix test. §9 D3 reclassified from "FIX-SHIPPED MICRO-PR" to "FR-1a (absorbed)."
+- **F9 (unicode-safe sanitizeFilename) absorbed** from §15 Identified into NFR-3. One-line regex fix at `packages/server/src/api-extension.ts` + unicode-preservation + path-escape-safety test. §9 D7 reclassified. §15 Identified: F8 and F9 entries removed.
+- Rationale: both fixes are one-line; spec's correctness (FR-1a markdown-image branch + NFR-3 security posture) depends on them; carrying as separate specs is more paperwork than code; implementer shouldn't start with two known blockers they have to detour around.
+
+### New decision
+
+- **D-L Rejection copy: two-message rule** LOCKED. Message A (unchanged from prior FR-1) for text-ext drops (.txt/.csv/.json/.md/.yml/.yaml/.toml). Message B (new, pinned): `"This file type isn't supported. Try a different file, or reference it with a markdown link: [label](path/to/file)."` for all other non-sniffable or admin-narrowed rejects. Client-side extension check determines which message fires.
+  - Origin: user-driven staff-eng + staff-PM convergence exercise during session-2 /gtm:analyze pass on the "5 unsettled items" from the E2E criteria draft.
+  - Underlying principle (captured in decision rationale): *error messages serve the user who hit them; be specific when the user's situation is knowable, generic-with-escape-hatch when not; never lie to preserve message variety; never expose internal structure (MIME names, config keys, allowlists) to non-operator users*.
+  - Reversibility: reversible on copy wording; the two-message shape is LOCKED.
+
+### Prose corrections (direct edit — Draft-stage, not post-ship corrigendum)
+
+- Line 9 header: replaced "Supersedes (partial): `specs/2026-04-08-editor-input-surface/SPEC.md`" with "Builds on: `reports/editor-input-surface-worldmodel/REPORT.md`". The prior-spec path never resolved (drafted in a sibling worktree, never committed to main); the report at that path does resolve and contains the D1-D30 /assess-findings triage.
+- §9 renamed "Relationship to prior spec" → "Relationship to prior work" (opens directly on the REPORT.md pointer).
+- Note: earlier session attempt to apply CLAUDE.md post-ship corrigendum breadcrumb pattern (commits `e714f2d2` on spec/asset-embed-surface, `bf385495` on fix/asset-embed-f2-breadcrumb — both local-only, never pushed to origin) was the wrong pattern for a Draft-stage spec. Replaced with direct prose edit. Both local commits are disposable; they can be cleaned up post-finalize.
+
+### New artifact
+
+- `evidence/e2e-acceptance-scenarios.md` — cross-FR E2E acceptance scenarios (10 primary scenarios P1.1 through P7.1, edge-siblings enumerated, perturbation checks per scenario, "top 10 budget" statement, push-down list for lower-tier tests, Phase 2 coordination protocol). This file is the testable contract that implementation-time test authoring consumes. Derived from /tdd + /gtm:analyze analysis in session 2 conversation.
+
+### §13 In Scope expansion
+
+Added explicit callouts for: F8 fix site, F9 fix site (with note on line-number drift from baseline), rejection-copy constants, new evidence file reference, push-down list (tests that stay unit/narrow integration / fidelity PBT rather than E2E).
+
+### Status field
+
+Updated from "Draft (All 11 decisions LOCKED — ready for §Audit)" to "Draft (12 decisions LOCKED; F8 + F9 absorbed into scope 2026-04-21; ready for §Audit re-run)". Baseline commit field updated `432a834b` → `2ad0177a`.
+
+### Ready for Step 6 (Audit re-run)
+
+Content-stable for audit re-run. Auditor + challenger will spawn in parallel; prior `meta/audit-findings.md` resolved items preserved above for audit-trail continuity. Re-run expected ~8min, ~$10-15.
+
+---
+
+## 2026-04-21 — Session 2 cycle-2: Step 7 assess-findings, apply corrections
+
+### Audit re-run results
+
+Parallel nested auditor (`_nest:finalize-auditor` — 18 min, 60 turns, $9.40) and challenger (`_nest:finalize-challenger` — 10 min, 14 turns, $4.42) produced:
+
+- **Auditor:** 14 findings (5 HIGH, 5 MEDIUM, 4 LOW) in `meta/audit-findings.md`. Concentrated theme: baseline drift `432a834b` → `2ad0177a` moved file:line citations in §8 and `evidence/current-shipped-state.md` + `evidence/inv3-file-type-mime-coverage.md`. Plus several F8/F9-absorption purge leftovers that contradict the in-scope status.
+- **Challenger:** 10 new findings + 3 STRONG revisits in `meta/design-challenge.md`. Revisits: STRONG-1 weakens to LOW (F8 absorption made `emitFormat: 'markdown-image'` opt-out reliable), STRONG-2 resolved (D-K 12-month + GC commitment already LOCKED), STRONG-3 still holds (scope split remains on the table post-absorption).
+
+### Auto-applied factual/coherence corrections (assess-findings → Act)
+
+14 corrections — all verified against baseline `2ad0177a` with `grep -n` / `ls`:
+
+1. **H1 §16 EXCLUDE purge:** deleted the two F8/F9 "handle separately" bullets that contradicted §13 In Scope + status line.
+2. **H2 §8 "micro-PR" leftovers:** rewrote lines 203-204 to reference absorbed-scope (NFR-3 / FR-1a + §13) instead of "handles separately."
+3. **H3 §8 upload-handler citation drift:** updated `api-extension.ts:2779-2894` → `:3014-3129`, constants `:132/:133/:135` → `:167/:168/:170`, `readUploadBody:176` → `:211`, `sanitizeFilename:137-144` → `:172-179`.
+4. **H4 handlers.ts path:** corrected `packages/core/src/markdown/handlers.ts` (file does NOT exist) → `packages/core/src/markdown/index.ts` with anchor line numbers `:591-594` (mdast→PM) and `:876-884` (PM→mdast). Applied in §13 and §16.
+5. **H5 F9 breadcrumb fix:** §13 F9 line said "drifted from 176" — at `432a834b`, line 176 was `readUploadBody`, not `sanitizeFilename` (which was at :137). Corrected to "was at lines 137-144 at baseline `432a834b`."
+6. **M1 §16 STOP_IF SVG range:** `api-extension.ts:2853-2858` → `:3088-3093` with symbolic anchor ("the `<svg` text-sniff block inside `handleUploadImage`").
+7. **M2 evidence/current-shipped-state.md re-verify at `2ad0177a`:** updated header date + baseline declaration; 12 individual citation updates (handler range, constants, sniff site, SVG block, sanitize range, destDir, path-escape guards, response line, writeUploadAtomic). F9/F8 "micro-PR fixes separately" language purged. Config section updated to note post-baseline ConfigSchema additions (github/sync/preview/folders — disjoint from FR-5's upload.*).
+8. **M3 signalChannel → signal:** replaced in 3 locations (FR-6 acceptance, §13 In Scope, §16 SCOPE). Actual CC1Broadcaster method is `signal(channel)` at `cc1-broadcast.ts:36`, not `signalChannel`.
+9. **M4 Q-INV4 repoint:** §11 Q-INV4 row no longer cites the non-existent `evidence/inv4-outline-drop-pattern.md`; repointed to `reports/editor-asset-embed-patterns-across-universe/REPORT.md` Outline entry (which covers the 16-editor cross-survey).
+10. **M5 evidence/inv3 citations:** updated import line 38 → 40, use site 2535 → 3084, gate check 2546 → 3095, constant 123 → 168, SVG fallback 2539-2543 → 3088-3093. Added `2ad0177a` baseline breadcrumb noting the historical numbers.
+11. **L1-auditor §15 Phase 2 line:** rewrote from pre-D-I "replaces `[name](path)` emit" to correctly describe D-F read-time promotion with storage shape unchanged.
+12. **L2-auditor line 9 phrasing:** tightened "8 items not shipped" to "7 prior-spec items became FR-1..FR-7 here (FR-8 is net-new)"; clarified that `reports/editor-input-surface-worldmodel/REPORT.md` is the findings-inventory input (triage outcomes in _changelog + §9).
+13. **L1-challenger F8 framing:** "one-line fix" replaced with "algorithmic rewrite, ~8-15 LOC" in §13 + changelog. F8 converts `shortestImageRef` from binary (same-dir → basename; else → absolute `/path`) to 4-case relative using `path.posix.relative()` + normalization.
+14. **L2-challenger FR-7 absolute-path clause:** added to §13 FR-7 bullet: "Absolute-path refs (`![alt](/docs/photo.png)`) from pre-F8 emit MUST be detected and left unchanged; only relative-path refs are recomputed." Plus unit-test fixture requirement.
+
+### Declined (2)
+
+- **L4-auditor (CODE_BANG parenthetical):** Technically a stylistic leak of implementation detail into acceptance criteria, but consistent with how the spec pins other low-level expectations (precedent #15 identity-dedup, precedent #9 add-only schema). Retaining it gives the implementer a useful hint about which extension slot to register. The auditor flagged this as optional.
+- **L3-challenger (STRONG-1 D-I auto-emit weakens):** Challenger's own recommendation is "no action required if the product call is locked." No action required on its own; L5-challenger's Future Work entry (external-tool compatibility guide, #12 above) implicitly carries the GitHub-readability communication debt.
+
+### Escalations surfaced to user (7)
+
+All Challenger MODERATE findings (M1-M5) plus L4 and a cross-cutting meta-observation are design judgment calls. Not auto-applied. Presented to user for decision before proceeding to Step 8 finalize:
+
+1. M1-challenger: D-L admin-narrowed rejection dead-end — accept or add Message C?
+2. M2-challenger: E2E top-10 omits P1.3 oversized-file rejection — promote, restore, or explicit cut?
+3. M3-challenger: warnBytes config field has no behavior contract — specify or delete?
+4. M4-challenger: D-E markdown-image race has no eventual-consistency guard — add P5.3 or accept gap?
+5. M5-challenger: scope split (STRONG-3 revisit) still holds — bundle as single PR or split into Bucket A upload-widening + Bucket B wiki-embed+vault?
+6. L4-challenger: Phase 2 coordination coupling — current protocol, permanent fallback markers, or agnostic conditional?
+7. Cross-cutting: articulate "no deferred tech debt on greenfield" principle in SPEC, or leave in changelog/memory?
+
+Step 7 complete pending user resolution of the above. Step 8 (verify + finalize) blocked on those resolutions.
+
+---
+
+## 2026-04-21 — Session 2 cycle-2 (PM): user resolutions applied
+
+### Biggest decision: D-A refuted, D-L removed, D-M locked (accept-all)
+
+User challenged the entire rejection-UX surface with the question *"what's the point of these toast messages? do other editors do this?"* Ecosystem check: every comparable editor (Obsidian, Logseq, Notion, Bear, iA Writer, Roam, Craft, Typora) accepts all file drops and emits a link for unrecognized types. OK as outlier produced overengineered rejection UX.
+
+Resolution:
+- **D-A → REFUTED by D-M.** Strict magic-byte-only reject stance overturned. User mental-model argument ("text drops should redirect to paste-into-code-fence") was paternalistic.
+- **D-L → REMOVED.** Two-message rule, admin-narrowed carve-out, and Message A/B constants all dissolve.
+- **D-M → LOCKED.** Accept all file drops up to `maxBytes`. Non-sniffable / unrecognized types emit as opaque markdown-link per FR-1a. SVG extension-fallback preserved for NFR-3 `<img>`-only security.
+- **M1 admin-narrowed case → dissolved.** OK is local-first (Electron desktop, single-user per install); the "admin vs user" distinction doesn't exist in the product model. User IS the operator.
+- **`allowedMimeTypes` config → deleted from FR-5.** No runtime gate consumer post-D-M. Added Future Work Explored entry "Security-focused upload allowlist" (revisit if multi-tenant deployment becomes relevant).
+
+### M2 — P1.3 promoted to top-list (soft cap)
+
+"Top 10 E2E budget" was a soft guide, not a hard constraint. P1.3 (oversized-file rejection with byte-size-specific toast) covers a distinct bug class (size-check layer vs type-dispatch layer) not caught by any other scenario. Especially load-bearing post-D-M since it's the ONLY rejection path in the spec.
+
+Resolution: promoted P1.3 as #11 in the top-list. Along with P5.3 (see M4 below), the list is now 12 scenarios. Documented as soft-cap in the budget section.
+
+### M3 — `warnBytes` deleted from FR-5
+
+Config field existed with no behavior contract. No dogfood signal on whether 5-25MB uploads produce perceptible sync lag. Per greenfield "fix or remove": remove.
+
+Resolution: deleted `warnBytes` from FR-5 field list. Added Future Work Explored entry "Soft-limit warn UX (5-25MB range)" with trigger "first user report that 5-25MB drops feel slow or unexpected."
+
+### M4 — P5.3 eventual-consistency scenario added
+
+D-E LOCKED accepts "temporary incoherence for markdown-image during bursts." But **eventual-consistency (post-quiescence correctness) is a different, deterministic assertion** that wasn't tested. The F8-absorbed `emitFormat: 'markdown-image'` opt-out path had no acceptance-tier guard for FR-7 regressions under concurrent rename + asset-create bursts.
+
+Resolution: added P5.3 scenario as sibling of P5.2. Condition-based quiescence wait (not wall-clock sleep, per /tdd flakiness rule). Invariants: post-quiescence path correctness, image renders, new asset indexed, no orphan. Promoted to top-list as #12.
+
+### L4 — Phase 2 coordination: permanent fallback markers
+
+Cross-spec coupling by convention ("Phase 2 author edits this file's assertions") was fragile. Flipped to permanent-fallback-marker pattern per challenger's Option B:
+- P0 fallback assertions stay indefinitely as `[P0-phase1-fallback]` regression guards.
+- Phase 2 additively writes new scenarios to its own `specs/2026-04-08-typed-component-nodes/` — does NOT edit this spec's evidence file.
+- Regression safety: if Phase 2 introduces a bug silently degrading back to plain-link, Phase 2's own scenarios fail; P0 assertions still pass. Clean bug localization.
+
+Resolution: rewrote the Phase 2 Coordination section in `evidence/e2e-acceptance-scenarios.md` to document the permanent-marker approach and enumerate which scenarios carry the fallback guards.
+
+### Cross-cutting (no action)
+
+Greenfield principle articulation: already named in CLAUDE.md §118 as "(greenfield directive, 2026-04-13)" + elaborated in PRECEDENTS.md §3. Specific corollary "no deferred tech debt" is implicit in the directive. No additional rule needed.
+
+### Net scope delta from cycle-1 to cycle-2
+
+- SPEC.md: §3 status updated, FR-1 rewritten (accept-all), FR-5 reduced to 6 fields (removed `warnBytes` + `allowedMimeTypes`), NFR-3 unchanged (SVG guard preserved), §9 D1 + D30 rows updated, §10 D-A refuted + D-L removed + D-M added, §13 In Scope simplified (no rejection-copy constants), §14 R1 + R7 re-rationaled, §15 Future Work gained 2 Explored entries, §16 SCOPE + STOP_IF updated.
+- evidence/e2e-acceptance-scenarios.md: P1.2 rewritten (accept → opaque markdown-link), P1.2a-e updated siblings, P1.3 rewrite and promote, P4.1 simplified (just `maxBytes`), P5.3 added, Phase 2 coordination rewritten (permanent markers), Resolved-in-session notes expanded, top-list updated (12 scenarios).
+- `evidence/current-shipped-state.md`: no change (factual record of current baseline unchanged).
+- `meta/_changelog.md`: this entry.
+
+### Remaining before Step 8 finalize
+
+None. All MODERATE + LOW design escalations resolved. Ready for Step 8 mechanical checks + resolution status verification + baseline commit advance.
+
+---
+
+## 2026-04-21 — Session 2 cycle-3: Step 8 finalize
+
+### Mechanical adversarial checks (self-applied per /spec Step 8)
+
+**Check 1 — ASSUMED decisions load-bearing?** No decision in §10 has ASSUMED status. D1-D4 are DIRECTED (user-directed scope calls); D-A is REFUTED by D-M; D-L is REMOVED; D-B/D-C/D-D/D-E/D-F/D-G/D-H/D-I/D-J/D-K/D-M are LOCKED. PASS.
+
+**Check 2 — Confidence gaps on 1-way doors?** 1-way-classified decisions: D-C (universe convergence, HIGH), D-F (paired with D-I, HIGH), D-G (client-breaking, client updates in same PR), D-I (6-editor convergence, HIGH), D-K (asymmetric 1-way; MEDIUM-HIGH with explicit 12-month revisit trigger + paired `openknowledge gc` commitment; user-accepted risk per STRONG-2 resolution). D-M is reversible (config-narrow path exists). PASS.
+
+**Check 3 — Non-goal accuracy?** All 14 NGs carry temporal tags. NEVER-tagged items (NG1, NG3, NG4) are either architectural (disjoint key space for NG4 means no rework penalty for adding note-to-note later in a separate spec) or scope boundaries (NG3 image editing is out-of-product). NOT NOW items all have concrete triggers. NOT UNLESS items (NG13, NG14) have explicit activation conditions. PASS.
+
+### Resolution completeness gate (per In Scope item)
+
+Each §13 In Scope item verified against /spec's 6-point gate:
+
+- All decisions affecting the item are made (LOCKED / DIRECTED / REFUTED-by-LOCKED / REMOVED — no ASSUMED) ✓
+- 3rd-party deps named: `file-type@22.0.1` (INV3-verified), `@tiptap/extension-file-handler` (shipped), Foam-style path resolver (ported per INV2), `micromark-extension-mdx` (spec unchanged here), Zod (existing) ✓
+- Architectural viability: wiki-link tokenizer extension validated additive per precedent #15; basename index sized for 1000+ files per INV2; CC1 primitive shipped and ready ✓
+- Integration feasibility: all cross-package seams (file-watcher → CC1 → `path-resolve.ts`, `managed-rename-rewrite` → FR-7 addition, `api-extension.ts` → sha256 dedup) verified against current-shipped-state.md at baseline `2ad0177a` ✓
+- Acceptance criteria verifiable: `evidence/e2e-acceptance-scenarios.md` 12-scenario contract + FR-by-FR acceptance column ✓
+- No dependency on Out of Scope items: Phase 2 (typed-component-nodes) is coordinated via permanent fallback markers (L4 B); Phase 2 landing does NOT block P0 ship ✓
+
+### Quality bar (must-have checklist)
+
+All must-have items pass. Spec includes SCR problem framing, goals + non-goals with temporal tags, 4 personas + 5 user journeys, measurable acceptance criteria with observable behavior descriptions, current-state documented with evidence file, vertical-slice proposed solution (UX → API → persistence → runtime → ops via CC1), Decision Log with resolution status + rationale + door-type + evidence links, Open Questions all RESOLVED with next actions, PRD + technical design together, major assertions evidence-backed or labeled VERIFIED via INV files, error/failure experience addressed in journeys + NFR-3 security, Future Work items maturity-tiered (Explored / Identified / Noted), Success Metrics M1-M6 defined, evidence files contain primary source citations, NOT-FOUND claims include negative-search documentation (e.g., "Zero references to `.obsidian`"), Agent Constraints §16 populated with SCOPE / EXCLUDE / STOP_IF / ASK_FIRST derived from In Scope.
+
+### Minor fixes applied during finalize
+
+Four issues caught by quality bar check:
+- **M5 success metric** referenced deleted `allowedMimeTypes` — reframed to `maxBytes` journey (the tangible operator-config path post-D-M).
+- **FR-2 acceptance** said D-B resolution "(pending)" — D-B is LOCKED. Updated to cite the LOCKED toast template verbatim + config escape hatch.
+- **Q-INV3 status** closed "D-A locked strict" — D-A now REFUTED by D-M. Added cycle-2 update note; sniff now feeds NFR-3 SVG routing + FR-1a emit consistency, not a rejection gate.
+- **§13 scenario count** said 11 — actually 12 in top-list plus P2.2 as in-file-not-top. Corrected enumeration.
+
+### Baseline commit
+
+Stamped at `4b527410` — the cycle-2 resolutions commit (last verified codebase state before finalize polish). The finalize polish commit (this one) carries no code-impacting changes, just status + four text fixes.
+
+### Status transition
+
+Draft → **Finalized**. Ready for `/ship`.
+
+---
+
+## 2026-04-22 — Post-finalization amendment: streaming upload refactor
+
+### Context
+
+During the ship review the user asked what `upload.maxBytes` actually did and whether removing it would break anything. Investigation showed the cap was a buffer-to-memory OOM guard dressed as a product choice — the editor's handler at the time read the entire multipart body into `chunks: Buffer[]` + `Buffer.concat(chunks)` before writing a byte to disk. busboy's `limits.fileSize` was the memory backstop.
+
+Authoritative research landed at [`reports/streaming-upload-refactor/REPORT.md`](../../../../reports/streaming-upload-refactor/REPORT.md) (476 LOC synthesis + 9 evidence files + peer-editor survey of 11 editors). Findings: (1) busboy is streaming-native — the `'file'` event emits a Node Readable and the handler was a regression on its intended API; (2) `stream.pipeline(fileStream, HashingPassThrough, createWriteStream)` gives O(1) memory with disk-only bound; (3) peer convergence — local-first editors (Obsidian, Logseq-local, Foam, Zettlr) have no cap because they own bytes via OS FS. OK's client-server split is an implementation detail from the user's POV (their own machine).
+
+### Changes in this amendment
+
+- **`upload.maxBytes` deleted** from `UploadConfig` interface, `DEFAULT_UPLOAD_CONFIG`, `ConfigSchema.upload`, `PartialUserUploadConfig`, `/api/upload-config` response, client `UploadResponseBody`. 5 fields now live on FR-5 (down from 6).
+- **Upload handler rewritten to stream end-to-end.** New `packages/server/src/upload-streaming.ts` module exports `HashingPassThrough` (on-the-fly sha256), `mintTempUploadPath`, `linkTempToFinalWithCollisionRetry` (POSIX `linkSync`, 99-attempt retry preserving the buffer-era `-1`…`-99` suffix semantic), `cleanupOrphanUploadTempfiles` (boot sweep, 24h TTL).
+- **Typed `UploadWriteReason` union** in new `packages/server/src/upload-errors.ts` — `malformed-upload` (400), `storage-full` (507), `storage-readonly` (500), `collision-exhaustion` (500), `storage-error` (500). Replaces the prior ad-hoc `'max-bytes'` 413 envelope.
+- **Boot-time orphan tempfile sweep** wired into `standalone.ts` `initAsync()` right after `recoverPendingManagedRename`; `degraded.push('upload-tempfile-sweep')` on error — matches the managed-rename-recovery precedent.
+- **Legacy config compatibility.** `UploadConfigSchema` is not `.strict()` so legacy `upload.maxBytes:` keys parse cleanly (silently stripped). Three deprecation WARNs surface at boot (CLI loader, Vite dev plugin, desktop loader) so users can clean up `config.yml`.
+- **SPEC direct edits** (pre-merge, per CLAUDE.md "corrigendum for shipped specs" convention which reserves breadcrumbs for post-ship state): §3 NG6, §5 P4, §6 FR-1 + FR-5 + NFR-1, §7 M5, §10 D1 mapping + D19 mapping + D-L row + D-M row, §12 A6, §13 In Scope + Agent Constraints, §15 Future Work. Amendment section appended at SPEC end.
+- **Evidence deletions.** P1.3 (oversized-file rejection) and P4.1 (operator bumps maxBytes) deleted from `evidence/e2e-acceptance-scenarios.md`. P4.1 rewritten to cover the remaining operator knobs (`attachmentFolderPath`, `emitFormat`). I-perf-sha256 invariant reframed to I-perf-streaming.
+- **E2E test deletions.** P1.3 / P4.1 tests deleted from `packages/app/tests/stress/asset-embed-advanced.e2e.ts` (Commit 4 of the refactor).
+- **Docs updates.** `docs/content/guides/configuration.mdx` + `docs/content/guides/assets-and-embeds.mdx` no longer document `upload.maxBytes`; added streaming-pipeline context + link to `reports/streaming-upload-refactor/REPORT.md`. `AGENTS.md` § upload surface updated with streaming pipeline + tempfile semantics; two new STOP rules added (do-not-re-add MIME allowlist; do-not-re-add maxBytes / buffer-to-memory pattern).
+- **Changeset bullet** in `.changeset/asset-embed-surface.md` reframes the feature as "any file drop — no user-facing byte cap" with a pointer to the streaming refactor report.
+
+### Implementation
+
+Four atomic commits, each `bun run check` green:
+
+1. `feat(server): add streaming upload primitives (no call sites)` — `packages/server/src/upload-streaming.ts` + `upload-streaming.test.ts` (25 tests) + `upload-errors.ts` (typed reason union).
+2. `feat(server): stream multipart uploads end-to-end` — rewrite `readUploadBody`, delete `writeUploadAtomic` + `sha256Hex`, rewire `handleUploadImage` to `linkTempToFinalWithCollisionRetry` + `HashingPassThrough`, extend error dispatch, wire boot sweep in `standalone.ts`.
+3. `refactor: remove upload.maxBytes from config surface` — surgical deletion from `UploadConfig`, `DEFAULT_UPLOAD_CONFIG`, `ConfigSchema`, `PartialUserUploadConfig`, client `UploadResponseBody` + `formatBytes` + toast branch. Three deprecation WARN sites.
+4. `docs(asset-embed): remove P1.3 scenario + maxBytes refs + SPEC amendment` — this changelog entry, evidence deletions, docs updates, changeset rewrite, AGENTS.md updates, SPEC direct edits + amendment section, E2E test deletions.
+
+### Unchanged
+
+Dual-CRDT bridge (precedent #14), FR-1 accept-all (D-M), FR-2 same-dir sha256 dedup, FR-3 wiki-embed tokenizer + basename index + dispatch + emit, FR-4 Obsidian vault detection (US-018 user-wins precedence), FR-6 CC1 `ch:'files'` asset events, FR-7 managed-rename image-ref rewrite (D-K refs-only), FR-8 endpoint rename, NFR-3 SVG `<img>`-only routing (text-sniff fallback survives the stream rewrite).
+
+### Baseline commit
+
+Stamped at `933421fc` — the Commit 3 completion. Commit 4 carries this changelog entry and the remaining doc/SPEC/E2E deletions.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct edit per the "shipped vs pre-merge" distinction in CLAUDE.md. Ready to proceed through the remaining ship phases (push, PR, review-cloud loop).
+
+---
+
+## 2026-04-23 — Post-finalization amendment: asset-click dispatcher + OS-integration surface
+
+### Context
+
+Post-merge shakedown of the 2026-04-22 streaming amendment surfaced two user-visible gaps the upstream QA matrix (P1–P8) didn't probe because it focused on drop + render + CRDT propagation, not post-reload click semantics:
+
+- **Gap 3b (post-reload click routing).** `![[meeting.pdf]]` drops as a PM `wikiLinkEmbed` node; after save → round-trip it becomes a PM text + `link` mark with `sourceForm='wikiembed'`. Clicking that chip routed through `classifyMarkdownHref → resolveInternalHref`, which only stripped `.md` — `docs/meeting.pdf` was classified as a doc named `notes/docs/meeting.pdf`. Bare click opened the doc-link PropPanel; Cmd+click tried to navigate OK's router to a nonexistent doc. The PDF never opened.
+- **Gap 4 (Electron window replacement).** Drop-time `WikiLinkEmbed.renderHTML` emitted `<a href>` without interception. In Electron's single BrowserWindow, clicking replaces the editor webContents with the PDF viewer — user loses the editor.
+
+Two research reports landed 2026-04-23 that closed the design space:
+
+- [`reports/electron-os-integration-patterns/`](../../../../reports/electron-os-integration-patterns/) — D1-D12, 7-app OSS Electron survey (VSCode, GitHub Desktop, Joplin, Logseq, AFFiNE, Zettlr, Standard Notes), source-level Obsidian 1.12.7 verification (D10: narrow-warn posture, exec-list, UNC regex, `oe()` function), gesture-forwarding limits across IPC (D11), Linux portal scope (D12).
+- [`reports/editor-asset-embed-patterns-across-universe/`](../../../../reports/editor-asset-embed-patterns-across-universe/) D9 — click behavior per editor across web + Electron; identified Docmost's Content-Disposition parity and Obsidian's right-click-only `shell.openPath` pattern.
+
+The research established that the architecturally-correct landing is a five-layer stack: first-class `asset` kind on `ClassifiedLinkTarget`; renderer-side `dispatchAssetClick` + empty-at-landing viewer registry; typed IPC for OS delegation in Electron (`shell.openPath`-class); main-process safety-net intercept (`setWindowOpenHandler` + `will-navigate`) for renderer-escape paths; right-click context menu via native `Menu.buildFromTemplate`. All five layers land in this amendment — no deferred tech debt.
+
+### Changes in this amendment
+
+- **`ClassifiedLinkTarget` widened** with `{kind: 'asset', url, ext}` fourth variant. `classifyMarkdownHref` detects relative-path non-md/non-mdx hrefs and emits the asset kind. `resolveInternalHref` gains a non-markdown-extension short-circuit (`.pdf`, `.png`, `.zip`, etc. → `null`) so `docs/meeting.pdf` stops masquerading as a doc named `docs/meeting.pdf`. `.mdx` is stripped alongside `.md` for doc-link resolution.
+- **SPEC direct edits.** New `## Post-finalization amendment (2026-04-23) — asset-click dispatcher + OS-integration surface` section appended after the 2026-04-22 streaming amendment. Covers US-A1..A6, FR-A1..A8, NG-A1..A6, D-A1..A12, acceptance criteria pointer to P9, and implementation sequence.
+- **E2E acceptance scenarios.** New `## Path P9 — Asset click dispatch` section appended to `evidence/e2e-acceptance-scenarios.md` with scenarios P9.1–P9.16 covering: asset click post-reload (web + Electron), drop-time click (web + Electron), Cmd+click escape, right-click menu (asset + wiki-link + image), markdown-wiki nav regression guard, hand-authored `[name](./file.pdf)`, image inline regression guard, executable-ext block, opaque zip click, multi-user CRDT + click, path-escape defense, safety-net coverage.
+- **Commit 1 (classifier + SPEC + evidence).** Additive classifier change, 15-test TDD coverage (plan matrix: new asset kind, `.mdx` stripping, URL-with-asset-ext regression guard, absolute-path regression guard, preserved existing `doc` / `anchor` / `external` / `null` behavior).
+- **Commits 2–6 land behind Commit 1** per implementation sequence above. Each leaves `bun run check` green.
+
+### Implementation plan
+
+Six atomic commits at `~/.claude/plans/lets-do-this-transient-jellyfish.md`:
+
+1. SPEC amendment + classifier types + 15-test coverage (this commit).
+2. `asset-dispatch/registry.ts` + `dispatcher.ts` + ~10 unit tests; zero importers at commit boundary.
+3. Electron typed IPC — 3 channels (`ok:shell:open-asset` / `reveal-asset` / `show-asset-menu`), main-process `openAssetSafely` / `revealAssetSafely` / `buildAssetMenu`, bridge-contract triplication, m1-smoke drift-guard update.
+4. Renderer hook-up — `internal-link.ts` + `InternalLinkPropPanel.tsx` asset branch + `wiki-link-embed.ts` (core + new app-level `.extend()`) + node-interaction-bridge + main-process safety nets (`setWindowOpenHandler` + `will-navigate`). FIRST user-visible behavior change — Gaps 3b + 4 close.
+5. Right-click context menu — main-process `context-menu` handler + renderer `asset-context-menu.ts` plugin + `showAssetMenu` IPC impl.
+6. E2E tests (`asset-click-dispatch.e2e.ts` covering P9.1–P9.16) + AGENTS.md emit-dispatch matrix update + IPC discipline update + STOP rule about `shell.openPath` call-site discipline + changeset bullet + `test:e2e` script file list update.
+
+### Unchanged
+
+Dual-CRDT bridge (precedent #14), the drop-to-embed flow, `pickInsertShape` emit dispatch matrix, basename-index resolution, managed-rename refs-only (D-K), FR-3a/b/c/d, FR-6 CC1 `ch:'files'`, NFR-3 SVG `<img>`-only routing, the 2026-04-22 streaming upload posture, `upload.*` config surface, server-side mdast→PM handlers, CRDT observer bridges. Dispatcher + OS-integration are purely additive.
+
+### Baseline commit
+
+Stamped at `616e3fe5` (pre-amendment HEAD). Commit 1 of the 6-commit plan is this changelog entry + SPEC amendment + classifier types + tests.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct append per the 2026-04-22 precedent. Additive only — no existing §/FR/NG/D narrowed.
+
+---
+
+## 2026-04-24 — Post-finalization amendment (config trim + Obsidian deferral)
+
+### Context
+
+Pre-merge VP-of-product review surfaced two problems with the shipped `upload.*` user-facing config surface (FR-5) and Obsidian vault runtime detection (FR-4):
+
+1. Every `upload.*` field failed the "one concrete user asking for it" test. All five values (`attachmentFolderPath`, `emitFormat`, `dedup.mode`, `dedup.ui`, `wikiEmbedExtensions`) were justified by speculative operator demand or Obsidian parity. Defaults cover every known workflow; no user has requested any specific knob.
+2. Runtime coupling to Obsidian's closed-source `.obsidian/app.json` schema is architectural debt. If Obsidian renames `useMarkdownLinks` or deprecates `.obsidian/app.json`, we discover the drift in user reports. The correct shape for "Obsidian refugee onboarding" is a one-shot migration tool at first boot, not a lifetime dependency.
+
+### Scope of amendment
+
+1. Deleted the entire `upload.*` Zod block in `packages/cli/src/config/schema.ts` and the three compile-time structural guards (`_ResolvedFieldsMatch`, `_AttachmentFolderPathStaysOptional`, `_EmitFormatStaysOptional`).
+2. Deleted `packages/server/src/obsidian-vault-detect.ts` + test and `packages/core/src/utils/resolve-upload-config.ts` + test. Deleted the `PartialUserUploadConfig` interface.
+3. Deleted the vault-detect + resolver call sites in `packages/cli/src/commands/start.ts`, `packages/app/src/server/hocuspocus-plugin.ts`, and `packages/desktop/src/main/upload-config-load.ts` (whole file).
+4. Deleted the `GET /api/upload-config` HTTP endpoint + the client-side `ensureUploadConfig` / `fetchUploadConfig` / cache + `isUploadConfig` runtime validator.
+5. Deleted the `UploadConfig` interface + `DEFAULT_UPLOAD_CONFIG` + `getUploadConfig?: () => UploadConfig` DI from `ApiExtensionOptions` + every boot-plumbing type (`boot.ts`, `standalone.ts`, `server-entry.ts`, `window-manager.ts`, `hocuspocus-plugin.ts`).
+6. Added five exported module-level constants to `packages/core/src/constants/upload.ts`: `DEFAULT_ATTACHMENT_FOLDER_PATH = './'`, `DEFAULT_EMIT_FORMAT = 'wikiembed'`, `DEFAULT_DEDUP_MODE = 'same-dir'`, `DEFAULT_DEDUP_UI = 'toast'`, `WIKI_EMBED_EXTENSIONS` (15-entry `ReadonlySet<string>`). Internal enum types `EmitFormat` / `DedupMode` / `DedupUIMode` stay for `pickInsertShape` dispatch typing; not user-surfaced.
+7. Refactored runtime consumers to read constants directly — `packages/server/src/api-extension.ts` upload handler, `packages/core/src/markdown/index.ts` mdast→PM dispatch, `packages/app/src/editor/image-upload/index.ts` (`pickInsertShape` signature simplified from `(filename, config)` to `(filename)`).
+8. Updated SPEC.md with direct in-line edits — struck FR-4 + FR-5 rows, D-J row, M5 metric, P4 journey. Rewrote P2 journey to cover only the default-shape refugee path. Rewrote NG14 to reference the fixed constant.
+9. Added a §Post-finalization amendment (2026-04-24) section at the end of SPEC.md documenting the decision rationale + scope + what-did-not-change + future-work pointer.
+10. Updated `.changeset/asset-embed-surface.md` to drop Obsidian-specific paragraphs + `upload.*` config language.
+11. Updated `docs/content/guides/assets-and-embeds.mdx` + `docs/content/guides/configuration.mdx` to describe the fixed defaults (no config knob).
+12. Updated `AGENTS.md` (symlink → CLAUDE.md): rewrote upload-surface section to describe constants; deleted Obsidian vault paragraphs + HTTP surface row for `/api/upload-config`; deleted user-first precedence WARN.
+
+### Rationale
+
+- **Every config field is a promise.** Speculative knobs accumulate into schemas that stop being contracts and become wishlists. The bar for a user-facing config field is "one concrete user asking for it," not "this might be useful someday."
+- **Runtime coupling to a closed-source schema is debt.** The "Obsidian refugee" persona is real; the runtime detection shape was wrong. A one-shot migration tool reads `.obsidian/app.json` once, writes translated settings to `.open-knowledge/config.yml`, then never reads the Obsidian file again. Decouples OK's runtime from Obsidian's release cadence.
+- **The P2 "Obsidian refugee" + P4 "operator" personas remain named but have no concrete, user-sourced demand for any specific knob today.** When one materializes, a future spec reintroduces the specific field with that user's use case as the justification.
+
+### Test changes
+
+- Deleted `packages/core/src/utils/resolve-upload-config.test.ts` (~110 LOC).
+- Deleted `packages/server/src/obsidian-vault-detect.test.ts` (~188 LOC).
+- Deleted the `ConfigSchema.upload (FR-5)` + `ConfigSchema.upload × resolveUploadConfig (US-018 precedence integration)` describe blocks in `packages/cli/src/config/schema.test.ts`; replaced with a single "legacy upload.* keys parse cleanly" smoke test.
+- Deleted the `handleUploadImage — config-driven upload surface (FR-5)` describe block in `packages/server/src/api-extension.test.ts` (two `GET /api/upload-config` tests + harness).
+- Deleted the `upload.dedup.mode = "off" disables the dedup scan` test in `packages/server/src/api-extension.test.ts` (no knob → no test).
+- Refactored `packages/app/src/editor/image-upload/pickInsertShape.test.ts` to the no-arg signature; deleted operator-override tests; kept the extension-matrix coverage that matters (image / non-image wikiembed / opaque / markdown-doc).
+- Deleted the `loadUploadConfig` stub + `uploadConfig` threading assertion in `packages/desktop/tests/main/window-manager.test.ts`.
+
+### Future work
+
+- **`ok migrate --from-obsidian-vault` CLI** — separate spec, separate PR. One-shot reader of `.obsidian/app.json` that writes translated settings to `.open-knowledge/config.yml` once and never reads the Obsidian file again. Requires a companion product decision on which OK-side config fields (if any) should be reintroduced to carry those imported values.
+
+### Status
+
+SPEC remains **Finalized**; amendment is pre-merge direct edit + append per the 2026-04-22 + 2026-04-23 precedent. This amendment is **reductive** (deletes user-facing surface area) rather than additive — honors the "no deferred tech debt" posture by removing overspec pre-merge rather than after it lands.
+
+### Authoritative cross-reference
+
+`~/.claude/plans/lets-do-this-transient-jellyfish.md` carries the full rationale, deletion scope by file, implementation order, and decision journal for this amendment.

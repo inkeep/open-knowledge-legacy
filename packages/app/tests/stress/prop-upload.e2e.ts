@@ -5,14 +5,17 @@
  * exercises:
  *
  *  - The PropUploadButton's hidden `<input type="file">` is wired through
- *    `runUpload` → `uploadFile` → real fetch to `/api/upload-{image,video,audio}`.
+ *    `runUpload` → `uploadFile` → real fetch to the unified `/api/upload`
+ *    endpoint (accept-all by extension; one route for all media kinds).
  *  - The server's magic-byte sniffing accepts a real multipart body shaped
  *    by Chromium's file-input + FormData (not a hand-crafted Buffer like
  *    the unit test).
- *  - The returned `{ src }` propagates through `onUploaded` → `onChange`
- *    → Y.Doc → re-render of the descriptor's React component with new src.
+ *  - The returned `{ ok, src, path, deduped }` propagates through
+ *    `onUploaded` → `onChange` → Y.Doc → re-render of the descriptor's
+ *    React component with new src (`uploadFile` unwraps `path ?? src`
+ *    into `{ url }`).
  *  - Cross-medium parity: each descriptor's wiring is independent (different
- *    `accept` array, different endpoint) and a video-specific regression
+ *    `accept` array, same endpoint) and a video-specific regression
  *    won't show in image-only coverage.
  *
  * Initial-insert AND replace-src are both exercised in the same flow per
@@ -24,10 +27,13 @@
  * existing PropPanel-attr-change test.
  *
  * The ERROR-PATH variant on UPLOAD-IMG exercises the catch arm in
- * `runUpload` (server-side magic-byte rejection → 400 → toast) without
- * needing a `Promise.reject(...)` mock at the unit tier — that's the
- * `bun:test` unhandled-rejection observer trap from the runUpload-tests
- * removal in `PropPanel.test.tsx:396-407`.
+ * `runUpload` (server 400 → toast) without needing a `Promise.reject(...)`
+ * mock at the unit tier — that's the `bun:test` unhandled-rejection
+ * observer trap from the runUpload-tests removal in
+ * `PropPanel.test.tsx:396-407`. Trigger flipped to 0-byte file
+ * (server's `byteLength === 0` → 400 'No file received') because the
+ * unified `/api/upload` endpoint is accept-all and the prior
+ * magic-byte-mismatch rejection no longer applies.
  *
  * This file is NOT in the CI `test:e2e` file list
  * (`packages/app/package.json` dispatches a fixed subset for PR-tier runs);
@@ -42,7 +48,6 @@ import type { Page } from '@playwright/test';
 import {
   createMp3Buffer,
   createMp4Buffer,
-  createPdfBuffer,
   createPngBuffer,
   expect,
   test,
@@ -114,7 +119,10 @@ async function waitForSrcChange(
 
 interface UploadCase {
   tag: 'img' | 'video' | 'audio';
-  endpoint: '/api/upload-image' | '/api/upload-video' | '/api/upload-audio';
+  // All media kinds route through the unified `/api/upload` endpoint.
+  // Retained as a field (not a const) so any future per-kind divergence has a
+  // single, obvious lever to flip.
+  endpoint: '/api/upload';
   initialMarkdown: string;
   initialSrc: string;
   /** Two distinct payloads — the test uploads both in sequence to exercise
@@ -125,32 +133,35 @@ interface UploadCase {
 const cases: Record<'img' | 'video' | 'audio', UploadCase> = {
   img: {
     tag: 'img',
-    endpoint: '/api/upload-image',
+    endpoint: '/api/upload',
     initialMarkdown: '<img src="initial.png" alt="initial" />',
     initialSrc: 'initial.png',
+    // Distinct salts so the two payloads differ in sha256; HEAD's `/api/upload`
+    // same-dir dedup would otherwise collapse byte-identical buffers to one
+    // stored file, leaving src unchanged on the second upload.
     payloads: [
-      { name: 'first.png', mimeType: 'image/png', buffer: createPngBuffer() },
-      { name: 'second.png', mimeType: 'image/png', buffer: createPngBuffer() },
+      { name: 'first.png', mimeType: 'image/png', buffer: createPngBuffer('first') },
+      { name: 'second.png', mimeType: 'image/png', buffer: createPngBuffer('second') },
     ],
   },
   video: {
     tag: 'video',
-    endpoint: '/api/upload-video',
+    endpoint: '/api/upload',
     initialMarkdown: '<video src="initial.mp4" controls />',
     initialSrc: 'initial.mp4',
     payloads: [
-      { name: 'first.mp4', mimeType: 'video/mp4', buffer: createMp4Buffer() },
-      { name: 'second.mp4', mimeType: 'video/mp4', buffer: createMp4Buffer() },
+      { name: 'first.mp4', mimeType: 'video/mp4', buffer: createMp4Buffer('first') },
+      { name: 'second.mp4', mimeType: 'video/mp4', buffer: createMp4Buffer('second') },
     ],
   },
   audio: {
     tag: 'audio',
-    endpoint: '/api/upload-audio',
+    endpoint: '/api/upload',
     initialMarkdown: '<audio src="initial.mp3" controls />',
     initialSrc: 'initial.mp3',
     payloads: [
-      { name: 'first.mp3', mimeType: 'audio/mpeg', buffer: createMp3Buffer() },
-      { name: 'second.mp3', mimeType: 'audio/mpeg', buffer: createMp3Buffer() },
+      { name: 'first.mp3', mimeType: 'audio/mpeg', buffer: createMp3Buffer('first') },
+      { name: 'second.mp3', mimeType: 'audio/mpeg', buffer: createMp3Buffer('second') },
     ],
   },
 };
@@ -188,11 +199,14 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     });
     const srcAfterFirst = await waitForSrcChange(page, c.tag, c.initialSrc);
     expect(srcAfterFirst).not.toBe(c.initialSrc);
-    // Server returns server-absolute URLs (leading slash, contentDir-relative).
-    expect(srcAfterFirst).toMatch(/^\//);
+    // Server returns the contentDir-relative `path` (POSIX-normalized, no
+    // leading slash from `relative()`); the upload-file.ts client helper
+    // prefixes `/` to root the URL at origin so subdir docs referencing
+    // peer-dir assets resolve correctly under hash routing. Mirror of the
+    // drop path's `resolvedSrc = `/${assetContentPath}``.
+    expect(srcAfterFirst.startsWith('/')).toBe(true);
     expect(srcAfterFirst).toContain(c.payloads[0].name.replace(/\.\w+$/, ''));
-    // Strip the leading `/` before joining: `path.join(base, '/foo')` happens
-    // to strip leading separators on POSIX, but relying on that is implicit.
+    // Strip the leading `/` before joining with the contentDir.
     expect(existsSync(join(workerServer.contentDir, srcAfterFirst.replace(/^\//, '')))).toBe(true);
 
     // Second upload — first payload → second payload. Same wiring path,
@@ -204,7 +218,7 @@ for (const kind of ['img', 'video', 'audio'] as const) {
     });
     const srcAfterSecond = await waitForSrcChange(page, c.tag, srcAfterFirst);
     expect(srcAfterSecond).not.toBe(srcAfterFirst);
-    expect(srcAfterSecond).toMatch(/^\//);
+    expect(srcAfterSecond.startsWith('/')).toBe(true);
     expect(srcAfterSecond).toContain(c.payloads[1].name.replace(/\.\w+$/, ''));
     expect(existsSync(join(workerServer.contentDir, srcAfterSecond.replace(/^\//, '')))).toBe(true);
   });
@@ -273,11 +287,15 @@ test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the ass
   const newSrc = await waitForSrcChange(page, 'img', cases.img.initialSrc);
   expect(newSrc).not.toBe(cases.img.initialSrc);
 
-  // Server-absolute URL shape — leading slash + contains the doc's subdir.
-  expect(newSrc).toMatch(/^\/sidebar-folder\//);
+  // Subdir is threaded through `path` (contentDir-relative, no leading
+  // slash). The bare-filename regression class manifests when src omits the
+  // subdir entirely (`first.png` instead of `sidebar-folder/first.png`) —
+  // this assertion guards the "doc subdir is preserved" invariant
+  // regardless of leading-slash style.
+  expect(newSrc).toContain('sidebar-folder/');
 
-  // The file must exist on disk under the doc's subdir. Strip the leading
-  // `/` before joining (path.join's leading-separator stripping is implicit).
+  // The file must exist on disk under the doc's subdir. Strip a leading `/`
+  // defensively before joining.
   expect(existsSync(join(workerServer.contentDir, newSrc.replace(/^\//, '')))).toBe(true);
 
   // Critical: when the browser resolves <img src=...>, it must hit the
@@ -293,12 +311,20 @@ test('UPLOAD-IMG-SUBDIR-01: subdir-doc upload renders <img> that fetches the ass
 });
 
 // ---------------------------------------------------------------------------
-// UPLOAD-IMG-ERR — server-side magic-byte rejection surfaces toast.error,
-// src unchanged. Exercises runUpload's catch arm (`String(err)` fallback)
-// without a mock-driven `Promise.reject(...)` (the Bun observer-bleed trap).
+// UPLOAD-IMG-ERR — server-side rejection surfaces toast.error, src unchanged.
+// Exercises runUpload's catch arm (`String(err)` fallback) without a
+// mock-driven `Promise.reject(...)` (the Bun observer-bleed trap).
+//
+// Trigger: 0-byte upload. The unified `/api/upload` endpoint is accept-all
+// (no MIME-prefix gate), so the prior PDF-magic-bytes-as-PNG trigger no
+// longer fails — the server happily accepts it. An empty file is the
+// cleanest server-side rejection accessible from the PropPanel UI:
+// `byteLength === 0` → 400 'No file received' (api-extension.ts ~line 4681).
+// PathName-escape rejections require manipulating `parentDocName`, which
+// the PropPanel UI doesn't expose.
 // ---------------------------------------------------------------------------
 
-test('UPLOAD-IMG-ERR: PDF masquerading as PNG → magic-byte 400 → toast.error → src unchanged', async ({
+test('UPLOAD-IMG-ERR: 0-byte upload → 400 No file received → toast.error → src unchanged', async ({
   page,
   api,
 }) => {
@@ -314,14 +340,14 @@ test('UPLOAD-IMG-ERR: PDF masquerading as PNG → magic-byte 400 → toast.error
   const fileInput = panel.locator('[data-prop-upload-input]').first();
   await fileInput.waitFor({ state: 'attached', timeout: 5000 });
 
-  // PDF magic bytes + .png filename + image/png MIME hint. Server's
-  // `fileTypeFromBuffer` ignores the client MIME, detects application/pdf
-  // from the magic bytes, rejects with 400 because pdf is not in
-  // ALLOWED_IMAGE_MIME_TYPES.
+  // Empty buffer + .png filename. Server admits the upload past the
+  // multipart parser (filename + MIME pass), then short-circuits at
+  // `byteLength === 0` → 400 'No file received'. runUpload's catch arm
+  // surfaces this through Sonner.
   await fileInput.setInputFiles({
-    name: 'malicious.png',
+    name: 'empty.png',
     mimeType: 'image/png',
-    buffer: createPdfBuffer(),
+    buffer: Buffer.alloc(0),
   });
 
   // Sonner toast surfaces with `Upload failed: <server message>` per

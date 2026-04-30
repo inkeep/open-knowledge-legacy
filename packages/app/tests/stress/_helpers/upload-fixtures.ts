@@ -1,25 +1,31 @@
 /**
- * Magic-byte buffers for upload e2e tests. Mirror the fixtures used by
- * `packages/server/src/api-extension.test.ts:115, 304, 334` (the unit-tier
- * tests for `/api/upload-image|video|audio`). Extracted here so the e2e
- * suite exercises the same byte sequences the server's `fileTypeFromBuffer`
- * dispatcher accepts.
+ * Magic-byte buffers for upload e2e tests. Mirror the fixtures used by the
+ * unit-tier `handleUploadImage` tests in `packages/server/src/api-extension.test.ts`
+ * (which exercise the unified `/api/upload` endpoint). Extracted here so the
+ * e2e suite exercises the same byte sequences the server's
+ * `fileTypeFromFile` dispatcher accepts — if `file-type` widens or narrows
+ * its detection ranges, both surfaces fail the same way.
  *
- * If `file-type` widens or narrows its detection ranges, both surfaces
- * fail the same way — single source of truth.
+ * The optional `salt` parameter appends salt bytes AFTER the format-defining
+ * magic bytes, producing a buffer that still type-sniffs as the intended
+ * format but has a distinct sha256. Required because HEAD's `/api/upload`
+ * pipeline runs same-dir sha256 dedup — two byte-identical payloads collapse
+ * to one stored file, which masks the "second upload replaces src" assertion
+ * with a no-op rename. Pass distinct salts when a test needs distinct uploads.
  */
 
 /** Minimal valid PNG (1×1 transparent pixel). `file-type` detects as image/png. */
-export function createPngBuffer(): Buffer {
-  return Buffer.from(
+export function createPngBuffer(salt?: string): Buffer {
+  const base = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
     'base64',
   );
+  return salt === undefined ? base : Buffer.concat([base, Buffer.from(salt, 'utf8')]);
 }
 
 /** Minimal valid MP4 — a 24-byte `ftyp` box. `file-type` detects as video/mp4. */
-export function createMp4Buffer(): Buffer {
-  return Buffer.from([
+export function createMp4Buffer(salt?: string): Buffer {
+  const base = Buffer.from([
     0x00,
     0x00,
     0x00,
@@ -45,11 +51,12 @@ export function createMp4Buffer(): Buffer {
     0x6f,
     0x6d, // compat brand = 'isom'
   ]);
+  return salt === undefined ? base : Buffer.concat([base, Buffer.from(salt, 'utf8')]);
 }
 
 /** ID3v2 header + MPEG-1 Layer III sync frame. `file-type` detects as audio/mpeg. */
-export function createMp3Buffer(): Buffer {
-  return Buffer.from([
+export function createMp3Buffer(salt?: string): Buffer {
+  const base = Buffer.from([
     0x49,
     0x44,
     0x33, // 'ID3'
@@ -66,13 +73,5 @@ export function createMp3Buffer(): Buffer {
     0x44, // 128 kbps, 44.1 kHz, stereo
     ...new Array(28).fill(0x00),
   ]);
-}
-
-/** Minimal PDF magic bytes. Used for the negative-path test where a PDF
- *  masquerades as a `.png` filename — the server's `fileTypeFromBuffer`
- *  rejects it because the detected MIME (`application/pdf`) isn't in
- *  `ALLOWED_IMAGE_MIME_TYPES`.
- */
-export function createPdfBuffer(): Buffer {
-  return Buffer.from('%PDF-1.4\n%\xC4\xE5\xF2\xE5');
+  return salt === undefined ? base : Buffer.concat([base, Buffer.from(salt, 'utf8')]);
 }

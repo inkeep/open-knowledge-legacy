@@ -61,7 +61,7 @@ export function ForwardLinksPanel({
   docName: string;
   className?: string;
 }) {
-  const { folderPaths, pages, loading: pagesLoading } = usePageList();
+  const { folderPaths, pages, pagesBySlug, loading: pagesLoading } = usePageList();
   const {
     data: links = [],
     isLoading,
@@ -78,6 +78,7 @@ export function ForwardLinksPanel({
       : resolveLinkTargetIntent(createTarget.docName, {
           pages,
           folderPaths,
+          pagesBySlug,
         });
   const createDialogSeed =
     createDialogIntent === null
@@ -97,6 +98,7 @@ export function ForwardLinksPanel({
     const linkIntent = resolveLinkTargetIntent(link.docName, {
       pages,
       folderPaths,
+      pagesBySlug,
     });
     if (!pagesLoading && linkIntent.kind === 'create') {
       setCreateTarget(link);
@@ -128,6 +130,7 @@ export function ForwardLinksPanel({
                     ? resolveLinkTargetIntent(link.docName, {
                         pages,
                         folderPaths,
+                        pagesBySlug,
                       })
                     : null;
                 const unresolved =

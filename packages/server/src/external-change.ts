@@ -10,6 +10,7 @@ import type { Hocuspocus } from '@hocuspocus/server';
 import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
+import type * as Y from 'yjs';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -40,6 +41,40 @@ export const FILE_WATCHER_ORIGIN = {
 } as const satisfies PairedWriteOrigin;
 
 /**
+ * Apply file content to a live Y.Doc inside a single FILE_WATCHER_ORIGIN
+ * transact. Pure CRDT update — no contributor recording, no reconciledBase
+ * advance, no `Hocuspocus` lookup. Used both by the file-watcher path
+ * (`applyExternalChange`, which adds those side effects) and by the
+ * persistence tripwire reset path (which must NOT advance attribution or
+ * the reconciled base because no disk write happened).
+ */
+export function applyDiskContentToDoc(
+  document: Y.Doc,
+  content: string,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
+  sourcePath?: string,
+): void {
+  const { frontmatter, body } = stripFrontmatter(content);
+  const parseOpts = resolveEmbed && sourcePath ? { resolveEmbed, sourcePath } : undefined;
+  const parsedJson = mdManager.parseWithFallback(body, parseOpts);
+  const pmNode = schema.nodeFromJSON(parsedJson);
+  const xmlFragment = document.getXmlFragment('default');
+
+  document.transact(() => {
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+    const metaMap = document.getMap('metadata');
+    metaMap.set('frontmatter', frontmatter);
+
+    const ytext = document.getText('source');
+    const currentText = ytext.toString();
+    if (currentText !== content) {
+      applyFastDiff(ytext, currentText, content);
+    }
+  }, FILE_WATCHER_ORIGIN);
+}
+
+/**
  * Apply external file content to a live Y.Doc — the throwing core of the
  * disk→CRDT bridge. Both standalone.ts (CLI) and the dev plugin delegate here.
  *
@@ -58,27 +93,13 @@ export function applyExternalChange(
   hocuspocus: Hocuspocus,
   docName: string,
   content: string,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): void {
   if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
-  const { frontmatter, body } = stripFrontmatter(content);
-  const parsedJson = mdManager.parseWithFallback(body);
-  const pmNode = schema.nodeFromJSON(parsedJson);
-  const xmlFragment = document.getXmlFragment('default');
 
-  document.transact(() => {
-    const meta = { mapping: new Map(), isOMark: new Map() };
-    updateYFragment(document, xmlFragment, pmNode, meta);
-    const metaMap = document.getMap('metadata');
-    metaMap.set('frontmatter', frontmatter);
-
-    const ytext = document.getText('source');
-    const currentText = ytext.toString();
-    if (currentText !== content) {
-      applyFastDiff(ytext, currentText, content);
-    }
-  }, FILE_WATCHER_ORIGIN);
+  applyDiskContentToDoc(document, content, resolveEmbed, docName);
 
   // Attribute this disk-originated write to the file-system classified writer (D41).
   // FILE_WATCHER_ORIGIN has skipStoreHooks:true so persistence.ts:onStoreDocument
@@ -104,10 +125,11 @@ export function applyExternalChange(
  */
 export function createExternalChangeHandler(
   hocuspocus: Hocuspocus,
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null,
 ): (docName: string, content: string) => Promise<void> {
   return async (docName: string, content: string): Promise<void> => {
     try {
-      applyExternalChange(hocuspocus, docName, content);
+      applyExternalChange(hocuspocus, docName, content, resolveEmbed);
       console.log(`[file-watcher] Applied external change: ${docName}`);
     } catch (err) {
       console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);

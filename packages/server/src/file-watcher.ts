@@ -17,11 +17,13 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
+import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import {
   type DocExtension,
   forgetDocExtension,
+  isSupportedAssetFile,
   isSupportedDocFile,
   registerDocExtension,
   stripDocExtension,
@@ -41,7 +43,8 @@ type WatcherBackend = 'parcel' | 'chokidar';
 
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 
-export type DiskEvent =
+// Subset of DiskEvent that classifyEvents emits — markdown-only.
+type MarkdownDiskEvent =
   | { kind: 'create'; path: string; docName: string; content: string }
   | { kind: 'update'; path: string; docName: string; content: string }
   | { kind: 'delete'; path: string; docName: string }
@@ -54,6 +57,31 @@ export type DiskEvent =
       content: string;
     }
   | { kind: 'conflict'; path: string; docName: string; content: string };
+
+// SPEC §6 FR-6 / D-H Option A. Asset events carry contentDir-relative
+// paths instead of docNames — assets aren't documents in the CRDT layer.
+// No content payload (binary) and no rename detection — Finder renames
+// surface as delete+create pair, and the basename index is idempotent
+// under add/remove so the end state matches. Rename-via-inode-pairing
+// was scoped out to keep hot-path binary handling simple (would require
+// hashing to correlate delete+create pairs).
+type AssetDiskEvent =
+  | { kind: 'asset-create'; path: string; relativePath: string }
+  | { kind: 'asset-delete'; path: string; relativePath: string };
+
+export type DiskEvent = MarkdownDiskEvent | AssetDiskEvent;
+
+/**
+ * Exhaustiveness guard for DiskEvent dispatch sites. Every consumer that
+ * pattern-matches on `event.kind` should terminate with
+ * `assertNeverDiskEvent(event)` so a new variant produces a TypeScript
+ * error at every consumer until they explicitly handle it. The new
+ * variant is discovered at compile time, not by silent drop-on-floor at
+ * runtime.
+ */
+export function assertNeverDiskEvent(event: never): never {
+  throw new Error(`[DiskEvent] unhandled variant: ${JSON.stringify(event)}`);
+}
 
 // ─── File index ─────────────────────────────────────────────────────────────
 
@@ -168,7 +196,7 @@ export async function classifyEvents(
   contentDir: string,
   contentFilter?: ContentFilter,
   aliasMap?: Map<string, string>,
-): Promise<DiskEvent[]> {
+): Promise<MarkdownDiskEvent[]> {
   const deletes: RawFileEvent[] = [];
   const creates: RawFileEvent[] = [];
   const updates: RawFileEvent[] = [];
@@ -275,7 +303,7 @@ export async function classifyEvents(
     return canonicalDocName;
   }
 
-  const results: DiskEvent[] = [];
+  const results: MarkdownDiskEvent[] = [];
   const pairedCreates = new Set<string>();
   const pairedDeletes = new Set<string>();
 
@@ -565,6 +593,11 @@ function seedLastKnownHashes(
  * to keep the index in sync with actual disk state.
  */
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
+  // Asset events are tracked by the basename index in standalone.ts, not by
+  // the docName-keyed file index — short-circuit here.
+  if (event.kind === 'asset-create' || event.kind === 'asset-delete') {
+    return;
+  }
   const docName = event.kind === 'rename' ? event.newDocName : event.docName;
   if (isSystemDoc(docName) || isConfigDoc(docName)) return;
   switch (event.kind) {
@@ -622,8 +655,11 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
 /**
  * Process a batch of raw file events through the classification + self-write
  * detection pipeline. Shared by both @parcel/watcher and chokidar backends.
+ *
+ * Exported for unit-level coverage of the md-before-asset ordering invariant
+ * — see the same-batch-create test in `file-watcher.test.ts`.
  */
-async function handleRawEvents(
+export async function handleRawEvents(
   rawEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }>,
   contentDir: string,
   contentFilter: ContentFilter | undefined,
@@ -632,9 +668,26 @@ async function handleRawEvents(
   aliasMap?: Map<string, string>,
 ): Promise<void> {
   const mdEvents = rawEvents.filter((e) => isSupportedDocFile(e.path));
-  if (mdEvents.length === 0) return;
+  const assetEvents = rawEvents.filter((e) => isSupportedAssetFile(e.path, ASSET_EXTENSIONS));
+  if (mdEvents.length === 0 && assetEvents.length === 0) return;
 
-  const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap);
+  // Process md events FIRST so the content filter's `dirCount` is current
+  // when asset events run `isExcluded()`. Same-batch atomic creates like
+  // `mkdir foo && cp note.md foo/ && cp pic.png foo/` arrive in a single
+  // watcher callback — @parcel/watcher's FSEvents backend coalesces with
+  // `latency=0.001` (1ms; FSEventsBackend.cc), and the chokidar fallback
+  // pools into a 50ms `BATCH_WINDOW_MS`. Both windows easily span a quick
+  // mkdir+cp+cp sequence. With assets-first ordering the asset event
+  // hits `isExcluded()` while dirCount is still 0; assets that admit
+  // only via the sibling-asset rule (extension in ASSET_EXTENSIONS +
+  // dirCount > 0) get silently dropped from basenameIndex until next
+  // server restart. Md-first puts `incrementMdDir` (below, `create`
+  // branch) ahead of the asset loop, lifting dirCount from 0 → 1 before
+  // the asset is filtered. The watcher API path is unaffected — self-
+  // writes already call `incrementMdDir` synchronously at the write
+  // site (see `!isSelf` guard below).
+  const diskEvents =
+    mdEvents.length > 0 ? await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap) : [];
 
   for (const event of diskEvents) {
     let isSelf = false;
@@ -671,7 +724,13 @@ async function handleRawEvents(
 
     updateFileIndex(event, fileIndex);
 
-    if (contentFilter) {
+    // Update the content filter's dirCount only for external changes. Self-
+    // writes (e.g. `/api/create-page`, agent-write, persistence store) call
+    // `contentFilter.incrementMdDir` synchronously at their own write site
+    // so sibling assets dropped immediately after can pass the filter's
+    // `ASSET_EXTENSIONS + dirCount > 0` rule without racing this async
+    // watcher callback. Incrementing here on self-writes would double-count.
+    if (contentFilter && !isSelf) {
       switch (event.kind) {
         case 'create':
           contentFilter.incrementMdDir(dirname(event.docName));
@@ -721,6 +780,25 @@ async function handleRawEvents(
       },
       async () => onDiskEvent(event),
     );
+  }
+
+  // SPEC §6 FR-6: emit asset events independently. Skip content reading
+  // (binary), reconciliation, and rename-via-hash detection — basename
+  // index is idempotent on add/remove/rename so a Finder rename surfacing
+  // as delete+create produces the correct end state. Runs AFTER the md
+  // loop so dirCount reflects same-batch md creates (see ordering note
+  // at the top of the function).
+  for (const raw of assetEvents) {
+    if (contentFilter) {
+      const relPath = relative(contentDir, raw.path);
+      if (contentFilter.isExcluded(relPath)) continue;
+    }
+    const relativePath = relative(contentDir, raw.path);
+    const event: DiskEvent =
+      raw.type === 'delete'
+        ? { kind: 'asset-delete', path: raw.path, relativePath }
+        : { kind: 'asset-create', path: raw.path, relativePath };
+    await onDiskEvent(event);
   }
 }
 

@@ -6,33 +6,38 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
+  createReadStream,
+  createWriteStream,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
-  ALLOWED_AUDIO_MIME_TYPES,
-  ALLOWED_IMAGE_MIME_TYPES,
-  ALLOWED_VIDEO_MIME_TYPES,
+  ASSET_EXTENSIONS,
   applyFastDiff,
   colorFromSeed,
   createCodeFenceTracker,
+  DEFAULT_ATTACHMENT_FOLDER_PATH,
+  DEFAULT_DEDUP_MODE,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -49,7 +54,7 @@ import {
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
-import { fileTypeFromBuffer } from 'file-type';
+import { fileTypeFromFile } from 'file-type';
 import { captureEffect } from './activity-log.ts';
 import { listAgentActivity, synthesizeStackItemDiffText } from './agent-activity.ts';
 import type { AgentFocusBroadcaster } from './agent-focus.ts';
@@ -76,6 +81,11 @@ import {
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
 import { readUiLock } from './ui-lock.ts';
+import {
+  HashingPassThrough,
+  linkTempToFinalWithCollisionRetry,
+  mintTempUploadPath,
+} from './upload-streaming.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -243,59 +253,298 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
-const ALLOWED_VIDEO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_VIDEO_MIME_TYPES);
-const ALLOWED_AUDIO_MIME_TYPES_SET: Set<string> = new Set(ALLOWED_AUDIO_MIME_TYPES);
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
+// F9: unicode-preserving. Permits any Unicode letter, number, or combining
+// mark, plus pictographic emoji and the punctuation whitelist (., -, _, space).
+// Everything else (including `/`, `\`, null bytes, control chars, CRLF) is
+// either stripped or replaced so path-escape guards downstream keep their
+// invariants. CJK, Arabic, Cyrillic, and emoji survive — macOS/Finder
+// ergonomics without sacrificing filesystem safety.
+const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
+// Stripping C0 + DEL is the whole point — the rule fires on intentional use.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
+const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
+
 export function sanitizeFilename(name: string): string {
-  const base = name.replace(/[/\\]/g, '');
-  const ext = extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
-  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
-  return safeStem + safeExt;
-}
+  // Strip path separators and null/control bytes BEFORE any other pass so
+  // they cannot reappear inside a replacement and dodge later checks.
+  let stripped = name.replace(STRIP_ON_SIGHT, '');
+  stripped = stripped.replace(SAFE_FILENAME_CHARS, '_');
 
-function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
-  const ext = extname(sanitized);
-  const stem = sanitized.slice(0, sanitized.length - ext.length);
-  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
+  // Collapse underscore and dot runs so "../etc/passwd" → "etcpasswd" and
+  // "foo__bar" → "foo_bar".
+  stripped = stripped.replace(/_+/g, '_').replace(/\.{2,}/g, '.');
 
-  for (const name of candidates) {
-    const destPath = resolve(destDir, name);
-    try {
-      const fd = openSync(destPath, 'wx');
-      try {
-        writeSync(fd, buffer);
-      } finally {
-        closeSync(fd);
-      }
-      return name;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
-      throw err;
+  // No hidden files — trim leading dots and leading underscores.
+  stripped = stripped.replace(/^[._]+/, '');
+  // Filesystem portability — strip trailing dots (Windows trims them too).
+  stripped = stripped.replace(/\.+$/, '');
+
+  if (stripped === '') return 'upload';
+
+  // Most filesystems cap basenames at 255 bytes (ext4, APFS, exFAT). Without a
+  // ceiling, a multipart `Content-Disposition` filename approaching busboy's
+  // header size can sail through Unicode-letter sanitization and surface as
+  // `ENAMETOOLONG` from `linkSync`, which classifies as a generic
+  // `storage-error` → 500. Truncate the stem (preserving the extension) to
+  // stay within the portable basename ceiling.
+  const MAX_BYTES = 255;
+  const encoder = new TextEncoder();
+  if (encoder.encode(stripped).length > MAX_BYTES) {
+    const dotIdx = stripped.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
+    let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
+    // `slice(0, -1)` removes one UTF-16 code unit. A trailing emoji is a
+    // surrogate pair, so the loop transiently produces a lone-surrogate
+    // string that `TextEncoder` re-encodes as U+FFFD (3 bytes) — harmless
+    // since the emoji is fully consumed before the loop exits and the
+    // returned string is always valid UTF-8.
+    while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
+      stem = stem.slice(0, -1);
     }
+    stripped = (stem || 'upload') + ext;
+    // The loop drains the stem; it cannot shrink the extension itself.
+    // An adversarial 250+ byte extension (e.g. `'x.' + 'a'.repeat(300)`)
+    // would drain the stem to empty and still leave `'upload' + ext`
+    // above the ceiling. Final-pass guard: fall back to extensionless
+    // `'upload'` when even the floor exceeds MAX_BYTES.
+    if (encoder.encode(stripped).length > MAX_BYTES) stripped = 'upload';
   }
-  throw new Error('Could not find available filename after 100 attempts');
+
+  return stripped;
 }
+
+/**
+ * SPEC §6 FR-5 / docs/assets-and-embeds.mdx: resolve the destination
+ * directory for an upload from the parent doc's path and the configured
+ * `upload.attachmentFolderPath`. Matches Obsidian's literal schema (D-J
+ * free-form string):
+ *
+ *   - `"./"` (default)  → same directory as the doc
+ *   - `"/"`             → content-directory root
+ *   - `"./<sub>"`       → subdirectory beside the doc
+ *   - `"<name>"` (bare) → fixed content-relative path
+ *
+ * Treats any `./` prefix as "relative to doc dir," any other value as
+ * "relative to content dir." Empty or whitespace-only strings fall back
+ * to the default (doc dir).
+ *
+ * Returns an absolute path within `resolvedContentDir` — path-escape
+ * enforcement happens at the caller via `isWithinContentDir` + `realpath`.
+ */
+export function resolveUploadDestDir(
+  parentDocName: string,
+  attachmentFolderPath: string,
+  resolvedContentDir: string,
+): string {
+  const trimmed = attachmentFolderPath.trim();
+  if (trimmed === '' || trimmed === './') {
+    return resolve(resolvedContentDir, dirname(parentDocName));
+  }
+  if (trimmed === '/') {
+    return resolvedContentDir;
+  }
+  if (trimmed.startsWith('./')) {
+    // Subdirectory beside the doc. `"./attachments"` → `<docDir>/attachments`.
+    return resolve(resolvedContentDir, dirname(parentDocName), trimmed.slice(2));
+  }
+  // Bare name or nested path: fixed content-relative location.
+  return resolve(resolvedContentDir, trimmed);
+}
+
+/**
+ * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
+ * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
+ * the tempfile, read its head, and check for `<svg` / `<?xml ... <svg`
+ * without ever materializing the whole file.
+ */
+function readTempFileHead(path: string, n: number): Buffer {
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const read = readSync(fd, buf, 0, n, 0);
+    return buf.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * SPEC §6 FR-2: scan `destDir` non-recursively for an existing file whose
+ * sha256 matches the buffer's. Returns the matching basename (case-preserving)
+ * or null if no match. Bounded by directory size — O(n) in sibling count, not
+ * vault size, per NFR-1. Only files with extensions in ASSET_EXTENSIONS are
+ * candidates; everything else (markdown, .git/, etc.) is skipped.
+ *
+ * `expectedSize` is the buffer's byte length — passed in so we can size-
+ * prefilter before hashing siblings. sha256 collision requires equal-sized
+ * inputs, so same-extension siblings with a different size are not
+ * candidates and we skip their (potentially multi-MB) read. This turns
+ * the common "paste a new screenshot" path from O(total asset bytes in
+ * dir) back to O(sibling count × stat). Non-ENOENT read failures log at
+ * WARN so silent dedup degradation has a signal.
+ */
+/**
+ * Upper bound on size-matched candidates we'll read+hash in a single
+ * dedup call. A capture-device folder with 1000+ screenshots at the same
+ * resolution could theoretically produce that many same-size siblings;
+ * each candidate costs a sync readFileSync + sha256Hex of the entire
+ * buffer, which would block the event loop for seconds per upload under
+ * adversarial / pathological load.
+ *
+ * Past the bound, dedup degrades to best-effort: we log a structured
+ * WARN and return null (treat as no-match → write a new file with the
+ * collision-suffix loop). This is a bounded-resource defense, not a
+ * correctness change — a duplicate that slips through produces the
+ * cheap storage cost of one extra on-disk copy, not silent data loss.
+ * The O(1) hash-cache alternative proposed in the review note is a
+ * larger architectural change and a follow-on.
+ */
+const MAX_DEDUP_SCAN_CANDIDATES = 1000;
+
+/**
+ * Stream a file's bytes through a sha256 Hash transform and return the hex
+ * digest. Keeps memory O(1) regardless of file size — a 500 MB candidate
+ * read by the buffer-based `readFileSync` path would otherwise materialize
+ * the whole file in heap, which defeats the streaming-upload amendment's
+ * O(1) memory guarantee (SPEC.md §Post-finalization amendment, NFR-1).
+ *
+ * Throws on read errors so the caller can classify ENOENT (concurrent
+ * rename — stay silent) vs other errors (log and skip).
+ */
+async function streamingHashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(path), hash);
+  return hash.digest('hex');
+}
+
+async function findDuplicateAsset(
+  destDir: string,
+  sha: string,
+  expectedSize: number,
+): Promise<string | null> {
+  let entries: string[];
+  try {
+    // Async `readdir` so the directory walk doesn't block the event
+    // loop during uploads — bun's loop is shared with WebSocket sync
+    // and CRDT updates, and a 1k-entry walk is observable on bursty
+    // upload traffic. The MAX_DEDUP_SCAN_CANDIDATES cap (line ~76)
+    // bounds the worst case at 1000 same-size siblings, but the
+    // pre-cap entry list can still be much larger.
+    entries = await readdir(destDir);
+  } catch {
+    return null;
+  }
+  const log = getLogger('upload');
+  let scanned = 0;
+  for (const entry of entries) {
+    const ext = extname(entry).slice(1).toLowerCase();
+    if (!ASSET_EXTENSIONS.has(ext)) continue;
+    const fullPath = resolve(destDir, entry);
+    let entryStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      entryStat = await stat(fullPath);
+    } catch {
+      continue;
+    }
+    if (!entryStat.isFile() || entryStat.size !== expectedSize) continue;
+    // Bounded scan: only count candidates that passed the cheap size
+    // prefilter, since same-size siblings are the ones that cost a
+    // full-file hash each (streaming now, not buffered).
+    scanned++;
+    if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
+      log.warn(
+        {
+          event: 'upload-dedup-skip',
+          reason: 'scan-cap-exceeded',
+          destDir,
+          scanned: MAX_DEDUP_SCAN_CANDIDATES,
+          expectedSize,
+        },
+        `[upload-dedup] candidate scan exceeded ${MAX_DEDUP_SCAN_CANDIDATES} same-size siblings — degrading to no-dedup for this upload`,
+      );
+      return null;
+    }
+    let candidateSha: string;
+    try {
+      // Stream + hash the candidate to preserve the O(1) memory guarantee
+      // the upload pipeline otherwise maintains end-to-end. A 500 MB
+      // candidate otherwise spiked heap to 500 MB per scan.
+      candidateSha = await streamingHashFile(fullPath);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOENT is the legitimate concurrent-rename race — stay silent.
+      if (code !== 'ENOENT') {
+        log.warn(
+          { event: 'upload-dedup-skip', reason: 'read-failed', code, entry },
+          '[upload-dedup] skipped candidate — read failed',
+        );
+      }
+      continue;
+    }
+    if (candidateSha === sha) return entry;
+  }
+  return null;
+}
+
+/**
+ * Discriminator for write failures so the upload handler can surface a
+ * specific error code (`collision-exhaustion` / `storage-full` /
+ * `storage-readonly` / `storage-error`) instead of collapsing every
+ * filesystem failure into a generic 500 "Failed to save file" response.
+ * The code field is a stable part of the error envelope; the numeric
+ * HTTP status differentiates transient-yet-retry (500) from full-disk
+ * (507) per RFC 4918.
+ */
+import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
   mimeType: string;
-  buffer: Buffer;
   parentDocName: string;
+  tempPath: string;
+  sha: string;
+  byteLength: number;
 }
 
-function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+/**
+ * Stream multipart upload body to a tempfile while hashing on-the-fly.
+ *
+ * Replaces the buffer-to-memory pattern (chunks.push(chunk) +
+ * Buffer.concat) with busboy's streaming 'file' event piped through a
+ * HashingPassThrough Transform into createWriteStream(tempPath). Memory
+ * becomes O(1); disk is the only bound.
+ *
+ * Error contract (typed via UploadWriteError.reason):
+ *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
+ *   - storage-full: ENOSPC / EDQUOT during the write stream
+ *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
+ *   - storage-error: any other write-stream error
+ *
+ * On any error, the tempfile is best-effort unlinked before propagating.
+ * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
+ */
+function readUploadBody(req: IncomingMessage, contentDir: string): Promise<UploadResult> {
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+      // `files: 1` caps the file part; `fields` + `fieldSize` cap non-file
+      // surface so a flooded multipart can't buffer thousands of fields or a
+      // multi-MB string field in memory before the upload body resolves. The
+      // legitimate schema (agentId / docName / position / summary) is bounded
+      // — short identifiers, never approaching 2 KB or 10 entries. The
+      // ENAMETOOLONG-via-crafted-filename DoS path is closed by the 255-byte
+      // ceiling in `sanitizeFilename` (the filesystem-portability layer);
+      // busboy does not expose a header-section-size limit (only headerPairs
+      // count), so the parsed-value cap is the right place.
+      bb = busboy({
+        headers: req.headers,
+        limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
+      });
     } catch (err) {
-      reject(err);
+      reject(new UploadWriteError('malformed-upload', err));
       return;
     }
 
@@ -303,59 +552,134 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
     let filename = 'upload';
     let mimeType = '';
     let parentDocName = '';
-    const chunks: Buffer[] = [];
-    let exceeded = false;
+    let tempPath: string | undefined;
+    let pipelineError: unknown;
+    // Track whether the 'file' event ever fired. busboy emits 'close' as
+    // soon as it finishes parsing the request body — but the file
+    // pipeline (createWriteStream + HashingPassThrough) is async and may
+    // still be running when 'close' fires. We must NOT resolve to an
+    // empty UploadResult on 'close' when a file IS being processed; the
+    // pipeline `.then()` is the legitimate resolver in that case. Only
+    // the no-file path needs the 'close' fallback.
+    let fileEventFired = false;
+
+    // Mint the tempfile path lazily on the first 'file' event — busboy
+    // can fire 'error' before any file arrives (e.g. missing boundary)
+    // and we'd otherwise create a zero-byte tempfile for no reason.
+
+    const fail = (reason: UploadWriteReason, cause: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (tempPath) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep catches stragglers
+        }
+      }
+      reject(cause instanceof UploadWriteError ? cause : new UploadWriteError(reason, cause));
+    };
+
+    const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
+        return 'storage-readonly';
+      }
+      return 'storage-error';
+    };
 
     bb.on('field', (name, val) => {
       if (name === 'parentDocName') parentDocName = val;
     });
 
     bb.on('file', (_fieldname, file, info) => {
+      fileEventFired = true;
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      file.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      file.on('limit', () => {
-        exceeded = true;
-        req.unpipe(bb);
-        if (!settled) {
-          settled = true;
-          reject(new Error('Payload too large'));
-        }
-      });
-
-      file.on('error', (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      });
-    });
-
-    bb.on('finish', () => {
-      if (!settled) {
-        if (exceeded) {
-          settled = true;
-          reject(new Error('Payload too large'));
-          return;
-        }
-        if (!mimeType && chunks.length === 0) {
-          settled = true;
-          reject(new Error('No file received'));
-          return;
-        }
-        settled = true;
-        resolveP({ filename, mimeType, buffer: Buffer.concat(chunks), parentDocName });
+      // `mintTempUploadPath` does `tracedMkdirSync(.., { recursive: true })`
+      // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
+      // uncaught throw here bubbles back through busboy's `_write` and
+      // re-emits as `'error'`, which the listener below classifies as
+      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
+      // a full disk into chasing a phantom client bug. Catch the sync
+      // throw, classify via the same table the pipeline rejection uses,
+      // and drain the file part so busboy can finish parsing the rest.
+      let path: string;
+      try {
+        path = mintTempUploadPath(contentDir);
+      } catch (err) {
+        const nodeErr = err as NodeJS.ErrnoException;
+        fail(classifyWriteError(nodeErr), err as Error);
+        file.resume();
+        return;
       }
+      tempPath = path;
+      const hasher = new HashingPassThrough();
+      const writeStream = createWriteStream(path);
+
+      pipeline(file, hasher, writeStream)
+        .then(() => {
+          if (settled) return;
+          settled = true;
+          resolveP({
+            filename,
+            mimeType,
+            parentDocName,
+            tempPath: path,
+            sha: hasher.digest(),
+            byteLength: hasher.byteLength(),
+          });
+        })
+        .catch((err) => {
+          pipelineError = err;
+          // Classify from the deepest write error if available; otherwise
+          // treat as a generic storage-error. The unlink happens inside fail().
+          const nodeErr = err as NodeJS.ErrnoException;
+          fail(classifyWriteError(nodeErr), err);
+        });
     });
 
     bb.on('error', (err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
+      fail('malformed-upload', err);
+    });
+
+    // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
+    // fires once busboy finishes parsing the request body. If by then
+    // no `file` event ever fired, the request was a well-formed
+    // multipart with fields-only (no file part) — resolve with a
+    // synthetic empty UploadResult so the route handler's
+    // `byteLength === 0` guard returns the standard 400 "No file
+    // received." Without this hook the Promise never settles on fields-
+    // only uploads and the connection hangs until Node's request
+    // timeout fires (DoS).
+    //
+    // CRUCIAL: gate on `!fileEventFired`. If a file part IS present,
+    // busboy emits 'close' as soon as it finishes parsing — but the
+    // async write/hash pipeline below may still be running. Resolving
+    // here would race the pipeline's legitimate resolveP and produce a
+    // spurious empty result. Pipeline resolves win in that case.
+    bb.on('close', () => {
+      if (settled || pipelineError) return;
+      if (fileEventFired) return;
+      settled = true;
+      resolveP({
+        filename: '',
+        mimeType: '',
+        parentDocName,
+        tempPath: '',
+        sha: '',
+        byteLength: 0,
+      });
+    });
+
+    // Guard the "client disconnected mid-stream" path. busboy never
+    // reaches `_final` if the request aborts before the closing boundary,
+    // so its `close` would not fire and the Promise would otherwise hang.
+    req.on('close', () => {
+      if (settled || pipelineError) return;
+      if (!req.complete) {
+        fail('malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -532,7 +856,19 @@ async function renameTrackedPathInGit(
 
   return await withParentLock(async () => {
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    const tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    // `ls-files` throws `GitError: fatal: not a git repository` when
+    // projectDir isn't a git checkout — normal in test tmpdirs and in Vite
+    // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
+    // so the caller falls back to `fs.renameSync`. Any other git failure
+    // (permission denied, corrupted index) also falls through to fs rename
+    // rather than 500ing the /api/rename handler.
+    let tracked = '';
+    try {
+      tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
+    } catch (err) {
+      console.warn('[renameTrackedPathInGit] git ls-files failed, falling back to fs rename:', err);
+      return false;
+    }
     if (!tracked) return false;
     mkdirSync(dirname(destinationPath), { recursive: true });
     try {
@@ -549,6 +885,21 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * Shared content filter. Threaded so `/api/create-page` can synchronously
+   * call `incrementMdDir(dirname(path))` after the file write, eliminating
+   * the window where a freshly-created doc's sibling assets get excluded by
+   * the filter's `ASSET_EXTENSIONS` + `dirCount.get(normalizedDir) > 0`
+   * rule because the file watcher hasn't processed the create event yet.
+   * Without this, a dropped sibling asset (PNG/PDF) requested via sirv
+   * falls through to the Vite SPA fallback and is served as `text/html`.
+   * Optional — when absent, the watcher's async `incrementMdDir` call
+   * remains the only path (pre-fix behavior).
+   */
+  contentFilter?: {
+    incrementMdDir: (dir: string) => void;
+    decrementMdDir: (dir: string) => void;
+  };
   /**
    * Per-process UUID advertised via `GET /api/server-info` and the
    * `__system__` CC1 `server-info` broadcast. Clients cache this value
@@ -633,6 +984,13 @@ export interface ApiExtensionOptions {
    * Parent-git operations are serialized through `parentGitMutex`.
    */
   projectDir?: string;
+  /**
+   * Basename-index resolver for `![[photo.png]]` wiki-embed refs. Threaded
+   * into every server-side `mdManager.parseWithFallback` call (managed-rename
+   * body rewrite, rollback content apply) so the resulting PM image/link
+   * carries the resolved src/href.
+   */
+  resolveEmbed?: (basename: string, sourcePath: string) => string | null;
   /**
    * Getter for the server's principal record. Called at request time so
    * deferred async init propagates. Returns null if principal has not
@@ -768,6 +1126,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     projectDir,
     getPrincipal,
     installedAgentsProbe,
+    contentFilter,
     forceUnloadDocument,
   } = options;
 
@@ -1110,7 +1469,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // updateYFragment (preserves user-content Items at matching positions) →
       // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
-      const parsedJson = mdManager.parseWithFallback(body);
+      const parseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(body, parseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       updateYFragment(document, xmlFragment, pmNode, {
         mapping: new Map(),
@@ -1480,7 +1842,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, `${content}\n`, 'append');
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            `${content}\n`,
+            'append',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -1602,7 +1971,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
         // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(session.dc.document, markdown, position);
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            markdown,
+            position,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -2203,7 +2579,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (newFm !== currentFm) {
             metaMap.set('frontmatter', newFm);
           }
-          applyAgentMarkdownWrite(session.dc.document, newBody, 'replace');
+          applyAgentMarkdownWrite(
+            session.dc.document,
+            newBody,
+            'replace',
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
 
           const activityMap = session.dc.document.getMap('agent-flash');
           activityMap.set(agentId, {
@@ -2379,7 +2762,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
         // applyAgentUndo wraps um.undo() + composition in one transact under
         // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        undone = applyAgentUndo(session, scope);
+        // Pass embedResolver so the post-undo body re-parse maps
+        // `![[photo.png]]` → resolved src on PM image nodes — matching
+        // applyAgentMarkdownWrite's composition contract so the XmlFragment
+        // shape stays equivalent to a fresh load of the same body.
+        undone = applyAgentUndo(
+          session,
+          scope,
+          options.resolveEmbed
+            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+            : undefined,
+        );
         // FR-5 / D42: record attribution for the undo write so the shadow-repo
         // L2 drain fans it out under this session's writer-id. Skip when the
         // UM stack was empty — a no-op undo has no mutation to attribute.
@@ -3148,7 +3541,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parseWithFallback(mdBody);
+      const rollbackParseOpts = options.resolveEmbed
+        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+        : undefined;
+      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
@@ -3745,6 +4141,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
+      // Synchronously bump the content filter's sibling-asset dirCount so any
+      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
+      // rule. The file watcher's `create` event will also increment later,
+      // which would double-count — so we also `registerWrite` to mark this
+      // as a self-write, and the watcher skips its own `incrementMdDir` on
+      // self-writes. See file-watcher.ts for the paired logic.
+      if (contentFilter) {
+        contentFilter.incrementMdDir(dirname(docName));
+      }
+      registerWrite(fullPath, contentHash(initialContent));
       recordContributor(
         docName,
         createPageAgentId,
@@ -4277,39 +4683,73 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Shared upload mechanics for image / video / audio endpoints. The three
-   * handlers differ only in their per-endpoint MIME allowlist + whether SVG
-   * fallback applies (image only — video and audio are binary formats with
-   * detectable magic bytes). Keeping a single source of truth for the
-   * security-critical path validation, magic-byte sniffing, and atomic
-   * write — every per-endpoint copy of this 100-line body would otherwise
-   * need the same audit + bug-fix cadence.
-   */
-  async function uploadMediaCore(
-    req: IncomingMessage,
-    res: ServerResponse,
-    allowlist: Set<string>,
-    options: { allowSvgFallback: boolean },
-  ): Promise<void> {
-    let uploadResult: UploadResult | undefined;
-    try {
-      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message === 'Payload too large') {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-      } else if (message === 'No file received') {
-        json(res, 400, { ok: false, error: 'No file received' });
-      } else {
-        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
-      }
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
 
-    const { filename, buffer, parentDocName } = uploadResult;
+    let uploadResult: UploadResult | undefined;
+    try {
+      uploadResult = await readUploadBody(req, contentDir);
+    } catch (e) {
+      // All body-parse failures land as UploadWriteError with a typed reason.
+      // Tempfile cleanup is handled inside readUploadBody's error path.
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'malformed-upload') {
+          json(res, 400, { ok: false, error: 'malformed-upload' });
+          return;
+        }
+        if (e.reason === 'storage-full') {
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      return;
+    }
+
+    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
+
+    // Identity extracted from query params (multipart body precludes JSON).
+    // Capture agentId / agentName so structured upload logs carry
+    // attribution — mirrors precedent #24/#25 and lets operators trace
+    // unexpected file-creation events back to the originating agent
+    // during incident investigation. Both fields follow bounded shapes
+    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
+    // remain cardinality-safe for log indexing.
+    const { agentId, agentName } = extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+
+    // Belt-and-braces cleanup: if anything below this point errors or
+    // early-returns, the tempfile must go away. Every early-return path
+    // below that does NOT consume tempPath via linkTempToFinal* runs this.
+    const cleanupTempfile = () => {
+      if (existsSync(tempPath)) {
+        try {
+          unlinkSync(tempPath);
+        } catch {
+          // best-effort; orphan sweep reaps stragglers
+        }
+      }
+    };
+
+    if (byteLength === 0) {
+      cleanupTempfile();
+      json(res, 400, { ok: false, error: 'No file received' });
+      return;
+    }
 
     if (!parentDocName) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'parentDocName is required' });
       return;
     }
@@ -4320,15 +4760,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
 
     const resolvedContentDir = resolve(contentDir);
-    const destDir = resolve(resolvedContentDir, dirname(parentDocName));
+    const destDir = resolveUploadDestDir(
+      parentDocName,
+      DEFAULT_ATTACHMENT_FOLDER_PATH,
+      resolvedContentDir,
+    );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
+      cleanupTempfile();
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
+    }
+    // mkdir -p the destination — bare-name / nested attachmentFolderPath
+    // values produce directories that may not exist at first upload.
+    try {
+      mkdirSync(destDir, { recursive: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') {
+        cleanupTempfile();
+        log.error({ err, destDir }, '[upload] failed to create attachment directory');
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
     }
 
     // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
@@ -4341,6 +4800,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         realContentDir = resolvedContentDir;
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
@@ -4349,102 +4809,178 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (code === 'ENOENT') {
         // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
+        cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
         return;
       }
     }
 
-    // Magic bytes check — ignore the client-supplied mimeType entirely
-    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    // D-M LOCKED accept-all: every file is accepted — there's no user-
+    // facing byte cap post-streaming (disk fullness surfaces as 507
+    // instead). The magic-byte sniff is only consulted to (a) preserve
+    // the SVG `<img>`-only routing for NFR-3 security and (b) recover
+    // an extension when the upload arrived with a generic clipboard
+    // filename. Non-sniffable bytes are accepted under the client-
+    // supplied filename.
+    //
+    // Post-streaming-refactor the sniff reads from tempPath via
+    // fileTypeFromFile which only pulls the minimum-required bytes.
+    const fileTypeResult = await fileTypeFromFile(tempPath);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes). Only the image
-    // endpoint accepts SVG, so the fallback is gated by the option.
-    if (!detectedMime && options.allowSvgFallback) {
-      const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
-      if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+    // file-type can't detect SVG (text-based, no magic bytes) — check manually.
+    // STOP: this fallback is LOAD-BEARING for NFR-3 — SVG must render via
+    // <img>, never inline DOM. Do not remove without a compensating guard.
+    if (!detectedMime) {
+      const head = readTempFileHead(tempPath, 256);
+      // Strip a leading UTF-8 BOM (U+FEFF) before the pattern match.
+      // `trimStart()` removes ECMAScript whitespace but not the BOM, so a
+      // file starting with `\xEF\xBB\xBF<svg ...>` would otherwise evade the
+      // head check the comment above documents as the SVG-disguised-as-PNG
+      // sniff fallback.
+      const headText = head.toString('utf-8').replace(/^﻿/, '').trimStart();
+      if (
+        headText.startsWith('<svg') ||
+        (headText.startsWith('<?xml') && headText.includes('<svg'))
+      ) {
         detectedMime = 'image/svg+xml';
         detectedExt = 'svg';
       }
     }
-    if (!detectedMime || !detectedExt || !allowlist.has(detectedMime)) {
-      json(res, 400, {
-        ok: false,
-        error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
-      });
-      return;
+
+    // Same-dir sha256 dedup. Bounded scan over destDir, skipped entirely
+    // when DEFAULT_DEDUP_MODE === 'off'. The dedup test happens BEFORE
+    // filename synthesis so a duplicate paste preserves the existing
+    // on-disk basename instead of producing a fresh pasted-<ts>.png stub.
+    // Server returns { deduped: true } so the client surfaces a toast.
+    //
+    // The hash + size come from the streaming pipeline (no buffer). On a
+    // dedup hit the tempfile is unlinked and we short-circuit without
+    // touching the destDir inode — `linkTempToFinalWithCollisionRetry`
+    // never runs.
+    if (DEFAULT_DEDUP_MODE === 'same-dir') {
+      const existing = await findDuplicateAsset(destDir, sha, byteLength);
+      if (existing) {
+        cleanupTempfile();
+        const relPath = relative(contentDir, resolve(destDir, existing));
+        log.info(
+          {
+            event: 'upload',
+            endpoint: req.url ?? '/api/upload',
+            agentId,
+            agentName,
+            dedup: true,
+            mime: detectedMime ?? null,
+            size: byteLength,
+            destPath: relPath,
+            httpStatus: 200,
+          },
+          '[upload] dedup hit',
+        );
+        // Include the contentDir-relative `path` in the response so the
+        // client honors non-default `attachmentFolderPath`. Without this
+        // the client assumes the asset is co-located with the parent doc
+        // and emits a broken relative ref when operators configure
+        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
+        // or similar.
+        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
+        return;
+      }
     }
 
-    // D8: detect clipboard paste (generic/empty filename) → timestamp stem
+    // D8 / GENERIC_PASTE_NAMES: clipboard paste arrives with synthetic names
+    // ("image.png", "Clipboard 2024-04-21 14:23:45"). Replace with a
+    // timestamp stem so the disk filename is human-meaningful.
     let finalFilename: string;
-    if (!filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename)) {
+    const isGenericPaste = !filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename);
+    if (isGenericPaste) {
       const now = new Date();
       const ts = now
         .toISOString()
         .replace(/[-:T]/g, '')
         .slice(0, 14)
         .replace(/(\d{8})(\d{6})/, '$1-$2');
-      finalFilename = `pasted-${ts}.${detectedExt}`;
+      // Prefer the sniffed extension when present; otherwise try the
+      // client-supplied extname, finally fall back to .bin.
+      const fallbackExt = filename ? extname(filename).slice(1) : '';
+      const ext = detectedExt ?? fallbackExt ?? '';
+      finalFilename = ext === '' ? `pasted-${ts}` : `pasted-${ts}.${ext}`;
     } else {
       finalFilename = sanitizeFilename(filename);
     }
 
-    mkdirSync(destDir, { recursive: true });
-
     try {
-      const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
+      const destFilename = linkTempToFinalWithCollisionRetry(tempPath, destDir, finalFilename);
       const relPath = relative(contentDir, resolve(destDir, destFilename));
-      // Server-absolute, POSIX-normalized path. Doc-relative bare filename
-      // resolves wrong under hash routing for subdir docs: page URL
-      // `/#/showcase/02-image` has base `localhost:5173/`, so a bare
-      // `foo.png` in <img src> fetches `/foo.png` while the file is at
-      // `/showcase/foo.png`. The leading slash anchors the resolution to
-      // the server root regardless of the doc's location in the tree.
-      const src = `/${relPath.split(sep).join('/')}`;
-      console.log(`[upload] ok ${relPath} ${buffer.length}`);
-      json(res, 200, { ok: true, src });
+      log.info(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          dedup: false,
+          mime: detectedMime ?? null,
+          size: byteLength,
+          // `destPath` is the contentDir-relative asset path. High-
+          // cardinality by nature — a vault with 10K assets produces
+          // 10K distinct values. Fine as a log field consumed by text-
+          // search / by-incident filtering; NEVER promote it to a
+          // metric label (Prometheus / Datadog will blow up memory on
+          // per-asset label explosion). Keep the nested-context shape
+          // below if you later route these through an aggregator so
+          // auto-label-extraction honors the sub-object convention.
+          destPath: relPath,
+          httpStatus: 200,
+        },
+        '[upload] write ok',
+      );
+      // Major-1: same rationale as the dedup branch above — client needs
+      // the contentDir-relative path to emit correct refs under any
+      // attachmentFolderPath value.
+      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
+      // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
+      // on throw; no extra cleanupTempfile() call needed here.
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
-      json(res, 500, { ok: false, error: 'Failed to save file' });
+      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      log.error(
+        {
+          event: 'upload',
+          endpoint: req.url ?? '/api/upload',
+          agentId,
+          agentName,
+          filename: finalFilename,
+          size: byteLength,
+          reason,
+          message,
+          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+        },
+        '[upload] write failed',
+      );
+      if (e instanceof UploadWriteError) {
+        if (e.reason === 'storage-full') {
+          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
+          // retry makes no sense until the operator frees space.
+          json(res, 507, { ok: false, error: 'storage-full' });
+          return;
+        }
+        if (e.reason === 'storage-readonly') {
+          json(res, 500, { ok: false, error: 'storage-readonly' });
+          return;
+        }
+        if (e.reason === 'collision-exhaustion') {
+          // Exhausted 100 collision-suffix candidates in one directory —
+          // practically unreachable absent an adversarial workload, but
+          // surfacing the reason helps operators diagnose a pathological
+          // filename that's dodging sanitize.
+          json(res, 500, { ok: false, error: 'collision-exhaustion' });
+          return;
+        }
+        json(res, 500, { ok: false, error: 'storage-error' });
+        return;
+      }
+      json(res, 500, { ok: false, error: 'storage-error' });
     }
-  }
-
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    // attribution threading (FR-5, D42): extract identity from query params (multipart body precludes JSON)
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_MIME_TYPES, { allowSvgFallback: true });
-  }
-
-  async function handleUploadVideo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_VIDEO_MIME_TYPES_SET, { allowSvgFallback: false });
-  }
-
-  async function handleUploadAudio(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
-    await uploadMediaCore(req, res, ALLOWED_AUDIO_MIME_TYPES_SET, { allowSvgFallback: false });
   }
 
   // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
@@ -5668,9 +6204,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload-image': handleUploadImage,
-    '/api/upload-video': handleUploadVideo,
-    '/api/upload-audio': handleUploadAudio,
+    '/api/upload': handleUploadImage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
@@ -5713,6 +6247,36 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     routes['/api/test-reset'] = handleTestReset;
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
+
+  // DNS-rebinding defense: routes that mutate local filesystem / CRDT /
+  // vault state. A DNS-rebound cross-origin page could otherwise POST to
+  // these endpoints and write to the user's content dir. Read-only
+  // endpoints (document/pages/backlinks/…) stay accessible so the editor
+  // UI can bootstrap against the collab server; mutations require a
+  // loopback Host header. /api/workspace enforces this inline already.
+  const MUTATING_ROUTES: ReadonlySet<string> = new Set([
+    '/api/upload',
+    '/api/create-page',
+    '/api/rename',
+    '/api/rename-path',
+    '/api/delete-path',
+    '/api/agent-write',
+    '/api/agent-write-md',
+    '/api/agent-patch',
+    '/api/save-version',
+    '/api/rollback',
+    '/api/sync/trigger',
+    '/api/sync/set-enabled',
+    '/api/sync/resolve-conflict',
+    '/api/sync/abort-merge',
+    '/api/test-reset',
+    '/api/test-rescan-backlinks',
+  ]);
+  // Every `/api/local-op/*` endpoint mutates local filesystem state or
+  // issues network requests on behalf of the user — clone/open/auth
+  // flows all fit. Prefix-match so new local-op handlers are protected
+  // by default.
+  const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
 
   return {
     priority: 100, // Higher priority — API routes run before static file serving
@@ -5765,8 +6329,38 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
+      // DNS-rebinding defense for state-mutating endpoints. The
+      // `isLoopbackAddress` TCP-peer check and `isAllowedWorkspaceHostHeader`
+      // Host-header check together block the standard rebinding pattern
+      // (attacker-owned hostname whose DNS resolves to 127.0.0.1 after an
+      // initial attacker-serves-JS response — the TCP peer is loopback,
+      // but the Host header names the attacker domain). The same mitigation
+      // already gates `/api/workspace`; without it, a rebinding page could
+      // POST /api/upload + /api/agent-write, mutating the local vault.
+      //
+      // Test-harness note: Node's production socket always has
+      // `remoteAddress` set by the kernel; the only path that reaches
+      // this check without a socket is a mocked `IncomingMessage` built
+      // from `Readable.from(...)`. Those mocks bypass the HTTP listener
+      // entirely and can't be reached by a real remote attacker, so a
+      // missing socket is treated as test-context and skips the check.
+      // The Host-header gate still fires (tests set `host: 'localhost'`),
+      // so the protection remains meaningful for any production path.
+      if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
+        const peerAddress = request.socket?.remoteAddress;
+        if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
+          json(response, 403, { ok: false, error: 'loopback-required' });
+          return;
+        }
+        if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
+          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
+          return;
+        }
+      }
+
       // Only /api/* gets a server span. Non-API routes (static file serving,
-      // Hocuspocus's own paths) fall through silently.
+      // Hocuspocus's own paths) fall through silently. (Route dispatch
+      // happens inside the OTel active-span block below.)
       if (!url.startsWith('/api/')) return;
 
       // Extract incoming trace context (W3C traceparent header) so this server

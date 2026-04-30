@@ -27,6 +27,19 @@ export function isSupportedDocFile(path: string): boolean {
 }
 
 /**
+ * True when a path's extension matches the shared `ASSET_EXTENSIONS` set.
+ * Used by the file-watcher to admit asset files into the live event stream
+ * (SPEC §6 FR-6 / D-H Option A) without conflating them with markdown docs.
+ *
+ * Imports the set lazily-via-direct-property to keep this module's I/O
+ * footprint zero — `ASSET_EXTENSIONS` itself lives in core.
+ */
+export function isSupportedAssetFile(path: string, assetExtensions: ReadonlySet<string>): boolean {
+  const ext = extname(path).slice(1).toLowerCase();
+  return ext.length > 0 && assetExtensions.has(ext);
+}
+
+/**
  * Strip a supported doc extension from a path. Returns the input unchanged if
  * no supported extension is present (so plain docNames pass through).
  */

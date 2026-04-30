@@ -596,8 +596,46 @@ describe('ContentFilter', () => {
         excludePatterns: [],
       });
 
+      // Script extensions and arbitrary unknown types stay excluded even when
+      // a sibling .md is present. `.js` is in EXECUTABLE_BLOCKLIST territory;
+      // `.xyz`/`.unknown` cover the novel-extension default-exclude path.
       expect(filter.isExcluded('docs/script.js')).toBe(true);
-      expect(filter.isExcluded('docs/data.json')).toBe(true);
+      expect(filter.isExcluded('docs/arbitrary.xyz')).toBe(true);
+      expect(filter.isExcluded('docs/other.unknown')).toBe(true);
+    });
+
+    test('includes widened user-drop extensions when sibling .md exists (2026-04-24b)', () => {
+      // SPEC §Post-finalization amendment (2026-04-24b) — D-M accept-all
+      // alignment. Prior to this amendment the content filter's step-3
+      // sibling-asset rule gated by a narrow `ASSET_EXTENSIONS` set of
+      // ~18 extensions, causing common user-drop types (.m4v video, .docx
+      // office, .csv tabular, etc.) to fall through to Vite's SPA fallback
+      // as text/html. This test pins the widened set against the filter's
+      // admission behavior — one representative from each user-visible
+      // class (video, audio, office-doc, tabular, text).
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Video (the bug reporter's file type)
+      expect(filter.isExcluded('docs/clip.m4v')).toBe(false);
+      expect(filter.isExcluded('docs/clip.mkv')).toBe(false);
+      // Audio
+      expect(filter.isExcluded('docs/song.flac')).toBe(false);
+      // Office docs
+      expect(filter.isExcluded('docs/spec.docx')).toBe(false);
+      expect(filter.isExcluded('docs/sheet.xlsx')).toBe(false);
+      // Tabular / text
+      expect(filter.isExcluded('docs/data.csv')).toBe(false);
+      expect(filter.isExcluded('docs/notes.txt')).toBe(false);
+      // Data serialization
+      expect(filter.isExcluded('docs/config.json')).toBe(false);
     });
 
     test('exclude takes precedence over sibling-asset rule', () => {

@@ -47,13 +47,15 @@ Three layers, each with its own cadence and responsibility.
 
 ### Layer 0: Disk to CRDT (file watcher)
 
-`@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT.
+`@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT. The same watcher also emits asset events (images, PDFs, video, audio, fonts, archives) for the basename index and the file sidebar.
 
 - ContentFilter drops excluded files (gitignored, config patterns)
 - Symlinks resolved to canonical paths via `realpath`; multiple paths to the same file share one Y.Doc
-- Events classified as create, update, delete, rename, or conflict
+- Markdown events classified as create, update, delete, rename, or conflict
+- Asset events classified as `asset-create` or `asset-delete` (Finder-style renames arrive as a delete+create pair; the basename index's add/remove is idempotent so the end state is correct)
 - Self-writes skipped via content-hash matching
-- External changes reconciled into Y.Doc via three-way merge (base/ours/theirs)
+- External markdown changes reconciled into Y.Doc via three-way merge (base/ours/theirs)
+- Asset events update the in-memory basename index and fire the CC1 `ch:'files'` signal so clients invalidate their file list
 - Latency: 2--52ms event detection
 
 ### Layer 1: CRDT to Disk (Hocuspocus persistence)

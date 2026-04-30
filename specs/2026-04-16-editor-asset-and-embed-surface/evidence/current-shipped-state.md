@@ -1,6 +1,6 @@
 ---
 name: Current shipped state (editor asset + embed surface)
-description: File:line citations for what's in main as of baseline 432a834b — upload, wiki-link, config, rename-rewrite
+description: File:line citations for what's in main as of baseline 2ad0177a — upload, wiki-link, config, rename-rewrite
 created: 2026-04-16
 sources:
   - packages/server/src/api-extension.ts
@@ -16,54 +16,54 @@ sources:
 
 # Current Shipped State
 
-All file:line citations re-verified at commit `432a834b` (current worktree HEAD) on 2026-04-17 during audit remediation. Citations in this file supersede any earlier draft numbers.
+All file:line citations re-verified at commit `2ad0177a` on 2026-04-21 during Session 2 finalize re-verification. Citations in this file supersede any earlier draft numbers. The Session 1 baseline was `432a834b`; most upload-handler citations drifted by +30-235 lines between `432a834b` and `2ad0177a` (intervening PRs touched the handler's surroundings). For archaeology against the earlier baseline, use `git show 432a834b:<path>`.
 
 ## Upload endpoint: `POST /api/upload-image`
 
-**Handler:** `packages/server/src/api-extension.ts:2779-2894`
-**Transport:** multipart + busboy via `readUploadBody` starting at `api-extension.ts:176`
+**Handler:** `packages/server/src/api-extension.ts:3014-3129` (inner function `handleUploadImage` declared at line 3014)
+**Transport:** multipart + busboy via `readUploadBody` starting at `api-extension.ts:211` (function body; `writeUploadAtomic` helper at `api-extension.ts:181`)
 **FormData fields:**
 - `file` — the binary
 - `parentDocName` — relative path (e.g., `docs/guide.md`) required
 
 **Size limits:**
-- `MAX_UPLOAD_BYTES = 10 * 1024 * 1024` (10MB) hardcoded at `api-extension.ts:132`
+- `MAX_UPLOAD_BYTES = 10 * 1024 * 1024` (10MB) hardcoded at `api-extension.ts:167`
 
 **MIME allowlist:**
 - Source of truth: `ALLOWED_IMAGE_MIME_TYPES` in `packages/core/src/constants/upload.ts:1-7`
 - Values: `{image/jpeg, image/png, image/gif, image/webp, image/svg+xml}`
-- Server at `api-extension.ts:2860` checks `!ALLOWED_MIME_TYPES.has(detectedMime)` and returns 400 "Unsupported file type"
+- Server at `api-extension.ts:3095` checks `!ALLOWED_MIME_TYPES.has(detectedMime)` and returns 400 "Unsupported file type" (also guards against missing `detectedMime` / `detectedExt`)
 - Client at `packages/app/src/editor/extensions/shared.ts:32-44` pins FileHandler's `allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES]`
 
 **MIME detection:**
-- `file-type@22.0.1` (per `packages/server/package.json` + `bun.lock`; package exports `fileTypeFromBuffer`) magic-byte sniff invoked at `api-extension.ts:2849`
+- `file-type@22.0.1` (per `packages/server/package.json` + `bun.lock`; package exports `fileTypeFromBuffer`, imported at `api-extension.ts:40`) magic-byte sniff invoked at `api-extension.ts:3084`
 - Client-supplied mimeType **ignored entirely**
-- SVG detected manually by checking `head.startsWith('<svg')` or `<?xml...<svg` at `api-extension.ts:2853-2858` — this one-off extension/content-sniff fallback is LOAD-BEARING for shipped SVG support and must be preserved under D-A strict-magic-byte
+- SVG detected manually by checking `head.startsWith('<svg')` or `<?xml...<svg` at `api-extension.ts:3088-3093` — this one-off extension/content-sniff fallback is LOAD-BEARING for shipped SVG support and must be preserved under D-A strict-magic-byte
 - Result: if no `detectedMime`, reject
 
 **Filename sanitization:**
-- `sanitizeFilename` at `api-extension.ts:137-144`: regex `/[^a-zA-Z0-9_\-.]/g` (without `+` quantifier) replaces each disallowed char with `_`
-- ASCII-only; destroys CJK/Arabic/Cyrillic (F9 micro-PR fixes separately)
+- `sanitizeFilename` at `api-extension.ts:172-179`: regex `/[^a-zA-Z0-9_\-.]/g` (without `+` quantifier) replaces each disallowed char with `_`
+- ASCII-only; destroys CJK/Arabic/Cyrillic (F9 absorbed — NFR-3 + §13)
 - Fallback stem `'upload'` if empty
 
 **Paste-name detection:**
-- `GENERIC_PASTE_NAMES` regex at `api-extension.ts:135`: `/^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i`
+- `GENERIC_PASTE_NAMES` regex at `api-extension.ts:170`: `/^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i`
 - On match: synthesize `pasted-YYYYMMDD-HHMMSS.{ext}` (inside the handler, post-sanitization)
 
 **Storage:**
-- `destDir = resolve(resolvedContentDir, dirname(parentDocName))` at `api-extension.ts:2819`
+- `destDir = resolve(resolvedContentDir, dirname(parentDocName))` at `api-extension.ts:3054`
 - Co-located: image dropped in `docs/guide.md` lands at `docs/<filename>`
-- `writeUploadAtomic(destDir, finalFilename, buffer)` at `api-extension.ts:2885`
+- `writeUploadAtomic(destDir, finalFilename, buffer)` call site at `api-extension.ts:3120`; helper definition at `api-extension.ts:181`
 - Collision: atomic suffix loop `original.png → original-1.png → … → original-99.png → error`
 
 **Path-escape guards:**
-- `api-extension.ts:2809-2846`
+- `api-extension.ts:3054-3069`
 - Reject: `\x00`, `..`, leading `/`
 - `isWithinContentDir(destDir, resolvedContentDir)` check
 - Realpath symlink-escape check via `realpathSync`
 
 **Response:**
-- Success: `{ ok: true, src: destFilename }` — basename only for sibling (api-extension.ts:2888)
+- Success: `{ ok: true, src: destFilename }` — basename only for sibling (api-extension.ts:3123)
 - Client uses `src` directly as image node's `src` attr (`image-upload/index.ts:178`)
 
 ## Client-side upload orchestration
@@ -77,7 +77,7 @@ All file:line citations re-verified at commit `432a834b` (current worktree HEAD)
 
 **`shortestImageRef(assetPath, mdPath)`:** `image-upload/index.ts:91-96`
 - Same parent dir → basename only
-- Cross-dir → `/absolute-path` (broken for GitHub/Obsidian; F8 micro-PR fixes)
+- Cross-dir → `/absolute-path` (F8 absorbed as algorithmic rewrite to 4-case relative — see FR-1a + §13)
 
 ## Wiki-link tokenizer
 
@@ -121,10 +121,11 @@ if (line[idx] === '[' && line[idx - 1] !== '!') {
 - `mcp.tools.read_document.historyDepth`
 - `mcp.tools.search.maxResults`
 
-**Upload config:** None.
-- `MAX_UPLOAD_BYTES` hardcoded in `api-extension.ts:122`
+**Upload config:** None (at baseline `2ad0177a`).
+- `MAX_UPLOAD_BYTES` hardcoded in `api-extension.ts:167`
 - `ALLOWED_IMAGE_MIME_TYPES` hardcoded in `core/src/constants/upload.ts:1-7`
 - Asset location not configurable (implicit: `dirname(parentDocName)`)
+- The `ConfigSchema` also contains `github.*`, `sync.*`, `preview.*`, and `folders[]` sections post-baseline; FR-5 `upload.*` is disjoint from all of them.
 
 ## CC1 broadcaster
 

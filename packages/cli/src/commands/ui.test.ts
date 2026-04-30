@@ -168,6 +168,19 @@ describe('startUiServer', () => {
     expect([200, 404]).toContain(status);
   });
 
+  test('GET / serves the SPA shell (rewrites to /index.html)', async () => {
+    // Regression: sirv's `single: true` SPA fallback was silently disabled by
+    // `extensions: []` (set so `/foo` doesn't transparently serve `/foo.html`).
+    // The request handler now rewrites `/` and `''` to `/index.html` before
+    // any middleware so the entry path always loads the SPA shell.
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const root = await get(handle.port, '/');
+    const indexHtml = await get(handle.port, '/index.html');
+    // Either both succeed (worktree has dist/) or both 404 (no dist), but
+    // they MUST agree — `/` must not 404 while `/index.html` succeeds.
+    expect(root.status).toBe(indexHtml.status);
+  });
+
   test('release() removes the ui.lock', async () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const lockPath = resolve(lockDir, 'ui.lock');
@@ -393,6 +406,73 @@ describe('startUiServer', () => {
     handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
     const { status } = await get(handle.port, '/api/config');
     expect(status).toBe(200);
+  });
+
+  test('asset serve: missing asset-extension URL returns 404 (not SPA index.html)', async () => {
+    // Closes the dogfood bug: `/missing.m4v` against a contentDir where the
+    // file does not exist used to fall through to the SPA static handler
+    // (which returns index.html as text/html for unknown URLs under
+    // `single: true`). The asset-serve middleware's fail-closed 404 guard
+    // catches asset-extension paths before they reach the SPA fallback.
+    const fs = await import('node:fs');
+    const seedFile = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedFile, '# seed', 'utf-8');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/missing.m4v');
+    expect(status).toBe(404);
+    // Should NOT be served as text/html (the SPA fallback's mime type).
+    expect(headers.get('content-type') ?? '').not.toMatch(/^text\/html/);
+  });
+
+  test('asset serve: existing inline-renderable asset gets Content-Disposition: inline', async () => {
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    const seedAsset = resolve(tmpDir, 'photo.png');
+    fs.writeFileSync(seedAsset, 'fake-png', 'binary');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/photo.png');
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBe('inline');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  test('asset serve: scripted-document extension is not served from contentDir', async () => {
+    // Stored-XSS defense: `.html` is outside the include patterns AND outside
+    // ASSET_EXTENSIONS, so the content filter excludes it. A request for
+    // `/evil.html` falls through to the SPA static handler — which never
+    // returns the literal file bytes. Verifies the body does NOT contain
+    // the planted `<script>` payload that would have leaked under the
+    // pre-fix CLI behavior (which served any contentDir file with
+    // attachment disposition).
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    const seedHtml = resolve(tmpDir, 'evil.html');
+    fs.writeFileSync(seedHtml, '<script>alert(1)</script>', 'utf-8');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { body } = await get(handle.port, '/evil.html');
+    expect(body).not.toContain('<script>alert(1)</script>');
+  });
+
+  test('asset serve: non-inline admitted asset gets Content-Disposition: attachment', async () => {
+    const fs = await import('node:fs');
+    const seedDoc = resolve(tmpDir, 'doc.md');
+    fs.writeFileSync(seedDoc, '# seed', 'utf-8');
+    // PDF is in ASSET_EXTENSIONS but in INLINE_RENDERABLE — pick a non-inline
+    // admitted extension instead. ZIP is in ASSET_EXTENSIONS but not in
+    // INLINE_RENDERABLE_EXTENSIONS, so it gets attachment.
+    const seedZip = resolve(tmpDir, 'archive.zip');
+    fs.writeFileSync(seedZip, 'fake-zip-bytes', 'binary');
+
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const { status, headers } = await get(handle.port, '/archive.zip');
+    expect(status).toBe(200);
+    expect(headers.get('content-disposition')).toBe('attachment');
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
   });
 });
 

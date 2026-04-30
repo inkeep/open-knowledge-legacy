@@ -5,13 +5,13 @@
  */
 import { describe, expect, mock, test } from 'bun:test';
 import type { OkMcpWiringEditorId, OkMcpWiringShowPayload } from '@/lib/desktop-bridge-types';
+import { McpConsentDialog } from './McpConsentDialog';
 import {
   computeInitialSelection,
-  McpConsentDialog,
   selectedIdsOrdered,
   type ToastImpl,
   toggleSelectedId,
-} from './McpConsentDialog';
+} from './McpConsentDialogBody';
 
 type EditorDetection = OkMcpWiringShowPayload['detectedEditors'][number];
 

@@ -28,7 +28,13 @@
  * forgotten UI doesn't linger overnight. Cancelled by `handle.release()`.
  */
 import type { Server as HttpServer, ServerResponse } from 'node:http';
-import { defaultScheduler, type Scheduler } from '@inkeep/open-knowledge-core';
+import {
+  ASSET_EXTENSIONS,
+  defaultScheduler,
+  EXECUTABLE_BLOCKLIST_EXTENSIONS,
+  INLINE_RENDERABLE_EXTENSIONS,
+  type Scheduler,
+} from '@inkeep/open-knowledge-core';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { type ProxyServerHandle, proxyRequest, startProxyServer } from './ui-proxy.ts';
@@ -107,9 +113,14 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   const { existsSync } = await import('node:fs');
   const { createServer: createHttpServer } = await import('node:http');
   const { resolve } = await import('node:path');
-  const { acquireUiLock, readServerLock, releaseUiLock, updateUiLockPort } = await import(
-    '@inkeep/open-knowledge-server'
-  );
+  const {
+    acquireUiLock,
+    createAssetServeMiddleware,
+    createContentFilter,
+    readServerLock,
+    releaseUiLock,
+    updateUiLockPort,
+  } = await import('@inkeep/open-knowledge-server');
   const { default: sirv } = await import('sirv');
   const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
 
@@ -130,10 +141,13 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   ];
   const assetDir = assetPaths.find((p) => existsSync(p));
   const staticHandler = assetDir
-    ? sirv(assetDir, { single: true, gzip: true, immutable: true })
+    ? sirv(assetDir, { single: true, gzip: true, immutable: true, extensions: [] })
     : null;
 
-  // Filter-aware content asset serving (matches start.ts behavior pre-split).
+  // Filter-aware content asset serving — shared `createAssetServeMiddleware`
+  // applies the same Content-Disposition policy + 404 fail-closed guard the
+  // dev-plugin path uses, so dev and prod cannot diverge on serve semantics.
+  //
   // Use `dev: true` so sirv resolves files lazily instead of recursively
   // crawling the entire content root at boot. Repo-root content dirs often
   // include huge trees (`node_modules`, build artifacts) and can contain
@@ -141,8 +155,30 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // fail before it has served a single request.
   //
   // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
-  const contentSirv = existsSync(contentDir)
-    ? sirv(contentDir, { dotfiles: false, dev: true })
+  // `extensions: []` disables sirv's default `['html', 'htm']` fallback —
+  // without this, a request to `/docs/evil` transparently resolves
+  // `docs/evil.html` and serves it as `text/html`, bypassing the
+  // Content-Disposition dispatch (which matches on the requested URL's
+  // extension). Refusing extension inference confines lookup to the
+  // literal requested URL.
+  //
+  // The asset-serve middleware itself only fires when `contentSirv` is
+  // present; if `contentDir` is missing we skip filter construction and
+  // route everything through the SPA static handler (matches the
+  // pre-middleware behavior for missing-contentDir setups).
+  const assetServeMiddleware = existsSync(contentDir)
+    ? createAssetServeMiddleware({
+        contentFilter: createContentFilter({
+          projectDir: opts.cwd,
+          contentDir,
+          includePatterns: opts.config.content.include,
+          excludePatterns: opts.config.content.exclude,
+        }),
+        contentSirv: sirv(contentDir, { dotfiles: false, dev: true, extensions: [] }),
+        inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
+        assetExtensions: ASSET_EXTENSIONS,
+        blocklistExtensions: EXECUTABLE_BLOCKLIST_EXTENSIONS,
+      })
     : null;
 
   // Resolved port — filled in after listen(). /api/config reads from this so
@@ -160,6 +196,19 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // when a caller passes an explicit host).
   const requestHandler = (req: import('node:http').IncomingMessage, res: ServerResponse) => {
     const url = req.url?.split('?')[0];
+
+    // Bare `/` and the empty path: rewrite to `/index.html` so sirv serves
+    // the SPA shell. The static handler is configured with `extensions: []`
+    // (a security choice — without it, `/foo` would transparently serve
+    // `/foo.html` and bypass the Content-Disposition dispatch which keys
+    // off the requested URL's extension). That suppression also disables
+    // sirv's implicit directory-index resolution, so `/` ends up as a 404
+    // even though `single: true` is set. The cleanest fix is to rewrite
+    // the entry path explicitly here, before any middleware runs, rather
+    // than re-enabling extension inference globally.
+    if (url === '/' || url === '') {
+      req.url = '/index.html';
+    }
 
     // GET /api/config — zero-ceremony bootstrap for the React app. Reads the
     // collab server.lock on demand so a later `ok start` shows up without
@@ -218,11 +267,13 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       return;
     }
 
-    // Content files (markdown etc.) served via filter-aware sirv.
-    const rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
-    if (rel && contentSirv) {
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      contentSirv(req, res, () => {
+    // Content files (markdown + assets) served via the shared asset-serve
+    // middleware — same Content-Disposition policy (inline / attachment) +
+    // fail-closed 404 guard that the dev plugin uses. Falls through to the
+    // SPA static handler when the content filter excludes the path or sirv
+    // doesn't recognize it.
+    if (assetServeMiddleware) {
+      assetServeMiddleware(req, res, () => {
         if (staticHandler) {
           staticHandler(req, res);
         } else {

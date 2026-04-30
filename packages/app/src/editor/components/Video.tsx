@@ -3,9 +3,10 @@
  * lowercase media pivot).
  *
  * Pure HTML5 `<video>` wrapper. Self-closing leaf descriptor symmetric with
- * Image. Renders the descriptor's 11-prop surface — 6 common (src + controls
- * + autoplay + poster + width + height) + 5 advanced (title + muted + loop +
- * playsinline + preload).
+ * Image. Renders the descriptor's 11-prop surface — 1 common (src) + 10
+ * advanced (controls + autoplay + poster + width + height + title + muted +
+ * loop + playsinline + preload). The fresh-insert PropPanel is a single src
+ * field; toggle controls / autoplay / etc. from the Advanced section.
  *
  * ── Constraints (load-bearing, unchanged from the prior canonical) ──────────
  *
