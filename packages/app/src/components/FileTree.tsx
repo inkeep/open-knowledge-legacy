@@ -448,7 +448,8 @@ export interface FileTreeHandle {
  * Today only `FileSidebar` mounts it, which is always inside the provider.
  */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
-  const { activeDocName, activeTarget, closeDocument, prewarm } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument, closeAndClearForRename, prewarm } =
+    useDocumentContext();
   const { notifySidebarFileSelected } = useSidebar();
   const { resolvedTheme } = useTheme();
   function navigateToWithPulse(targetPath: string) {
@@ -685,11 +686,23 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     });
   }, [model]);
 
-  const applyRenamedDocuments = (renamed: RenamedDocMapping[]) => {
+  const applyRenamedDocuments = async (renamed: RenamedDocMapping[]) => {
     const currentActiveDocName = activeDocNameRef.current;
     const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
-    for (const entry of renamed) closeDocument(entry.fromDocName);
+    // Wipe IDB for BOTH ends of every rename pair before any new provider
+    // opens. The `to` clear catches the move-back-to-previous-folder case
+    // where the destination docName already had IDB rows from an earlier
+    // session — opening into that stale IDB would hydrate the new Y.Doc
+    // with prior-session content (foreign clientID, no shared ancestor
+    // with the server's freshly-loaded Y.Doc), and the union-merge would
+    // append the stale content to the post-rename body.
+    await Promise.all(
+      renamed.flatMap((entry) => [
+        closeAndClearForRename(entry.fromDocName),
+        closeAndClearForRename(entry.toDocName),
+      ]),
+    );
 
     setDocuments((current) => {
       const next = applyRenameToDocuments(current, renamed);
@@ -782,7 +795,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
+      await applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -842,7 +855,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         renamed = renamed.concat(Array.isArray(data.renamed) ? data.renamed : []);
       }
 
-      applyRenamedDocuments(renamed);
+      await applyRenamedDocuments(renamed);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] move failed:', err);

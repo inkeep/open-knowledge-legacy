@@ -232,6 +232,168 @@ describe('file operation API routes', () => {
     }
   });
 
+  test('cross-folder file move rewrites outbound links without duplicating content', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'artists'), { recursive: true });
+    writeFileSync(join(dir, 'artists/picasso.md'), '# Picasso\n', 'utf-8');
+    const sourceBody = [
+      '# Some File',
+      '',
+      'See [Picasso](./picasso.md) and [[artists/picasso]].',
+      '',
+      'A second paragraph with [Other](./other.md).',
+      '',
+      '```md',
+      '[Code link](./picasso.md) — should not rewrite',
+      '```',
+      '',
+      'End of file.',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'artists/some-file.md'), sourceBody, 'utf-8');
+
+    const result = await callApi(dir, '/api/rename-path', 'POST', {
+      kind: 'file',
+      fromPath: 'artists/some-file',
+      toPath: 'venues/some-file',
+    });
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'artists/some-file.md'))).toBe(false);
+
+    const destContent = readFileSync(join(dir, 'venues/some-file.md'), 'utf-8');
+    const expectedDest = [
+      '# Some File',
+      '',
+      'See [Picasso](../artists/picasso.md) and [[artists/picasso]].',
+      '',
+      'A second paragraph with [Other](../artists/other.md).',
+      '',
+      '```md',
+      '[Code link](./picasso.md) — should not rewrite',
+      '```',
+      '',
+      'End of file.',
+      '',
+    ].join('\n');
+    expect(destContent).toBe(expectedDest);
+
+    // Hard duplication guards: a duplicated body would double the byte count
+    // and double the count of marker substrings.
+    expect(destContent.length).toBe(expectedDest.length);
+    expect(destContent.match(/# Some File/g)?.length).toBe(1);
+    expect(destContent.match(/End of file\./g)?.length).toBe(1);
+    expect(destContent.match(/A second paragraph/g)?.length).toBe(1);
+  });
+
+  test('cross-folder file move with frontmatter + image refs does not duplicate content', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'docs/photo.png'), 'fakebytes', 'utf-8');
+    const sourceBody = [
+      '---',
+      'title: Meeting Notes',
+      'date: 2026-04-30',
+      '---',
+      '',
+      '# Meeting Notes',
+      '',
+      '![photo](./photo.png)',
+      '',
+      '[See agenda](./agenda.md)',
+      '',
+      'Closing paragraph.',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'docs/meeting.md'), sourceBody, 'utf-8');
+
+    const result = await callApi(dir, '/api/rename-path', 'POST', {
+      kind: 'file',
+      fromPath: 'docs/meeting',
+      toPath: 'archive/2026/meeting',
+    });
+
+    expect(result.status).toBe(200);
+
+    const destContent = readFileSync(join(dir, 'archive/2026/meeting.md'), 'utf-8');
+    const expected = [
+      '---',
+      'title: Meeting Notes',
+      'date: 2026-04-30',
+      '---',
+      '',
+      '# Meeting Notes',
+      '',
+      '![photo](../../docs/photo.png)',
+      '',
+      '[See agenda](../../docs/agenda.md)',
+      '',
+      'Closing paragraph.',
+      '',
+    ].join('\n');
+    expect(destContent).toBe(expected);
+    expect(destContent.match(/# Meeting Notes/g)?.length).toBe(1);
+    expect(destContent.match(/Closing paragraph\./g)?.length).toBe(1);
+    expect(destContent.match(/title: Meeting Notes/g)?.length).toBe(1);
+  });
+
+  test('cross-folder file move with currently-loaded Y.Doc does not duplicate content', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'artists'), { recursive: true });
+    writeFileSync(join(dir, 'artists/picasso.md'), '# Picasso\n', 'utf-8');
+    const initialBody = [
+      '# Some File',
+      '',
+      'See [Picasso](./picasso.md).',
+      '',
+      'Body content.',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'artists/some-file.md'), initialBody, 'utf-8');
+
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('artists/some-file');
+    const document = (conn as unknown as { document: Y.Doc }).document;
+    const ytext = document.getText('source');
+    document.transact(() => {
+      ytext.insert(0, initialBody);
+    });
+
+    try {
+      const result = await callApi(
+        dir,
+        '/api/rename-path',
+        'POST',
+        {
+          kind: 'file',
+          fromPath: 'artists/some-file',
+          toPath: 'venues/some-file',
+        },
+        {
+          backlinkIndex: buildBacklinkIndex(dir),
+          hocuspocus,
+        },
+      );
+
+      expect(result.status).toBe(200);
+
+      const destContent = readFileSync(join(dir, 'venues/some-file.md'), 'utf-8');
+      const expected = [
+        '# Some File',
+        '',
+        'See [Picasso](../artists/picasso.md).',
+        '',
+        'Body content.',
+        '',
+      ].join('\n');
+      expect(destContent).toBe(expected);
+      expect(destContent.match(/# Some File/g)?.length).toBe(1);
+      expect(destContent.match(/Body content\./g)?.length).toBe(1);
+    } finally {
+      await conn.disconnect();
+    }
+  });
+
   test('managed rename rejects destination collisions without changing files', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');

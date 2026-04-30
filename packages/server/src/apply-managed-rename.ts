@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import {
   rewriteMarkdownLinksForDocumentRename,
+  rewriteOutboundMarkdownLinksForSourceMove,
   rewriteWikiLinksForDocumentRename,
 } from './managed-rename-rewrite.ts';
 
@@ -131,19 +132,35 @@ function rewriteSupportedLinksForRename(
 /**
  * Apply a rename map to a single document's markdown body.
  *
- * Two-pass placeholder-substitute trick — handles swap cycles
- * (`{A→B, B→A}`) correctly. Phase 1 substitutes each `from` with a fresh
- * UUID-based placeholder; Phase 2 swaps each placeholder for its real `to`.
- * Direct substitution would over-collapse swap cycles ({A→B, B→A} would
- * leave content unchanged after both passes apply naively).
+ * Three logical passes when the doc whose body is being rewritten is itself
+ * being moved (a "self-rename"):
  *
- * `currentDocName` is the doc whose body we are rewriting (used by the
- * markdown-link primitive for relative-path resolution against the doc's
- * own location). Backlink-source docs pass their own name; renamed docs
- * pass their pre-rename name.
+ *   1. Self-rename pass — rewrites self-targeting wiki/markdown links and
+ *      recomputes relative image-ref hrefs (the existing FR-7 logic in
+ *      `rewriteMarkdownLinksInLine`'s `isContainingDocMove` branch). Runs
+ *      ONCE with the real (old, new) pair, never via the placeholder cycle
+ *      (that would feed it a synthetic dirname and corrupt the path
+ *      arithmetic).
+ *   2. Outbound markdown source-move pass — recomputes relative hrefs of
+ *      internal markdown-doc links that point to NON-renamed targets. The
+ *      asset-recompute analog for images already runs in pass 1; this pass
+ *      handles the markdown-link gap that previously left
+ *      `[X](./x.md)` pointing at the wrong folder after a folder change.
+ *   3. Placeholder cycle for OTHER renames — handles links to docs whose
+ *      own paths changed. Two-pass placeholder substitute keeps swap cycles
+ *      (`{A→B, B→A}`) correct; direct substitution would collapse them.
  *
- * `rewrites` counts user-visible rewrites (Phase 1 count) — Phase 2's
- * unwrapping is a mechanical inverse and does not double-count.
+ * After pass 1 the markdown's relative paths are anchored to the NEW source
+ * dir (because pass 1 emitted them that way), so passes 2 and 3 use the
+ * post-rename name as the resolution source.
+ *
+ * `currentDocName` is the doc whose body we are rewriting (the pre-rename
+ * name when the doc itself is being moved). Backlink-source docs pass their
+ * own name and never enter pass 1 / pass 2.
+ *
+ * `rewrites` counts user-visible rewrites — pass 1 + pass 2 + the
+ * placeholder cycle's Phase 1 count (Phase 2 unwrap is a mechanical inverse
+ * and doesn't double-count).
  */
 export function applyRenameMap(
   content: string,
@@ -152,12 +169,57 @@ export function applyRenameMap(
 ): ManagedRenameRewriteSummary {
   let markdown = content;
   let rewrites = 0;
-  const placeholderToFinal = new Map<string, string>();
 
+  let selfRenamedTo: string | undefined;
+  const otherRenames: Array<readonly [string, string]> = [];
   for (const [from, to] of renameMap) {
     if (from === to) continue;
+    if (from === currentDocName) {
+      selfRenamedTo = to;
+    } else {
+      otherRenames.push([from, to] as const);
+    }
+  }
+
+  // Pass 1 — self-rename. Real (old, new) pair so image-ref source-move
+  // arithmetic and self-targeting link rewrites both compute correct paths.
+  if (selfRenamedTo !== undefined) {
+    const selfPass = rewriteSupportedLinksForRename(
+      markdown,
+      currentDocName,
+      currentDocName,
+      selfRenamedTo,
+    );
+    markdown = selfPass.markdown;
+    rewrites += selfPass.rewrites;
+
+    // Pass 2 — outbound markdown-link source-move (folder-change only).
+    const outboundPass = rewriteOutboundMarkdownLinksForSourceMove(
+      markdown,
+      currentDocName,
+      selfRenamedTo,
+    );
+    markdown = outboundPass.markdown;
+    rewrites += outboundPass.rewrites;
+  }
+
+  // Pass 3 — placeholder cycle for OTHER renames. After pass 1, paths in
+  // the body that point to non-renamed targets are anchored to the new
+  // source dir (because pass 2 re-relativized them); paths to self are
+  // anchored to the old source dir but resolve correctly from the new doc
+  // name regardless. Use the post-rename name for resolution so the
+  // resolver matches the body's anchor.
+  const resolutionSourceName = selfRenamedTo ?? currentDocName;
+
+  const placeholderToFinal = new Map<string, string>();
+  for (const [from, to] of otherRenames) {
     const placeholder = `__OK_RENAME_${randomUUID().replaceAll('-', '')}__`;
-    const phase1 = rewriteSupportedLinksForRename(markdown, currentDocName, from, placeholder);
+    const phase1 = rewriteSupportedLinksForRename(
+      markdown,
+      resolutionSourceName,
+      from,
+      placeholder,
+    );
     if (phase1.rewrites > 0) {
       markdown = phase1.markdown;
       rewrites += phase1.rewrites;
@@ -166,7 +228,7 @@ export function applyRenameMap(
   }
 
   for (const [placeholder, to] of placeholderToFinal) {
-    const phase2 = rewriteSupportedLinksForRename(markdown, currentDocName, placeholder, to);
+    const phase2 = rewriteSupportedLinksForRename(markdown, resolutionSourceName, placeholder, to);
     markdown = phase2.markdown;
   }
 

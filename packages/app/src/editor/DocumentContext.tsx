@@ -86,6 +86,18 @@ interface DocumentContextValue {
   clearTarget: () => void;
   closeDocument: (docName: string) => void;
   /**
+   * Close `docName` and synchronously delete its client-side IndexedDB.
+   * Used by rename flows so a future open at this name starts from a
+   * clean persistence. Without this, moving a doc back to a previously-
+   * occupied folder would hydrate the new Y.Doc from the leftover IDB
+   * rows of the prior session at that name and then append-merge with
+   * the server's freshly-loaded content (no shared ancestor → CRDT
+   * union-merge), producing visible content duplication. Returns a
+   * promise so callers can await IDB deletion before triggering the
+   * navigation that opens the new provider.
+   */
+  closeAndClearForRename: (docName: string) => Promise<void>;
+  /**
    * Destroy and recreate the pool entry for `docName` while preserving
    * `activeDocName`. Used by the "Try again" path in `DocumentErrorBoundary`
    * to recover from `BridgeSetupError` (and any other sync failure where the
@@ -493,6 +505,15 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       if (collabUrl === null) return;
       const p = getPool(collabUrl);
       p.close(docName);
+      setActiveTarget((current) => {
+        if (!current) return current;
+        return docNameForNavigationTarget(current) === docName ? null : current;
+      });
+    },
+    closeAndClearForRename: async (docName: string) => {
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
+      await p.closeAndClearPersistence(docName);
       setActiveTarget((current) => {
         if (!current) return current;
         return docNameForNavigationTarget(current) === docName ? null : current;
