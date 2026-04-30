@@ -15,13 +15,22 @@ const BROWSER_ORIGIN = {
 };
 
 function replaceDocParagraph(document: Y.Doc, text: string): void {
+  replaceDocParagraphs(document, [text]);
+}
+
+function replaceDocParagraphs(document: Y.Doc, texts: string[]): void {
   const fragment = document.getXmlFragment('default');
   if (fragment.length > 0) {
     fragment.delete(0, fragment.length);
   }
-  const paragraph = new Y.XmlElement('paragraph');
-  paragraph.insert(0, [new Y.XmlText(text)]);
-  fragment.insert(0, [paragraph]);
+  fragment.insert(
+    0,
+    texts.map((text) => {
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText(text)]);
+      return paragraph;
+    }),
+  );
 }
 
 async function loadDocument(
@@ -152,6 +161,40 @@ describe('batch-gated L1 persistence', () => {
 
     badDoc.destroy();
     goodDoc.destroy();
+  });
+
+  test('tripwire reset failure breaker only suppresses duplicate reset retries', async () => {
+    const docName = 'tripwire-reset-failed';
+    const docPath = join(tmpDir, `${docName}.md`);
+    writeFileSync(docPath, 'base\n', 'utf-8');
+    let resetAttempts = 0;
+    const persistence = createPersistenceExtension({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      gitEnabled: false,
+      applyDiskContentToDoc: () => {
+        resetAttempts += 1;
+        throw new Error('synthetic reset failure');
+      },
+    });
+    const document = new Y.Doc();
+
+    await loadDocument(persistence, document, docName);
+    document.transact(() => replaceDocParagraphs(document, ['base', 'base']), BROWSER_ORIGIN);
+
+    await storeDocument(persistence, document, docName);
+    expect(resetAttempts).toBe(1);
+    expect(readFileSync(docPath, 'utf-8')).toBe('base\n');
+
+    await storeDocument(persistence, document, docName);
+    expect(resetAttempts).toBe(1);
+    expect(readFileSync(docPath, 'utf-8')).toBe('base\n');
+
+    document.transact(() => replaceDocParagraph(document, 'recovered edit'), BROWSER_ORIGIN);
+    await storeDocument(persistence, document, docName);
+    expect(readFileSync(docPath, 'utf-8')).toContain('recovered edit');
+
+    document.destroy();
   });
 
   test('stale deferred stores are discarded across branch changes', async () => {

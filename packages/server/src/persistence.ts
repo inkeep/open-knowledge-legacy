@@ -175,6 +175,7 @@ export interface PersistenceOptions {
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
+  applyDiskContentToDoc?: (document: Y.Doc, content: string) => void;
 }
 
 /**
@@ -309,6 +310,8 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // Lives inside the closure so multiple server instances don't share mutable state.
   const frontmatterCache = new Map<string, string>();
   const tripwireResetFailedDocs = new Set<string>();
+  const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
+  let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
 
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
@@ -671,10 +674,6 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
         const markdown = prependFrontmatter(frontmatter, body);
 
-        if (tripwireResetFailedDocs.has(documentName)) {
-          return;
-        }
-
         // Skip the write when the serialized output matches the load-time
         // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
         // including the first-pass observer sync that populates Y.Text from the
@@ -769,6 +768,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         if (currentBase !== undefined) {
           const classification = classifyDuplication(markdown, currentBase);
           if (classification.kind === 'block') {
+            if (tripwireResetFailedDocs.has(documentName)) {
+              return;
+            }
             const fragmentChildren = document.getXmlFragment('default').length;
             console.warn(
               JSON.stringify({
@@ -786,7 +788,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               const diskContent = existsSync(requestedDiskPath)
                 ? readFileSync(requestedDiskPath, 'utf-8')
                 : currentBase;
-              applyDiskContentToDoc(document, diskContent);
+              applyDiskContent(document, diskContent);
               tripwireResetFailedDocs.delete(documentName);
             } catch (err) {
               tripwireResetFailedDocs.add(documentName);
@@ -914,28 +916,42 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
 
   async function flushDeferredStores(mode: 'within-branch' | 'discard-stale' = 'within-branch') {
-    if (deferredStoreDrainInFlight) return deferredStoreDrainInFlight;
+    if (deferredStoreDrainInFlight) {
+      pendingDeferredStoreFlushMode =
+        pendingDeferredStoreFlushMode === 'discard-stale' || mode === 'discard-stale'
+          ? 'discard-stale'
+          : 'within-branch';
+      return deferredStoreDrainInFlight;
+    }
 
     deferredStoreDrainInFlight = (async () => {
-      const entries = [...deferredStores.entries()];
-      deferredStores.clear();
+      let drainMode = mode;
+      while (true) {
+        const entries = [...deferredStores.entries()];
+        deferredStores.clear();
 
-      if (mode === 'discard-stale') return;
-
-      for (const [documentName, entry] of entries) {
-        if (entry.branch !== getActiveBranch()) continue;
-        try {
-          await storeDocumentNow({
-            document: entry.document,
-            documentName,
-            lastTransactionOrigin: entry.lastTransactionOrigin,
-          });
-        } catch (err) {
-          log.error(
-            { err, documentName },
-            `[persistence] Deferred store failed for ${documentName}`,
-          );
+        if (drainMode !== 'discard-stale') {
+          for (const [documentName, entry] of entries) {
+            if (entry.branch !== getActiveBranch()) continue;
+            try {
+              await storeDocumentNow({
+                document: entry.document,
+                documentName,
+                lastTransactionOrigin: entry.lastTransactionOrigin,
+              });
+            } catch (err) {
+              log.error(
+                { err, documentName },
+                `[persistence] Deferred store failed for ${documentName}`,
+              );
+            }
+          }
         }
+
+        const nextMode = pendingDeferredStoreFlushMode;
+        pendingDeferredStoreFlushMode = null;
+        if (deferredStores.size === 0 && nextMode === null) break;
+        drainMode = nextMode ?? 'within-branch';
       }
     })().finally(() => {
       deferredStoreDrainInFlight = null;
