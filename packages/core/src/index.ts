@@ -11,7 +11,71 @@ export {
 // Re-export VFileMessage for Observer B's error classification (instanceof check
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
-
+// Headless config writers (US-003 — D5 reshape Part B / D38 reshaped / D63).
+// UI ConfigBinding (US-008 — D5 reshape Part A / FR-33 / D48 / D59).
+// Browser+node compatible — no Node deps; structural ConfigDocProvider type
+// keeps `@hocuspocus/provider` out of core's runtime deps.
+export {
+  bindConfigDoc,
+  type ConfigBinding,
+  type ConfigBindingPatchResult,
+  type ConfigBindingPatchSuccess,
+  type ConfigDocProvider,
+  type Unsubscribe,
+} from './config/bind-config-doc.ts';
+export {
+  type ConfigIssue,
+  ConfigIssueSchema,
+  type ConfigIssueSource,
+  ConfigIssueSourceSchema,
+  type ConfigValidationError,
+  ConfigValidationErrorSchema,
+  type FieldScope,
+  FieldScopeSchema,
+  type ForwardCompatConfigError,
+  ForwardCompatConfigErrorSchema,
+  humanFormat,
+  isKnownConfigError,
+  type KnownConfigValidationError,
+  KnownConfigValidationErrorSchema,
+  type WriteScope,
+  WriteScopeSchema,
+} from './config/errors.ts';
+export {
+  type FieldMeta,
+  fieldRegistry,
+  getFieldMeta,
+} from './config/field-registry.ts';
+export type { Err, Ok, Result } from './config/result.ts';
+// Config (config-edit-paths spec — D44/D50/FR-31, US-001)
+// Schema, error envelope, and Result helper. Browser+node compatible.
+export {
+  type Config,
+  type ConfigPatch,
+  ConfigSchema,
+  type FolderFrontmatter,
+  FolderFrontmatterSchema,
+  type FolderRule,
+  FolderRuleSchema,
+} from './config/schema.ts';
+export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
+export { CONFIG_SCHEMA_MAJOR, CONFIG_SCHEMA_MAJOR_PATH } from './config/schema-version.ts';
+export { type LocateOptions, locateIssue } from './config/source-locator.ts';
+// OTel helpers for config-edit spans (US-014 / FR-38 / D53). Browser+node
+// compatible — imports only `@opentelemetry/api`. Spans are inert no-ops
+// when no SDK is registered (server: OTEL_SDK_DISABLED gate; app:
+// VITE_OTEL_ENABLED gate).
+export {
+  addConfigSpanEvent,
+  type ConfigOutcome,
+  type ConfigScopeAttr,
+  type ConfigSpanAttributes,
+  type ConfigTransport,
+  type ConfigValidationLayer,
+  setConfigOutcome,
+  withConfigSpan,
+  withConfigSpanSync,
+} from './config/telemetry.ts';
 // Constants
 export {
   ACTIVITY_TTL_MS,
@@ -20,7 +84,14 @@ export {
   FLASH_DURATION_MS,
   hasNewEntries,
 } from './constants/activity.ts';
-export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
+export {
+  CC1_CONTRACT_VERSION,
+  CONFIG_DOC_NAME_USER,
+  CONFIG_DOC_NAME_WORKSPACE,
+  CONFIG_DOC_NAMES,
+  type ConfigDocName,
+  SYSTEM_DOC_NAME,
+} from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { OK_DIR } from './constants/ok-dir.ts';
 export {
@@ -117,10 +188,13 @@ export {
 } from './schemas/api.ts';
 export {
   CC1_CHANNEL_BRANCH_SWITCHED,
+  CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
   CC1_CHANNEL_DISK_ACK,
   CC1_CHANNEL_SERVER_INFO,
   type CC1BranchSwitchedPayload,
   CC1BranchSwitchedPayloadSchema,
+  type CC1ConfigValidationRejectedPayload,
+  CC1ConfigValidationRejectedPayloadSchema,
   type CC1DerivedViewPayload,
   CC1DerivedViewPayloadSchema,
   type CC1DiskAckPayload,
