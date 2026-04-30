@@ -43,12 +43,21 @@ describe('canonical/compat split — registry shape', () => {
   test('compat descriptor set covers v1 source-form preservation + WikiEmbed convergence', () => {
     // v1 set: GFMCallout / CommonMarkImage / HtmlDetailsAccordion (alternative
     // surface forms that already shared canonical's prop spelling — identity
-    // translateProps). WikiEmbedImage joins the manifest as the first compat
-    // with a non-identity translateProps (alias → alt for img-canonical
-    // render), proving the seam scales beyond identity remaps. Video / audio
-    // siblings join later.
+    // translateProps). WikiEmbedImage / WikiEmbedVideo / WikiEmbedAudio carry
+    // a non-identity translateProps (alias → alt for img; alias → title for
+    // video/audio since neither HTML5 element accepts an `alt` attribute) —
+    // they prove the seam scales beyond identity remaps and converge all four
+    // media authoring shapes (slash-menu JSX, ![](src) CommonMark, ![[file]]
+    // wiki-embed, drag-drop) on the same React component.
     expect(compatDescriptors.map((m) => m.name).sort()).toEqual(
-      ['CommonMarkImage', 'GFMCallout', 'HtmlDetailsAccordion', 'WikiEmbedImage'].sort(),
+      [
+        'CommonMarkImage',
+        'GFMCallout',
+        'HtmlDetailsAccordion',
+        'WikiEmbedAudio',
+        'WikiEmbedImage',
+        'WikiEmbedVideo',
+      ].sort(),
     );
   });
 

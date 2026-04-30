@@ -516,6 +516,10 @@ const htmlDetailsAccordionProps: PropDef[] = [
 // alongside `alias` so `serialize` can rebuild byte-identical source bytes,
 // but they are not surfaced in PropPanel (the parser owns them; the user
 // edits the alias and nothing else).
+//
+// The three sibling PropDef arrays differ only in the description string —
+// kept distinct so PropPanel renders the user-friendly alias-syntax example
+// matching the file kind they're editing (image / video / audio).
 const wikiEmbedImageProps: PropDef[] = [
   {
     name: 'alias',
@@ -523,6 +527,26 @@ const wikiEmbedImageProps: PropDef[] = [
     required: false,
     defaultValue: '',
     description: 'Alt text (Obsidian alias syntax: `![[file.png|alt text]]`)',
+  },
+];
+
+const wikiEmbedVideoProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[clip.mp4|title]]`)',
+  },
+];
+
+const wikiEmbedAudioProps: PropDef[] = [
+  {
+    name: 'alias',
+    type: 'string',
+    required: false,
+    defaultValue: '',
+    description: 'Title text (Obsidian alias syntax: `![[song.mp3|title]]`)',
   },
 ];
 
@@ -744,6 +768,85 @@ export const builtInComponents: JsxComponentMeta[] = [
       return {
         src: props.src,
         alt: alias ?? target,
+      };
+    },
+    serialize: (node) => {
+      const p = node.attrs.props as
+        | { target?: string; alias?: string | null; anchor?: string | null }
+        | undefined;
+      const target = p?.target ?? '';
+      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+      return {
+        type: 'wikiLinkEmbed' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
+    },
+  },
+
+  // Video / audio sibling compats. Both canonicals (Video.tsx / Audio.tsx)
+  // expose `title` as the user-visible authored string — neither HTML5 element
+  // accepts an `alt` attribute. Alias maps to `title` for both. The serialize
+  // shape is identical to WikiEmbedImage's; only `rendersAs` and the prop
+  // mapping differ.
+  {
+    name: 'WikiEmbedVideo',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedVideoProps,
+    icon: 'Film',
+    category: 'media',
+    displayName: 'Wiki Embed Video',
+    description:
+      'Obsidian-style `![[clip.mp4]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'video',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
+      };
+    },
+    serialize: (node) => {
+      const p = node.attrs.props as
+        | { target?: string; alias?: string | null; anchor?: string | null }
+        | undefined;
+      const target = p?.target ?? '';
+      const alias = typeof p?.alias === 'string' && p.alias.length > 0 ? p.alias : null;
+      const anchor = typeof p?.anchor === 'string' && p.anchor.length > 0 ? p.anchor : null;
+      const label = alias ?? (anchor ? `${target}#${anchor}` : target);
+      return {
+        type: 'wikiLinkEmbed' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
+    },
+  },
+
+  {
+    name: 'WikiEmbedAudio',
+    surface: 'compat',
+    hasChildren: false,
+    isSelfClosing: true,
+    props: wikiEmbedAudioProps,
+    icon: 'Volume2',
+    category: 'media',
+    displayName: 'Wiki Embed Audio',
+    description:
+      'Obsidian-style `![[song.mp3]]` wiki-embed — read-only compat. Edit the title via the alias slot; the embed target / anchor stay on the prop bag and round-trip byte-identical.',
+    rendersAs: 'audio',
+    translateProps: (props) => {
+      const alias = typeof props.alias === 'string' && props.alias.length > 0 ? props.alias : null;
+      const target = typeof props.target === 'string' ? props.target : '';
+      return {
+        src: props.src,
+        title: alias ?? target,
       };
     },
     serialize: (node) => {
