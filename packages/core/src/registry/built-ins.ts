@@ -571,6 +571,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Image',
     description: 'Image with click-to-zoom and HTML-native attributes',
     searchTerms: ['image', 'zoom', 'picture', 'photo'],
+    placeholder: { label: 'Add an image' },
     serialize: (node, ctx) => emitMdxJsx('img', node, ctx),
   },
   {
@@ -584,6 +585,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Video',
     description: 'HTML5 video player with native controls',
     searchTerms: ['video', 'media', 'player', 'mp4', 'webm', 'movie'],
+    placeholder: { label: 'Add a video' },
     serialize: (node, ctx) => emitMdxJsx('video', node, ctx),
   },
   {
@@ -597,6 +599,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Audio',
     description: 'HTML5 audio player with native controls',
     searchTerms: ['audio', 'sound', 'music', 'mp3', 'podcast', 'player'],
+    placeholder: { label: 'Add audio' },
     serialize: (node, ctx) => emitMdxJsx('audio', node, ctx),
   },
 

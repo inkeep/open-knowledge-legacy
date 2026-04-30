@@ -148,6 +148,14 @@ interface JsxComponentMetaBase {
   /** For empty-container placeholder UX — Steps → 'Step', Tabs → 'Tab'. */
   emptyChildName?: string;
   /**
+   * Notion-style empty-state copy when an autoFocus-flagged required prop is
+   * empty (e.g. fresh `<img src="" />`). Both fields optional; the resolver
+   * falls back to `Add ${displayName.toLowerCase()}` for label and to
+   * `descriptor.icon` for the icon when omitted. Only consulted for descriptors
+   * with `hasChildren: false` — containers route through `emptyChildName`.
+   */
+  placeholder?: { label?: string; icon?: string };
+  /**
    * Emit this descriptor's source form as mdast. Required.
    *
    * Pristine-path round-trip is handled upstream by the caller via
