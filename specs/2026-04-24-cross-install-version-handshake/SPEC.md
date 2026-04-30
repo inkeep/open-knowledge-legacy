@@ -1,15 +1,17 @@
 ---
 title: Cross-install version handshake — server.lock + project state
-description: Extend server.lock with minimal version metadata (protocolVersion + runtimeVersion), add .open-knowledge/state.json for cold-start schema compatibility, and gate the npx-spawned MCP child on protocol match. Reduced from the original spec on 2026-04-27 — desktop attach handshake / kill-and-restart / direction-asymmetric refuse are NOT NOW per D14, because Path B (M6/D52) makes the desktop spawn its own bundled server.
+description: Extend server.lock with minimal version metadata (protocolVersion + runtimeVersion), add .open-knowledge/state.json for cold-start schema compatibility, and gate the npx-spawned MCP child on protocol match. Reduced from the original spec on 2026-04-27 — desktop attach handshake / kill-and-restart / direction-asymmetric refuse are NOT NOW per D14, because Path B (M6/D52) makes the desktop spawn its own bundled server.<br>_[Corrected 2026-04-30 post-ship: the live MCP protocol gate, lock protocolVersion, and --pin parts were superseded by the HTTP MCP shim cleanup; this description is historical for those surfaces.]_
 tags: [spec, infrastructure, versioning, server-lock, mcp, cross-install]
-status: Reduced — 2026-04-27 (in flight)
+status: Reduced — 2026-04-27 (in flight)<br>_[Corrected 2026-04-30 post-ship: superseded in part by the HTTP MCP shim cleanup.]_
 ---
 
 # Cross-install version handshake — server.lock + project state
 
-**Status:** Reduced — implementing reduced scope per D14 (2026-04-27)
+**Status:** Reduced — implementing reduced scope per D14 (2026-04-27)<br>_[Corrected 2026-04-30 post-ship: the state manifest / `runtimeVersion` portions remain historical background; the live MCP protocol gate, lock `protocolVersion`, and `ok init --pin` plan were superseded by the HTTP MCP shim cleanup.]_
 **Owner(s):** Andrew Mikofalvy
-**Last updated:** 2026-04-27
+**Last updated:** 2026-04-30
+
+> _Superseded 2026-04-30 by [`specs/2026-04-29-mcp-shim/SPEC.md`](../2026-04-29-mcp-shim/SPEC.md): the live system now has one server-owned HTTP MCP implementation with `ok mcp` as a thin stdio→HTTP shim. The `protocolVersion` lock field, G6 MCP protocol gate, and `ok init --pin` plan below are retained only as historical context, not live behavior._
 
 > **Reduced scope (2026-04-27).** This spec was originally written assuming Path A — DMG bundles its own independent server runtime, cross-install drift is inherent. Subsequent analysis in [`reports/electron-spawns-cli-security/REPORT.md`](../../reports/electron-spawns-cli-security/REPORT.md) — synthesizing prior research on the bundled-CLI install pattern (`reports/electron-bundled-cli-install-patterns/`), cross-install coordination (`reports/ai-coding-tools-cross-install-coordination/`), and hardened-runtime spawn semantics — established that **OK has already locked Path B via D52/M6**: the desktop bundles the CLI inside `Contents/Resources/cli/` and `/usr/local/bin/ok` symlinks to it. When the desktop "spawns the CLI" it re-invokes its own signed Electron binary in Node mode (`ELECTRON_RUN_AS_NODE=1`); same Developer ID, same notarization ticket, same hardened-runtime entitlements.
 >

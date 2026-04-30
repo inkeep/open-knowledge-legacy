@@ -17,13 +17,15 @@ topics:
 
 **Purpose:** Provide concrete implementation guidance for wiring agent identity through Open Knowledge's MCP → HTTP → CRDT → shadow repo pipeline. The story (`collaboration-capabilities-audit/STORY.md` §14, D12) already established *what* the `AgentIdentity` struct should look like and *why* MCP `clientInfo` is the right identity primitive. This report answers *how* — the specific code paths, the threading strategy, and the cross-harness compatibility surface.
 
+> _Updated 2026-04-30: the MCP runtime now lives in `ok start` behind the Streamable HTTP `/mcp` endpoint; `ok mcp` is a thin stdio→HTTP shim. Per-session identity is derived from each HTTP MCP session's `clientInfo.name` plus a server-generated `connectionId`. The old process-wide label model is gone, and server lifetime is owned by idle-shutdown rather than the editor that first spawned the server._
+
 ---
 
 ## Executive Summary
 
-Open Knowledge currently attributes all agent writes to a hardcoded `DEFAULT_AGENT_ID = 'claude-1'` and all shadow repo commits to `WriterIdentity { id: 'server' }`. Eight specific points in the pipeline drop identity. The MCP SDK already captures `clientInfo` (harness name + version) during the initialize handshake and exposes it via `McpServer.server.getClientVersion()` — it's just never read.
+At the time of this report, Open Knowledge attributed all agent writes to a hardcoded `DEFAULT_AGENT_ID = 'claude-1'` and all shadow repo commits to `WriterIdentity { id: 'server' }`. Eight specific points in the pipeline dropped identity. The MCP SDK already captured `clientInfo` (harness name + version) during the initialize handshake and exposed it via `McpServer.server.getClientVersion()` — it just was not being read.
 
-The implementation path is a straight pipeline threading: extract identity at MCP startup, generate a `connectionId` (UUID for stdio), compose an `AgentIdentity`, pass it through HTTP API bodies to the Hocuspocus server, use it for session management, activity map entries, and shadow repo commits. The shadow repo infrastructure (`WriterIdentity`, `parseWriterId`, per-writer WIP refs) is already parameterized and ready — it just needs real identity as input.
+The implementation path was a straight pipeline threading: extract identity at MCP session initialization, generate a `connectionId`, compose an `AgentIdentity`, pass it through HTTP API bodies to the Hocuspocus server, use it for session management, activity map entries, and shadow repo commits. The current HTTP MCP implementation follows that direction at the MCP/session boundary: identity is per session, not process-wide.
 
 **Key Findings:**
 
