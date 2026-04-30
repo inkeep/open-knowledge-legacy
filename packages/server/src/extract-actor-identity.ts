@@ -1,9 +1,6 @@
 import type { Principal } from '@inkeep/open-knowledge-core';
-import { AGENT_ID_RE, resolveAgentType, toBroadcasterKey } from './agent-id.ts';
+import { parseAgentBodyFields, resolveAgentType } from './agent-id.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
-import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
-
-const AGENT_NAME_MAX_LEN = 128;
 
 interface ActorMetadata {
   principalId?: string;
@@ -61,43 +58,25 @@ export function extractActorIdentity(
     return { kind: 'invalid-summary' };
   }
 
-  const rawAgentId: string | undefined =
-    typeof body.agentId === 'string' && body.agentId.length > 0 && AGENT_ID_RE.test(body.agentId)
-      ? body.agentId
-      : undefined;
-
+  const fields = parseAgentBodyFields(body);
   const principal = getPrincipal?.() ?? null;
 
-  if (rawAgentId !== undefined) {
-    const writerId = toBroadcasterKey(rawAgentId);
-    const displayName =
-      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
-    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    if (clientName !== undefined) clientName = sanitizeGitIdentity(clientName);
-    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
-    if (clientVersion !== undefined) clientVersion = sanitizeGitIdentity(clientVersion);
-    let label = typeof body.label === 'string' ? body.label : undefined;
-    if (label !== undefined) label = sanitizeGitIdentity(label);
-    const colorSeed =
-      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
-        : rawAgentId;
-    const actor: ActorMetadata = {
-      principalId: principal?.id,
-      agentType: resolveAgentType(clientName),
-      clientName,
-      clientVersion,
-      label,
-    };
+  if (fields.rawAgentId !== undefined && fields.writerId !== undefined) {
     return {
       kind: 'agent',
-      writerId,
-      displayName,
-      colorSeed,
-      clientName,
-      clientVersion,
-      label,
-      actor,
+      writerId: fields.writerId,
+      displayName: fields.displayName,
+      colorSeed: fields.colorSeed ?? fields.rawAgentId,
+      clientName: fields.clientName,
+      clientVersion: fields.clientVersion,
+      label: fields.label,
+      actor: {
+        principalId: principal?.id,
+        agentType: resolveAgentType(fields.clientName),
+        clientName: fields.clientName,
+        clientVersion: fields.clientVersion,
+        label: fields.label,
+      },
       summary,
     };
   }

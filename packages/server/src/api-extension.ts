@@ -99,7 +99,7 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, resolveAgentType, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { parseAgentBodyFields, resolveAgentType, validateAgentId } from './agent-id.ts';
 import {
   applyRenameMap,
   buildRenameMap,
@@ -1726,12 +1726,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     );
   }
 
-  const AGENT_NAME_MAX_LEN = 128;
-
   /**
    * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
    * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
    * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   *
+   * Body parsing + sanitization is shared with `extractActorIdentity` via
+   * `parseAgentBodyFields` in `agent-id.ts`. This wrapper adds the write-handler
+   * default — absent agentId becomes `'claude-1'` so attribution always lands on
+   * a stable broadcaster key (matches `getSession()` for presence bar color).
    */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
@@ -1742,32 +1745,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     clientVersion: string | undefined;
     label: string | undefined;
   } {
-    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
-    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
-      rawAgentId = undefined;
-    }
-    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
-    const agentName =
-      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
-    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    if (clientName !== undefined) {
-      clientName = sanitizeGitIdentity(clientName);
-    }
-    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
-    if (clientVersion !== undefined) {
-      clientVersion = sanitizeGitIdentity(clientVersion);
-    }
-    let label = typeof body.label === 'string' ? body.label : undefined;
-    if (label !== undefined) {
-      label = sanitizeGitIdentity(label);
-    }
-    // colorSeed must match what getSession() uses for presence bar color consistency.
-    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
-    const colorSeed =
-      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
-        : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
+    const fields = parseAgentBodyFields(body);
+    const agentId = fields.writerId ?? 'claude-1';
+    return {
+      rawAgentId: fields.rawAgentId,
+      agentId,
+      agentName: fields.displayName,
+      colorSeed: fields.colorSeed ?? fields.rawAgentId ?? agentId,
+      clientName: fields.clientName,
+      clientVersion: fields.clientVersion,
+      label: fields.label,
+    };
   }
 
   /**
