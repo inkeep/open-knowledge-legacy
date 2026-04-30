@@ -41,9 +41,22 @@ export function DescriptorPlaceholder({
       {...rest}
       role="button"
       tabIndex={-1}
+      contentEditable={false}
       data-descriptor-placeholder=""
       data-selected={selected ? 'true' : undefined}
       onClick={onClick}
+      // Without preventDefault on mousedown, browsers move focus out of the
+      // PM-managed wrapper when the click target is contentEditable={false}
+      // — that focus reroute fires before openPanel can dispatch its
+      // setNodeSelection, and PM's selectionUpdate handler wipes the
+      // selection before it is read. `preventDefault` keeps focus inside the
+      // editor; `stopPropagation` keeps PM's own mousedown handler from
+      // running its own selection logic. Mirrors the chrome bar's defense at
+      // `.jsx-component-chrome` `onMouseDown`.
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -51,7 +64,7 @@ export function DescriptorPlaceholder({
         }
       }}
       className={cn(
-        'flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer',
+        'flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         className,
       )}
     >

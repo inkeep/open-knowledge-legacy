@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { uploadFile } from '@/editor/image-upload/upload-file.ts';
 import type { JsxComponentDescriptor } from '@/editor/registry/types.ts';
-import { humanizePropName } from '@/editor/utils/editor-strings.ts';
+import { getAutoFocusedPropName, humanizePropName } from '@/editor/utils/editor-strings.ts';
 
 /**
  * Per-descriptor localStorage key for persisting the Advanced section's
@@ -83,24 +83,6 @@ export function countAdvancedSet(
     if (current !== undefined && current !== declaredDefault) count += 1;
   }
   return count;
-}
-
-/**
- * Pick the prop whose Input should receive `autoFocus={true}` on PropPanel
- * mount: the first PropDefString in declared order with `autoFocus: true`
- * and not `hidden` and not `advanced` (advanced props live inside a
- * collapsed `<CollapsibleContent>` and would not be visible on mount).
- * Other Inputs render with `autoFocus={false}`. Returns `null` when no
- * prop opts in. Pure; safe to call inside render.
- */
-export function getAutoFocusedPropName(props: PropDef[]): string | null {
-  for (const p of props) {
-    if (p.type !== 'string') continue;
-    if (p.hidden === true) continue;
-    if ('advanced' in p && p.advanced === true) continue;
-    if (p.autoFocus === true) return p.name;
-  }
-  return null;
 }
 
 /**

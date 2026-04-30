@@ -14,7 +14,7 @@
  * placeholder mode.
  */
 import type { LucideIcon } from 'lucide-react';
-import { getAutoFocusedPropName } from '../components/PropPanel.tsx';
+import { getAutoFocusedPropName } from '../utils/editor-strings.ts';
 import { resolveIcon } from './icons.ts';
 import type { JsxComponentDescriptor } from './types.ts';
 

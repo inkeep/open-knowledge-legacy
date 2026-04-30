@@ -22,13 +22,9 @@ import { builtInComponents, type PropDef } from '@inkeep/open-knowledge-core';
 import { renderToString } from 'react-dom/server';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 
-const {
-  countAdvancedSet,
-  getAutoFocusedPropName,
-  PropPanel,
-  persistAdvancedOpenState,
-  readAdvancedOpenState,
-} = await import('./PropPanel.tsx');
+const { countAdvancedSet, PropPanel, persistAdvancedOpenState, readAdvancedOpenState } =
+  await import('./PropPanel.tsx');
+const { getAutoFocusedPropName } = await import('../utils/editor-strings.ts');
 
 // ---------------------------------------------------------------------------
 // localStorage fake — the read/write helpers swallow throws and treat

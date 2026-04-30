@@ -199,7 +199,7 @@ describe('builtInComponents manifest', () => {
     );
   });
 
-  test('img exposes the 12-prop HTML-native surface (4 common + 8 advanced)', () => {
+  test('img exposes the 12-prop HTML-native surface (2 common + 10 advanced)', () => {
     // Lowercase media canonical pivot. Drops the OK-specific `caption` and
     // `zoom` props from the descriptor — caption belongs on a future Frame
     // wrapper; zoom is always-on inside the Image React component.
@@ -258,7 +258,7 @@ describe('builtInComponents manifest', () => {
     expect(img?.isSelfClosing).toBe(true);
   });
 
-  test('video exposes the 11-prop HTML-native surface (6 common + 5 advanced)', () => {
+  test('video exposes the 11-prop HTML-native surface (1 common + 10 advanced)', () => {
     // Lowercase media canonical pivot. Adds `width` / `height` (today's
     // canonical lacked them); HTML-attr lowercase names (`autoplay`,
     // `playsinline`) so the rendered MDX matches the spec exactly.
@@ -329,7 +329,7 @@ describe('builtInComponents manifest', () => {
     expect(start).toBeUndefined();
   });
 
-  test('audio exposes the 7-prop HTML-native surface (3 common + 4 advanced)', () => {
+  test('audio exposes the 7-prop HTML-native surface (1 common + 6 advanced)', () => {
     // Lowercase media canonical pivot. `controls` is now an explicit prop
     // (default true) — Audio.tsx no longer hardcodes always-on; authors who
     // want a chrome-less audio set controls={false} from the descriptor.

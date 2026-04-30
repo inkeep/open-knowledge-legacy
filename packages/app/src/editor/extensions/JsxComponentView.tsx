@@ -783,7 +783,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 }
               }}
             >
-              <ArrowUp size={12} />
+              <ArrowUp size={12} aria-hidden="true" />
             </button>
           )}
 
@@ -822,7 +822,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 }
               }}
             >
-              <ArrowDown size={12} />
+              <ArrowDown size={12} aria-hidden="true" />
             </button>
           )}
 
@@ -840,7 +840,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               }
             }}
           >
-            <Trash2 size={12} />
+            <Trash2 size={12} aria-hidden="true" />
           </button>
 
           {/* Settings — opens the controlled PropPanel popover hoisted above
@@ -855,7 +855,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 className="jsx-chrome-btn"
                 aria-label={`${descriptor.displayName ?? descriptor.name} properties`}
               >
-                <Settings2 size={12} />
+                <Settings2 size={12} aria-hidden="true" />
               </button>
             </PopoverTrigger>
           )}
@@ -884,6 +884,13 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         prop that was causing the render to throw.
       */}
         {showPlaceholder && resolvedPlaceholder ? (
+          // No NodeViewContent here for the same reason the healthy branch's
+          // Image / Video / Audio components silently drop children: the
+          // descriptors that surface the placeholder are self-closing leaves
+          // (`hasChildren: false`), so PM never has block children to map.
+          // The slot's absence here matches Branch 2 for self-closing leaves;
+          // Precedent #30's "always rendered" obligation lives downstream in
+          // the renderer that does have children to host (Callout / Accordion).
           <PopoverAnchor asChild>
             <DescriptorPlaceholder
               label={resolvedPlaceholder.label}

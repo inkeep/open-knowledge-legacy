@@ -12,6 +12,8 @@
  * The helpers here intentionally do NOT inflect user-supplied nouns.
  */
 
+import type { PropDef } from '@inkeep/open-knowledge-core';
+
 const pluralRules = new Intl.PluralRules('en-US');
 
 /**
@@ -46,6 +48,28 @@ export function formatContainerAriaLabel(
  * when the selection is at document-body depth (no block selected).
  */
 export const DOCUMENT_ROOT_LABEL = 'Document';
+
+/**
+ * Pick the prop name whose input should be focused first when the PropPanel
+ * mounts. Matches the React DOM `autoFocus` convention. Skips reactnode,
+ * hidden, and advanced props — only first-tier string inputs are eligible.
+ * First match in declared `props[]` order wins (deterministic, no separate
+ * ordering field). Returns `null` when no eligible autoFocus prop exists.
+ *
+ * Lives here (rather than alongside PropPanel) because `resolve-descriptor-
+ * placeholder.ts` also keys off it: the placeholder predicate fires when the
+ * autoFocus-flagged required string is empty. Two consumers, one shape-
+ * introspection helper — symmetric with `humanizePropName` below.
+ */
+export function getAutoFocusedPropName(props: PropDef[]): string | null {
+  for (const p of props) {
+    if (p.type !== 'string') continue;
+    if (p.hidden === true) continue;
+    if ('advanced' in p && p.advanced === true) continue;
+    if (p.autoFocus === true) return p.name;
+  }
+  return null;
+}
 
 /**
  * Humanize a camelCase / snake_case prop name for the PropPanel UI.
