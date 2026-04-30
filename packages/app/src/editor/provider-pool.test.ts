@@ -1276,12 +1276,14 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
         serverInstanceId?: string;
         failureKind: string;
         errorName?: string;
+        errorMessage?: string;
       };
       expect(payload.docName).toBe('doc1');
       expect(payload.branch).toBe('clear-fail-branch');
       expect(payload.serverInstanceId).toBe('server-old');
       expect(payload.failureKind).toBe('rejected');
       expect(payload.errorName).toBe('Error');
+      expect(payload.errorMessage).toBe('idb blocked');
       expect(Object.keys(payload).every((k) => !['message', 'stack', 'reason'].includes(k))).toBe(
         true,
       );

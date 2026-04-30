@@ -1338,6 +1338,8 @@ export class ProviderPool {
               ...this.recoveryTelemetryBase(docName),
               failureKind: 'rejected',
               errorName,
+              errorMessage:
+                result.reason instanceof Error ? result.reason.message : String(result.reason),
             });
           }
         } else {
