@@ -69,6 +69,7 @@ import type { JsxComponentMeta, PropDef } from './types.ts';
 // from the generic switch per `hasEditableProps` in JsxComponentView).
 
 const calloutProps: PropDef[] = [
+  // common — what the typical author actually picks per insert
   {
     name: 'type',
     type: 'enum',
@@ -83,16 +84,21 @@ const calloutProps: PropDef[] = [
     required: false,
     description: 'Optional heading shown above the body',
   },
+  // advanced — taste-and-edge-case knobs (custom icon override, accent color
+  // override, foldable behavior). Default rendering is good enough for the
+  // typical author; PropPanel collapses these under "Advanced".
   {
     name: 'icon',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Custom lucide icon override (e.g. `lucide:Lightbulb`)',
   },
   {
     name: 'color',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Optional accent color override (hex — e.g. `#F05032`)',
   },
   {
@@ -100,6 +106,7 @@ const calloutProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: false,
+    advanced: true,
     description: 'Render as a foldable `<details>` (Obsidian `[!TYPE]+/-`)',
   },
   {
@@ -107,6 +114,7 @@ const calloutProps: PropDef[] = [
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
     description: 'When collapsible, start in the open state',
   },
   {
@@ -149,10 +157,15 @@ const calloutProps: PropDef[] = [
 //     always wraps in `<Zoom>`; Frame v2 will introduce `<Frame zoom={false}>`
 //     as the opt-out path when it lands.
 
-// htmlImgProps — 12 props (4 common + 8 advanced).
+// htmlImgProps — 12 props (2 common + 10 advanced).
 //
-// Common: src + alt + width + height. Advanced: srcset + sizes + loading +
+// Common: src + alt. Advanced: width + height + srcset + sizes + loading +
 // title + decoding + fetchpriority + crossorigin + referrerpolicy.
+//
+// `width` / `height` are layout-shift-prevention specialist knobs — most
+// authors lay out images with CSS or container width, not pixel dimensions.
+// Demoted to advanced so the default PropPanel for a fresh image stays a
+// simple two-field form (src + alt).
 //
 // Index map (used by commonMarkImageProps below — identity-shared):
 //   [0] src         [4] srcset          [8]  decoding
@@ -176,9 +189,21 @@ const htmlImgProps: PropDef[] = [
     defaultValue: '',
     description: 'Alt text',
   },
-  { name: 'width', type: 'number', required: false, description: 'Image width' },
-  { name: 'height', type: 'number', required: false, description: 'Image height' },
   // advanced
+  {
+    name: 'width',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Image width',
+  },
+  {
+    name: 'height',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Image height',
+  },
   {
     name: 'srcset',
     type: 'string',
@@ -244,13 +269,16 @@ const htmlImgProps: PropDef[] = [
   },
 ];
 
-// htmlVideoProps — 11 props (6 common + 5 advanced).
+// htmlVideoProps — 11 props (1 common + 10 advanced).
 //
-// Common: src + controls + autoplay + poster + width + height.
-// Advanced: title + muted + loop + playsinline + preload.
+// Common: src. Advanced: controls + autoplay + poster + width + height +
+// title + muted + loop + playsinline + preload.
 //
-// Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps to
-// React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
+// `controls` defaults true (most authors want them); `autoplay` is niche and
+// destructive; `poster` is power-user nice-to-have. Demoting these keeps the
+// fresh-insert PropPanel a single src field — same shape as Notion's video
+// block. Lowercase HTML-attr names: `autoplay`, `playsinline`. Video.tsx maps
+// to React's camelCase (`autoPlay`, `playsInline`) at the JSX boundary.
 const htmlVideoProps: PropDef[] = [
   // common
   {
@@ -261,28 +289,43 @@ const htmlVideoProps: PropDef[] = [
     accept: ALLOWED_VIDEO_MIME_TYPES,
     autoFocus: true,
   },
+  // advanced
   {
     name: 'controls',
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
     description: 'Show native HTML5 video controls (defaults to true)',
   },
   {
     name: 'autoplay',
     type: 'boolean',
     required: false,
+    advanced: true,
     description: 'Begin playback as soon as possible (usually requires muted)',
   },
   {
     name: 'poster',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Poster image URL shown before playback',
   },
-  { name: 'width', type: 'number', required: false, description: 'Video width' },
-  { name: 'height', type: 'number', required: false, description: 'Video height' },
-  // advanced
+  {
+    name: 'width',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Video width',
+  },
+  {
+    name: 'height',
+    type: 'number',
+    required: false,
+    advanced: true,
+    description: 'Video height',
+  },
   {
     name: 'title',
     type: 'string',
@@ -321,13 +364,14 @@ const htmlVideoProps: PropDef[] = [
   },
 ];
 
-// htmlAudioProps — 7 props (3 common + 4 advanced).
+// htmlAudioProps — 7 props (1 common + 6 advanced).
 //
-// Common: src + controls + autoplay. Advanced: title + muted + loop + preload.
+// Common: src. Advanced: controls + autoplay + title + muted + loop + preload.
 //
-// `controls` is now an explicit prop (default true) — Audio.tsx no longer
+// `controls` is an explicit prop (default true) — Audio.tsx no longer
 // hardcodes always-on. Authors who want a chrome-less audio set
-// `controls={false}` instead of escaping to raw HTML.
+// `controls={false}` from the Advanced section instead of escaping to raw
+// HTML. Demoted to keep the typical insert a single src field.
 const htmlAudioProps: PropDef[] = [
   // common
   {
@@ -338,20 +382,22 @@ const htmlAudioProps: PropDef[] = [
     accept: ALLOWED_AUDIO_MIME_TYPES,
     autoFocus: true,
   },
+  // advanced
   {
     name: 'controls',
     type: 'boolean',
     required: false,
     defaultValue: true,
+    advanced: true,
     description: 'Show native HTML5 audio controls (defaults to true)',
   },
   {
     name: 'autoplay',
     type: 'boolean',
     required: false,
+    advanced: true,
     description: 'Begin playback as soon as possible (usually requires muted)',
   },
-  // advanced
   {
     name: 'title',
     type: 'string',
@@ -426,6 +472,8 @@ const htmlAudioProps: PropDef[] = [
 // closed `<details>`, but PM children stay live so editing doesn't lose state.
 
 const accordionProps: PropDef[] = [
+  // common — every accordion needs a title; defaultOpen is the one stylistic
+  // knob the typical author actually picks (start open vs closed).
   {
     name: 'title',
     type: 'string',
@@ -439,28 +487,35 @@ const accordionProps: PropDef[] = [
     defaultValue: false,
     description: 'When true, the accordion renders expanded on initial load',
   },
+  // advanced — custom icon override, subtitle, deep-link anchor, exclusive-
+  // group identifier. All taste-and-edge-case territory; default rendering
+  // (lucide ChevronRight + bare title) is good enough for typical use.
   {
     name: 'icon',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Custom lucide icon override (e.g. `lucide:Rocket`)',
   },
   {
     name: 'description',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'Optional subtitle rendered below the title inside <summary>',
   },
   {
     name: 'id',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'HTML id attribute for deep-linking (e.g. `#advanced-options`)',
   },
   {
     name: 'name',
     type: 'string',
     required: false,
+    advanced: true,
     description: 'HTML5 <details name=> group — siblings with the same name are mutually exclusive',
   },
 ];

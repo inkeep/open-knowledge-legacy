@@ -1,3 +1,0 @@
-paragraph above
-
-<img src="" />
