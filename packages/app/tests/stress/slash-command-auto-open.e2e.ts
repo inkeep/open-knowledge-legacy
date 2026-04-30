@@ -162,3 +162,107 @@ test('PLACEHOLDER-RENDERS-FRESH: slash-inserted img shows placeholder + auto-ope
   });
   await expect(page.locator('[data-prop-panel]')).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
 });
+
+test('PLACEHOLDER-CLICK-OPENS-PANEL: clicking placeholder NodeSelects + reopens PropPanel', async ({
+  page,
+  api,
+}) => {
+  // Dismiss the auto-opened panel via Escape (without filling src), then
+  // click the placeholder pill to verify the click handler is wired:
+  // setNodeSelection on the img + setPopoverOpen(true).
+  const docName = `placeholder-click-opens-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('[data-prop-panel]')).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-prop-panel]')).toBeHidden({ timeout: PROP_PANEL_TIMEOUT });
+  await expect(page.locator('[data-descriptor-placeholder]')).toBeVisible();
+
+  await page.locator('[data-descriptor-placeholder]').click();
+  await expect(page.locator('[data-prop-panel]')).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
+
+  // Verify PM selection is now a NodeSelection on the img specifically.
+  const selected = await page.evaluate(() => {
+    const ed = (window as unknown as { __activeEditor?: { state: { selection: unknown } } })
+      .__activeEditor;
+    if (!ed) return null;
+    const sel = ed.state.selection as {
+      node?: { attrs: { componentName?: string } };
+    };
+    return sel.node?.attrs.componentName ?? null;
+  });
+  expect(selected).toBe('img');
+});
+
+test('PLACEHOLDER-FILL-DISMISSES: filling src dismisses placeholder, real img renders', async ({
+  page,
+  api,
+}) => {
+  // After typing a src value into the autofocused input, the descriptor
+  // re-renders with a non-empty src — `shouldRenderPlaceholder` returns
+  // false and the real <img> takes over from the placeholder pill.
+  const docName = `placeholder-fill-dismisses-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('[data-descriptor-placeholder]')).toBeVisible({
+    timeout: PROP_PANEL_TIMEOUT,
+  });
+  // The autofocused input is the src field (htmlImgProps[0] has autoFocus: true).
+  const autofocusedInput = page.locator('[data-prop-autofocus]');
+  await expect(autofocusedInput).toBeVisible();
+
+  await autofocusedInput.fill('/test.png');
+  // Tab away to commit the value (PropPanel onChange fires per keystroke,
+  // but the wrapper data-attrs only update after a re-render with the new
+  // props — Tab forces a flush of any pending events).
+  await page.keyboard.press('Tab');
+
+  await expect(page.locator('[data-descriptor-placeholder]')).toHaveCount(0);
+  await expect(
+    page.locator('.jsx-component-wrapper[data-component-type="img"] img'),
+  ).toHaveAttribute('src', '/test.png');
+});
+
+test('PLACEHOLDER-CONTAINER-EXCLUDED: slash-inserting /callout does NOT show placeholder', async ({
+  page,
+  api,
+}) => {
+  // hasChildren=true descriptors (Callout, Accordion) are excluded from the
+  // placeholder — `shouldRenderPlaceholder`'s first guard short-circuits on
+  // descriptor.hasChildren. Verifies the predicate gating, not just the
+  // resolver.
+  const docName = `placeholder-container-excluded-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/callout');
+  await waitForSlashMenuFirstOption(page, 'callout');
+  await page.keyboard.press('Enter');
+
+  // Wait for the Callout NodeView to mount before asserting placeholder absence
+  // — without this, the assertion races the slash-insert dispatch.
+  await expect(page.locator('[data-jsx-component][data-component-type="callout"]')).toBeVisible({
+    timeout: PROP_PANEL_TIMEOUT,
+  });
+  await expect(page.locator('[data-descriptor-placeholder]')).toHaveCount(0);
+});
