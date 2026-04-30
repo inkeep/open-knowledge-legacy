@@ -12,11 +12,11 @@ import type { Editor } from '@tiptap/react';
 import {
   Box,
   ChevronRight,
-  Film,
+  Image,
   type LucideIcon,
   MessageSquareWarning,
+  SquarePlay,
   Volume2,
-  ZoomIn,
 } from 'lucide-react';
 import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
@@ -42,10 +42,10 @@ import type { SlashCommandItem } from './items';
  */
 const ICON_COMPONENTS: Record<string, LucideIcon> = {
   ChevronRight,
-  Film,
+  SquarePlay,
   MessageSquareWarning,
   Volume2,
-  ZoomIn,
+  Image,
 };
 
 /**
