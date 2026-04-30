@@ -622,11 +622,20 @@ interface FieldControlBodyProps {
   onCommit: () => boolean;
 }
 
+type SlotForwardedProps = {
+  id?: string;
+  'aria-invalid'?: boolean | 'true' | 'false';
+  'aria-describedby'?: string;
+};
+
 /**
  * Type-tag-driven dispatch for the inner control element. Returns a
  * single React element so the wrapping `<FormControl>` (Radix Slot)
  * can forward `id`, `aria-describedby`, and `aria-invalid` to the
- * underlying DOM input.
+ * underlying DOM input. The Slot clones this component with those props;
+ * destructure + forward as `...slotForwarded` into each leaf — without
+ * this hop the a11y attributes hit FieldControlBody and stop, breaking
+ * screen-reader notification of L1 rejection (ARIA §4.10).
  *
  * `'use no memo'` opts out of React Compiler memoization because RHF's
  * `ControllerRenderProps` exposes a `ref` field; the compiler heuristic
@@ -634,11 +643,19 @@ interface FieldControlBodyProps {
  * render. The control bodies below use the same opt-out for the same
  * reason.
  */
-function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldControlBodyProps) {
+function FieldControlBody({
+  field,
+  ctl,
+  typeTag,
+  enumOptions,
+  onCommit,
+  ...slotForwarded
+}: FieldControlBodyProps & SlotForwardedProps) {
   'use no memo';
   if (typeTag === 'boolean') {
     return (
       <Switch
+        {...slotForwarded}
         checked={Boolean(ctl.value)}
         ref={ctl.ref}
         onCheckedChange={(next) => {
@@ -653,6 +670,7 @@ function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldC
     if (field.control === 'enum-toggle' || enumOptions.length <= 4) {
       return (
         <ToggleGroup
+          {...slotForwarded}
           type="single"
           value={typeof ctl.value === 'string' ? ctl.value : ''}
           ref={ctl.ref}
@@ -678,12 +696,12 @@ function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldC
     }
   }
   if (typeTag === 'number' || typeTag === 'int') {
-    return <NumberControlBody ctl={ctl} onCommit={onCommit} />;
+    return <NumberControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
   }
   if (typeTag === 'array') {
-    return <StringArrayControlBody ctl={ctl} onCommit={onCommit} />;
+    return <StringArrayControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
   }
-  return <StringControlBody ctl={ctl} onCommit={onCommit} />;
+  return <StringControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
 }
 
 /**
@@ -693,13 +711,15 @@ function FieldControlBody({ field, ctl, typeTag, enumOptions, onCommit }: FieldC
 function StringControlBody({
   ctl,
   onCommit,
+  ...slotForwarded
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   onCommit: () => boolean;
-}) {
+} & SlotForwardedProps) {
   'use no memo';
   return (
     <Input
+      {...slotForwarded}
       value={typeof ctl.value === 'string' ? ctl.value : ''}
       ref={ctl.ref}
       onChange={(e) => ctl.onChange(e.target.value)}
@@ -727,10 +747,11 @@ function StringControlBody({
 function NumberControlBody({
   ctl,
   onCommit,
+  ...slotForwarded
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   onCommit: () => boolean;
-}) {
+} & SlotForwardedProps) {
   'use no memo';
   const [pendingText, setPendingText] = useState(ctl.value === undefined ? '' : String(ctl.value));
   const lastSyncedValueRef = useRef(ctl.value);
@@ -759,6 +780,7 @@ function NumberControlBody({
 
   return (
     <Input
+      {...slotForwarded}
       type="number"
       value={pendingText}
       ref={ctl.ref}
@@ -787,10 +809,11 @@ function NumberControlBody({
 function StringArrayControlBody({
   ctl,
   onCommit,
+  ...slotForwarded
 }: {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   onCommit: () => boolean;
-}) {
+} & SlotForwardedProps) {
   'use no memo';
   const initial = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
   const [pendingText, setPendingText] = useState(initial);
@@ -815,6 +838,7 @@ function StringArrayControlBody({
 
   return (
     <textarea
+      {...slotForwarded}
       value={pendingText}
       ref={ctl.ref as unknown as React.Ref<HTMLTextAreaElement>}
       onChange={(e) => setPendingText(e.target.value)}
