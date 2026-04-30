@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createTestServer, type TestServer } from './test-harness';
+import { awaitFileWatcherIndexed, createTestServer, type TestServer } from './test-harness';
 
 let server: TestServer;
 
@@ -18,6 +18,7 @@ beforeAll(async () => {
       '',
       '[linked image](./media/diagram.png)',
       '<img src="/docs/media/root.png" alt="Root referenced asset" />',
+      '![[media/wiki-embed.jpg]]',
       '[remote image](https://example.com/remote.png)',
       '',
     ].join('\n'),
@@ -25,9 +26,11 @@ beforeAll(async () => {
   );
   writeFileSync(join(contentDir, 'docs', 'media', 'diagram.png'), 'png bytes');
   writeFileSync(join(contentDir, 'docs', 'media', 'root.png'), 'root png bytes');
+  writeFileSync(join(contentDir, 'docs', 'media', 'wiki-embed.jpg'), 'jpg bytes');
   writeFileSync(join(contentDir, 'docs', 'media', 'unreferenced.png'), 'unused bytes');
 
   server = await createTestServer({ contentDir, keepContentDir: false });
+  await awaitFileWatcherIndexed(server, 'docs/guide');
 });
 
 afterAll(async () => {
@@ -67,6 +70,17 @@ describe('/api/documents sidebar asset rows', () => {
       kind: 'asset',
       docName: 'docs/media/root.png',
       assetExt: '.png',
+      mediaKind: 'image',
+      referencedBy: ['docs/guide'],
+    });
+
+    const wikiEmbedAsset = body.documents.find(
+      (entry) => entry.path === 'docs/media/wiki-embed.jpg',
+    );
+    expect(wikiEmbedAsset).toMatchObject({
+      kind: 'asset',
+      docName: 'docs/media/wiki-embed.jpg',
+      assetExt: '.jpg',
       mediaKind: 'image',
       referencedBy: ['docs/guide'],
     });

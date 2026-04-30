@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { dirname, extname, normalize, resolve, sep } from 'node:path';
+import { extname, normalize, resolve, sep } from 'node:path';
+import { resolveAssetProjectPath } from '@inkeep/open-knowledge-core';
 import type { FileIndexEntry } from './file-watcher.ts';
 
 type AssetMediaKind = 'image' | 'video';
@@ -19,7 +20,8 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg']);
 const VIDEO_EXTENSIONS = new Set(['mp4']);
 
 const MARKDOWN_LINK_OR_IMAGE_RE =
-  /!?\[[^\]\n]*(?:\][^[\]\n]*)?\]\(([^)\s]+)(?:\s+['"][^'"]*['"])?\)/g;
+  /!?\[[^\]\n]*(?:\][^[\]\n]*)?\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+['"][^'"]*['"])?\)/g;
+const WIKI_LINK_OR_EMBED_RE = /!?\[\[([^[\]|#]+?)(?:#[^\]|]+?)?(?:\|[^\]]+?)?\]\]/g;
 const HTML_SRC_RE = /<(?:img|image|video)\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
 
 function isWithinDirectory(child: string, parent: string): boolean {
@@ -40,11 +42,20 @@ function isRemoteOrOpaqueHref(href: string): boolean {
 }
 
 function stripHrefDecorations(rawHref: string): string {
-  const trimmed = rawHref.trim();
+  const trimmed = rawHref.trim().replace(/^<(.+)>$/, '$1');
   const hashIndex = trimmed.indexOf('#');
   const withoutHash = hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
   const queryIndex = withoutHash.indexOf('?');
   return queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
+}
+
+function decodeHrefPath(rawHref: string): string {
+  const stripped = stripHrefDecorations(rawHref);
+  try {
+    return decodeURI(stripped);
+  } catch {
+    return stripped;
+  }
 }
 
 export function mediaKindForAssetPath(path: string): AssetMediaKind | null {
@@ -57,8 +68,12 @@ export function mediaKindForAssetPath(path: string): AssetMediaKind | null {
 export function extractLocalAssetHrefs(markdown: string): string[] {
   const hrefs = new Set<string>();
   for (const match of markdown.matchAll(MARKDOWN_LINK_OR_IMAGE_RE)) {
-    const href = match[1];
+    const href = match[1] ?? match[2];
     if (href) hrefs.add(href);
+  }
+  for (const match of markdown.matchAll(WIKI_LINK_OR_EMBED_RE)) {
+    const target = match[1];
+    if (target) hrefs.add(target);
   }
   for (const match of markdown.matchAll(HTML_SRC_RE)) {
     const src = match[2];
@@ -72,17 +87,15 @@ export function resolveReferencedAssetPath(args: {
   fromDocName: string;
   href: string;
 }): string | null {
-  const href = stripHrefDecorations(args.href);
+  const href = decodeHrefPath(args.href);
   if (!href || isRemoteOrOpaqueHref(href)) return null;
   const ext = extname(href).slice(1).toLowerCase();
   if (!REFERENCED_ASSET_EXTENSIONS.has(ext)) return null;
 
   const contentDir = realpathSync(args.contentDir);
-  const docDir = dirname(`${args.fromDocName}.md`);
-  const baseDir = docDir === '.' ? contentDir : resolve(contentDir, docDir);
-  const requestedPath = href.startsWith('/')
-    ? resolve(contentDir, href.slice(1))
-    : resolve(baseDir, href);
+  const relativeAssetPath = resolveAssetProjectPath(href, args.fromDocName);
+  if (!relativeAssetPath) return null;
+  const requestedPath = resolve(contentDir, relativeAssetPath);
   let canonicalPath: string;
   try {
     canonicalPath = realpathSync(requestedPath);

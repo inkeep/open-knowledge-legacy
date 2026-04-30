@@ -8,7 +8,7 @@ tags:
 
 ## Problem
 
-The file sidebar currently treats the document list as markdown-only: `/api/documents` returns document-shaped entries keyed by `docName`, the app maps those entries to `.md`/`.mdx` tree paths, and selecting a file opens the CRDT editor. That is correct for editable documents, but it hides local assets that authors reference from markdown or MDX, such as `![alt](./diagram.png)`, `[mockup](./mockup.jpg)`, `<img src="./photo.png" />`, and video-style assets. The result is that assets used by the knowledge base are invisible in the primary navigation surface even though they are part of the authored content.
+The file sidebar currently treats the document list as markdown-only: `/api/documents` returns document-shaped entries keyed by `docName`, the app maps those entries to `.md`/`.mdx` tree paths, and selecting a file opens the CRDT editor. That is correct for editable documents, but it hides local assets that authors reference from markdown or MDX, such as `![alt](./diagram.png)`, `[mockup](./mockup.jpg)`, `![[photo.png]]`, `<img src="./photo.png" />`, and video-style assets. The result is that assets used by the knowledge base are invisible in the primary navigation surface even though they are part of the authored content.
 
 ## Goals
 
@@ -40,6 +40,7 @@ The server must discover local asset references from tracked markdown and MDX do
 
 - CommonMark images: `![alt](./file.png)`.
 - Markdown links to asset files: `[preview](./file.jpg)`.
+- Open Knowledge wiki links and embeds to asset files: `[[file.jpg]]` and `![[file.png]]`.
 - HTML or MDX image tags with `src`: `<img src="./file.png" />` and `<image src="./file.png" />` where supported by the parser/string scanner.
 - Video-style tags or links to allowlisted video extensions may be represented by the same asset model, even if only image rendering is shipped first.
 
@@ -78,6 +79,7 @@ Existing editor link behavior should not be broadened in this ship run. Markdown
 ## Acceptance Criteria
 
 - A markdown document that references `./photo.png` causes `photo.png` to appear in the sidebar after `/api/documents` refreshes.
+- A markdown document that references `![[photo.png]]` causes `photo.png` to appear in the sidebar after `/api/documents` refreshes.
 - An unreferenced `photo.png` in the same workspace does not appear solely because it exists.
 - Clicking `photo.png` opens a standalone image preview and does not open a Hocuspocus document named `photo`.
 - Existing `.md` and `.mdx` sidebar rows still open the editor and preserve current rename/delete/create behavior.

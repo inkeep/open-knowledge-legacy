@@ -63,7 +63,10 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
-import { resolveFileTreeSelection } from '@/components/file-tree-selection';
+import {
+  resolveFileTreeSelection,
+  resolveFileTreeSelectionAction,
+} from '@/components/file-tree-selection';
 import {
   type DocumentEntry,
   type FileEntry,
@@ -83,7 +86,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { hashFromAssetPath, hashFromDocName } from '@/lib/doc-hash';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { createRefreshScheduler } from '@/lib/refresh-scheduler';
 import { joinWorkspacePath } from '@/lib/workspace-paths';
@@ -947,35 +950,23 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     activeAncestorTreePathsRef.current = activeAncestorTreePaths;
     handleSelectionChangeRef.current = (selectedPaths) => {
       if (suppressSelectionRef.current) return;
-      const selected = selectedPaths[0];
-      if (!selected) return;
-      const entry = documentsRef.current.find((item) => fileEntryToTreePath(item) === selected);
-      if (entry && isAssetEntry(entry)) {
-        window.location.hash = hashFromAssetPath(entry.path);
+      const action = resolveFileTreeSelectionAction(selectedPaths[0], documentsRef.current);
+      if (action.kind === 'none') {
+        const selected = selectedPaths[0];
+        if (selected) {
+          console.debug(
+            '[FileTree] Dropped selection for unknown docName:',
+            treePathToAppPath(selected),
+          );
+        }
+        return;
+      }
+      if (action.kind === 'asset') {
+        window.location.hash = action.hash;
         notifySidebarFileSelected();
         return;
       }
-      const appPath = treePathToAppPath(selected);
-      const isFolder = selected.endsWith('/');
-      // Don't navigate to a doc the rest of the app doesn't know about yet.
-      // @pierre/trees fires onSelectionChange synchronously when an inline
-      // rename commits — the renamed item's path updates in the tree model
-      // and the selection follows BEFORE onRename fires our `handleTreeRename`
-      // and BEFORE applyRenamedDocuments updates `documents`. Without this
-      // guard, the selection-driven navigation opens a HocuspocusProvider
-      // for the new docName before the file exists at the new path on disk,
-      // which produces an empty server-side Y.Doc that the persistence layer
-      // then writes back to disk as an empty file (data-loss bug). Navigation
-      // for legitimately-renamed docs is handled in applyRenamedDocuments
-      // after the API succeeds, so dropping this transient event is safe.
-      if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
-        // Visible at debug level for diagnosis if `documents` is ever stale
-        // for a non-rename reason — keeps the rename hot path silent without
-        // discarding the signal entirely.
-        console.debug('[FileTree] Dropped selection for unknown docName:', appPath);
-        return;
-      }
-      navigateToWithPulse(appPath);
+      navigateToWithPulse(action.path);
     };
     handleRenameRef.current = handleTreeRename;
     handleDropCompleteRef.current = handleDropComplete;

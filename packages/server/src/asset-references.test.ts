@@ -22,15 +22,32 @@ describe('asset reference extraction', () => {
   test('extracts markdown image, markdown link, and img src hrefs', () => {
     expect(
       extractLocalAssetHrefs(
-        '![Alt](./a.png)\n[Photo](./b.jpg)\n<img src="./c.jpeg" />\n<image src="./d.png" />',
+        [
+          '![Alt](./a.png)',
+          '[Photo](./b.jpg)',
+          '![Spaced](<./my photo.png>)',
+          '![[wiki.png]]',
+          '[[linked-wiki.jpg]]',
+          '<img src="./c.jpeg" />',
+          '<image src="./d.png" />',
+        ].join('\n'),
       ),
-    ).toEqual(['./a.png', './b.jpg', './c.jpeg', './d.png']);
+    ).toEqual([
+      './a.png',
+      './b.jpg',
+      './my photo.png',
+      'wiki.png',
+      'linked-wiki.jpg',
+      './c.jpeg',
+      './d.png',
+    ]);
   });
 
   test('resolves only existing local assets inside contentDir', () =>
     withFixture((dir) => {
       mkdirSync(join(dir, 'docs'));
       writeFileSync(join(dir, 'docs', 'photo.png'), 'png');
+      writeFileSync(join(dir, 'docs', 'My Photo.png'), 'png');
 
       expect(
         resolveReferencedAssetPath({
@@ -46,6 +63,13 @@ describe('asset reference extraction', () => {
           href: '/docs/photo.png',
         }),
       ).toBe(realpathSync(resolve(dir, 'docs/photo.png')));
+      expect(
+        resolveReferencedAssetPath({
+          contentDir: dir,
+          fromDocName: 'docs/guide',
+          href: '<./My%20Photo.png>',
+        }),
+      ).toBe(realpathSync(resolve(dir, 'docs/My Photo.png')));
 
       expect(
         resolveReferencedAssetPath({
@@ -73,9 +97,10 @@ describe('asset reference extraction', () => {
   test('collects referenced assets with referencing docs and ignores unreferenced files', () =>
     withFixture((dir) => {
       mkdirSync(join(dir, 'docs'), { recursive: true });
-      writeFileSync(join(dir, 'docs', 'guide.md'), '![Photo](./photo.png)');
+      writeFileSync(join(dir, 'docs', 'guide.md'), '![Photo](./photo.png)\n![[embed.jpg]]');
       writeFileSync(join(dir, 'docs', 'second.md'), '[same](./photo.png)');
       writeFileSync(join(dir, 'docs', 'photo.png'), 'png');
+      writeFileSync(join(dir, 'docs', 'embed.jpg'), 'jpg');
       writeFileSync(join(dir, 'docs', 'orphan.png'), 'png');
       const now = new Date().toISOString();
       const fileIndex = new Map<string, FileIndexEntry>([
@@ -105,16 +130,25 @@ describe('asset reference extraction', () => {
         contentDir: dir,
         fileIndex,
         readMarkdown: (path) =>
-          path.endsWith('guide.md') ? '![Photo](./photo.png)' : '[same](./photo.png)',
+          path.endsWith('guide.md')
+            ? '![Photo](./photo.png)\n![[embed.jpg]]'
+            : '[same](./photo.png)',
       });
 
-      expect(assets).toHaveLength(1);
-      expect(assets[0]).toMatchObject({
+      expect(assets).toHaveLength(2);
+      expect(assets.find((asset) => asset.path === 'docs/photo.png')).toMatchObject({
         kind: 'asset',
         path: 'docs/photo.png',
         assetExt: '.png',
         mediaKind: 'image',
         referencedBy: ['docs/guide', 'docs/second'],
+      });
+      expect(assets.find((asset) => asset.path === 'docs/embed.jpg')).toMatchObject({
+        kind: 'asset',
+        path: 'docs/embed.jpg',
+        assetExt: '.jpg',
+        mediaKind: 'image',
+        referencedBy: ['docs/guide'],
       });
     }));
 });
