@@ -1613,6 +1613,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
           for (const docName of [...renameMap.keys(), ...backlinkSources]) {
             if (snapshotContents.has(docName)) continue;
+
+            // For backlink sources (non-renamed docs that link to a rename
+            // target): require a real on-disk file. A Y.Doc may be in
+            // memory for a docName that has no disk file (e.g.,
+            // `openDirectConnection` was triggered by a hover or pre-warm
+            // on a redlink). Treating in-memory-only Y.Docs as legitimate
+            // backlink sources here would funnel them into the
+            // `rewriteDocNames` loop and `writeManagedRenameDocumentToDisk`
+            // would materialize a phantom file — `tracedMkdirSync` +
+            // `tracedWriteFileSync` create whatever path it's handed.
+            // Treat as missing and let the index purge the stale entry.
+            if (!renameMap.has(docName)) {
+              const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+              if (!existsSync(filePath)) {
+                missingBacklinkSources.push(docName);
+                continue;
+              }
+            }
+
             const content = readCurrentDocumentContent(docName);
             if (typeof content === 'string') {
               snapshotContents.set(docName, content);
@@ -2155,6 +2174,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
+
+      // Existing in-memory Y.Doc → read it directly; no need to round-trip
+      // through openDirectConnection (which would still resolve to the same
+      // doc but adds a connect/disconnect cycle).
+      const existing = hocuspocus.documents.get(docName);
+      if (existing) {
+        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
+        return;
+      }
+
+      // No in-memory doc → require an on-disk file before opening a
+      // connection. `openDirectConnection` on a missing path materializes
+      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
+      // suppressed for (PR #362's design). The persistence layer's
+      // phantom-doc guard blocks the eventual 0-byte file write, but any
+      // later code path that populates the lingering Y.Doc with content
+      // (a mis-routed agent write, the rename spine pulling it in via a
+      // stale backlink edge) would then land a phantom file because
+      // `reconciledBase` was never set. 404 here closes that whole class.
+      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+      if (!existsSync(filePath)) {
+        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
+        return;
+      }
+
       // Read via a transient DirectConnection rather than sessionManager.getSession —
       // this endpoint has no agent identity, and creating a cached session would
       // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
@@ -4238,15 +4282,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       registerWrite(fullPath, contentHash(initialContent));
       switch (actor.kind) {
         case 'agent':
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            undefined,
-            actor.actor,
-          );
-          break;
         case 'principal':
           recordContributor(
             docName,

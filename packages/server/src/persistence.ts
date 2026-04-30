@@ -703,6 +703,32 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       'persistence.onStoreDocument',
       { attributes: { 'doc.name': documentName } },
       async () => {
+        // Lifecycle guard: when the file watcher saw an external delete or
+        // rename, the disk-event handler in standalone.ts sets the doc's
+        // lifecycle status to mark the Y.Doc as no-longer-tracking-disk.
+        // But `unloadDocument` does NOT cancel debounced stores already
+        // queued from prior transactions — and any in-flight rewrite that
+        // mutated the Y.Doc just before the rm/mv leaves a pending store.
+        // Without this short-circuit, that store fires, serializes the
+        // in-memory state, and writes it via `tracedWriteFileSync` —
+        // recreating the file at the OLD path. The CRDT-ghost behavior
+        // the agent sees ("rm couldn't kill them, the CRDT kept
+        // resurrecting them on disk") is exactly this race.
+        //
+        // Statuses guarded:
+        //   - 'deleted-upstream': file removed externally; Y.Doc must
+        //     not write to the now-empty path.
+        //   - 'renamed': file moved externally; the old docName must
+        //     not get rewritten — the new docName has its own Y.Doc.
+        const lifecycleStatus = document.getMap('lifecycle').get('status');
+        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+          log.info(
+            { documentName, lifecycleStatus },
+            `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
+          );
+          return;
+        }
+
         // Atomic pre-write snapshot — `sv` and `json` MUST be captured
         // at the same synchronous instant. See
         // `captureDocSnapshotForPersistence` for the timing contract;

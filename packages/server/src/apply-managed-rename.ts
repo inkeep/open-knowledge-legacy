@@ -194,12 +194,15 @@ export function applyRenameMap(
     rewrites += selfPass.rewrites;
 
     // Pass 2 — outbound markdown-link source-move (folder-change only).
+    // Strip frontmatter so YAML values containing markdown-link syntax
+    // (e.g. `description: "See [guide](./guide.md)"`) aren't rewritten.
+    const { frontmatter: fm2, body: body2 } = stripFrontmatter(markdown);
     const outboundPass = rewriteOutboundMarkdownLinksForSourceMove(
-      markdown,
+      body2,
       currentDocName,
       selfRenamedTo,
     );
-    markdown = outboundPass.markdown;
+    markdown = prependFrontmatter(fm2, outboundPass.markdown);
     rewrites += outboundPass.rewrites;
   }
 
