@@ -33,6 +33,7 @@
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
+import { logWalkerFallback } from './instrument.ts';
 
 /**
  * CSS properties copied inline from the live element to the clone. Curated for
@@ -107,7 +108,12 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
   'data-pm-slice',
 ]);
 
-/** Marker the descriptor sets on a subtree to opt out of clipboard capture. */
+/**
+ * Marker the descriptor sets on a subtree to opt out of clipboard capture.
+ * Set on a React render root or descendant element as `data-clipboard-omit="true"`
+ * to make the walker skip the subtree at copy time. Exported so descriptors
+ * reference the constant rather than hardcoding the literal string.
+ */
 const OPT_OUT_ATTR = 'data-clipboard-omit';
 
 /**
@@ -176,7 +182,10 @@ export function walkLiveDomToInlineStyledFragment(
 
     const liveDom = view.nodeDOM(pos);
     if (liveDom == null) {
-      // Activity-hidden subtree — defer to the per-descriptor static palette.
+      // Activity-hidden subtree — defer to the per-descriptor static
+      // palette. Emit telemetry so a non-Activity-hidden null (a real
+      // bug per the walker STOP_IF rule) surfaces in production logs.
+      logWalkerFallback({ descriptor: node.type.name, view: 'wysiwyg' });
       const fallback = paletteFor(node);
       if (fallback) fragment.appendChild(fallback);
       return false;

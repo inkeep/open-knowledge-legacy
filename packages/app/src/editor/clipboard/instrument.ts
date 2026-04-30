@@ -61,7 +61,12 @@ type ClipboardEventName =
   // intentionally NOT instrumented (would explode telemetry volume on
   // every copy). The helper that emits this event lands with the first
   // override; the name is registered here so dashboards know it exists.
-  | 'clipboard-toclipboard-hast';
+  | 'clipboard-toclipboard-hast'
+  // Emitted when the live-DOM walker hits `view.nodeDOM(pos) === null`
+  // and falls back to the per-descriptor static palette. Expected only
+  // for Activity-hidden subtrees; presence in normal copy operations
+  // signals a real bug per the walker STOP_IF rule.
+  | 'clipboard-walker-fallback-palette';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
@@ -215,6 +220,24 @@ export function logSerializeFail(info: SerializeFailInfo): void {
       view: info.view,
       kind: info.kind,
       reason: info.reason,
+    }),
+  );
+}
+
+/**
+ * Emit when the live-DOM clipboard walker hits a `null` from
+ * `view.nodeDOM(pos)` and falls back to the per-descriptor static palette.
+ * Expected behavior for Activity-hidden subtrees; presence on a top-level
+ * descriptor in a normally-mounted editor signals a real bug per the
+ * walker STOP_IF rule. Bounded-cardinality: `descriptor` is a PM node
+ * type name (statically defined) and `view` is a fixed enum.
+ */
+export function logWalkerFallback(info: { descriptor: string; view: ClipboardView }): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-fallback-palette' satisfies ClipboardEventName,
+      descriptor: info.descriptor,
+      view: info.view,
     }),
   );
 }
