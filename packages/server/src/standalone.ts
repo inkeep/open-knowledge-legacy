@@ -31,7 +31,7 @@ import {
 import { applyExternalConfigChange } from './config-persistence.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { getDocExtension } from './doc-extensions.ts';
-import { applyExternalChange } from './external-change.ts';
+import { applyDiskContentToDoc, applyExternalChange } from './external-change.ts';
 import {
   assertNeverDiskEvent,
   contentHash,
@@ -676,9 +676,17 @@ export function createServer(options: ServerOptions): ServerInstance {
    * resolved href) shapes via the same `[[<name>]]` substring. A reverse
    * index would buy throughput we don't need.
    *
-   * Idempotent: `updateYFragment` (inside `applyExternalChange`) diffs the
-   * computed PM tree against the live XmlFragment and only writes changed
-   * positions; re-applying the same content is a no-op on the Y.Doc.
+   * Why Y.Text source instead of disk: the Y.Text already includes the user's
+   * pending edits within the persistence-debounce window. Reading disk content
+   * here would diff a stale tree against the live XmlFragment via
+   * `updateYFragment` — silently reverting unsaved edits. The pure CRDT helper
+   * `applyDiskContentToDoc` re-parses with the new resolveEmbed but doesn't
+   * call `recordContributor` or `setReconciledBase` (no actual disk write
+   * happened — only the embed resolution changed).
+   *
+   * Idempotent: `updateYFragment` diffs the computed PM tree against the live
+   * XmlFragment and only writes changed positions; re-parsing the same source
+   * with the same basenameIndex is a no-op on the Y.Doc.
    */
   const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
     if (!assetBasename) return;
@@ -690,10 +698,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       const source = document.getText('source').toString();
       if (!source.includes(needle)) continue;
       try {
-        const filePath = safeContentPath(docName, contentDir);
-        if (!existsSync(filePath)) continue;
-        const diskContent = readFileSync(filePath, 'utf-8');
-        applyToDoc(docName, diskContent);
+        applyDiskContentToDoc(document, source, resolveEmbed, docName);
       } catch (err) {
         log.error(
           { err, docName, assetBasename },
@@ -701,6 +706,34 @@ export function createServer(options: ServerOptions): ServerInstance {
         );
       }
     }
+  };
+
+  /**
+   * Schedule a deduplicated rerender for an asset basename. Multiple events
+   * arriving in the same parcel-watcher batch (e.g. `asset-delete photo.png`
+   * + `asset-create assets/photo.png` from a single `mv`) collapse into ONE
+   * rerender pass per unique basename — eliminating the broken-ref flicker
+   * during the inter-event window and halving the parse cost on N-asset
+   * folder moves.
+   *
+   * `setImmediate` runs in Node's check phase, AFTER the current macrotask's
+   * for-loop over batched events completes (microtask drains between awaits
+   * leave the loop intact). All asset events in a single parcel callback
+   * therefore land in the same pending Set before the deferred render fires.
+   */
+  let pendingAssetRerenderBasenames: Set<string> | null = null;
+  const scheduleAssetRerender = (assetBasename: string): void => {
+    if (!assetBasename) return;
+    if (pendingAssetRerenderBasenames === null) {
+      pendingAssetRerenderBasenames = new Set();
+      setImmediate(() => {
+        const toRender = pendingAssetRerenderBasenames;
+        pendingAssetRerenderBasenames = null;
+        if (!toRender) return;
+        for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
+      });
+    }
+    pendingAssetRerenderBasenames.add(assetBasename);
   };
 
   /** Helper to extract a logging label from any DiskEvent variant. */
@@ -967,13 +1000,13 @@ export function createServer(options: ServerOptions): ServerInstance {
         case 'asset-create': {
           basenameIndex.add(event.relativePath);
           signalChannel('files');
-          rerenderDocsReferencingAssetBasename(basename(event.relativePath));
+          scheduleAssetRerender(basename(event.relativePath));
           break;
         }
         case 'asset-delete': {
           basenameIndex.remove(event.relativePath);
           signalChannel('files');
-          rerenderDocsReferencingAssetBasename(basename(event.relativePath));
+          scheduleAssetRerender(basename(event.relativePath));
           break;
         }
         default:

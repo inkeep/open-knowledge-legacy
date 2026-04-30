@@ -179,4 +179,108 @@ describe('asset-move embed re-resolution — head-watcher-independent fallback',
     const postSource = postState.fragment.doc?.getText('source').toString() ?? '';
     expect((postSource.match(/!\[\[photo\.png\]\]/g) ?? []).length).toBe(1);
   }, 30_000);
+
+  test('deleting photo.png without replacement re-renders embed with null src', async () => {
+    // Pure asset delete — no replacement file appears. Pins the contract that
+    // basenameIndex.remove + scheduleAssetRerender produces a doc whose
+    // wiki-embed reflects unresolved state (resolveEmbed returns null), not
+    // the stale pre-delete src. Sister scenario to the move test above; the
+    // delete-only path doesn't get the asset-create fallback rerender, so
+    // the asset-delete handler's rerender is the only mechanism here.
+    const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-asset-delete-')));
+    cleanups.push(() => {
+      try {
+        rmSync(contentDir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    });
+
+    writeRel(contentDir, 'test-doc.md', DOC_BODY);
+    writeRel(contentDir, 'photo.png', PNG_BYTES);
+    await ensureProjectGit(contentDir);
+
+    const server = await createRestartableServer({
+      contentDir,
+      keepContentDir: false,
+      gitEnabled: true,
+      commitDebounceMs: 500,
+    });
+    cleanups.push(() => server.shutdown());
+
+    const pool = new ProviderPool(3, `ws://localhost:${server.port}/collab`);
+    cleanups.push(() => pool.dispose());
+
+    pool.open('test-doc');
+    pool.setActive('test-doc');
+    await pollUntil(() => pool.getActive()?.provider.isSynced === true, 10_000, 50);
+    await pollUntil(() => pool.getActive()?.provider.unsyncedChanges === 0, 10_000, 50);
+
+    // Pre-delete: PM image src reflects root-level photo.png.
+    const preState = getServerState(server, 'test-doc');
+    if (!preState) throw new Error('server has no test-doc loaded pre-delete');
+    const preJson = yXmlFragmentToProseMirrorRootNode(
+      preState.fragment,
+      schema,
+    ).toJSON() as PmJsonNode;
+    const preEmbeds = collectNodes(preJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(preEmbeds.length).toBe(1);
+    expect((preEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined)?.src).toBe(
+      '/photo.png',
+    );
+
+    await wait(300);
+
+    // Delete the asset with no replacement. file-watcher fires `asset-delete
+    // photo.png`; basenameIndex.remove leaves no entry, so resolveEmbed
+    // returns null. The post-delete rerender re-applies the same Y.Text
+    // source through `applyDiskContentToDoc` and the wiki-embed renders
+    // with whatever the resolveEmbed-returns-null code path produces.
+    rmSync(join(contentDir, 'photo.png'));
+
+    // Poll until PM reflects the unresolved state. The exact unresolved-
+    // src shape (null vs '' vs the bare basename) is owned by resolveEmbed;
+    // pinning the contract here = "src is no longer the pre-delete value".
+    await pollUntil(
+      () => {
+        const state = getServerState(server, 'test-doc');
+        if (!state) return false;
+        const json = yXmlFragmentToProseMirrorRootNode(
+          state.fragment,
+          schema,
+        ).toJSON() as PmJsonNode;
+        const embeds = collectNodes(json, 'jsxComponent').filter(
+          (n) => n.attrs?.componentName === 'WikiEmbedImage',
+        );
+        if (embeds.length !== 1) return false;
+        const src = (embeds[0]?.attrs?.props as Record<string, unknown> | undefined)?.src;
+        return src !== '/photo.png';
+      },
+      10_000,
+      100,
+    );
+
+    const postState = getServerState(server, 'test-doc');
+    if (!postState) throw new Error('server has no test-doc loaded post-delete');
+    const postJson = yXmlFragmentToProseMirrorRootNode(
+      postState.fragment,
+      schema,
+    ).toJSON() as PmJsonNode;
+    const postEmbeds = collectNodes(postJson, 'jsxComponent').filter(
+      (n) => n.attrs?.componentName === 'WikiEmbedImage',
+    );
+    expect(postEmbeds.length).toBe(1);
+    const postPropsRecord = postEmbeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+    // Pre-delete src was `/photo.png`; the rerender must have moved off it.
+    expect(postPropsRecord?.src).not.toBe('/photo.png');
+    // The wiki-link target itself is preserved on the embed (markdown text
+    // is unchanged) — only the resolved src changed.
+    expect(postPropsRecord?.target).toBe('photo.png');
+
+    // Source markdown is unchanged across the delete — only resolution shifted.
+    const postSource = postState.fragment.doc?.getText('source').toString() ?? '';
+    expect((postSource.match(/!\[\[photo\.png\]\]/g) ?? []).length).toBe(1);
+  }, 30_000);
 });
