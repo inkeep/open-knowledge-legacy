@@ -199,6 +199,29 @@ interface JsxComponentMetaBase {
    * `null` to fall back to the walker default. The optional `liveDom` arg is
    * the same Element the walker would clone, so overrides can decorate the
    * walker output rather than rebuilding from scratch.
+   *
+   * @example Tabs override (illustrative — no v1 descriptor uses this).
+   * ```ts
+   * toClipboardHast(node, ctx, liveDom) {
+   *   // The live DOM only carries the active tab panel; rebuild a
+   *   // representation that includes every tab's children.
+   *   const panels = (node.attrs.props as { panels?: Array<{ label: string; body: string }> }).panels ?? [];
+   *   return {
+   *     type: 'element',
+   *     tagName: 'section',
+   *     properties: { className: ['tabs'] },
+   *     children: panels.map((p) => ({
+   *       type: 'element',
+   *       tagName: 'details',
+   *       properties: {},
+   *       children: [
+   *         { type: 'element', tagName: 'summary', properties: {}, children: [{ type: 'text', value: p.label }] },
+   *         { type: 'text', value: p.body },
+   *       ],
+   *     })),
+   *   };
+   * }
+   * ```
    */
   toClipboardHast?: (
     node: PmNode,
