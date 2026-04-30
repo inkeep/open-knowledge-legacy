@@ -267,7 +267,7 @@ export async function startHeadWatcher(
     // parcel.subscribe() can fail on rarer scenarios: permission errors,
     // inotify watcher-limit exhaustion, EACCES on the .git directory, etc.
     // Throw to align with the import-failure path above — the caller's
-    // catch in standalone.ts pushes 'head-watcher' to degraded so
+    // catch in server-factory.ts pushes 'head-watcher' to degraded so
     // consumers can detect the subsystem is non-functional.
     throw new Error(
       `@parcel/watcher subscribe failed for HEAD watching: ${

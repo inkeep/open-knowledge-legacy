@@ -193,6 +193,7 @@ export {
   type StarterFolder,
   starterFolderRule,
 } from './seed/index.ts';
+export { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 export {
   acquireServerLock,
   readServerLock,
@@ -243,7 +244,6 @@ export {
   type SkillInstallLogger,
   type SpawnLike,
 } from './skill-install.ts';
-export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,

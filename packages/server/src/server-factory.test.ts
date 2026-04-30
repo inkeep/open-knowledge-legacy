@@ -11,8 +11,8 @@ import {
   writeManagedRenameJournal,
 } from './managed-rename-journal.ts';
 import { ensureProjectGit } from './project-git.ts';
+import { createServer, type ServerInstance } from './server-factory.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
-import { createServer, type ServerInstance } from './standalone.ts';
 
 // ─── CaptureLogger infrastructure ───────────────────────────────────────────
 // Uses loggerFactory.configure() pattern from logger.test.ts:27-36.
@@ -489,7 +489,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 // ─── createServer() degraded signal tests (from PR #62) ─────────────────────
 // These verify that ServerInstance.degraded correctly reports which subsystems
 // failed to initialize. Combined into this file during the PR #62 ↔ PR #61
-// merge so both test suites share the `standalone.test.ts` filename.
+// merge so both test suites share the `server-factory.test.ts` filename.
 //
 /**
  * Tests for createServer() — degraded signal from initAsync.
@@ -561,7 +561,7 @@ describe('createServer() degraded signal', () => {
     // assertion — not as strong as a runtime test, but mock.module leaks
     // make runtime testing impractical without process isolation.
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
-    const src = readFileSync(resolve(dir, 'standalone.ts'), 'utf-8');
+    const src = readFileSync(resolve(dir, 'server-factory.ts'), 'utf-8');
 
     // Each subsystem's catch block should push to the degraded array
     expect(src).toContain("degraded.push('shadow-repo')");

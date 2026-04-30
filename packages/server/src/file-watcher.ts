@@ -593,7 +593,7 @@ function seedLastKnownHashes(
  * to keep the index in sync with actual disk state.
  */
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
-  // Asset events are tracked by the basename index in standalone.ts, not by
+  // Asset events are tracked by the basename index in server-factory.ts, not by
   // the docName-keyed file index — short-circuit here.
   if (event.kind === 'asset-create' || event.kind === 'asset-delete') {
     return;

@@ -2,7 +2,8 @@
  * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
- * the standalone Server and the Vite dev plugin.
+ * the production Server (assembled by `createServer()` in `server-factory.ts`)
+ * and the Vite dev plugin.
  */
 
 import { spawn } from 'node:child_process';
@@ -928,7 +929,7 @@ export interface ApiExtensionOptions {
   getCurrentBranch?: () => string | null;
   /**
    * Accessor for the latest disk-ack state vectors per document. Wired
-   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
+   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in boot.
    * Returned as part of `GET /api/server-info` so clients can recover
    * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
    * without relying on stateless CC1 broadcasts (which have no replay).
@@ -3728,7 +3729,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * enumerates the same docName set as `/api/documents` plus per-
    * client Lamport op counts (random clientID, no wall-clock).
    * Single-user-loopback deployment model is documented in
-   * `standalone.ts` near the principalAuthExtension; hosted/multi-
+   * `server-factory.ts` near the principalAuthExtension; hosted/multi-
    * tenant deployments must wrap this entire `/api/*` class with
    * authentication and per-caller scoping.
    */

@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import simpleGit from 'simple-git';
 import * as Y from 'yjs';
 import { clearContributors, contributorCount } from './contributor-tracker.ts';
-import { createServer } from './standalone.ts';
+import { createServer } from './server-factory.ts';
 
 /**
  * Poll until `predicate()` holds or the timeout elapses. Used instead of a

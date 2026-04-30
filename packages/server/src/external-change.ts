@@ -1,7 +1,7 @@
 /**
  * Shared handler for applying external file changes to a live Y.Doc.
  *
- * Used by both standalone.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
+ * Used by both server-factory.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
  * Extracted to prevent drift between copies — a bug fix in one would
  * otherwise easily miss the other.
  */
@@ -76,7 +76,7 @@ export function applyDiskContentToDoc(
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the
- * disk→CRDT bridge. Both standalone.ts (CLI) and the dev plugin delegate here.
+ * disk→CRDT bridge. Both server-factory.ts (CLI) and the dev plugin delegate here.
  *
  * 1. Looks up the live Y.Doc by docName (no-op if missing)
  * 2. Strips frontmatter and parses markdown → ProseMirror JSON
