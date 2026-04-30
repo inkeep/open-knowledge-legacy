@@ -261,6 +261,11 @@ Every entry inserts a fully-formed MDX block with sensible defaults.
 For components with editable props, the settings panel opens
 automatically so you can fill in required fields before you move on.
 
+When a media block (`img`, `video`, `audio`) is inserted without a
+source, it renders as an "Add an image" / "Add a video" / "Add audio"
+pill instead of a broken placeholder. Click the pill to reopen the
+settings panel — typing a URL replaces it with the rendered media.
+
 ## Editing props
 
 When a component is selected, a hover chrome bar appears at the
