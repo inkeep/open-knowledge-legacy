@@ -133,24 +133,9 @@ describe('resolveDescriptorPlaceholder', () => {
   });
 });
 
-describe('placeholder feature invariants', () => {
-  // Guard against silent breakage of the placeholder predicate.
-  // `getAutoFocusedPropName` skips `advanced: true` props (they live inside the
-  // collapsed Advanced section of the PropPanel and aren't visible on mount).
-  // If a future prop reshuffle demotes the autoFocus-flagged prop on a media
-  // descriptor to `advanced`, the autoFocus name resolves to null →
-  // `shouldRenderPlaceholder` returns false → the placeholder pill silently
-  // never renders. This invariant catches that at `bun test` time.
-  test('autoFocus prop on media descriptors is NOT advanced (placeholder contract)', () => {
-    for (const name of ['img', 'video', 'audio']) {
-      const desc = getDescriptor(name);
-      const autoFocusProp = desc.props.find(
-        (p) => p.type === 'string' && 'autoFocus' in p && p.autoFocus === true,
-      );
-      expect(autoFocusProp).toBeDefined();
-      expect(
-        autoFocusProp && 'advanced' in autoFocusProp ? autoFocusProp.advanced : undefined,
-      ).not.toBe(true);
-    }
-  });
-});
+// Note: the broader manifest-level placeholder-contract guard lives in
+// `packages/core/src/registry/registry.test.ts` (asserts defaultValue + autoFocus
+// + not-advanced together on img/video/audio's `src` prop). Keeping the
+// invariant in the manifest test file rather than here puts it next to the
+// source of truth (built-ins.ts) — a future demote/promote PR is more likely
+// to run registry.test.ts than a dedicated resolver test.
