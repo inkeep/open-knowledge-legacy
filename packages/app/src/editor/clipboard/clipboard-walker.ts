@@ -109,6 +109,46 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * URL-scheme attributes stripped of dangerous values during the walk. The
+ * pre-walker mdast-to-hast pipeline ran `rehypeSanitizeUrls` downstream of
+ * the markdown→HTML chain; the walker bypasses that pipeline and copies the
+ * live DOM verbatim. Without this filter, an attacker-controlled
+ * `<a href="javascript:...">` (e.g., from a markdown autolink that survived
+ * upstream parsing) would land in the cross-app clipboard payload.
+ *
+ * The pattern matches the schemes that resource fetchers (browsers, Slack,
+ * Notion, Gmail) treat as code-execution surfaces: `javascript:`, `data:` for
+ * non-image MIME types, `vbscript:`, `file:`, and the Chromium / Firefox
+ * extension URI schemes. `mailto:` / `tel:` / `sms:` and standard
+ * `http(s):` / `ftp(s):` / relative URLs are explicitly safe and pass through.
+ */
+const DANGEROUS_URL_SCHEME_HEAD_RE =
+  /^(?:javascript|vbscript|file|chrome-extension|moz-extension):|^data:(?!image\/)/i;
+const URL_SCHEME_ATTRS: ReadonlySet<string> = new Set([
+  'href',
+  'src',
+  'srcset',
+  'poster',
+  'formaction',
+  'xlink:href',
+]);
+
+/**
+ * Human-readable attributes that may carry an embedded URL — internal-link's
+ * `aria-label="Link: <href>"` is the canonical OK shape. The walker scrubs
+ * any dangerous-scheme URL appearing inside these values; safe schemes pass
+ * through unchanged. Defined as a non-anchored alternation so we can scrub
+ * `Link: javascript:alert(1)` without dropping the wrapping label text.
+ */
+const DANGEROUS_URL_SCHEME_EMBEDDED_RE =
+  /\b(?:javascript|vbscript|file|chrome-extension|moz-extension):[^\s"<]*|\bdata:(?!image\/)[^\s"<]*/gi;
+const URL_BEARING_TEXT_ATTRS: ReadonlySet<string> = new Set([
+  'aria-label',
+  'aria-description',
+  'title',
+]);
+
+/**
  * Marker the descriptor sets on a subtree to opt out of clipboard capture.
  * Set on a React render root or descendant element as `data-clipboard-omit="true"`
  * to make the walker skip the subtree at copy time.
@@ -227,9 +267,31 @@ function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
     else clone.removeAttribute('class');
   }
 
-  // Strip blocklisted attributes.
+  // Strip blocklisted attributes + sanitize URL-scheme attributes.
+  // FR-20 escape contract: the pre-walker pipeline ran rehypeSanitizeUrls
+  // downstream of mdast-to-hast; the walker bypasses that pipeline so the
+  // filter has to live here.
   for (const attr of Array.from(clone.attributes)) {
-    if (ATTR_BLOCKLIST.has(attr.name)) clone.removeAttribute(attr.name);
+    if (ATTR_BLOCKLIST.has(attr.name)) {
+      clone.removeAttribute(attr.name);
+      continue;
+    }
+    if (URL_SCHEME_ATTRS.has(attr.name) && DANGEROUS_URL_SCHEME_HEAD_RE.test(attr.value)) {
+      // Drop the attribute rather than substitute `about:blank` — destinations
+      // that strip the resulting unsafe-removed anchor surface clean text
+      // instead of a clickable trap.
+      clone.removeAttribute(attr.name);
+      continue;
+    }
+    if (URL_BEARING_TEXT_ATTRS.has(attr.name)) {
+      // Internal-link mark renders `aria-label="Link: <href>"` (see
+      // internal-link.ts); a dangerous-scheme href would land verbatim
+      // in cross-app HTML. Replace the URL portion with `[blocked]` so
+      // assistive tech sees clean text and the surrounding label stays
+      // informative ("Link: [blocked]" vs. silent attribute drop).
+      const sanitized = attr.value.replace(DANGEROUS_URL_SCHEME_EMBEDDED_RE, '[blocked]');
+      if (sanitized !== attr.value) clone.setAttribute(attr.name, sanitized);
+    }
   }
 
   // Recurse pairwise.

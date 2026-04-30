@@ -192,10 +192,7 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
     expect(out.html).toContain('data-pm-slice');
   });
 
-  test('WYSIWYG copy with wikiLink → text/html has <a class="wiki-link">', async ({
-    page,
-    baseURL,
-  }) => {
+  test('WYSIWYG copy with wikiLink → text/html preserves chip shape', async ({ page, baseURL }) => {
     // Seed via /api/agent-write-md so the paste goes through the full
     // MarkdownManager.parse path (recognises the `[[Page|Alias]]` as a
     // wikiLink mdast node, not just literal brackets that the copy side
@@ -215,7 +212,10 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
     await page.click('.ProseMirror');
     const out = await simulateCopyAndRead(page, 'wysiwyg');
     expect(out.plain).toContain('[[Page|Alias]]');
-    expect(out.html).toContain('class="wiki-link"');
+    // Live-DOM walker captures the chip node view verbatim — the inbound
+    // parseDOM marker `data-wiki-link` survives so OK→OK round-trip
+    // recovers the wiki-link node identity through Branch C.
+    expect(out.html).toContain('data-wiki-link');
     expect(out.html).toContain('data-target="Page"');
     // FR-20 escape-correctness invariant: no unescaped <script> substring
     expect(out.html).not.toContain('<script>');
@@ -1165,7 +1165,10 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await page.click('.ProseMirror');
     const captured = await simulateCopyAndRead(page, 'wysiwyg');
     expect(captured.html).toContain('data-pm-slice');
-    expect(captured.html).toContain('class="wiki-link"');
+    // `data-wiki-link` is the parseDOM marker that recovers the wiki-link
+    // node identity through Branch C round-trip; the live-DOM walker
+    // preserves it on the chip clone.
+    expect(captured.html).toContain('data-wiki-link');
     expect(captured.plain).toContain('[[Page|Alias]]');
 
     // Reset the doc so subsequent paste can't just "inherit" the seed.
