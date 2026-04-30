@@ -57,7 +57,7 @@ Render shape inside `JsxComponentView`:
 ```tsx
 <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
   <NodeViewWrapper data-jsx-component data-needs-config={needsConfig}>
-    {!showPlaceholder && <ChromeBar>{/* gear is PopoverTrigger */}</ChromeBar>}
+    {!showPlaceholder && <ChromeBar>{/* gear is PopoverTrigger */}</ChromeBar>}<br>_[Corrected 2026-04-30 post-ship: chrome bar now renders unconditionally — placeholder mode keeps gear / move arrows / delete visible because the same `data-needs-config` gear-hint UX should apply to fresh slash inserts. Authoritative fix in commit `8e3e925f`; popover placement (below + slightly overlapping pill) refined in `f83219a6`.]_
 
     {showPlaceholder ? (
       <PopoverAnchor asChild>
