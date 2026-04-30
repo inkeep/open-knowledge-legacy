@@ -199,9 +199,17 @@ const mdxJsxFlowHandler: Handler = (state, node) => {
 
 /**
  * mdxJsxTextElement → either a native HTML primitive (lowercase media)
- * or the `<span class="mdx-inline">` fallback for capitalized inline
- * JSX. The span preserves the raw text inline as readable-but-inert
- * source for external destinations.
+ * or the `<span class="mdx-inline" data-jsx-inline="">` fallback for
+ * capitalized inline JSX. The span preserves the raw text inline as
+ * readable-but-inert source for external destinations.
+ *
+ * Outbound carries BOTH the `mdx-inline` class (for any destination CSS
+ * that might hook on it) AND the `data-jsx-inline` attribute (so the
+ * `JsxInline` PM node's `parseHTML: span[data-jsx-inline]` matches when
+ * outbound HTML is round-tripped back into OK via Branch C). Cross-app
+ * destinations strip `data-*` attrs without rendering regression. This
+ * sets the precedent: outbound HTML for a custom-node descriptor MUST
+ * include the inbound `parseHTML` marker.
  */
 const mdxJsxTextHandler: Handler = (state, node) => {
   const jsx = node as MdxJsxTextElement;
@@ -214,7 +222,7 @@ const mdxJsxTextHandler: Handler = (state, node) => {
   const span: Element = {
     type: 'element',
     tagName: 'span',
-    properties: { className: ['mdx-inline'] },
+    properties: { className: ['mdx-inline'], dataJsxInline: '' },
     children: [{ type: 'text', value: raw }],
   };
   state.patch(node, span);
@@ -223,9 +231,16 @@ const mdxJsxTextHandler: Handler = (state, node) => {
 
 /**
  * rawMdxFallback → `<!-- Parse error: reason -->` (hast comment) followed
- * by `<pre class="mdx-fallback"><code>{escaped raw}</code></pre>`. Two
- * siblings returned as an array — mdast-util-to-hast splats arrays into
- * the parent's children stream.
+ * by `<pre class="mdx-fallback" data-raw-mdx-fallback="" data-reason=
+ * "{reason}"><code>{escaped raw}</code></pre>`. Two siblings returned as
+ * an array — mdast-util-to-hast splats arrays into the parent's children
+ * stream.
+ *
+ * Outbound carries BOTH the `mdx-fallback` class (cross-app readability)
+ * AND the `data-raw-mdx-fallback` attribute (so the `RawMdxFallback` PM
+ * node's `parseHTML` matches when outbound HTML is round-tripped back into
+ * OK via Branch C). Cross-app destinations strip `data-*` without
+ * rendering regression.
  */
 const rawMdxFallbackHandler: Handler = (state, node) => {
   const fb = node as RawMdxFallbackMdast;
@@ -251,7 +266,14 @@ const rawMdxFallbackHandler: Handler = (state, node) => {
   const pre: Element = {
     type: 'element',
     tagName: 'pre',
-    properties: { className: ['mdx-fallback'] },
+    properties: {
+      className: ['mdx-fallback'],
+      dataRawMdxFallback: '',
+      // Use the em-dash-normalized reason consistently with the leading
+      // comment so an adversarial `-->` in the parser error doesn't leak
+      // anywhere downstream that re-parses HTML naively.
+      dataReason: safeReason,
+    },
     children: [code],
   };
   state.patch(node, pre);

@@ -287,7 +287,7 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
 });
 
 describe('mdxJsxTextElement mdast→hast', () => {
-  test('renders as <span class="mdx-inline">escaped</span>', () => {
+  test('renders as <span> carrying both the mdx-inline class and the data-jsx-inline marker', () => {
     const node: MdxJsxTextElement = {
       type: 'mdxJsxTextElement',
       name: null,
@@ -296,14 +296,17 @@ describe('mdxJsxTextElement mdast→hast', () => {
       data: { sourceRaw: '<Tag/>' },
     };
     const out = html(wrap(node));
-    expect(out).toContain('<span class="mdx-inline">');
+    // Outbound carries both class (cross-app readability) AND data-* (PM
+    // parseHTML round-trip via Branch C).
+    expect(out).toContain('class="mdx-inline"');
+    expect(out).toContain('data-jsx-inline=""');
     expect(out).toContain('&#x3C;Tag/>');
     expect(out).not.toContain('<Tag/>');
   });
 });
 
 describe('rawMdxFallback mdast→hast', () => {
-  test('renders leading comment + pre/code', () => {
+  test('renders leading comment + pre/code with both class and data-raw-mdx-fallback markers', () => {
     const node: RawMdxFallbackMdast = {
       type: 'rawMdxFallback',
       value: '<A>\n</B>',
@@ -311,7 +314,10 @@ describe('rawMdxFallback mdast→hast', () => {
     };
     const out = html(wrap(node));
     expect(out).toContain('<!-- Parse error: mismatched tag -->');
-    expect(out).toContain('<pre class="mdx-fallback">');
+    // Outbound carries both class and data-* markers.
+    expect(out).toContain('class="mdx-fallback"');
+    expect(out).toContain('data-raw-mdx-fallback=""');
+    expect(out).toContain('data-reason="mismatched tag"');
     expect(out).toContain('<code>');
     expect(out).toContain('&#x3C;A>');
     expect(out).toContain('&#x3C;/B>');
