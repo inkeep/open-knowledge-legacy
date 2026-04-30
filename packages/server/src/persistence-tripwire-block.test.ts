@@ -167,6 +167,17 @@ describe('persistence onStoreDocument tripwire', () => {
       expect(typeof payload.candidateBytes).toBe('number');
       expect(typeof payload.baseBytes).toBe('number');
       expect(typeof payload.fragmentChildren).toBe('number');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set([
+          'event',
+          'doc.name',
+          'candidateBytes',
+          'baseBytes',
+          'fragmentChildren',
+          'copies',
+          'reason',
+        ]),
+      );
 
       conn.disconnect();
     } finally {

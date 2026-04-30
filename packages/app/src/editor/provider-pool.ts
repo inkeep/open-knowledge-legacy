@@ -349,6 +349,12 @@ export class ProviderPool {
     resolve: (id: string) => void;
   } | null = null;
   /**
+   * Claimed server epoch carried on mismatch auth tokens until recovery
+   * reaches a terminal `idle` or `failed` state. Used solely for bounded
+   * structured client telemetry alongside `docName` / `branch`.
+   */
+  private recoveryMismatchStaleClaim: string | undefined;
+  /**
    * Unsynced-edit buffer captured per-doc during a `server-instance-mismatch`
    * recycle. Populated right before `clearData()` wipes IDB; drained at the
    * fresh provider's FIRST post-recycle `synced` event when the replay
@@ -637,6 +643,34 @@ export class ProviderPool {
     });
   }
 
+  private recoveryTelemetryBase(
+    docName: string,
+    staleClaimOverride?: string | undefined,
+  ): { docName: string; branch: string; serverInstanceId?: string } {
+    const branch = this.getOrInitObservedBranch() ?? UNKNOWN_BRANCH_SENTINEL;
+    const base: { docName: string; branch: string; serverInstanceId?: string } = {
+      docName,
+      branch,
+    };
+    const stale =
+      staleClaimOverride !== undefined ? staleClaimOverride : this.recoveryMismatchStaleClaim;
+    if (stale !== undefined && stale.length > 0) {
+      base.serverInstanceId = stale;
+    }
+    return base;
+  }
+
+  private emitStructuredClientRecoveryEvent(parts: Record<string, string | number>): void {
+    console.warn(JSON.stringify(parts));
+  }
+
+  private clearRecoveryMismatchStaleClaimIfTerminal(): void {
+    const kind = this.serverRestartRecoveryState.kind;
+    if (kind === 'idle' || kind === 'failed') {
+      this.recoveryMismatchStaleClaim = undefined;
+    }
+  }
+
   private beginServerRestartRecovery(docNames: readonly string[], startedAt: number): void {
     this.serverRestartRecoveryState = {
       kind: 'recovering',
@@ -668,6 +702,7 @@ export class ProviderPool {
               failedDocNames,
               startedAt,
             };
+      this.clearRecoveryMismatchStaleClaimIfTerminal();
       this.notify();
       return;
     }
@@ -702,10 +737,12 @@ export class ProviderPool {
         failedDocNames: state.failedDocNames,
         startedAt: state.startedAt,
       };
+      this.clearRecoveryMismatchStaleClaimIfTerminal();
       return;
     }
 
     this.serverRestartRecoveryState = IDLE_SERVER_RESTART_RECOVERY;
+    this.clearRecoveryMismatchStaleClaimIfTerminal();
   }
 
   /**
@@ -1071,8 +1108,9 @@ export class ProviderPool {
         if (this.cachedServerInstanceId !== expectedServerInstanceId) {
           return;
         }
+        const staleClaimFromToken = expectedServerInstanceId;
         this.cachedServerInstanceId = null;
-        this.handleServerInstanceMismatch();
+        this.handleServerInstanceMismatch(staleClaimFromToken);
         return;
       }
       // Branch-mismatch is the late-join backstop for the cross-branch
@@ -1110,6 +1148,7 @@ export class ProviderPool {
     // replay writes from user edits / server sync deliveries.
     const buffered = this.bufferedUpdates.get(docName);
     if (buffered !== undefined) {
+      const staleClaimAtReplayInstall = this.recoveryMismatchStaleClaim;
       const replayOnce = (): void => {
         provider.off('synced', replayOnce);
         if (entry.kind !== 'active' || this.entries.get(docName) !== entry) return;
@@ -1124,14 +1163,13 @@ export class ProviderPool {
         try {
           Y.applyUpdate(provider.document, current, TAB_REPLAY_ORIGIN);
         } catch (err: unknown) {
-          console.warn(
-            JSON.stringify({
-              event: 'ok-buffer-replay-failed',
-              docName,
-              bytes: current.byteLength,
-              reason: err instanceof Error ? err.message : String(err),
-            }),
-          );
+          const errorName = err instanceof Error ? err.name : 'non-error-throw';
+          this.emitStructuredClientRecoveryEvent({
+            event: 'ok-buffer-replay-failed',
+            ...this.recoveryTelemetryBase(docName, staleClaimAtReplayInstall),
+            replayByteLength: current.byteLength,
+            errorName,
+          });
         }
       };
       provider.on('synced', replayOnce);
@@ -1151,7 +1189,10 @@ export class ProviderPool {
    * returned promise is owned here; errors are logged structurally and
    * never rethrown into Hocuspocus's event emitter.
    */
-  private handleServerInstanceMismatch(): void {
+  private handleServerInstanceMismatch(staleClaimedServerInstanceId: string): void {
+    this.recoveryMismatchStaleClaim =
+      staleClaimedServerInstanceId.length > 0 ? staleClaimedServerInstanceId : undefined;
+
     // Snapshot entries BEFORE any async work — subsequent recycle mutates
     // the map via destroyEntry → delete → re-open.
     const snapshot = Array.from(this.entries.entries());
@@ -1168,6 +1209,17 @@ export class ProviderPool {
       )
         ? [recoveryActiveDocName]
         : [];
+
+    const telemetryDocName =
+      recoveryActiveDocName ??
+      snapshot.find(([, poolEntry]) => poolEntry.kind === 'active')?.[0] ??
+      '';
+    if (telemetryDocName.length > 0) {
+      this.emitStructuredClientRecoveryEvent({
+        event: 'ok-client-cache-epoch-mismatch',
+        ...this.recoveryTelemetryBase(telemetryDocName),
+      });
+    }
 
     this.beginServerRestartRecovery(activeRecoveryDocNames, startedAt);
     for (const [docName, poolEntry] of snapshot) {
@@ -1191,13 +1243,11 @@ export class ProviderPool {
       // mismatch window can lose keystrokes; accepted trade-off.
       const baseline = poolEntry.lastDiskAckedSV ?? poolEntry.lastServerSyncedSV;
       if (baseline === null) {
-        console.warn(
-          JSON.stringify({
-            event: 'ok-buffer-replay-skipped-no-baseline',
-            docName,
-            reason: 'no-disk-ack-or-server-sync-vector',
-          }),
-        );
+        this.emitStructuredClientRecoveryEvent({
+          event: 'ok-buffer-replay-skipped-no-baseline',
+          ...this.recoveryTelemetryBase(docName),
+          reason: 'no-disk-ack-or-server-sync-vector',
+        });
         continue;
       }
       const unsynced = computeUnsyncedUpdate(poolEntry.provider.document, baseline);
@@ -1245,20 +1295,29 @@ export class ProviderPool {
       const cleared: string[] = [];
       let sawClearTimeout = false;
       results.forEach((result, i) => {
-        const docName = clears[i]?.docName ?? '<unknown>';
+        const row = clears[i];
+        if (!row) return;
+        const docName = row.docName;
         if (result.status === 'rejected') {
           failed.push(docName);
           if (result.reason instanceof ClientPersistenceClearTimeoutError) {
             sawClearTimeout = true;
           }
-          console.warn(
-            JSON.stringify({
-              event: 'ok-client-persistence-clear-failed',
-              docName,
-              reason:
-                result.reason instanceof Error ? result.reason.message : String(result.reason),
-            }),
-          );
+          if (result.reason instanceof ClientPersistenceClearTimeoutError) {
+            this.emitStructuredClientRecoveryEvent({
+              event: 'ok-client-cache-clear-failed',
+              ...this.recoveryTelemetryBase(docName),
+              failureKind: 'timeout',
+            });
+          } else {
+            const errorName = result.reason instanceof Error ? result.reason.name : 'unknown';
+            this.emitStructuredClientRecoveryEvent({
+              event: 'ok-client-cache-clear-failed',
+              ...this.recoveryTelemetryBase(docName),
+              failureKind: 'rejected',
+              errorName,
+            });
+          }
         } else {
           cleared.push(docName);
         }
@@ -1489,6 +1548,7 @@ export class ProviderPool {
     // pool.
     this.pendingServerInstanceKnown = null;
     this.tabIdentity = null;
+    this.recoveryMismatchStaleClaim = undefined;
   }
 
   private evictLru(): void {

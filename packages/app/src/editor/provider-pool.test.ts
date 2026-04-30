@@ -1144,23 +1144,48 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('second mismatch event is a no-op after cache is cleared (idempotence)', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry) throw new Error('expected entry');
-    pool.setActive('doc1');
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('telemetry-branch-idem');
+      const entry = pool.open('doc1');
+      if (!entry) throw new Error('expected entry');
+      pool.setActive('doc1');
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
-    const postFirstEntry = pool.entries.get('doc1');
-    if (!postFirstEntry) throw new Error('expected post-first entry');
-    const postFirstProvider = postFirstEntry.provider;
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
+      const postFirstEntry = pool.entries.get('doc1');
+      if (!postFirstEntry) throw new Error('expected post-first entry');
+      const postFirstProvider = postFirstEntry.provider;
 
-    // A stale sibling's event arriving after cache is null must not churn.
-    postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
-    const postSecond = pool.entries.get('doc1');
-    expect(postSecond?.provider).toBe(postFirstProvider);
+      const epochSignals = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+        } catch {
+          return false;
+        }
+      });
+      expect(epochSignals.length).toBe(1);
+
+      postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
+      const epochAfterSecond = warnSpy.mock.calls.filter(([first]) => {
+        if (typeof first !== 'string') return false;
+        try {
+          return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+        } catch {
+          return false;
+        }
+      });
+      expect(epochAfterSecond.length).toBe(1);
+
+      const postSecond = pool.entries.get('doc1');
+      expect(postSecond?.provider).toBe(postFirstProvider);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
@@ -1210,43 +1235,97 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('active doc clearData failure exposes targeted recovery failure state', async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry?.persistence) throw new Error('expected entry');
-    pool.setActive('doc1');
-    const originalProvider = entry.provider;
-    entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('clear-fail-branch');
+      const entry = pool.open('doc1');
+      if (!entry?.persistence) throw new Error('expected entry');
+      pool.setActive('doc1');
+      const originalProvider = entry.provider;
+      entry.persistence.clearData = mock(() => Promise.reject(new Error('idb blocked')));
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(50);
 
-    expect(pool.getActive()?.provider).toBe(originalProvider);
-    expect(pool.getServerRestartRecoveryState()).toMatchObject({
-      kind: 'failed',
-      reason: 'clear-data-failed',
-      docNames: ['doc1'],
-      failedDocNames: ['doc1'],
-    });
+      expect(pool.getActive()?.provider).toBe(originalProvider);
+      expect(pool.getServerRestartRecoveryState()).toMatchObject({
+        kind: 'failed',
+        reason: 'clear-data-failed',
+        docNames: ['doc1'],
+        failedDocNames: ['doc1'],
+      });
+
+      const clearFailed = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-clear-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(clearFailed.length).toBe(1);
+      const payload = JSON.parse(clearFailed[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId?: string;
+        failureKind: string;
+        errorName?: string;
+      };
+      expect(payload.docName).toBe('doc1');
+      expect(payload.branch).toBe('clear-fail-branch');
+      expect(payload.serverInstanceId).toBe('server-old');
+      expect(payload.failureKind).toBe('rejected');
+      expect(payload.errorName).toBe('Error');
+      expect(Object.keys(payload).every((k) => !['message', 'stack', 'reason'].includes(k))).toBe(
+        true,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('active doc clearData timeout exposes targeted timeout state', async () => {
-    pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
-    pool.setExpectedServerInstanceId('server-old');
-    const entry = pool.open('doc1');
-    if (!entry?.persistence) throw new Error('expected entry');
-    pool.setActive('doc1');
-    entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS, { clearDataTimeoutMs: 5 });
+      pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('timeout-branch');
+      const entry = pool.open('doc1');
+      if (!entry?.persistence) throw new Error('expected entry');
+      pool.setActive('doc1');
+      entry.persistence.clearData = mock(() => new Promise<void>(() => {}));
 
-    entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(30);
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(30);
 
-    expect(pool.getServerRestartRecoveryState()).toMatchObject({
-      kind: 'failed',
-      reason: 'clear-data-timeout',
-      docNames: ['doc1'],
-      failedDocNames: ['doc1'],
-    });
+      expect(pool.getServerRestartRecoveryState()).toMatchObject({
+        kind: 'failed',
+        reason: 'clear-data-timeout',
+        docNames: ['doc1'],
+        failedDocNames: ['doc1'],
+      });
+
+      const clearFailed = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-clear-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(clearFailed.length).toBe(1);
+      const payload = JSON.parse(clearFailed[0] ?? '{}') as { failureKind: string };
+      expect(payload.failureKind).toBe('timeout');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -2203,6 +2282,7 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
     try {
       pool = new ProviderPool(3, DUMMY_WS);
       pool.setExpectedServerInstanceId('server-old');
+      pool.setObservedBranch('no-baseline-branch');
       const docName = uniqueDocName('pp-baseline');
       const entry = pool.open(docName);
       if (!entry) throw new Error('expected entry');
@@ -2232,14 +2312,148 @@ describe('ProviderPool handleServerInstanceMismatch baseline-selection', () => {
       const payload = JSON.parse(firstArg) as {
         event: string;
         docName: string;
+        branch: string;
+        serverInstanceId: string;
         reason: string;
       };
       expect(payload.event).toBe('ok-buffer-replay-skipped-no-baseline');
       expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('no-baseline-branch');
+      expect(payload.serverInstanceId).toBe('server-old');
       expect(payload.reason).toBe('no-disk-ack-or-server-sync-vector');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set(['event', 'docName', 'branch', 'serverInstanceId', 'reason']),
+      );
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * Persistence tripwire blocks emit `ok-persistence-duplication-blocked` server-side only.
+ * There is no push channel delivering that signal to browsers, so
+ * ServerRestartRecoveryState does not expose a duplicated-write sentinel—the
+ * existing mismatch recovery spinner / failed-clear states remain the UX surface for
+ * client-observable cache recovery.
+ */
+describe('ProviderPool structured mismatch telemetry', () => {
+  test('replay applies corrupt buffer emits ok-buffer-replay-failed with bounded fields', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('epoch-replay-telemetry');
+      pool.setObservedBranch('replay-telemetry-branch');
+      const docName = uniqueDocName('replay-flush');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+      entry.observerCleanup = () => {};
+
+      const cp = await import('./client-persistence');
+      entry.provider.document.getText('source').insert(0, 'R');
+      const svDisk = cp.captureStateVector(entry.provider.document);
+      entry.lastDiskAckedSV = svDisk;
+
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(150);
+
+      const neo = pool.entries.get(docName);
+      if (!neo || neo.kind !== 'active') throw new Error('expected recycled active entry');
+
+      neo.observerCleanup = () => {};
+      pool.__test_seedBufferedUpdate(docName, new Uint8Array([255, 0, 254]));
+      neo.provider.emit('synced', { state: true });
+
+      await wait(20);
+
+      const replayFailedCalls = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-buffer-replay-failed';
+          } catch {
+            return false;
+          }
+        });
+      expect(replayFailedCalls.length).toBe(1);
+      const payload = JSON.parse(replayFailedCalls[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId?: string;
+        replayByteLength: number;
+        errorName: string;
+      };
+      expect(payload.event).toBe('ok-buffer-replay-failed');
+      expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('replay-telemetry-branch');
+      expect(payload.serverInstanceId).toBe('epoch-replay-telemetry');
+      expect(payload.replayByteLength).toBe(3);
+      expect(typeof payload.errorName).toBe('string');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set([
+          'event',
+          'docName',
+          'branch',
+          'serverInstanceId',
+          'replayByteLength',
+          'errorName',
+        ]),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('epoch mismatch envelope uses active doc plus branch and stale instance claim', async () => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      pool = new ProviderPool(3, DUMMY_WS);
+      pool.setExpectedServerInstanceId('stale-epoch-telemetry');
+      pool.setObservedBranch('epoch-msg-branch');
+      const docName = uniqueDocName('epoch-msg');
+      const entry = pool.open(docName);
+      if (!entry) throw new Error('expected entry');
+      pool.setActive(docName);
+
+      entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await wait(30);
+
+      const epochCalls = warnSpy.mock.calls
+        .map((c) => c[0])
+        .filter((first): first is string => typeof first === 'string')
+        .filter((first) => {
+          try {
+            return JSON.parse(first).event === 'ok-client-cache-epoch-mismatch';
+          } catch {
+            return false;
+          }
+        });
+      expect(epochCalls.length).toBe(1);
+      const payload = JSON.parse(epochCalls[0] ?? '{}') as {
+        event: string;
+        docName: string;
+        branch: string;
+        serverInstanceId: string;
+      };
+      expect(payload.docName).toBe(docName);
+      expect(payload.branch).toBe('epoch-msg-branch');
+      expect(payload.serverInstanceId).toBe('stale-epoch-telemetry');
+      expect(new Set(Object.keys(payload))).toEqual(
+        new Set(['event', 'docName', 'branch', 'serverInstanceId']),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('recovery state machine never reports blocked-suspicious-write labels', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const snapshot = JSON.stringify(pool.getServerRestartRecoveryState());
+    expect(snapshot).not.toContain('blocked-suspicious-write');
+    expect(snapshot).not.toContain('blocked_suspicious_write');
   });
 });
 
