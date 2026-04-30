@@ -168,12 +168,14 @@ describe('PropertyPanel row chrome', () => {
     expect(html).toContain('data-key="title"');
   });
 
-  test('each row renders move-up + move-down buttons (drag-as-buttons fallback)', () => {
+  test('each row renders a drag handle with key-scoped aria-label (FR4 + FR5)', () => {
     const provider = makeProvider('chrome-move-doc');
     seedYTextFm(provider, '---\ntitle: A\nstatus: draft\n---\n');
     const html = renderPanel(provider);
-    expect(html).toContain('data-testid="property-move-up"');
-    expect(html).toContain('data-testid="property-move-down"');
+    const dragHandles = html.match(/data-testid="property-drag-handle"/g) ?? [];
+    expect(dragHandles.length).toBe(2);
+    expect(html).toContain('aria-label="Drag title to reorder"');
+    expect(html).toContain('aria-label="Drag status to reorder"');
   });
 });
 
