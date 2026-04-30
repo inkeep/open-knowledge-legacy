@@ -25,6 +25,15 @@ function uniqueDocName(prefix = 'pp-us003'): string {
   return `${prefix}-${randomUUID()}`;
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await wait(10);
+  }
+  return predicate();
+}
+
 // Use a dummy URL — providers won't connect but pool logic still works
 const DUMMY_WS = 'ws://localhost:1/collab';
 
@@ -1084,13 +1093,24 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
+    const recycled = await waitFor(() => {
+      const postE1 = pool.entries.get('doc1');
+      return (
+        pool.has('doc1') &&
+        !pool.has('doc2') &&
+        !pool.has('doc3') &&
+        postE1 !== undefined &&
+        postE1.provider !== originalProvider &&
+        pool.getActiveDocName() === 'doc1'
+      );
+    });
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later
     // will get a fresh provider on next open(), which is exactly what we
     // want (no stale Y.Doc from the prior server incarnation ever merges
     // with fresh server state).
+    expect(recycled).toBe(true);
     expect(pool.has('doc1')).toBe(true);
     expect(pool.has('doc2')).toBe(false);
     expect(pool.has('doc3')).toBe(false);
@@ -1107,12 +1127,20 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
 
     // The re-opened provider's token must NOT carry the old claim — that's
     // the whole point of the recycle. HocuspocusProvider defaults token to
     // `null` when not passed, so we accept null OR undefined; the only
     // failure mode is a string containing the stale serverInstanceId.
+    const claimCleared = await waitFor(() => {
+      const replaced = pool.entries.get('doc1');
+      if (!replaced || replaced === entry) return false;
+      const resolved = replaced.provider.configuration.token;
+      if (typeof resolved !== 'string') return true;
+      const parsed = parseHocuspocusAuthToken(resolved);
+      return parsed?.expectedServerInstanceId === undefined;
+    });
+    expect(claimCleared).toBe(true);
     const replaced = pool.entries.get('doc1');
     if (!replaced) throw new Error('expected replaced entry');
     const resolved = replaced.provider.configuration.token;
@@ -1151,7 +1179,11 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
       pool.setActive('doc1');
 
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      const firstRecycled = await waitFor(() => {
+        const postFirstEntry = pool.entries.get('doc1');
+        return postFirstEntry !== undefined && postFirstEntry.provider !== entry.provider;
+      });
+      expect(firstRecycled).toBe(true);
       const postFirstEntry = pool.entries.get('doc1');
       if (!postFirstEntry) throw new Error('expected post-first entry');
       const postFirstProvider = postFirstEntry.provider;
@@ -1167,7 +1199,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
       expect(epochSignals.length).toBe(1);
 
       postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      await wait(0);
       const epochAfterSecond = warnSpy.mock.calls.filter(([first]) => {
         if (typeof first !== 'string') return false;
         try {
