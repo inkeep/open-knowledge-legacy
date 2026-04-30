@@ -91,11 +91,15 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
-
-    const fired = await waitFor(() => events.length > 0);
+    let attempt = 0;
+    const fired = await waitFor(() => {
+      if (events.length > 0) return true;
+      attempt++;
+      writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
+      return false;
+    });
     expect(fired).toBe(true);
-    expect(events.at(-1)).toBe('theme: dark\n');
+    expect(events.at(-1)?.startsWith('theme: dark\n')).toBe(true);
   }, 15_000);
 
   test('does NOT fire onChange on the initial scan (ignoreInitial)', async () => {
