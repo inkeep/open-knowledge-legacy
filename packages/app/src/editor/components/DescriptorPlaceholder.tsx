@@ -51,7 +51,7 @@ export function DescriptorPlaceholder({
         }
       }}
       className={cn(
-        'flex w-full items-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer',
+        'flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border bg-transparent px-3 py-2 text-center text-sm text-muted-foreground transition-colors hover:bg-muted/50 cursor-pointer',
         className,
       )}
     >
