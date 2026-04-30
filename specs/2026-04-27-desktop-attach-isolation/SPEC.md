@@ -12,6 +12,9 @@ baseline_commit: 30a42966
 **Owner(s):** Andrew
 **Last updated:** 2026-04-27
 **Baseline commit:** `30a42966`
+
+> _Superseded 2026-04-30 by [`specs/2026-04-29-mcp-shim/SPEC.md`](../2026-04-29-mcp-shim/SPEC.md): the implemented shared-server model keeps `OK_LOCK_KIND` for lock classification, but removes `OK_PARENT_PID`, `parentPid`, and the parent-death watcher. Idle-shutdown is now the only teardown trigger; the MCP-spawn/parent-death requirements below are retained as historical design context, not live behavior._
+
 **Links:**
 
 - Prior art: [[reports/orphan-process-prevention/evidence/process-enumeration]] (the 11-orphan tally that motivated this)
