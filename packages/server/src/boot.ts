@@ -32,6 +32,7 @@ import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** 30 minutes — default idle threshold. */
 const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const DESTROY_STEP_TIMEOUT_MS = 5000;
 
 export interface BootServerOptions
   extends Pick<
@@ -328,22 +329,66 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
   }
 
   let destroyed = false;
+  const withDestroyTimeout = async (name: string, work: () => Promise<void>): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        work(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`${name} timed out after ${DESTROY_STEP_TIMEOUT_MS}ms`));
+          }, DESTROY_STEP_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
   const destroy = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
-    idleHandle?.detach();
-    // Cancel any pending keepalive-grace timers + await in-flight cleanup
-    // promises so Hocuspocus teardown doesn't race with an in-flight
-    // closeAllForAgent.
-    await mount.shutdown();
-    await mcpHttpHandler.close();
-    await new Promise<void>((resolveClose) => {
-      httpServer.close(() => resolveClose());
-    });
-    await destroyHocuspocus();
+    const errors: unknown[] = [];
+    const runStep = async (name: string, work: () => Promise<void>): Promise<void> => {
+      try {
+        await withDestroyTimeout(name, work);
+      } catch (err) {
+        errors.push(err);
+        log.warn({ err, step: name }, 'bootServer destroy step failed');
+      }
+    };
+
+    try {
+      idleHandle?.detach();
+    } catch (err) {
+      errors.push(err);
+      log.warn({ err, step: 'idleHandle.detach' }, 'bootServer destroy step failed');
+    }
+
+    await runStep('mount.shutdown', () => mount.shutdown());
+    await runStep('mcpHttpHandler.close', () => mcpHttpHandler.close());
+    await runStep(
+      'mount.wss.close',
+      () =>
+        new Promise<void>((resolveClose, rejectClose) => {
+          mount.wss.close((err) => (err ? rejectClose(err) : resolveClose()));
+        }),
+    );
+    await runStep(
+      'httpServer.close',
+      () =>
+        new Promise<void>((resolveClose) => {
+          httpServer.close(() => resolveClose());
+        }),
+    );
+    await runStep('destroyHocuspocus', () => destroyHocuspocus());
     // Flush pending spans/metrics LAST so the teardown sequence itself is
-    // observable. shutdownTelemetry is idempotent and has a 5s timeout.
-    await shutdownTelemetry();
+    // observable. shutdownTelemetry is idempotent and has its own timeout.
+    await runStep('shutdownTelemetry', () => shutdownTelemetry());
+
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'bootServer destroy completed with errors');
+    }
   };
 
   return {

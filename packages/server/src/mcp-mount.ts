@@ -36,11 +36,17 @@ import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
 import type { AgentPresenceBroadcaster } from './agent-presence.ts';
 import type { AgentSessionManager } from './agent-sessions.ts';
+import { isAllowedApiOrigin, isLoopbackRemoteAddress } from './api-origin.ts';
 import type { PinoLogger } from './logger.ts';
 import type { McpHttpHandler } from './mcp-http.ts';
 import { handleCollabSocketError } from './metrics.ts';
 
 const DEFAULT_KEEPALIVE_GRACE_MS = 10_000;
+const MCP_CORS_HEADERS = {
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers':
+    'Content-Type, Authorization, traceparent, tracestate, baggage, mcp-session-id, mcp-protocol-version',
+};
 
 export interface MountMcpAndApiOptions {
   /** HTTP server constructed with no constructor callback (the helper installs `'request'` + `'upgrade'` listeners). */
@@ -125,8 +131,34 @@ export function mountMcpAndApi(opts: MountMcpAndApiOptions): MountMcpAndApiHandl
   const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url?.split('?')[0];
     if (mcpHttpHandler !== undefined && url === '/mcp') {
+      const origin = req.headers.origin;
+      const sessionId = Array.isArray(req.headers['mcp-session-id'])
+        ? req.headers['mcp-session-id'][0]
+        : req.headers['mcp-session-id'];
+      if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('MCP endpoint is only accessible from localhost');
+        return;
+      }
+      if (origin !== undefined && !isAllowedApiOrigin(origin)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+        return;
+      }
+      if (origin !== undefined) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+      for (const [header, value] of Object.entries(MCP_CORS_HEADERS)) {
+        res.setHeader(header, value);
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
       mcpHttpHandler.handle(req, res).catch((err) => {
-        log.error({ err }, 'Unhandled MCP HTTP error');
+        log.error({ err, sessionId }, 'Unhandled MCP HTTP error');
         if (!res.writableEnded && !res.headersSent) {
           res.writeHead(500);
           res.end('Internal server error');

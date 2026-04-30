@@ -12,6 +12,7 @@ import { RUNTIME_VERSION } from './version-constants.ts';
 interface McpHttpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  ttlTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface McpHttpHandlerOptions {
@@ -33,6 +34,8 @@ export interface McpHttpHandlerOptions {
     warn?: (obj: object, msg: string) => void;
     error?: (obj: object, msg: string) => void;
   };
+  sessionTtlMs?: number;
+  maxSessions?: number;
 }
 
 export interface McpHttpHandler {
@@ -49,6 +52,18 @@ function writePlain(res: ServerResponse, statusCode: number, message: string): v
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.end(message);
+}
+
+function sanitizeClientName(name: string | undefined, fallback: string): string {
+  const clean = Array.from(name ?? '')
+    .map((char) => {
+      const code = char.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f ? ' ' : char;
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean ? clean.slice(0, 128) : fallback;
 }
 
 function createSessionServer(
@@ -85,12 +100,12 @@ function createSessionServer(
 
   server.server.oninitialized = () => {
     const clientInfo = server.server.getClientVersion();
-    const name = clientInfo?.name;
+    const name = sanitizeClientName(clientInfo?.name, connectionId);
     identityRef.current = {
       connectionId,
-      clientInfo: clientInfo ? { name: clientInfo.name, version: clientInfo.version } : undefined,
-      displayName: name ?? connectionId,
-      colorSeed: name ?? connectionId,
+      clientInfo: clientInfo ? { name, version: clientInfo.version } : undefined,
+      displayName: name,
+      colorSeed: name,
     };
   };
 
@@ -113,6 +128,35 @@ function createSessionServer(
  */
 export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandler {
   const sessions = new Map<string, McpHttpSession>();
+  const sessionTtlMs = opts.sessionTtlMs ?? 30 * 60 * 1000;
+  const maxSessions = opts.maxSessions ?? 100;
+
+  async function closeSession(sessionId: string, reason: string): Promise<void> {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    sessions.delete(sessionId);
+    if (session.ttlTimer !== undefined) clearTimeout(session.ttlTimer);
+    const results = await Promise.allSettled([session.server.close(), session.transport.close()]);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        opts.log?.warn?.(
+          { err: result.reason, sessionId, reason },
+          'MCP HTTP session close failed',
+        );
+      }
+    }
+    opts.log?.info?.({ sessionId, reason }, 'MCP HTTP session closed');
+  }
+
+  function touchSession(sessionId: string, session: McpHttpSession): void {
+    if (session.ttlTimer !== undefined) clearTimeout(session.ttlTimer);
+    session.ttlTimer = setTimeout(() => {
+      void closeSession(sessionId, 'ttl-expired').catch((err) => {
+        opts.log?.warn?.({ err, sessionId }, 'MCP HTTP session TTL cleanup failed');
+      });
+    }, sessionTtlMs);
+    session.ttlTimer.unref?.();
+  }
 
   return {
     async handle(req, res): Promise<void> {
@@ -123,6 +167,7 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
           writePlain(res, 404, 'MCP session not found');
           return;
         }
+        touchSession(sessionId, session);
         await session.transport.handleRequest(req, res);
         return;
       }
@@ -131,15 +176,29 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
         writePlain(res, 400, 'Missing MCP session. Initialize with POST /mcp first.');
         return;
       }
+      if (sessions.size >= maxSessions) {
+        writePlain(res, 503, 'Too many active MCP sessions');
+        return;
+      }
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: async (newSessionId) => {
-          const session = createSessionServer(opts, transport);
-          sessions.set(newSessionId, session);
-          await session.server.connect(transport);
-          opts.log?.info?.({ sessionId: newSessionId }, 'MCP HTTP session initialized');
+          try {
+            const session = createSessionServer(opts, transport);
+            await session.server.connect(transport);
+            sessions.set(newSessionId, session);
+            touchSession(newSessionId, session);
+            opts.log?.info?.({ sessionId: newSessionId }, 'MCP HTTP session initialized');
+          } catch (err) {
+            sessions.delete(newSessionId);
+            opts.log?.error?.(
+              { err, sessionId: newSessionId },
+              'MCP HTTP session initialization failed',
+            );
+            throw err;
+          }
         },
       });
 
@@ -148,20 +207,19 @@ export function createMcpHttpHandler(opts: McpHttpHandlerOptions): McpHttpHandle
       };
       transport.onclose = () => {
         const id = transport.sessionId;
+        const session = id ? sessions.get(id) : undefined;
         if (id) sessions.delete(id);
-        opts.log?.info?.({ sessionId: id }, 'MCP HTTP session closed');
+        if (session?.ttlTimer !== undefined) clearTimeout(session.ttlTimer);
+        opts.log?.info?.({ sessionId: id, reason: 'transport-closed' }, 'MCP HTTP session closed');
       };
 
       await transport.handleRequest(req, res);
     },
 
     async close(): Promise<void> {
-      const active = [...sessions.values()];
-      sessions.clear();
+      const active = [...sessions.entries()];
       await Promise.allSettled(
-        active.map(async (session) => {
-          await session.server.close();
-        }),
+        active.map(([sessionId]) => closeSession(sessionId, 'handler-close')),
       );
     },
   };

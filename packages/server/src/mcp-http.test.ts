@@ -18,8 +18,13 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { type Config, ConfigSchema } from './config/schema.ts';
-import { createMcpHttpHandler, type McpHttpHandler } from './mcp-http.ts';
+import {
+  createMcpHttpHandler,
+  type McpHttpHandler,
+  type McpHttpHandlerOptions,
+} from './mcp-http.ts';
 
 const MCP_PROTOCOL_VERSION = '2025-06-18';
 
@@ -39,7 +44,10 @@ async function getFreePort(): Promise<number> {
   });
 }
 
-async function bootHandler(config: Config): Promise<SessionHarness> {
+async function bootHandler(
+  config: Config,
+  handlerOptions: Partial<Pick<McpHttpHandlerOptions, 'log' | 'maxSessions' | 'sessionTtlMs'>> = {},
+): Promise<SessionHarness> {
   const contentDir = mkdtempSync(join(tmpdir(), 'ok-mcp-http-cfg-'));
   const port = await getFreePort();
   let handler: McpHttpHandler | null = null;
@@ -50,6 +58,7 @@ async function bootHandler(config: Config): Promise<SessionHarness> {
       projectDir: contentDir,
       config,
       getServerUrl: () => `http://localhost:${port}`,
+      ...handlerOptions,
     });
 
     httpServer = createHttpServer((req, res) => {
@@ -306,4 +315,56 @@ test('configured mcp.tools.read_document.historyDepth is the value handed to the
   );
   expect(result.structuredContent?.truncated).toBe(true);
   expect(result.structuredContent?.matchCount).toBe(11);
+});
+
+test('active MCP session cap refuses new sessions before allocation', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const harness = await bootHandler(config, { maxSessions: 1 });
+  openHarnesses.push(harness);
+
+  await openMcpSession(harness.port);
+
+  const second = await fetch(`http://localhost:${harness.port}/mcp`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'initialize',
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'over-cap', version: '0.0.0' },
+      },
+    }),
+  });
+
+  expect(second.status).toBe(503);
+  expect(await second.text()).toContain('Too many active MCP sessions');
+});
+
+test('inactive MCP sessions expire and return 404 on later use', async () => {
+  const config: Config = ConfigSchema.parse({});
+  const harness = await bootHandler(config, { sessionTtlMs: 25 });
+  openHarnesses.push(harness);
+
+  const session = await openMcpSession(harness.port);
+  await wait(50);
+
+  const expired = await fetch(`http://localhost:${harness.port}/mcp`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      'content-type': 'application/json',
+      'mcp-session-id': session.sessionId,
+      'mcp-protocol-version': session.protocolVersion,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }),
+  });
+
+  expect(expired.status).toBe(404);
+  expect(await expired.text()).toContain('MCP session not found');
 });

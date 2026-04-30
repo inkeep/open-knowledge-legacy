@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import type { ServerLockMetadata } from '@inkeep/open-knowledge-server';
-import { resolveMcpHttpUrl } from './shim.ts';
+import { parseSpawnTimeoutEnv, resolveMcpHttpUrl, resolveMcpKeepaliveWsUrl } from './shim.ts';
 
 const liveLock: ServerLockMetadata = {
   pid: 1234,
@@ -84,5 +84,141 @@ describe('MCP stdio shim server resolution', () => {
         isAlive: () => false,
       }),
     ).rejects.toThrow('OK_MCP_AUTOSTART=0');
+  });
+
+  test('config auto-start opt-out turns missing server into a short diagnostic', async () => {
+    await expect(
+      resolveMcpHttpUrl({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        configAutoStart: false,
+        readLock: () => null,
+        isAlive: () => false,
+      }),
+    ).rejects.toThrow('config mcp.autoStart=false');
+  });
+
+  test('valid port override bypasses discovery and formats wildcard host as localhost', async () => {
+    const url = await resolveMcpHttpUrl({
+      lockDir,
+      contentDir: tmp,
+      host: '0.0.0.0',
+      portOverride: '6789',
+      readLock: () => {
+        throw new Error('should not read lock');
+      },
+      isAlive: () => false,
+      spawn: (() => {
+        throw new Error('should not spawn');
+      }) as never,
+    });
+
+    expect(url).toBe('http://localhost:6789/mcp');
+  });
+
+  test('invalid port override rejects before spawn', async () => {
+    await expect(
+      resolveMcpHttpUrl({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        portOverride: 'not-a-port',
+        spawn: (() => {
+          throw new Error('should not spawn');
+        }) as never,
+      }),
+    ).rejects.toThrow("invalid --port value 'not-a-port'");
+  });
+
+  test('sync spawn failure includes captured stderr', async () => {
+    await expect(
+      resolveMcpHttpUrl({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {},
+        openErrorLog: () => 123,
+        closeFd: () => {},
+        readErrorLog: () => 'boot failed loudly',
+        spawn: (() => {
+          throw new Error('spawn EACCES');
+        }) as never,
+        timeoutMs: 1000,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toThrow('spawn failed: spawn EACCES stderr:\nboot failed loudly');
+  });
+
+  test('spawn timeout includes captured stderr', async () => {
+    await expect(
+      resolveMcpHttpUrl({
+        lockDir,
+        contentDir: tmp,
+        host: 'localhost',
+        readLock: () => null,
+        isAlive: () => false,
+        sleep: async () => {},
+        openErrorLog: () => 123,
+        closeFd: () => {},
+        readErrorLog: () => 'still starting',
+        spawn: (() => ({ on: () => {}, unref: () => {} })) as never,
+        timeoutMs: 1,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toThrow('server did not start within 1ms stderr:\nstill starting');
+  });
+
+  test('spawn timeout env parser accepts positive integers only', () => {
+    expect(parseSpawnTimeoutEnv(undefined)).toBeUndefined();
+    expect(parseSpawnTimeoutEnv('')).toBeUndefined();
+    expect(parseSpawnTimeoutEnv('0')).toBeUndefined();
+    expect(parseSpawnTimeoutEnv('-1')).toBeUndefined();
+    expect(parseSpawnTimeoutEnv('abc')).toBeUndefined();
+    expect(parseSpawnTimeoutEnv('2500')).toBe(2500);
+  });
+
+  test('keepalive WS resolver follows the live lock unless a port override is explicit', () => {
+    expect(
+      resolveMcpKeepaliveWsUrl(
+        {
+          lockDir,
+          contentDir: tmp,
+          host: 'localhost',
+          readLock: () => liveLock,
+          isAlive: () => true,
+        },
+        'http://localhost:4123/mcp',
+      ),
+    ).toBe('ws://localhost:4123');
+
+    expect(
+      resolveMcpKeepaliveWsUrl(
+        {
+          lockDir,
+          contentDir: tmp,
+          host: 'localhost',
+          readLock: () => liveLock,
+          isAlive: () => false,
+        },
+        'http://localhost:4123/mcp',
+      ),
+    ).toBeUndefined();
+
+    expect(
+      resolveMcpKeepaliveWsUrl(
+        {
+          lockDir,
+          contentDir: tmp,
+          host: 'localhost',
+          portOverride: '5123',
+          readLock: () => null,
+          isAlive: () => false,
+        },
+        'http://localhost:5123/mcp',
+      ),
+    ).toBe('ws://localhost:5123');
   });
 });

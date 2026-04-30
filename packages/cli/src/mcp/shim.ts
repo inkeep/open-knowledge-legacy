@@ -21,6 +21,7 @@
  * substitute a different URL/transport without touching the bridge code.
  */
 import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -34,6 +35,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { JSONRPCMessage, RequestId } from '@modelcontextprotocol/sdk/types.js';
 import { resolveSelfSpawn } from '../commands/self-spawn.ts';
+import { startKeepalive as defaultStartKeepalive } from './keepalive.ts';
 
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
 const DEFAULT_POLL_INTERVAL_MS = 100;
@@ -72,6 +74,8 @@ interface ResolveMcpHttpUrlOptions {
 
 interface StartMcpShimOptions extends ResolveMcpHttpUrlOptions {
   stderr?: NodeJS.WritableStream;
+  startKeepalive?: typeof defaultStartKeepalive;
+  createConnectionId?: () => string;
 }
 
 interface BridgeStdioToHttpMcpOptions {
@@ -87,6 +91,19 @@ function formatHost(host: string): string {
 
 function mcpUrlForPort(host: string, port: number): string {
   return `http://${formatHost(host)}:${port}/mcp`;
+}
+
+function wsUrlForPort(host: string, port: number): string {
+  return `ws://${formatHost(host)}:${port}`;
+}
+
+function wsUrlFromMcpEndpoint(endpointUrl: string): string {
+  const url = new URL(endpointUrl);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/$/, '');
 }
 
 function livePortFromLock(
@@ -227,6 +244,18 @@ export async function resolveMcpHttpUrl(opts: ResolveMcpHttpUrlOptions): Promise
   throw new Error(formatTimeoutMessage(timeoutMs, readErrorLog(stderrPath)));
 }
 
+export function resolveMcpKeepaliveWsUrl(
+  opts: ResolveMcpHttpUrlOptions,
+  endpointUrl: string,
+): string | undefined {
+  if (opts.portOverride !== undefined) return wsUrlFromMcpEndpoint(endpointUrl);
+  const readLock = opts.readLock ?? (() => readServerLock(opts.lockDir));
+  const isAlive = opts.isAlive ?? defaultIsProcessAlive;
+  const port = livePortFromLock(readLock(), isAlive);
+  if (port !== undefined) return wsUrlForPort('localhost', port);
+  return undefined;
+}
+
 /** Bridge stdio JSON-RPC frames to the server-owned Streamable HTTP MCP endpoint. */
 export async function bridgeStdioToHttpMcp(
   endpointUrl: string,
@@ -256,17 +285,32 @@ export async function bridgeStdioToHttpMcp(
     void closeBoth();
   };
 
+  let forwardQueue = Promise.resolve();
   stdio.onmessage = (message) => {
-    void (async () => {
-      try {
-        await http.send(message);
-      } catch (err) {
-        const id = requestIdOf(message);
-        if (id !== undefined) {
-          await stdio.send(toErrorResponse(id, err));
+    forwardQueue = forwardQueue
+      .then(async () => {
+        try {
+          await http.send(message);
+        } catch (err) {
+          const id = requestIdOf(message);
+          if (id === undefined) {
+            stderr.write(
+              `[mcp-shim] failed to forward stdio notification: ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+            return;
+          }
+          await stdio.send(toErrorResponse(id, err)).catch((sendErr) => {
+            stderr.write(
+              `[mcp-shim] failed to write stdio error response: ${sendErr instanceof Error ? sendErr.message : String(sendErr)}\n`,
+            );
+          });
         }
-      }
-    })();
+      })
+      .catch((err) => {
+        stderr.write(
+          `[mcp-shim] unexpected stdio forwarding failure: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      });
   };
 
   http.onmessage = (message) => {
@@ -288,10 +332,23 @@ export async function bridgeStdioToHttpMcp(
 export async function startMcpShim(opts: StartMcpShimOptions): Promise<void> {
   const stderr = opts.stderr ?? process.stderr;
   const endpointUrl = await resolveMcpHttpUrl(opts);
+  const connectionId = opts.createConnectionId?.() ?? randomUUID();
+  const keepalive = (opts.startKeepalive ?? defaultStartKeepalive)({
+    connectionId,
+    resolveWsUrl: async () => resolveMcpKeepaliveWsUrl(opts, endpointUrl),
+    log: (msg) => stderr.write(`[mcp-shim] keepalive: ${msg}\n`),
+  });
   stderr.write(`[mcp-shim] proxying stdio to ${endpointUrl}\n`);
-  const bridge = await bridgeStdioToHttpMcp(endpointUrl, { stderr });
+  let bridge: Awaited<ReturnType<typeof bridgeStdioToHttpMcp>>;
+  try {
+    bridge = await bridgeStdioToHttpMcp(endpointUrl, { stderr });
+  } catch (err) {
+    keepalive.close();
+    throw err;
+  }
 
   const shutdown = (): void => {
+    keepalive.close();
     void bridge.close().finally(() => {
       process.exit(0);
     });

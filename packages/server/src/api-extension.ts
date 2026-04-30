@@ -61,6 +61,7 @@ import {
   iconFromClientName,
 } from './agent-sessions.ts';
 import { type NormalizedSummary, normalizeSummary } from './agent-write-summary.ts';
+import { isAllowedApiOrigin } from './api-origin.ts';
 import { recordContributor, swapContributors } from './contributor-tracker.ts';
 import {
   createInstalledAgentsProbe,
@@ -716,32 +717,6 @@ function isSafeDocName(docName: string): boolean {
     docName.includes('\x00') ||
     docName.includes('\\')
   );
-}
-
-/**
- * Returns true when an Origin header value is permitted to reach /api/* endpoints.
- *
- * Allowed:
- * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
- * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
- * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
- * - http(s)://[::1][:port] — IPv6 loopback
- *
- * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
- */
-function isAllowedApiOrigin(origin: string): boolean {
-  if (origin === 'null') return true; // file:// / packaged Electron renderer
-  try {
-    const { hostname } = new URL(origin);
-    return (
-      hostname === 'localhost' ||
-      hostname === '::1' ||
-      hostname === '[::1]' ||
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
-    );
-  } catch {
-    return false;
-  }
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
