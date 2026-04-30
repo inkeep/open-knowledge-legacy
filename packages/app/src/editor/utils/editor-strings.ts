@@ -65,7 +65,7 @@ export function getAutoFocusedPropName(props: PropDef[]): string | null {
   for (const p of props) {
     if (p.type !== 'string') continue;
     if (p.hidden === true) continue;
-    if ('advanced' in p && p.advanced === true) continue;
+    if (p.advanced === true) continue;
     if (p.autoFocus === true) return p.name;
   }
   return null;

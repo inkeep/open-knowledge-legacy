@@ -345,3 +345,86 @@ test('PLACEHOLDER-DOM-SHAPE: placeholder is a div (not button) and is full-width
   // content column). A small tolerance handles sub-pixel rounding.
   expect(shape.placeholderWidth).toBeGreaterThanOrEqual(shape.editorWidth - 2);
 });
+
+test('PLACEHOLDER-CLOSE-ADVANCES-CARET: PM selection lands past the image after panel close', async ({
+  page,
+  api,
+}) => {
+  // Regression guard for the rAF-deferred caret-advance path in
+  // `JsxComponentView.handleOpenChange`. After the popover closes for a
+  // self-closing component, the handler defers to the next frame, computes
+  // the node end position, and dispatches `TextSelection.near($end, 1)` to
+  // land the caret in the nearest valid text position past the node. If
+  // that dispatch breaks (rAF cancellation, position arithmetic off-by-one,
+  // or the parent-block-boundary fallback), the PM selection stays on the
+  // NodeSelection (a leaf node that doesn't accept text input).
+  //
+  // We assert the PM selection state directly via the editor handle rather
+  // than typing — typing relies on DOM focus being returned to the editor,
+  // which Radix doesn't always do cleanly after Escape and is independently
+  // tracked. Asserting selection.from > nodeEnd verifies the caret-advance
+  // dispatch fired AND landed past the node, which is what `handleOpenChange`
+  // is responsible for.
+  const docName = `placeholder-close-caret-${Math.random().toString(36).slice(2, 10)}`;
+  await api.createPage(`${docName}.md`);
+  await page.goto(`/#/${docName}`);
+  await page.waitForSelector('.ProseMirror');
+  await waitForActiveProviderSynced(page);
+  await page.click('.ProseMirror');
+
+  await page.keyboard.type('/image');
+  await waitForSlashMenuFirstOption(page, 'image');
+  await page.keyboard.press('Enter');
+
+  await expect(page.locator('[data-prop-panel]')).toBeVisible({ timeout: PROP_PANEL_TIMEOUT });
+
+  // Fill src so the placeholder dismisses to a real <img> element (the path
+  // that handleOpenChange's caret-advance is calibrated for).
+  const srcInput = page.locator('[data-prop-panel] input#prop-src');
+  await srcInput.fill('https://example.com/test.png');
+
+  // Close the panel via Escape — Radix dispatches onOpenChange(false), our
+  // handleOpenChange schedules the rAF caret-advance.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-prop-panel]')).toBeHidden({ timeout: PROP_PANEL_TIMEOUT });
+
+  // Wait for the rAF + PM transaction to commit, then read selection state.
+  // Two frames of slack absorbs Radix's own focus-restore animation frame
+  // plus our handler's deferred dispatch.
+  await page.evaluate(
+    () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+  );
+
+  const result = await page.evaluate(() => {
+    interface PmNode {
+      type: { name: string };
+      nodeSize: number;
+      attrs: { componentName?: string };
+    }
+    interface WindowEditor {
+      state: {
+        selection: { from: number };
+        doc: PmNode & {
+          descendants: (cb: (n: PmNode, p: number) => boolean | undefined) => void;
+        };
+      };
+    }
+    const ed = (window as unknown as { __activeEditor?: WindowEditor }).__activeEditor;
+    if (!ed) return null;
+    let imgPos = -1;
+    let imgSize = 0;
+    ed.state.doc.descendants((n, p) => {
+      if (n.type.name === 'jsxComponent' && n.attrs.componentName === 'img' && imgPos === -1) {
+        imgPos = p;
+        imgSize = n.nodeSize;
+      }
+    });
+    return { selectionFrom: ed.state.selection.from, imgPos, imgEnd: imgPos + imgSize };
+  });
+
+  expect(result).not.toBeNull();
+  expect(result?.imgPos).toBeGreaterThanOrEqual(0);
+  // Caret should be AT or PAST the img's end boundary — not inside the
+  // img's range [imgPos, imgEnd).
+  expect(result?.selectionFrom).toBeGreaterThanOrEqual(result?.imgEnd ?? 0);
+});
