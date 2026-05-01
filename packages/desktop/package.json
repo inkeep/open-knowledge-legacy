@@ -18,7 +18,7 @@
     "rebuild:native": "electron-builder install-app-deps",
     "smoke:mock-update": "OK_UPDATER_FORCE_DEV=1 node scripts/smoke-mock-update.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "bun --conditions=development test"
+    "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {
     "@inkeep/open-knowledge": "workspace:*",
