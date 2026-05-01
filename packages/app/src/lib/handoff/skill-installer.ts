@@ -112,11 +112,20 @@ export function httpSkillInstaller(opts: HttpSkillInstallerOptions = {}): SkillI
         };
       }
       if (!response.ok) {
-        return {
-          ok: false,
-          reason: 'http-error',
-          message: `HTTP ${response.status}`,
-        };
+        // Server returns structured `{ error: string | { message } }` on
+        // 400 (e.g., path-confinement rejection) and 500. Parse for the
+        // real diagnostic; fall back to the status line on parse failure.
+        let message = `HTTP ${response.status}`;
+        try {
+          const errBody = (await response.json()) as {
+            error?: string | { message?: string };
+          };
+          const detail = typeof errBody.error === 'string' ? errBody.error : errBody.error?.message;
+          if (detail) message = detail;
+        } catch {
+          // Keep the HTTP status fallback.
+        }
+        return { ok: false, reason: 'http-error', message };
       }
       let body: ServerSkillInstallResponse;
       try {

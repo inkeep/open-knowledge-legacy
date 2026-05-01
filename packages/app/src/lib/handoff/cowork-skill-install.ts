@@ -86,9 +86,11 @@ export async function ensureCoworkSkillInstalled(
   if (result.ok) {
     try {
       storage?.setItem(key, GUARD_VALUE);
-    } catch {
+    } catch (err) {
       // QuotaExceededError or SecurityError — guard is non-critical;
-      // worst case the installer runs again on the next click.
+      // worst case the installer runs again on the next click. Log so
+      // a persistent setItem failure is diagnosable instead of silent.
+      console.warn('[cowork-skill] storage.setItem failed (guard will not persist):', err);
     }
     return { kind: 'installed-now', path: result.path, handoffWarning: result.handoffWarning };
   }

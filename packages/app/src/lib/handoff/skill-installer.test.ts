@@ -146,15 +146,56 @@ describe('httpSkillInstaller', () => {
     });
   });
 
-  test('non-2xx HTTP response: ok-false with http-error reason', async () => {
+  test('non-2xx HTTP response with no body: ok-false falls back to HTTP <status>', async () => {
     const installer = httpSkillInstaller({
-      fetch: fakeFetch({ ok: false, status: 503 }),
+      fetch: mock(
+        async () =>
+          ({
+            ok: false,
+            status: 503,
+            json: async () => {
+              throw new SyntaxError('Unexpected end of JSON input');
+            },
+          }) as unknown as Response,
+      ) as unknown as typeof fetch,
     });
 
     expect(await installer.install()).toEqual({
       ok: false,
       reason: 'http-error',
       message: 'HTTP 503',
+    });
+  });
+
+  test('400 with string error body: surfaces server detail (e.g., path confinement)', async () => {
+    const installer = httpSkillInstaller({
+      fetch: fakeFetch({
+        ok: false,
+        status: 400,
+        body: { ok: false, error: 'Output path must be within home directory' },
+      }),
+    });
+
+    expect(await installer.install()).toEqual({
+      ok: false,
+      reason: 'http-error',
+      message: 'Output path must be within home directory',
+    });
+  });
+
+  test('500 with structured error body: surfaces error.message', async () => {
+    const installer = httpSkillInstaller({
+      fetch: fakeFetch({
+        ok: false,
+        status: 500,
+        body: { ok: false, error: { kind: 'internal', message: 'spawn EACCES' } },
+      }),
+    });
+
+    expect(await installer.install()).toEqual({
+      ok: false,
+      reason: 'http-error',
+      message: 'spawn EACCES',
     });
   });
 
