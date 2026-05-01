@@ -91,7 +91,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
-      - run: bunx turbo run ${{ matrix.task }}
+      # `timeout` bounds the step at 12 minutes (well inside the job's 15-min
+      # budget) and `--kill-after=30` SIGKILLs any process tree that survives
+      # the initial SIGTERM after another 30s. Bun's `child_process.kill()` is
+      # documented unreliable on ubuntu-latest (oven-sh/bun#11892); when test
+      # cleanup leaks `bun`-labelled grandchildren they can keep the runner's
+      # cgroup alive past the wrapper exit, which on PR #377 had `test (test)`
+      # hanging the full 15-minute budget without `timeout`. The post-step
+      # `pkill` belt-and-suspenders any final survivors before the runner
+      # tries to clean orphans (which is the slow path).
+      - run: timeout --kill-after=30 12m bunx turbo run ${{ matrix.task }}
+      - if: always()
+        run: pkill -9 -x bun || true; pkill -9 -x bunx || true
 
   playwright:
     # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`
