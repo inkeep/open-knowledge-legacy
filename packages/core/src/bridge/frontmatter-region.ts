@@ -96,7 +96,19 @@ export function parseFmRegion(yamlBody: string): ParsedFmRegion {
   if (doc.errors.length > 0) {
     return { doc, map: null, parseError: doc.errors[0]?.message ?? 'yaml parse errors' };
   }
-  const json = doc.toJS();
+  // yaml@2's `doc.toJS()` throws on some pathological documents (circular
+  // anchors, exotic merge keys). The function's contract is total — every
+  // exit path returns `ParsedFmRegion` with `map === null` + `parseError`
+  // when the input can't be coerced to a clean JS object. Without this
+  // catch, callers like `fireListeners` (Y.Text observer) would propagate
+  // an exception into Y.js's transaction machinery.
+  let json: unknown;
+  try {
+    json = doc.toJS();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { doc, map: null, parseError: `toJS threw: ${msg}` };
+  }
   if (json == null || typeof json !== 'object' || Array.isArray(json)) {
     return { doc, map: null, parseError: 'top-level value is not a mapping' };
   }

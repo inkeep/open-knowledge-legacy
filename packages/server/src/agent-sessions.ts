@@ -140,10 +140,11 @@ function applyAgentMarkdownWriteInner(
 
     // 2. Split the agent's payload into frontmatter + body. The agent may
     //    send a full document (FM + body) or body-only; we handle both.
-    //    On 'replace', an FM in the payload updates metaMap. On 'prepend'/
-    //    'append', the payload is treated as body-only — any leading FM is
-    //    stripped defensively to avoid producing a document with two FM
-    //    blocks (double-FM is a CommonMark invalid state).
+    //    On 'replace', an FM in the payload supersedes the existing FM
+    //    region of `Y.Text('source')`. On 'prepend'/'append', the payload
+    //    is treated as body-only — any leading FM is stripped defensively
+    //    to avoid producing a document with two FM blocks (double-FM is
+    //    a CommonMark invalid state).
     const { frontmatter: payloadFm, body: payloadBody } = stripFrontmatter(markdown);
 
     // 3. Determine the final frontmatter and compose the final body.
@@ -549,7 +550,7 @@ export class AgentSessionManager {
     // same Document. Presence is published on the `__system__` Y.Doc via
     // `AgentPresenceBroadcaster` (map-valued, keyed by agentId) instead.
 
-    // US-008 (D25, D24, D21): per-session UndoManager across Y.Text + metaMap + flashMap.
+    // Per-session UndoManager scoped to [Y.Text, agent-flash].
     // trackedOrigins uses object identity — only transactions under session.origin are stacked.
     // captureTransaction excludes undoOrigin writes to prevent undo-of-undo cycles.
     // ignoreRemoteMapChanges: true — remote agent map updates do not trigger undo eligibility.

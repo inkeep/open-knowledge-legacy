@@ -272,23 +272,25 @@ function frontmatterValuesEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Read the FM region keys from a parsed Document — exposed so `current()` can
- * surface them alongside the map (the UI uses `keys` for render order +
- * dup-name detection).
+ * Read the FM snapshot from a Y.Text-string. Returns both the structured
+ * snapshot and the raw string so callers that also need the fenced region
+ * (e.g. `fireListeners` updating its `lastFenced` cache) can avoid a second
+ * O(n) `ytext.toString()` call. `Y.Text.toString()` is O(n) in live-item
+ * count — paying it twice on every observer fire over a large doc adds up.
  */
-function readSnapshotFromYText(ytext: Y.Text): FrontmatterSnapshot {
-  const snapshot = ytext.toString();
-  const { map, parseError } = readFmRegionWithError(snapshot);
+function readSnapshotFromYText(ytext: Y.Text): { snapshot: FrontmatterSnapshot; raw: string } {
+  const raw = ytext.toString();
+  return { snapshot: snapshotFromRaw(raw), raw };
+}
+
+function snapshotFromRaw(raw: string): FrontmatterSnapshot {
+  const { map, parseError } = readFmRegionWithError(raw);
   // Source-order keys (with duplicates preserved) — re-parse via the AST
   // path. Light enough for typical FM (≤10 keys) that re-walking on each
   // observer fire isn't a hot path; the perf-critical path is the body-edit
   // bailout in `subscribe`.
-  const keys = readKeysFromFenced(snapshot);
+  const keys = readFmKeys(raw);
   return { map, keys, parseError };
-}
-
-function readKeysFromFenced(ytextSnapshot: string): string[] {
-  return readFmKeys(ytextSnapshot);
 }
 
 /**
@@ -300,18 +302,34 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
   const ytext = ydoc.getText('source');
 
   const listeners = new Set<(snapshot: FrontmatterSnapshot) => void>();
-  let lastSnapshot: FrontmatterSnapshot = readSnapshotFromYText(ytext);
-  let lastFenced = detectFmRegion(ytext.toString()).fenced;
+  const initial = readSnapshotFromYText(ytext);
+  let lastSnapshot: FrontmatterSnapshot = initial.snapshot;
+  let lastFenced = detectFmRegion(initial.raw).fenced;
   let disposed = false;
 
   function fireListeners(force = false): void {
     if (disposed) return;
-    const next = readSnapshotFromYText(ytext);
+    // Wrap in try/catch — fires inside a Y.Text observer; an exception here
+    // would propagate into Y.js's transaction machinery and break later
+    // observer dispatches. Underlying parse functions are total
+    // (`parseFmRegion` / `readFmKeys` return `parseError`-bearing envelopes
+    // on bad input) but defense-in-depth here covers any future change that
+    // accidentally throws.
+    let next: FrontmatterSnapshot;
+    let raw: string;
+    try {
+      const read = readSnapshotFromYText(ytext);
+      next = read.snapshot;
+      raw = read.raw;
+    } catch (e) {
+      console.warn('[bindFrontmatterDoc] readSnapshotFromYText threw:', e);
+      return;
+    }
     if (!force && snapshotsEqual(lastSnapshot, next)) {
       return;
     }
     lastSnapshot = next;
-    lastFenced = detectFmRegion(ytext.toString()).fenced;
+    lastFenced = detectFmRegion(raw).fenced;
     for (const listener of listeners) {
       try {
         listener(next);
@@ -450,7 +468,7 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
 
   return {
     current(): FrontmatterSnapshot {
-      return readSnapshotFromYText(ytext);
+      return readSnapshotFromYText(ytext).snapshot;
     },
 
     patch(patch: FrontmatterPatch): FrontmatterBindingPatchResult {

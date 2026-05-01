@@ -61,7 +61,17 @@ export function parseFrontmatterYaml(yaml: string): ParsedFrontmatter {
     // the message already.
     return { doc, map: null, parseError: doc.errors[0]?.message ?? 'yaml parse errors' };
   }
-  const json = doc.toJS();
+  // yaml@2's `doc.toJS()` throws on some pathological documents (circular
+  // anchors, exotic merge keys). Catch so the function stays total — the
+  // contract is "every exit returns ParsedFrontmatter with parseError on
+  // failure," which downstream observer / Y.Text-driven callers rely on.
+  let json: unknown;
+  try {
+    json = doc.toJS();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { doc, map: null, parseError: `toJS threw: ${msg}` };
+  }
   if (json == null || typeof json !== 'object' || Array.isArray(json)) {
     return { doc, map: null, parseError: 'top-level value is not a mapping' };
   }
