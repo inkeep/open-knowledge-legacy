@@ -62,7 +62,7 @@ function buildDeps(
   overrides: Partial<HandoffDispatchDeps> = {},
 ): HandoffDispatchDeps & { toast: RecordingToast } {
   const toast = recordingToast();
-  return {
+  const defaults: HandoffDispatchDeps = {
     dispatchHandoff: mock(async (_payload: HandoffPayload) => ({ ok: true }) as HandoffOutcome),
     recordHandoff: mock(async (_line) => {}),
     toast,
@@ -76,8 +76,14 @@ function buildDeps(
           : target === 'codex'
             ? 'Codex'
             : 'Cursor',
-    ...overrides,
+    // Default to `already-installed` so existing tests exercise the URL
+    // dispatch path; install-gate-specific tests override this.
+    ensureCoworkSkillInstalled: mock(async () => ({ kind: 'already-installed' }) as const),
   };
+  // `toast` is the test seam — placed last so the intersection's
+  // `RecordingToast` survives any `overrides.toast` (callers should override
+  // *behavior* deps, not the toast double itself).
+  return { ...defaults, ...overrides, toast };
 }
 
 describe('useHandoffDispatch module surface', () => {
@@ -381,6 +387,122 @@ describe('defaultHandoffDispatchDeps — production wiring', () => {
     expect(deps.now()).toBeInstanceOf(Date);
     expect(typeof deps.isElectronHost()).toBe('boolean');
     expect(deps.getDisplayName('claude-cowork')).toBe('Claude Cowork');
+    expect(typeof deps.ensureCoworkSkillInstalled).toBe('function');
+  });
+});
+
+describe('runHandoffDispatch — Cowork install gate', () => {
+  test('first click + bridge ran: shows install toast and skips URL dispatch', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(
+        async () => ({ kind: 'installed-now', path: '/tmp/openknowledge.skill' }) as const,
+      ),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome).toEqual({ ok: true });
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.recordHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.successCalls).toEqual([
+      'Open Knowledge skill saved. Upload it in Claude Desktop, then click Cowork again.',
+    ]);
+  });
+
+  test('install-failed: surfaces error toast and returns dispatch-error outcome', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(
+        async () =>
+          ({
+            kind: 'install-failed',
+            reason: 'open-failed',
+            message: 'Claude Desktop not found',
+          }) as const,
+      ),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('dispatch-error');
+      expect(outcome.detail).toContain('install-failed');
+    }
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.errorCalls[0]?.message).toBe(
+      "Couldn't install Open Knowledge skill — Claude Desktop not found",
+    );
+  });
+
+  test('already-installed: falls through to URL dispatch (default test path)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps(); // default ensureCoworkSkillInstalled → already-installed
+
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+    expect(deps.toast.successCalls).toEqual(['Opened in Claude Cowork.']);
+  });
+
+  test('host-unsupported (web): falls through to URL dispatch unchanged', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      isElectronHost: () => false,
+      ensureCoworkSkillInstalled: mock(async () => ({ kind: 'host-unsupported' }) as const),
+    });
+
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+    expect(deps.toast.successCalls).toEqual(['Opened in Claude Cowork.']);
+  });
+
+  test('non-Cowork target: install gate is never consulted', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const ensureSpy = mock(async () => ({ kind: 'already-installed' }) as const);
+    const deps = buildDeps({ ensureCoworkSkillInstalled: ensureSpy });
+
+    await runHandoffDispatch('codex', sampleInput(), deps);
+    await runHandoffDispatch('claude-code', sampleInput(), deps);
+    await runHandoffDispatch('cursor', sampleInput(), deps);
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+  });
+
+  test('retry attempt skips the install gate (only first attempt invokes it)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const ensureSpy = mock(async () => ({ kind: 'already-installed' }) as const);
+    const deps = buildDeps({ ensureCoworkSkillInstalled: ensureSpy });
+
+    // attempt=2 simulates a retry — the install gate must not re-run.
+    await runHandoffDispatch('claude-cowork', sampleInput(), deps, 2);
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+    expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
+  });
+
+  test('install gate throws: surfaces error toast + dispatch-error outcome (no unhandled rejection)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(async () => {
+        throw new Error('IPC channel closed');
+      }),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('dispatch-error');
+      expect(outcome.detail).toContain('install-error');
+      expect(outcome.detail).toContain('IPC channel closed');
+    }
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.errorCalls[0]?.message).toBe(
+      "Couldn't install Open Knowledge skill — IPC channel closed",
+    );
   });
 });
 

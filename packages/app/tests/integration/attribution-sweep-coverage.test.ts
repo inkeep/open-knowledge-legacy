@@ -106,6 +106,12 @@ const EXEMPT_HANDLERS = new Set([
   'handleSeedApply',
   'handleAgentActivity',
   'handleAgentBurstDiff',
+  // `/api/install-skill` — local-op style endpoint guarded by
+  // `checkLocalOpSecurity`. Builds `openknowledge.skill` and hands off to
+  // the OS file association (Claude Desktop). Operates on the user's
+  // ~/Downloads folder on behalf of the local user, not agent content —
+  // same rationale as sync/local-op/seed handlers.
+  'handleInstallSkill',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
