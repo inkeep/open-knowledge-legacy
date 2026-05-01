@@ -1,7 +1,7 @@
 /**
  * Direct unit tests for the unified disk→CRDT bridge (`applyExternalChange`).
  *
- * Covers the 4 internal branches of the throwing helper:
+ * Covers the 3 internal branches of the throwing helper:
  *   (a) document-missing → silent early return (no throw, no mutations)
  *   (b) frontmatter asymmetry → XmlFragment gets body only, Y.Text gets full content
  *   (c) Y.Text no-op → skip delete/insert when content unchanged
@@ -11,6 +11,7 @@
  */
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';
+import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type * as Y from 'yjs';
 import { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
 
@@ -30,39 +31,118 @@ describe('applyExternalChange — throwing helper', () => {
   });
 
   test('(a) document-missing early return — no throw, no mutations', () => {
-    // No document opened → hocuspocus.documents is empty
     expect(() => {
       applyExternalChange(hp, 'nonexistent-doc', '# Hello\n\nWorld\n');
     }).not.toThrow();
-    // Verify the document was never created
     expect(hp.documents.get('nonexistent-doc')).toBeUndefined();
   });
 
-  test('(b) frontmatter asymmetry — XmlFragment gets body, Y.Text gets full content', async () => {
+  test('(b) frontmatter asymmetry — XmlFragment gets body only, Y.Text gets full content (D8)', async () => {
     const docName = 'test-frontmatter-asymmetry';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
 
-    // stripFrontmatter regex captures `---\n...\n---\n?` including delimiters + trailing newline
     const fullContent = '---\ntitle: Test\ntags: [a, b]\n---\n# Hello\n\nParagraph text.\n';
 
     applyExternalChange(hp, docName, fullContent);
 
-    // Y.Text should contain the FULL content (frontmatter + body)
+    // Y.Text contains the FULL content (FM region IS the FM source of truth — D8).
     const ytext = doc.getText('source');
     expect(ytext.toString()).toBe(fullContent);
 
-    // XmlFragment should contain body-derived nodes but NOT frontmatter text
+    // FM extracted from the YAML region matches what was on disk.
+    const { frontmatter } = stripFrontmatter(ytext.toString());
+    expect(frontmatter).toContain('title: Test');
+    expect(frontmatter).toContain('---');
+
+    // XmlFragment contains body-derived nodes but NOT frontmatter text.
     const xmlFragment = doc.getXmlFragment('default');
     const xmlString = xmlFragment.toString();
     expect(xmlString).not.toContain('title: Test');
     expect(xmlString).not.toContain('tags: [a, b]');
 
-    // Metadata map should cache the frontmatter (includes delimiters and trailing newline)
-    const metaMap = doc.getMap('metadata');
-    const storedFm = metaMap.get('frontmatter') as string;
-    expect(storedFm).toContain('title: Test');
-    expect(storedFm).toContain('---');
+    await conn.disconnect();
+  });
+
+  test('(b2) repeated apply with identical content does not mutate Y.Text', async () => {
+    const docName = 'test-ytext-stable';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    const content = '---\ntitle: Stable\nstatus: draft\n---\n# Body\n';
+    applyExternalChange(hp, docName, content);
+
+    let textMutations = 0;
+    const ytext = doc.getText('source');
+    const observer = () => {
+      textMutations++;
+    };
+    ytext.observe(observer);
+
+    applyExternalChange(hp, docName, content);
+
+    ytext.unobserve(observer);
+    expect(textMutations).toBe(0);
+
+    await conn.disconnect();
+  });
+
+  test('(b3) malformed YAML round-trips into Y.Text verbatim (D31 — Y.Text is the source of truth)', async () => {
+    const docName = 'test-malformed-yaml';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    const malformed = '---\ntitle: [unterminated\nstatus: published\n---\n# Body\n';
+    applyExternalChange(hp, docName, malformed);
+
+    // Y.Text holds the malformed bytes verbatim — no defensive revert.
+    expect(doc.getText('source').toString()).toBe(malformed);
+
+    await conn.disconnect();
+  });
+
+  test('(b4) FM-indent preserved verbatim; body canonicalized to match XmlFragment (bridge invariant)', async () => {
+    // Two parts of the same disk→CRDT contract:
+    //   - FM region is preserved EXACTLY (D8/D26 — user's YAML formatting,
+    //     including `  - characters` indent, must round-trip).
+    //   - Body region matches XmlFragment's canonical serialization
+    //     (bridge invariant — `stripTrailingWhitespace(ytext) ===
+    //     stripTrailingWhitespace(serialize(fragment))`). Markdown has
+    //     multiple equivalent representations (NG7 — doc-start `---` is
+    //     a thematic break that serializes to canonical `***`); writing
+    //     the raw disk bytes for these constructs would diverge.
+    const docName = 'test-fm-indent-body-canonical';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    const onDisk = '---\ntags:\n  - characters\n  - air-nomads\n---\n\n# Aang\n';
+    applyExternalChange(hp, docName, onDisk);
+
+    const ytext = doc.getText('source').toString();
+    // FM region byte-identical to disk (preserves indent + scalar style).
+    const { frontmatter } = stripFrontmatter(ytext);
+    expect(frontmatter).toBe('---\ntags:\n  - characters\n  - air-nomads\n---\n');
+
+    await conn.disconnect();
+  });
+
+  test('(b5) horizontal-rule canonicalization: doc-start `---` body becomes canonical `***`', async () => {
+    // NG7 — input markdown contains `---` (a thematic break) as the doc
+    // body. The mdast parser canonicalizes thematic-break markers to
+    // `***` on serialize. Y.Text's body half must hold the canonical
+    // form so the bridge invariant holds; if we wrote `---` verbatim
+    // to Y.Text but XmlFragment serialized to `***`, they'd diverge.
+    const docName = 'test-thematic-break-canonical';
+    const conn = await hp.openDirectConnection(docName);
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, docName, '---\n');
+
+    const ytext = doc.getText('source').toString();
+    // No FM block (single `---` doesn't match `^---\n…\n---`); the line
+    // is body content. After canonicalization Y.Text holds `***\n`.
+    expect(ytext).toContain('***');
+    expect(ytext).not.toContain('---');
 
     await conn.disconnect();
   });
@@ -74,11 +154,9 @@ describe('applyExternalChange — throwing helper', () => {
 
     const content = '# Hello\n\nWorld\n';
 
-    // First call: seeds the Y.Text
     applyExternalChange(hp, docName, content);
     expect(doc.getText('source').toString()).toBe(content);
 
-    // Track Y.Text mutations via observer
     let textMutations = 0;
     const ytext = doc.getText('source');
     const observer = () => {
@@ -86,27 +164,21 @@ describe('applyExternalChange — throwing helper', () => {
     };
     ytext.observe(observer);
 
-    // Second call with identical content — should not mutate Y.Text
     applyExternalChange(hp, docName, content);
 
     ytext.unobserve(observer);
-
-    // The observer fires per-transaction when Y.Text operations occur.
-    // With the no-op path (content unchanged), the ytext delete/insert branch is
-    // skipped, so no Y.Text events fire.
     expect(textMutations).toBe(0);
 
     await conn.disconnect();
   });
 
-  test('(d) transaction origin matches LocalTransactionOrigin shape', async () => {
+  test('(d) transaction origin matches paired-write shape', async () => {
     const docName = 'test-tx-origin';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
 
     let capturedOrigin: unknown = null;
     doc.on('beforeTransaction', (tx: Y.Transaction) => {
-      // Only capture the file-watcher origin, skip any internal transactions
       if (
         tx.origin &&
         typeof tx.origin === 'object' &&
@@ -146,30 +218,24 @@ describe('createExternalChangeHandler — error-swallowing factory', () => {
       const docName = 'test-throw-path';
       const conn = await hp.openDirectConnection(docName);
 
-      // Sabotage the document's getXmlFragment to force a throw inside the transact
       const doc = getDoc(conn);
       const originalGetXmlFragment = doc.getXmlFragment.bind(doc);
       doc.getXmlFragment = () => {
         throw new Error('synthetic getXmlFragment failure');
       };
 
-      // Seed Y.Text so we can verify it's unchanged after error
       doc.getText('source').insert(0, '# Original\n');
       const textBefore = doc.getText('source').toString();
 
-      // The factory should catch and log, not throw
       await expect(handler(docName, '# Content\n')).resolves.toBeUndefined();
 
-      // Verify console.error was called with the expected message
       expect(errorSpy).toHaveBeenCalled();
       const callArgs = errorSpy.mock.calls[0];
       expect(callArgs[0]).toContain('Failed to apply external change');
       expect(callArgs[0]).toContain(docName);
 
-      // Document state unchanged after error
       expect(doc.getText('source').toString()).toBe(textBefore);
 
-      // Restore
       doc.getXmlFragment = originalGetXmlFragment;
       await conn.disconnect();
     } finally {

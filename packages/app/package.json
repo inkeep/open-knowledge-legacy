@@ -27,12 +27,12 @@
     "perf:profile": "bun run tests/perf/profile.ts",
     "size": "turbo run build --filter=@inkeep/open-knowledge-app && size-limit"
   },
-  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB",
+  "//": "TODO: check why after installing @pierre/trees has exceeded by 55 kB; PropertyPanel pulled date-fns + react-day-picker into the eager bundle (~24 kB) — follow-up should lazy-load DateWidget so the calendar/date-fns chunk only loads on first date-property edit; @dnd-kit adds ~15 kB to the eager bundle (PropertyPanel imports it at top level) — follow-up should lazy-load PropertyPanel itself so dnd-kit + the widget zoo only load when a doc has frontmatter",
   "size-limit": [
     {
       "name": "main app bundle (gzipped)",
       "path": "dist/assets/index-*.js",
-      "limit": "290 kB",
+      "limit": "340 kB",
       "gzip": true
     },
     {
@@ -64,6 +64,9 @@
     "@codemirror/merge": "^6.12.1",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.0",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@floating-ui/dom": "^1.7.6",
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
@@ -97,11 +100,13 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
+    "date-fns": "^4.1.0",
     "fuzzysort": "^3.1.0",
     "lucide-react": "^1.7.0",
     "next-themes": "^0.4.6",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
+    "react-day-picker": "^9.14.0",
     "react-diff-view": "^3.3.3",
     "react-dom": "^19.2.5",
     "react-error-boundary": "^6.0.0",

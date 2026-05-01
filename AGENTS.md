@@ -104,16 +104,17 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ```
 Y.Doc
-├── Y.XmlFragment('default')  ← TipTap binds here
-├── Y.Text('source')          ← CodeMirror binds (y-codemirror.next)
-├── Y.Map('metadata')         ← frontmatter cache
-├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
-└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
+├── Y.XmlFragment('default')  ← TipTap binds (body)
+├── Y.Text('source')          ← CodeMirror binds (full doc: FM region + body)
+├── Y.Map('agent-flash')      ← agent write-flash side-channel
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer
 
 Server Observer A: XmlFragment → Y.Text  (OBSERVER_SYNC_ORIGIN)
 Server Observer B: Y.Text → XmlFragment  (OBSERVER_SYNC_ORIGIN)
 Client observers: baseline tracking only (write paths deleted — precedent #14)
 ```
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the property panel reads + writes via `bindFrontmatterDoc` (no `Y.Map('metadata')`). Spec: [`specs/2026-04-30-realtime-frontmatter-entries/SPEC.md`](specs/2026-04-30-realtime-frontmatter-entries/SPEC.md).
 
 **Three invariants** (assert before/after every propagation):
 
@@ -130,6 +131,7 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 | W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite | Persistence debounce |
 | W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange     | (direct)             |
 | W5 Agent Undo            | applyAgentUndo          | applyAgentUndo          | Persistence debounce |
+| W6 Property panel | bindFrontmatterDoc | (Observer B if body shifts) | Persistence debounce |
 
 **Full observer design** (server-authoritative Path A/B, settlement dispatch via `afterAllTransactions`, origin-guard truth tables, paired-write markers, `applyAgentMarkdownWrite` reference implementation): [`ARCHITECTURE.md`](./ARCHITECTURE.md) + the four spec directories under `specs/2026-04-1[4-6]-*/`. `packages/server/src/server-observers.ts` is the canonical implementation.
 
@@ -175,7 +177,7 @@ Snapshots on failure write to `/tmp/fuzz-*`.
 - **Agent running Playwright + dev server:** Playwright sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; `bun run dev` uses `packages/content/`. No contention.
 - **VITE\_PORT** env var for custom port (`VITE_PORT=9999 bun run dev`, strict). Default 5173 (not strict).
 
-**Worktree gotcha — `bun install` after `git worktree add`.** Worktrees nested at `.claude/worktrees/X/` inherit `node_modules` via Bun's upward-walk resolution, causing ProseMirror-model dedup failures (`PmNode.fromJSON()` throws "multiple versions of prosemirror-model"). Also causes spurious `bun run knip` reports (missing `docs/.source/` postinstall artifacts). **Always run `bun install` in the worktree before `bun run check` or `git push`.** Full analysis: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
+**Worktree gotcha — always `bun install` in the worktree before `bun run check` or `git push`.** Nested worktrees inherit `node_modules` via Bun's upward-walk, causing PM-model dedup failures + spurious knip reports. Background: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
 
 ## STOP rules
 

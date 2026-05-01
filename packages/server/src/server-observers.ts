@@ -30,7 +30,6 @@ import {
   applyFastDiff,
   applyIncrementalDiff,
   BridgeMergeContentLossError,
-  getFrontmatter,
   mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
@@ -39,6 +38,7 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import {
   incrementBridgeMergeCheckpointCreated,
   incrementBridgeMergeContentLoss,
@@ -332,11 +332,18 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   let xmlDirty = false;
   let textDirty = false;
 
+  /**
+   * Read the current FM region directly from Y.Text. After D8 (Y.Map metadata
+   * fully eliminated as an FM source), the YAML region of `Y.Text('source')`
+   * IS the FM source of truth — no recompose needed.
+   */
+  const readCurrentFm = (): string => stripFrontmatter(ytext.toString()).frontmatter;
+
   /** Initialize Observer A baseline from current XmlFragment state. */
   try {
     const initialJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const initialBody = mdManager.serialize(initialJson);
-    const initialFrontmatter = getFrontmatter(doc);
+    const initialFrontmatter = readCurrentFm();
     lastSyncedXmlMd = prependFrontmatter(initialFrontmatter, initialBody);
   } catch (err) {
     incrementServerObserverError('a');
@@ -355,7 +362,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     try {
       const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
-      const frontmatter = getFrontmatter(doc);
+      const frontmatter = readCurrentFm();
       const md = prependFrontmatter(frontmatter, body);
 
       if (lastSyncedXmlMd === md) return;
@@ -445,7 +452,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
+        const frontmatter = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       } catch (err) {
         incrementServerObserverError('a');
@@ -469,7 +476,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     try {
       const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
       const body = mdManager.serialize(json);
-      const frontmatter = getFrontmatter(doc);
+      const frontmatter = readCurrentFm();
       const md = prependFrontmatter(frontmatter, body);
       doc.transact(() => {
         ytext.insert(0, md);
@@ -491,13 +498,14 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   /**
    * Observer B sync work. Parses Y.Text markdown and applies to XmlFragment
-   * via updateYFragment. Handles frontmatter sync: strips frontmatter from
-   * Y.Text, caches in Y.Map('metadata'), parses body only.
+   * via updateYFragment. Frontmatter lives in Y.Text directly (D8) — the
+   * observer only needs to strip the FM region before parsing the body.
    *
    * Under the settlement dispatcher, this always runs AFTER runObserverASync
    * within the same drain (when both flags are set), so any fresh XmlFragment
    * state from Observer A's write is already visible to this pass.
    */
+  let priorFmForTelemetry = readCurrentFm();
   const runObserverBSync = (): void => {
     try {
       const md = ytext.toString();
@@ -508,20 +516,15 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // Uses the maintained `lastSyncedXmlMd` baseline instead of a fresh
       // serialize(XmlFragment) call — the baseline is refreshed on every
       // Observer A path and on every paired-write origin's synchronous
-      // short-circuit (lines 433-451), so it always reflects the current
-      // canonical XmlFragment form. This avoids an O(doc-size) serialize
-      // on every Observer B fire, which during bursty Y.Text writes
-      // (chunked-paste of 1 MB in 20 × 50 KB transactions) aggregated to
-      // hundreds of ms of wasted work on content the observer wouldn't
-      // touch anyway.
+      // short-circuit, so it always reflects the current canonical XmlFragment
+      // form.
       if (normalizeBridge(lastSyncedXmlMd) === normalizeBridge(md)) {
-        // Tree and text are already in sync — just update frontmatter if changed.
-        const metaMap = doc.getMap('metadata');
-        const currentFm = metaMap.get('frontmatter');
-        if ((currentFm ?? '') !== frontmatter) {
-          doc.transact(() => {
-            metaMap.set('frontmatter', frontmatter);
-          }, OBSERVER_SYNC_ORIGIN);
+        // Tree and text are already in sync. FM region is already where it
+        // should be (Y.Text is the source of truth). Just emit telemetry if
+        // the FM changed.
+        if (priorFmForTelemetry !== frontmatter) {
+          recordFrontmatterEditSurface('source-mode');
+          priorFmForTelemetry = frontmatter;
         }
         return;
       }
@@ -545,9 +548,12 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);
-        const metaMap = doc.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
       }, OBSERVER_SYNC_ORIGIN);
+
+      if (priorFmForTelemetry !== frontmatter) {
+        recordFrontmatterEditSurface('source-mode');
+        priorFmForTelemetry = frontmatter;
+      }
 
       incrementServerObserverFire('b');
 
@@ -607,7 +613,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const postJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const postBody = mdManager.serialize(postJson);
-        const fm = getFrontmatter(doc);
+        const fm = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(fm, postBody);
       } catch (innerErr) {
         console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
@@ -634,7 +640,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       try {
         const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
         const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
+        const frontmatter = readCurrentFm();
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       } catch (err) {
         incrementServerObserverError('b');

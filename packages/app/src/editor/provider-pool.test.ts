@@ -1016,7 +1016,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      await pool.awaitMismatchSettled();
 
       const replaced = pool.getActive();
       if (!replaced) throw new Error('expected replaced entry');
@@ -1088,7 +1088,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
+    await pool.awaitMismatchSettled();
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later

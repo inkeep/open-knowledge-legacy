@@ -19,8 +19,19 @@ Architectural governance:
 | `assertContentPreservation(baseline, userText, agentText, result)` | Post-condition: every maximal unique non-whitespace line from `(userText \ baseline)` and `(agentText \ baseline)` appears in `result`, and each side's lines retain their relative order. O(n log n) per side plus greedy order walk; sub-millisecond on ~10 KB markdown in practice. |
 | `BridgeMergeContentLossError` | Thrown error carrying `{ baseline, userText, agentText, result, lostSubstrings, which: 'substring' \| 'order', side: 'user' \| 'agent' }`. Call `err.toLog()` for the `BridgeMergeContentLossLogPayload` shape consumed by the `bridge-merge-content-loss` structured log. |
 | `diffLinesFast(a, b)` | Line-level diff helper used by `applyIncrementalDiff`. |
-| `getFrontmatter(doc)` / frontmatter helpers | Read the frontmatter cache from `Y.Map('metadata')` so bridge writes serialize/deserialize against the same canonical prefix on both sides. |
+| `bindFrontmatterDoc(provider)` | Browser-side binding analogous to `bindConfigDoc`. Returns `{ current, patch, rename, reorder, subscribe, dispose }`. Reads + writes the YAML region of `Y.Text('source')` directly under `FORM_WRITE_ORIGIN`. Validates patches against the shared schema BEFORE any Y.Text mutation. |
+| `applyPatchToFm(fenced, patch)` / `applyRenameToFm(fenced, oldKey, newKey)` / `applyReorderToFm(fenced, orderedKeys)` | Pure parse-edit-stringify primitives over a fenced FM region. Return `{ ok, nextFenced }` or a typed `FmEditError`. |
+| `parseFmRegion(yaml)` / `parseFencedFmRegion(fenced)` / `readFmMap(ytextSnapshot)` / `readFmRegionWithError(ytextSnapshot)` / `readFmKeys(ytextSnapshot)` / `detectFmRegion(ytextSnapshot)` | Read helpers for the YAML region of a Y.Text snapshot. `readFmRegionWithError` returns last-valid map + parse error envelope so the panel can render last-valid + a banner per FR9. |
+| `MAX_FM_REGION_BYTES` | 64 KB cap enforced at the binding's L1 commit gate (D33). |
 | `normalizeBridge(text)` | Strip bridge-internal whitespace variance (trailing newline, etc.) when comparing raw Y.Text bytes to serialized XmlFragment markdown. The bridge invariant is stated against `normalizeBridge`, not raw equality. |
+
+## Frontmatter storage shape
+
+The YAML region of `Y.Text('source')` IS the frontmatter source of truth (D8). Every write surface — `bindFrontmatterDoc` (browser form), Observer B (source-mode), `applyExternalChange` (file watcher), agent-session helpers — touches Y.Text directly under a paired-write origin. There is no `Y.Map('metadata')` mirror; the per-key map and L3 validation hook were removed in the realtime-frontmatter-entries spec.
+
+Concurrent edits merge through Y.Text's character-level CRDT: edits to disjoint byte ranges (different keys) interleave cleanly; overlapping byte-range edits collapse to last-writer-wins on the overlap (acknowledged trade-off vs. the predecessor's per-key field-level merge — see NG6 in the spec).
+
+The companion module `packages/core/src/frontmatter/` exports the boundary schemas (`FrontmatterValueSchema`, `FrontmatterPatchSchema`, `FRONTMATTER_TYPES`) and the YAML codec (`parseFrontmatterYaml` + `serializeFrontmatterMap` over `yaml@2.x`'s `parseDocument` so comments survive round-trip). The binding parses the FM region with `parseDocument(yaml, { uniqueKeys: false })` so duplicate-name documents are representable (D4 LOCKED).
 
 ## Post-condition policy
 

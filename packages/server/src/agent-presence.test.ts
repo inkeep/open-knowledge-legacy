@@ -369,6 +369,42 @@ describe('AgentPresenceBroadcaster', () => {
     expect(map[agentId]).toBeUndefined();
   });
 
+  test('principal-prefixed agentId is filtered at the broadcaster boundary (form-write writes never surface as agent presence)', () => {
+    // Form-write handlers attribute writes to `principal-<UUID>` (precedent
+    // #25 writer-ID taxonomy) — the local human editing their own properties
+    // is the principal, not an agent. The structural test above pins the
+    // try/finally setPresence/touchMode shape, so write handlers can't omit
+    // the calls at the source level. The broadcaster therefore filters
+    // principal-prefixed ids internally so the awareness fanout stays free
+    // of phantom-agent entries that would render as the user's own avatar
+    // (presence badge in the editor chrome) or animate the body text in
+    // agent colors via the agent-flash plugin.
+    broadcaster.setPresence(
+      'principal-deadbeef',
+      entry({ displayName: 'Local User', currentDoc: 'a.md' }),
+    );
+    expect(broadcaster.getPresenceMap()).toEqual({});
+
+    broadcaster.touchMode('principal-deadbeef', 'idle');
+    expect(broadcaster.getPresenceMap()).toEqual({});
+
+    broadcaster.bumpPresenceTs('principal-deadbeef');
+    expect(broadcaster.getPresenceMap()).toEqual({});
+
+    // clearPresence is also gated — there's nothing to clear, but exercising
+    // the path documents that principal ids never reach the awareness
+    // mutation layer.
+    broadcaster.clearPresence('principal-deadbeef');
+    expect(broadcaster.getPresenceMap()).toEqual({});
+
+    // An adjacent real agent's entry must remain unaffected — the filter is
+    // per-id, not a global short-circuit.
+    broadcaster.setPresence('agent-real', entry({ currentDoc: 'b.md' }));
+    expect(Object.keys(broadcaster.getPresenceMap())).toEqual(['agent-real']);
+    broadcaster.setPresence('principal-deadbeef', entry({ currentDoc: 'should-not-appear.md' }));
+    expect(Object.keys(broadcaster.getPresenceMap())).toEqual(['agent-real']);
+  });
+
   test('structural: every agent write handler pairs setPresence("writing") + touchMode("idle")', () => {
     // Source-level regression guard. Runtime equivalence is infeasible
     // because `mock.module` leaks across test files per
@@ -377,13 +413,19 @@ describe('AgentPresenceBroadcaster', () => {
     // above prove the pattern IS race-safe.
     //
     // The expected-match count is DISCOVERED from the source — counting
-    // `applyAgentMarkdownWrite(` + `applyAgentUndo(` call sites — rather
-    // than hardcoded. That's the load-bearing signal of an "agent write
-    // handler": every handler that dispatches an agent-origin CRDT mutation
-    // must wrap it in the same try/finally + setPresence('writing') shape.
-    // `extractAgentIdentity` call sites are too broad — post-D42 identity
-    // threading, it's also called by admin handlers (rollback, create-page,
-    // rename, save-version) that don't produce a live presence badge.
+    // `applyAgentMarkdownWrite(` + `applyAgentUndo(` call sites. That's
+    // the load-bearing signal of an "agent write handler": every handler
+    // that dispatches an agent-origin CRDT mutation must wrap it in the
+    // same try/finally + setPresence('writing') shape. `extractAgentIdentity`
+    // call sites are too broad — post-D42 identity threading, it's also
+    // called by admin handlers (rollback, create-page, rename, save-version)
+    // that don't produce a live presence badge.
+    //
+    // Frontmatter form writes (browser PropertyPanel) bypass HTTP entirely
+    // via `bindFrontmatterDoc.patch()` — they reach `Y.Map('metadata')`
+    // through the WebSocket connection's origin, not an HTTP handler. The
+    // legacy `handleFrontmatterPatch` HTTP handler is gone; this test no
+    // longer needs its per-key-write-loop discovery branch.
     //
     // If you are reading this because this test just failed:
     //   - If a NEW handler was added that calls applyAgentMarkdownWrite
@@ -398,9 +440,8 @@ describe('AgentPresenceBroadcaster', () => {
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
     const src = readFileSync(resolve(dir, 'api-extension.ts'), 'utf-8');
 
-    // Discover agent-write handlers via `applyAgentMarkdownWrite(` +
-    // `applyAgentUndo(` call sites (the import lines start with
-    // `  applyAgent…,` with no `(`, so they're naturally excluded).
+    // Discover agent-write handlers via `applyAgentMarkdownWrite(` /
+    // `applyAgentUndo(` call sites.
     const handlerCallSites = src.match(/apply(?:AgentMarkdownWrite|AgentUndo)\(/g) ?? [];
     const expectedCount = handlerCallSites.length;
     expect(expectedCount).toBeGreaterThanOrEqual(4); // 3 write + 1 undo

@@ -160,11 +160,15 @@ No notes yet.
 
 TBD`;
 
+// Find strings deliberately avoid yaml-shape `key: value` patterns —
+// agent-patch rejects FM-targeting finds via a string-shape heuristic
+// that flags `^\s*[\w-]+:`. Matching on the value half only keeps the
+// simulator exercising body splices.
 const PATCH_SEQUENCE: Array<{ find: string; replace: string }> = [
-  { find: 'Status: pending', replace: 'Status: in progress' },
+  { find: 'pending', replace: 'in progress' },
   { find: 'No notes yet.', replace: 'Notes added by agent.' },
   { find: 'TBD', replace: 'Review patch behavior' },
-  { find: 'Status: in progress', replace: 'Status: complete' },
+  { find: 'in progress', replace: 'complete' },
 ];
 
 async function runPatchMode() {

@@ -27,6 +27,30 @@ function countLeadingIndent(text: string): number {
   return indent;
 }
 
+/**
+ * Resolve `[fmStartLine, fmEndLine]` (1-indexed, inclusive) when the document
+ * begins with a YAML frontmatter fence (`---\n…\n---`). Returns `null` when
+ * there is no FM region.
+ *
+ * Decorations inside the FM region are skipped — markdown-list and
+ * markdown-table parsing fires on YAML lines like `  - characters` and
+ * `| col |`, but those aren't markdown constructs. The list-item decoration's
+ * negative `text-indent` (`.cm-list-item` in globals.css) clips the leading
+ * YAML indent into negative-x and makes `  - foo` render flush-left.
+ */
+function frontmatterRange(state: EditorState): { from: number; to: number } | null {
+  if (state.doc.lines < 2) return null;
+  const firstLine = state.doc.line(1);
+  if (firstLine.text !== '---') return null;
+  for (let i = 2; i <= state.doc.lines; i++) {
+    const line = state.doc.line(i);
+    if (line.text === '---') {
+      return { from: firstLine.from, to: line.to };
+    }
+  }
+  return null;
+}
+
 /** Pure state-based decoration builder. Exported for unit tests — the ViewPlugin
  * wrapper passes `view.visibleRanges` (viewport-scoped); tests can pass the
  * whole-doc range to exercise every construct. No `view` dependency → works
@@ -37,12 +61,22 @@ export function buildDecorationsForRanges(
 ): DecorationSet {
   const decorations: Range<Decoration>[] = [];
   const tree = syntaxTree(state);
+  const fmRange = frontmatterRange(state);
+  const insideFrontmatter = (pos: number): boolean =>
+    fmRange !== null && pos >= fmRange.from && pos <= fmRange.to;
 
   for (const { from, to } of ranges) {
     tree.iterate({
       from,
       to,
       enter(node) {
+        // Skip every decoration class for nodes that fall inside the YAML
+        // frontmatter region. The lezer-markdown parser still tokenizes
+        // `  - foo` as a ListItem, but the visual indent + hanging-indent
+        // semantics of `.cm-list-item` (and the list/table/code styling
+        // siblings) don't apply to YAML — applying them clips leading
+        // whitespace into negative-x and makes the line render flush-left.
+        if (insideFrontmatter(node.from)) return;
         // Strikethrough — apply .cm-del to content between ~~ delimiters
         if (node.name === 'Strikethrough') {
           let contentFrom = node.from;

@@ -21,7 +21,13 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
-import { MarkdownManager, normalizeBridge, sharedExtensions } from '@inkeep/open-knowledge-core';
+import {
+  MarkdownManager,
+  normalizeBridge,
+  readFmMap,
+  sharedExtensions,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
@@ -230,7 +236,7 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     cleanup();
   });
 
-  test('frontmatter: Observer B caches frontmatter in Y.Map metadata', () => {
+  test('frontmatter: Observer B leaves the YAML region of Y.Text intact (Y.Text IS the FM source — D8)', () => {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
@@ -239,25 +245,28 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
       ytext.insert(0, '---\ntitle: My Page\n---\n\n# Hello\n\nWorld\n');
     });
 
-    const metaMap = doc.getMap('metadata');
-    expect(metaMap.get('frontmatter')).toBe('---\ntitle: My Page\n---\n');
+    // FM region in Y.Text round-trips verbatim; the parsed map matches what
+    // was written.
+    expect(stripFrontmatter(ytext.toString()).frontmatter).toBe('---\ntitle: My Page\n---\n');
+    expect(readFmMap(ytext.toString())).toEqual({ title: 'My Page' });
 
     cleanup();
   });
 
-  test('frontmatter: Observer A prepends frontmatter from Y.Map on serialize', () => {
+  test('frontmatter: post-load Y.Text carries FM + body verbatim (D8 — Y.Text IS the FM source)', () => {
     const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
-    // Pre-set frontmatter in metadata map
+    // Production load flow (persistence.onLoadDocument): both XmlFragment
+    // (body) and Y.Text (full file: FM + body) populate during the load
+    // transaction. Mirror that here.
+    populateFragment(doc, xmlFragment, '# Hello\n\nContent\n');
     doc.transact(() => {
-      doc.getMap('metadata').set('frontmatter', '---\ntitle: Test\n---\n');
+      ytext.insert(0, '---\ntitle: Test\n---\n# Hello\n\nContent\n');
     });
 
-    // Populate XmlFragment with body content
-    populateFragment(doc, xmlFragment, '# Hello\n\nContent\n');
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Y.Text should have frontmatter prepended (initial sync populated it).
+    // Y.Text carries the FM region as the source of truth.
     expect(ytext.toString()).toContain('---\ntitle: Test\n---\n');
     expect(ytext.toString()).toContain('Hello');
 

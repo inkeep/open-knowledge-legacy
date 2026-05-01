@@ -58,6 +58,24 @@ export function toBroadcasterKey(rawAgentId: string): string {
 }
 
 /**
+ * True iff the broadcaster-map key represents an agent whose state should
+ * surface in the agent-presence / agent-focus UI.
+ *
+ * Form-write handlers attribute writes to `principal-<UUID>` (precedent #25
+ * writer-ID taxonomy) — the local human editing their own properties is the
+ * principal, not an agent. Routing those writes through the same broadcaster
+ * call sites as MCP writes (the structural agent-presence test pins the
+ * try/finally setPresence/touchMode shape, so handlers can't omit the calls)
+ * would surface the user as their own agent: avatar in the editor chrome,
+ * red agent-flash on the body text. Filter principal-prefixed ids at the
+ * broadcaster boundary so handler shape stays valid AND non-agent writers
+ * never reach the awareness fanout.
+ */
+export function isPresenceEligibleAgentId(agentId: string): boolean {
+  return !agentId.startsWith('principal-');
+}
+
+/**
  * Derive the bounded-cardinality `agent_type` from a `clientInfo.name`
  * string. Mirrors the registry used by `iconFromClientName` on the client
  * side. Unknown clients map to `'bot'`. Used by every actor-identity

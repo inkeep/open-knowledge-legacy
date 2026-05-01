@@ -23,6 +23,9 @@ import { type AddressInfo, createServer as createNetServer, type Socket } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+
+export { wait };
+
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import {
@@ -31,6 +34,7 @@ import {
   prependFrontmatter,
   ServerInfoResponseSchema,
   sharedExtensions,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import {
   createServer,
@@ -869,7 +873,9 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
   const fragment = document.getXmlFragment('default');
   const metaMap = document.getMap('metadata');
   const activityMap = document.getMap('agent-flash');
-  const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+  // FM lives in the YAML region of `Y.Text('source')` (D8) — extract via
+  // stripFrontmatter rather than reading a metaMap slot.
+  const frontmatter = stripFrontmatter(ytext.toString()).frontmatter;
   const md = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
   const fullMd = prependFrontmatter(frontmatter, md);
   const connectionCount = document.getConnectionsCount?.() ?? 0;
@@ -969,7 +975,9 @@ export function attachBridgeInvariantWatcher(
     if (!shouldEnforce) return;
 
     const ytextStr = ytext.toString();
-    const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
+    // FM lives in the YAML region of `Y.Text('source')` (D8) — extract via
+    // stripFrontmatter rather than reading a metaMap slot.
+    const fm = stripFrontmatter(ytextStr).frontmatter;
     const fragBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON(),
     );
