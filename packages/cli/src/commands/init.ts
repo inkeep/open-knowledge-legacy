@@ -1096,8 +1096,6 @@ export function initCommand(): Command {
         result.preview = previewContent({
           projectDir: cwd,
           contentDir,
-          include: ['**/*.md', '**/*.mdx'],
-          exclude: [],
         });
       } catch (e) {
         result.previewWarning = e instanceof Error ? e.message : String(e);

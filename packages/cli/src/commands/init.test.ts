@@ -1051,15 +1051,12 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
       });
       result.preview = preview;
 
       const output = formatInitResult(result, testDir);
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
-      expect(output).toContain('Scope: include=');
       expect(output).toContain('Re-check anytime: open-knowledge preview');
     });
 
@@ -1079,8 +1076,6 @@ describe('runInit', () => {
         totalCount: 0,
         sample: [],
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
         warnings: [],
       };
 
@@ -1125,8 +1120,6 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir,
-        include: ['**/*.md', '**/*.mdx'],
-        exclude: [],
       });
       result.preview = preview;
 

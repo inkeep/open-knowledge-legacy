@@ -64,7 +64,7 @@ describe('resolveLeafSchema against ConfigSchema', () => {
   });
 
   test('descends to an array leaf', () => {
-    expect(getLeafTypeTag(requireLeaf(['content', 'include']))).toBe('array');
+    expect(getLeafTypeTag(requireLeaf(['folders']))).toBe('array');
   });
 
   test('returns undefined for non-existent path', () => {
@@ -80,7 +80,7 @@ describe('getFieldDefault against ConfigSchema', () => {
   });
 
   test('returns array defaults', () => {
-    expect(getFieldDefault(requireLeaf(['content', 'exclude']))).toEqual([]);
+    expect(getFieldDefault(requireLeaf(['folders']))).toEqual([]);
   });
 
   test('returns undefined for fields without .default()', () => {

@@ -50,8 +50,6 @@ export interface BootServerOptions
     | 'gitEnabled'
     | 'commitDebounceMs'
     | 'wipRef'
-    | 'includePatterns'
-    | 'excludePatterns'
     | 'destroyTimeoutMs'
     | 'localOpCliArgs'
     | 'onAgentWrite'
@@ -244,8 +242,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     wipRef: opts.wipRef,
     enableTestRoutes: opts.enableTestRoutes,
     shadowRepo: opts.shadowRepo,
-    includePatterns: opts.includePatterns,
-    excludePatterns: opts.excludePatterns,
     destroyTimeoutMs: opts.destroyTimeoutMs,
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,

@@ -46,23 +46,14 @@ const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
 interface ContentConfig {
   dir: string;
-  include: string[];
-  exclude: string[];
 }
 
 // Exported for unit testing. Matches `api-config-handler.ts:computeDevApiConfigResponse`
 // extraction pattern — keep the pure logic reachable from a test harness so the
 // defaults-fallback path gets regression coverage without spinning up Vite.
 export function resolveContentConfig(projectRoot: string): ContentConfig {
-  // Defaults must stay in sync with `packages/cli/src/config/schema.ts` —
-  // admitting both `.md` and `.mdx` is the path contract the rest of the
-  // stack (file watcher, content filter, doc-extensions) already expects.
-  const defaults: ContentConfig = {
-    dir: projectRoot,
-    include: ['**/*.md', '**/*.mdx'],
-    exclude: [],
-  };
-  const configPath = resolve(projectRoot, '.open-knowledge/config.yml');
+  const defaults: ContentConfig = { dir: projectRoot };
+  const configPath = resolve(projectRoot, '.ok/config.yml');
   if (existsSync(configPath)) {
     try {
       const raw = readFileSync(configPath, 'utf-8');
@@ -70,18 +61,6 @@ export function resolveContentConfig(projectRoot: string): ContentConfig {
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
         defaults.dir = resolve(projectRoot, content.dir);
-      }
-      if (Array.isArray(content?.include)) {
-        const valid = (content.include as unknown[]).filter(
-          (p): p is string => typeof p === 'string',
-        );
-        if (valid.length > 0) defaults.include = valid;
-      }
-      if (Array.isArray(content?.exclude)) {
-        const valid = (content.exclude as unknown[]).filter(
-          (p): p is string => typeof p === 'string',
-        );
-        if (valid.length > 0) defaults.exclude = valid;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
@@ -156,8 +135,6 @@ export function hocuspocusPlugin(): Plugin {
         projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
         contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
         gitEnabled: !isTestIsolated || gitEnabledForTest,
-        includePatterns: contentConfig.include,
-        excludePatterns: contentConfig.exclude,
         enableTestRoutes: true,
         quiet: true,
       });

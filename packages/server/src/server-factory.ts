@@ -116,10 +116,6 @@ export interface ServerOptions {
   shadowRepo?: ShadowHandle;
   /** Content root relative to project dir. */
   contentRoot?: string;
-  /** Glob patterns for files to include (default: ['**\/*.md']). */
-  includePatterns?: string[];
-  /** Glob patterns for files to explicitly exclude. */
-  excludePatterns?: string[];
   /**
    * Maximum time (ms) `destroy()` waits for all pending stores to drain
    * before giving up and continuing with the rest of the shutdown sequence.
@@ -252,8 +248,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
-    includePatterns = ['**/*.md', '**/*.mdx'],
-    excludePatterns = [],
     destroyTimeoutMs = 10_000,
     localOpCliArgs,
     skipStateManifestCheck = false,
@@ -353,8 +347,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentFilter = createContentFilter({
       projectDir,
       contentDir,
-      includePatterns,
-      excludePatterns,
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 

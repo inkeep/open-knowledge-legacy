@@ -171,8 +171,6 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
         contentFilter: createContentFilter({
           projectDir: opts.cwd,
           contentDir,
-          includePatterns: ['**/*.md', '**/*.mdx'],
-          excludePatterns: [],
         }),
         contentSirv: sirv(contentDir, { dotfiles: false, dev: true, extensions: [] }),
         inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,

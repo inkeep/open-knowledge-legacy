@@ -35,7 +35,7 @@ import { withSpan, withSpanSync } from './telemetry.ts';
  * so traces don't explode attribute cardinality with full user-home paths.
  *
  * Example: `/Users/alice/Documents/project/.git/ok/HEAD` →
- *          `.../open-knowledge/HEAD`
+ *          `.../ok/HEAD`
  */
 export function normalizeFsPath(p: string): string {
   const segments = p.split(sep).filter(Boolean);

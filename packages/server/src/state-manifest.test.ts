@@ -15,7 +15,7 @@ import {
 function makeTmp(): { lockDir: string; shadowRepoDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'state-manifest-test-'));
   const lockDir = join(root, '.ok');
-  const shadowRepoDir = join(root, '.git', 'open-knowledge');
+  const shadowRepoDir = join(root, '.git', 'ok');
   return {
     lockDir,
     shadowRepoDir,
@@ -65,6 +65,30 @@ describe('detectProjectShape', () => {
       expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
     } finally {
       cleanup();
+    }
+  });
+
+  test('FR3 contract — only the .git/ok shadow path triggers adopt (not .git/open-knowledge legacy)', () => {
+    // After the 2026-04-30 rename, `detectProjectShape` MUST be called with the
+    // new `.git/ok` shadow path (per `assertCompatibleStateManifest` callers).
+    // Spec FR3 narrows the signal: a project with neither `.git/ok` nor a
+    // manifest is fresh — even if it has the legacy `.git/open-knowledge/`
+    // shadow left over from a pre-rename worktree.
+    const root = mkdtempSync(join(tmpdir(), 'state-manifest-fr3-'));
+    try {
+      const lockDir = join(root, '.ok');
+      const newShadow = join(root, '.git', 'ok');
+      const legacyShadow = join(root, '.git', 'open-knowledge');
+
+      // Pre-rename leftover only — no `.git/ok`. Should be fresh.
+      mkdirSync(legacyShadow, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir: newShadow })).toBe('fresh');
+
+      // Once `.git/ok` exists, adopt fires.
+      mkdirSync(newShadow, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir: newShadow })).toBe('adopt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

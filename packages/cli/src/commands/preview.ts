@@ -26,8 +26,6 @@ export function previewCommand(getConfig: () => Config): Command {
         result = previewContent({
           projectDir: cwd,
           contentDir,
-          include: ['**/*.md', '**/*.mdx'],
-          exclude: [],
         });
       } catch (e) {
         console.error(`Content preview failed: ${e instanceof Error ? e.message : String(e)}`);
