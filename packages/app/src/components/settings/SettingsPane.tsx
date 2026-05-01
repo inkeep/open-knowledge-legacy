@@ -85,23 +85,34 @@ interface SettingsPaneProps {
   onScopeChange: (scope: SettingsScope) => void;
 }
 
-interface SectionDef {
-  id: string;
-  title: string;
-  description: string;
-  fields: FieldDef[];
-  /**
-   * Specialized renderer dispatch. When set, the SettingsForm render path
-   * delegates wholly to a custom component (e.g. `<FoldersSection>` for
-   * `'folders'`) and the rest of the per-section pipeline — `fields[]`
-   * iteration, `SettingsSection` heading wrapper, scope filtering — does
-   * NOT run. The custom component owns its own `<section>`, heading, and
-   * scope handling. `fields[]` and `title` / `description` on the entry
-   * are retained for shape uniformity but are unused by the dispatcher
-   * for custom sections.
-   */
-  custom?: 'folders';
-}
+/**
+ * Discriminated union: a section is either the scalar variant (`fields[]`
+ * iterated by SettingsForm + SettingsSection) OR the custom variant
+ * (delegates wholly to a custom component like `<FoldersSection>`). The
+ * `custom?: never` branch makes `{ custom: 'folders', fields: [{...}] }`
+ * unrepresentable — a stray `fields[]` entry on a custom section would
+ * silently never render under the dispatcher's early-return.
+ *
+ * Custom sections still carry `title` / `description` for shape
+ * uniformity (the SECTIONS array is iterated as a single list), but the
+ * custom component owns its own `<section>` + heading + scope handling
+ * and the dispatcher never reads those fields.
+ */
+type SectionDef =
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: FieldDef[];
+      custom?: never;
+    }
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: [];
+      custom: 'folders';
+    };
 
 interface FieldDef {
   path: string[];

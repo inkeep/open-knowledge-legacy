@@ -107,8 +107,15 @@ describe('SettingsPane folders section integration', () => {
     expect(SRC).toContain('FoldersSection');
   });
 
-  test("SectionDef carries the optional `custom?: 'folders'` discriminator", () => {
-    expect(SRC).toMatch(/custom\?:\s*'folders'/);
+  test('SectionDef is a discriminated union (scalar vs custom-folders) so illegal compositions are unrepresentable', () => {
+    // The scalar variant carries `custom?: never`; the custom-folders
+    // variant carries `custom: 'folders'` with `fields: []`. A refactor
+    // that collapses this back to a single interface would re-permit
+    // `{ custom: 'folders', fields: [{...}] }` — a composition where the
+    // field would silently never render under the dispatcher early-return.
+    expect(SRC).toMatch(/custom\?:\s*never/);
+    expect(SRC).toMatch(/custom:\s*'folders'/);
+    expect(SRC).toMatch(/fields:\s*\[\]/);
   });
 
   test("SECTIONS includes a folders entry with custom: 'folders' and empty fields[]", () => {
