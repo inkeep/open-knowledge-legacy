@@ -66,6 +66,7 @@ Once the shim reaches `/mcp`, the running `ok start` process registers the full 
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
 | `write_document`                              | Connected | Write content to a document through the CRDT (full document, including frontmatter)          |
 | `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
+| `delete_document`                             | Connected | Delete a document through the managed delete flow — closes agent sessions, unloads from Hocuspocus, removes from disk |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rename_folder`                               | Connected | Rename a folder and rewrite inbound links across every affected doc in one call              |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
@@ -74,7 +75,7 @@ Once the shim reaches `/mcp`, the running `ok start` process registers the full 
 
 Tools marked `Always` operate directly on the YAML files via the imported Zod schema and so work whether or not `ok start` is running. When a server IS running, the file watcher detects the write and propagates it into Y.Text, refreshing any open Settings panes within ~500ms.
 
-All 22 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block). `rename_folder` emits one `previewUrls` map keyed by the new docName for every affected doc.
+All 23 docName-producing tools emit a preview URL in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block). `rename_folder` emits one `previewUrls` map keyed by the new docName for every affected doc. `delete_document` emits `previousPreviewUrl` instead of `previewUrl` since the doc is gone — agents use it to close any stale preview tab.
 
 <Callout type="info">
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.

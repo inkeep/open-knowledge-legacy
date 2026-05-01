@@ -291,6 +291,7 @@ This repo's `.md` / `.mdx` files (under `content.dir`, not excluded by `.gitigno
 | Search a phrase across markdown | `Grep: "pattern" *.md`    | `search({ query: "pattern" })`                 |
 | Read an individual spec         | `Read: specs/foo/SPEC.md` | `read_document({ path: "specs/foo/SPEC.md" })` |
 | Edit / create a markdown doc    | `Edit` / `Write` / `sed`  | `edit_document` / `write_document`             |
+| Delete a markdown doc | `Bash: rm` | `delete_document` |
 
 Subagents (`Explore`, `general-purpose`) use native tools internally and bypass MCP — keep markdown exploration on the main thread; subagents remain appropriate for `.ts` / `.py` / config exploration.
 
