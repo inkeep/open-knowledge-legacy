@@ -112,8 +112,12 @@ function TagPillInput({
               addTag(draft);
             }
           } else if (e.key === ',') {
+            // Always swallow comma — it's the tag delimiter and must never
+            // appear as literal content. Empty-draft comma is a no-op
+            // (prevents pressing comma alone from inserting `,` and later
+            // being committed as a single-character `,` tag on blur).
+            e.preventDefault();
             if (draft.trim()) {
-              e.preventDefault();
               addTag(draft);
             }
           } else if (e.key === 'Tab') {

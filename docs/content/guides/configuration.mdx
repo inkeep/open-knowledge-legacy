@@ -153,7 +153,7 @@ Settings is unavailable in the Electron Navigator window — it has no project c
 
 **Tags** uses a pill input: type a tag and press **Enter**, **comma**, or **Tab** to commit it as a Badge pill. **Backspace** on an empty input removes the last pill. Duplicates are silently deduped, and any uncommitted draft is auto-committed when the field loses focus. Click the × on any pill to remove it individually.
 
-Like scalar fields, per-row edits commit on blur or Enter — but the wire write is always the **whole `folders[]` array**, mirroring the all-or-nothing transactional semantics of the `set_folder_rule` MCP tool and `applyFolderRulesUpsert` core helper. Validation runs against the merged config; if any rule fails (e.g. an empty `match` slips through, or a sibling row is invalid for an unrelated reason), no rules land on disk and the offending **Match** field flashes.
+Like scalar fields, per-row edits commit on blur or Enter — but the wire write is always the **whole `folders[]` array**, mirroring the all-or-nothing transactional semantics of the `set_folder_rule` MCP tool and `applyFolderRulesUpsert` core helper. Validation runs against the merged config; if any rule fails (e.g. an empty `match` slips through, or a sibling row is invalid for an unrelated reason), no rules land on disk and the offending **Match** field shows an inline validation error. Rejections from external writers (CLI, MCP, hand-edits to disk) also briefly flash the affected row in addition to showing the inline error.
 
 ## IDE intellisense
 

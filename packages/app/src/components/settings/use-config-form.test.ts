@@ -153,7 +153,11 @@ describe('runCommit — success path', () => {
     expect(resetField).toHaveBeenCalledTimes(1);
     const [name, options] = resetField.mock.calls[0] ?? [];
     expect(name).toBe('mcp.tools.search.maxResults');
-    expect(options).toMatchObject({ defaultValue: 100, keepError: false });
+    // Exact match — `keepDirty` MUST NOT be present. If it slipped in
+    // (e.g. `keepDirty: true`), committed fields would stay dirty forever
+    // and external Y.Text updates under `keepDirtyValues: true` would
+    // skip them — exactly the regression this test is meant to prevent.
+    expect(options).toEqual({ defaultValue: 100, keepError: false });
   });
 
   test('null-as-clear (reset path) round-trips through buildPatch and binding.patch', () => {

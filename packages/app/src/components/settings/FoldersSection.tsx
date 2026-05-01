@@ -20,7 +20,7 @@
  * `ctl` (which has `.ref`) is flagged as ref-access during render.
  */
 
-import type { Config } from '@inkeep/open-knowledge-core';
+import type { Config, FolderRule } from '@inkeep/open-knowledge-core';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import {
   type ControllerRenderProps,
@@ -58,13 +58,16 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
   // `Config` is inferred from `z.looseObject({...})`, which carries an index
   // signature (`[k: string]: unknown`). RHF's `FieldArrayPath<Config>`
   // collapses under that signature and can't narrow to the literal
-  // `'folders'`, so we cast through `never`. The path is still verified at
-  // the field-level by `FieldPath<Config>` casts on `folders.${i}.*`
-  // and by the L1/L3 schema gates downstream.
+  // `'folders'`, so we cast the `name` parameter through `never`. The
+  // return value is then re-typed against a `{folders: FolderRule[]}`
+  // shape so `append()`/`fields[]`/`update()` are checked element-wise
+  // (e.g. `append({wrongField: 1})` becomes a compile error). The
+  // looseObject index signature only erases narrowing on the input side;
+  // we recover element type-safety on the output side.
   const { fields, append, remove, move } = useFieldArray({
     control: form.control,
     name: 'folders' as never,
-  });
+  }) as unknown as ReturnType<typeof useFieldArray<{ folders: FolderRule[] }, 'folders'>>;
 
   const runCommitIfDirty = (): boolean => {
     if (!form.getFieldState(FOLDERS_PATH).isDirty) return true;
