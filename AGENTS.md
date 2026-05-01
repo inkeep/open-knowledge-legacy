@@ -86,7 +86,7 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ## Architectural precedents
 
-37 numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands here; code cites them as `precedent #N` across ~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
+37 numbered rules (with #29 retracted 2026-04-23 — slot preserved to keep citations stable) govern how work lands here; code cites them as `precedent #N` across \~50 sites. **Canonical source: [`PRECEDENTS.md`](./PRECEDENTS.md)** — read the relevant entry before touching a cited site or adding a new pattern that sits alongside one.
 
 ## Packages
 
@@ -124,14 +124,14 @@ Frontmatter lives in the YAML region of `Y.Text('source')` — the property pane
 
 **Write surfaces:**
 
-| Surface                  | → Y.Text                | → XmlFragment           | → Disk               |
-| ------------------------ | ----------------------- | ----------------------- | -------------------- |
-| W1 WYSIWYG (XmlFragment) | Server Observer A       | (direct)                | Persistence debounce |
-| W2 Source (Y.Text)       | (direct)                | Server Observer B       | Persistence debounce |
-| W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite | Persistence debounce |
-| W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange     | (direct)             |
-| W5 Agent Undo            | applyAgentUndo          | applyAgentUndo          | Persistence debounce |
-| W6 Property panel | bindFrontmatterDoc | (Observer B if body shifts) | Persistence debounce |
+| Surface                  | → Y.Text                | → XmlFragment               | → Disk               |
+| ------------------------ | ----------------------- | --------------------------- | -------------------- |
+| W1 WYSIWYG (XmlFragment) | Server Observer A       | (direct)                    | Persistence debounce |
+| W2 Source (Y.Text)       | (direct)                | Server Observer B           | Persistence debounce |
+| W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite     | Persistence debounce |
+| W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange         | (direct)             |
+| W5 Agent Undo            | applyAgentUndo          | applyAgentUndo              | Persistence debounce |
+| W6 Property panel        | bindFrontmatterDoc      | (Observer B if body shifts) | Persistence debounce |
 
 **Full observer design** (server-authoritative Path A/B, settlement dispatch via `afterAllTransactions`, origin-guard truth tables, paired-write markers, `applyAgentMarkdownWrite` reference implementation): [`ARCHITECTURE.md`](./ARCHITECTURE.md) + the four spec directories under `specs/2026-04-1[4-6]-*/`. `packages/server/src/server-observers.ts` is the canonical implementation.
 
@@ -202,7 +202,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
 - **Serve-side asset admission via `createAssetServeMiddleware`.** Shared factory at `packages/server/src/asset-serve-middleware.ts` (consumed by Vite dev plugin + `ok ui`); inline for `INLINE_RENDERABLE_EXTENSIONS`, attachment otherwise. Don't drop the CD dispatch or the SPA-fallback 404 guard.
 - **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates (stale IDB + new clientID → markers twice). Auth-token Zod-validated via `parseHocuspocusAuthToken`. Ref: `provider-pool.ts`.
-- **No OK sidecars in user-content paths.** OK state lives in `<contentDir>/.ok/`; no per-doc sidecars (no `.frontmatter.yml`, `_meta.json`, `_index.md`). Folder defaults live in `config.yml`'s `folders[]`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](specs/2026-04-25-config-edit-paths/SPEC.md).
+- **No per-doc OK sidecars** (`.frontmatter.yml`, `_meta.json`, `_index.md`). Folder-scoped metadata + templates live in opt-in nested `<folder>/.ok/`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-05-01-folder-level-metadata-and-templates/SPEC.md`](specs/2026-05-01-folder-level-metadata-and-templates/SPEC.md).
 - **`ConfigSchema` leaves: `.register(fieldRegistry, ...)` BEFORE `.default()`/`.optional()`/`.nullable()`.** Zod v4 wrappers drop `_zod.parent` — metadata binds to the wrapper, not the leaf. Use the `@inkeep/open-knowledge-core` singleton; coverage test enforces.
 
 ## WARN rules
