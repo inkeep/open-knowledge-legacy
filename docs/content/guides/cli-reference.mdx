@@ -264,9 +264,9 @@ Exit `0` on success with a one-line summary like `✓ Configuration valid (sourc
 
 ### `config migrate`
 
-Idempotent codemod that drops fields removed from the schema during upgrades. Currently removes the 10 fields retired in 0.2: `sync.*` (all 7 keys), `persistence.debounceMs`, `persistence.maxDebounceMs`, and `server.port`. Future codemods extend this command rather than spawning new ones.
+Idempotent codemod that drops fields removed from the schema during upgrades. Currently removes: `sync.*` (all 7 keys), `persistence.debounceMs`, `persistence.maxDebounceMs`, `server.port`, `content.include`, and `content.exclude`. Future codemods extend this command rather than spawning new ones.
 
-Note: `content.include` and `content.exclude` produce a hard error at config-load time directing you to `.okignore` — see [Content filtering](/guides/content-filtering) for the migration recipe.
+For the content keys, `config migrate` strips the YAML entries; you must still recreate any exclusion patterns in `.okignore` manually — see [Content filtering](/guides/content-filtering#migrating-from-contentinclude--contentexclude). If removed keys remain in `config.yml`, OK rejects the file at load time with a source-located error directing you to `.okignore`.
 
 ```bash
 npx @inkeep/open-knowledge config migrate                       # project + user

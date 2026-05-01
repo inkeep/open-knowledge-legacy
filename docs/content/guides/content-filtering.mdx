@@ -120,7 +120,7 @@ drafts/
 *.draft.md
 ```
 
-Then remove the `content.include` and `content.exclude` keys from your `config.yml` by hand. If you forget, OK refuses to start with a source-located `REMOVED_KEY` error pointing at the offending lines, so you can't miss them.
+Then remove the `content.include` and `content.exclude` keys from your `config.yml` — either via `ok config migrate` (which strips them automatically; see [CLI reference](/guides/cli-reference#config-migrate)) or by hand. If any removed keys remain, OK refuses to start with a source-located `REMOVED_KEY` error pointing at the offending lines, so you can't miss them.
 
 `content.include` had only one real job — gating which extensions count as content — and `.md`/`.mdx` extension matching is now hardcoded upstream. If your old `content.include` was the default (`['**/*.md', '**/*.mdx']`), you don't need to add anything to `.okignore` for it.
 
