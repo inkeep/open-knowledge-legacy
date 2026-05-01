@@ -12,7 +12,7 @@
  * `window.okDesktop.config.apiOrigin = 'http://localhost:<utility-port>'`.
  *
  * Without this wrapper, every app fetch to `/api/*` (FileTree documents list,
- * BacklinksPanel, GraphPanel, etc.) hits the renderer host and gets back the
+ * LinksPanel, GraphPanel, etc.) hits the renderer host and gets back the
  * Vite HTML fallback — which parses as null JSON and surfaces as
  * "Server error (HTTP 200)" in the UI. This is the symptom the user saw when
  * the sidebar loaded with no files for dragon-wiki.
