@@ -320,10 +320,7 @@ describe('useConfigForm module shape', () => {
 // convention means we can't render the hook; the guard ensures the
 // structural contract holds. Behavioral coverage of useForm itself
 // belongs to RHF's own tests + Settings-pane Playwright E2E.
-const HOOK_SRC = readFileSync(
-  join(new URL('.', import.meta.url).pathname, 'use-config-form.ts'),
-  'utf8',
-);
+const HOOK_SRC = readFileSync(join(__dirname, 'use-config-form.ts'), 'utf8');
 
 describe('useConfigForm source-level guards', () => {
   const SRC = HOOK_SRC;

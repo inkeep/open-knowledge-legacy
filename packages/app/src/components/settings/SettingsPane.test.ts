@@ -11,8 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'SettingsPane.tsx'), 'utf8');
+const SRC = readFileSync(join(__dirname, 'SettingsPane.tsx'), 'utf8');
 
 describe('SettingsPane module', () => {
   test('exports SettingsPane component', async () => {

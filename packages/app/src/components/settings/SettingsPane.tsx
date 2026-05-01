@@ -390,7 +390,19 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
           form.setFocus(path as FieldPath<Config>);
           setFlashedPath(path);
           if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-          flashTimerRef.current = setTimeout(() => setFlashedPath(null), 600);
+          flashTimerRef.current = setTimeout(() => {
+            setFlashedPath(null);
+            // Clear the inline error alongside the flash. The toast (8s)
+            // remains the persistent feedback channel; if the external
+            // writer corrected the value via Y.Text, `applyExternalUpdate`
+            // already updated the field — we don't want a stale red
+            // FormMessage lingering on a now-valid value. If the user
+            // hasn't corrected it, their next commit will re-reject and
+            // re-fire setError. (Without this, `runCommitIfDirty` would
+            // skip a click-and-blur on the untouched field, leaving the
+            // error stuck.)
+            form.clearErrors(path as FieldPath<Config>);
+          }, 600);
         }
       },
     );
@@ -580,9 +592,10 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
         const indicator = isModified ? (
           <span
             data-modified="true"
-            aria-hidden="true"
             className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
-          />
+          >
+            <span className="sr-only">Modified from default</span>
+          </span>
         ) : null;
 
         return (
@@ -845,7 +858,7 @@ function NumberControlBody({
           commitText();
         }
       }}
-      className="h-8 w-28 text-sm"
+      className="h-8 w-28 text-sm tabular-nums"
     />
   );
 }
