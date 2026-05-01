@@ -7168,14 +7168,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             try {
               // Static routes
               const handler = routes[url];
+              let dispatched = false;
               if (handler) {
+                dispatched = true;
                 await handler(request, response);
               } else if (url.startsWith('/api/rescue/')) {
                 const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
-                if (docName) await handleRescueGet(request, response, docName);
+                if (docName) {
+                  dispatched = true;
+                  await handleRescueGet(request, response, docName);
+                }
               } else if (url.startsWith('/api/history/')) {
                 const sha = decodeURIComponent(url.slice('/api/history/'.length));
-                if (sha) await handleHistoryVersion(request, response, sha);
+                if (sha) {
+                  dispatched = true;
+                  await handleHistoryVersion(request, response, sha);
+                }
+              }
+
+              // Defense-in-depth: unmatched `/api/*` routes (typos, removed
+              // endpoints, empty `/api/rescue/` / `/api/history/` segments)
+              // would otherwise fall through with no response body, leaving
+              // Hocuspocus's `onRequest` machinery to either pass through to
+              // static-file middleware or hang. Emit an explicit RFC 9457 404
+              // so the dispatch surface is fully closed. Dispatch flag is
+              // robust against test-mock `ServerResponse` shapes that don't
+              // simulate `headersSent` (vs checking `response.headersSent`
+              // directly, which would misfire on mocks after a handler
+              // successfully wrote 200).
+              if (!dispatched) {
+                errorResponse(response, 404, 'urn:ok:error:not-found', 'API endpoint not found.', {
+                  handler: 'api-dispatch',
+                  detail: `No handler for ${method} ${url}`,
+                });
               }
 
               const status = response.statusCode;

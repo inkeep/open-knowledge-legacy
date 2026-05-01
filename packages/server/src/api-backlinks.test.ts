@@ -493,9 +493,17 @@ describe('POST /api/test-rescan-backlinks', () => {
           method: 'POST',
         },
       );
-      // Unregistered route → falls through past the onRequest handler → captured
-      // status remains 0 since writeHead was never called on the mock.
-      expect(resp.status).toBe(0);
+      // Unregistered route → dispatch fallback (pass-3 W3-1) emits an
+      // explicit RFC 9457 404 problem+json. Pre-W3-1 the dispatch fell
+      // through silently and status stayed 0; that silent-fallthrough was
+      // the bug W3-1 closes.
+      expect(resp.status).toBe(404);
+      // Test mock preserves header casing (real Node would lowercase via
+      // getHeader); errorResponse emits 'Content-Type'.
+      expect(resp.headers['Content-Type']).toBe('application/problem+json');
+      const body = JSON.parse(resp.body);
+      expect(body.type).toBe('urn:ok:error:not-found');
+      expect(body.title).toBe('API endpoint not found.');
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

@@ -81,6 +81,21 @@ interface ErrorResponseOptions {
 }
 
 /**
+ * Subset of `ErrorResponseOptions` applicable to streaming surfaces. The NDJSON
+ * streaming protocol (`{type:'progress'|'complete'|'error', ...}`) writes events
+ * one per line, so per-event response headers (`extraHeaders`) are meaningless —
+ * the head was already written when the stream was opened. RFC 9457 §3.2
+ * extension members on the `problem` body (`extensions`) are similarly out of
+ * scope: streaming sites today only carry `type/title/status/instance/detail`,
+ * and adding extensions would change the wire shape mid-stream. Narrowing the
+ * type here makes both omissions a compile-time guard rather than a silent drop.
+ */
+type StreamingErrorOptions = Pick<
+  ErrorResponseOptions,
+  'instance' | 'handler' | 'detail' | 'cause'
+>;
+
+/**
  * Emit an RFC 9457 Problem Details error response.
  *
  * @param res - Node HTTP response. If the head has already been written,
@@ -223,7 +238,7 @@ export function streamingProblemEvent(
   status: number,
   type: ProblemType,
   title: string,
-  options: ErrorResponseOptions = {},
+  options: StreamingErrorOptions = {},
 ): StreamingProblemEvent {
   const instance = options.instance ?? randomUUID();
   const problem: ProblemDetails = {
@@ -308,7 +323,25 @@ export function createStreamingErrorWriter(
   options?: { detail?: string; cause?: unknown },
 ) => void {
   return (status, type, title, options = {}) => {
-    if (res.writableEnded) return;
+    if (res.writableEnded) {
+      // Mirror `errorResponse`'s `headersSent` log pattern: a streaming write
+      // suppressed by client disconnect race or a programming error must stay
+      // loud in logs / telemetry instead of silently disappearing. Without
+      // this log, the underlying error that triggered the streaming-error
+      // event is lost entirely.
+      log.error(
+        {
+          event: 'api.streaming.error.suppressed',
+          type,
+          status,
+          handler,
+          detail: options.detail,
+          err: options.cause,
+        },
+        'createStreamingErrorWriter called after writableEnded — suppressed',
+      );
+      return;
+    }
     const event = streamingProblemEvent(status, type, title, { handler, ...options });
     res.write(`${JSON.stringify(event)}\n`);
   };

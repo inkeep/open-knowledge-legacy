@@ -153,7 +153,7 @@ export const ProblemTypeSchema = z.enum([
   'urn:ok:error:clone-timeout',
   'urn:ok:error:server-start-failed',
   // Cluster A: agent-write / -write-md / -patch / -undo.
-  // `reserved-docname` rejects writes to system / config doc names (post-
+  // `reserved-doc-name` rejects writes to system / config doc names (post-
   // identity, attributed). `target-not-found` / `stale-target` /
   // `frontmatter-edit-not-supported` are handleAgentPatch-specific.
   // `no-active-session` is handleAgentUndo-specific.
@@ -165,14 +165,14 @@ export const ProblemTypeSchema = z.enum([
   // Cluster B: pages CRUD (US-007). `doc-not-found` covers rename / rollback
   // / delete / rename-path "doesn't exist" cases; `doc-already-exists` covers
   // create-page collision and rename-into-existing destinations.
-  // `document-not-open` distinguishes rollback's open-in-editor requirement
+  // `doc-not-open` distinguishes rollback's open-in-editor requirement
   // from the absent-on-disk case. `rollback-not-configured` flags the
   // shadow-repo-unavailable startup state separately from internal-error.
   'urn:ok:error:doc-not-found',
   'urn:ok:error:doc-already-exists',
   'urn:ok:error:doc-not-open',
   'urn:ok:error:rollback-not-configured',
-  // Cluster C: document/links read part 1 (US-008). `document-not-available`
+  // Cluster C: document/links read part 1 (US-008). `doc-not-available`
   // distinguishes hocuspocus-document-load failure from `doc-not-found`
   // (former is server-internal, latter is "doesn't exist on disk").
   // `backlink-index-not-configured` flags the (rare) startup state where
@@ -581,7 +581,7 @@ export type EmptyRequest = z.infer<typeof EmptyRequestSchema>;
 /**
  * Request body for `POST /api/create-page`. `path` is the relative
  * content-dir path including the `.md`/`.mdx` suffix; the handler runs the
- * `isSupportedDocFile` + path-traversal + reserved-docname checks
+ * `isSupportedDocFile` + path-traversal + reserved-doc-name checks
  * post-validation. `agentId` etc. are optional — `extractAgentIdentity`
  * carries the default-agent fallback when absent.
  */
@@ -695,10 +695,18 @@ export const RenamePathRequestSchema = z
   .loose() satisfies StandardSchemaV1;
 export type RenamePathRequest = z.infer<typeof RenamePathRequestSchema>;
 
-/** Success body for `POST /api/rename-path`. */
+/**
+ * Success body for `POST /api/rename-path`. Mirrors the full handler emit
+ * shape: `renamed` (the mapping list, present even on no-op renames),
+ * `rewrittenDocs` (back-references rewritten across the rename), and
+ * `summary` (the normalized contributor-record summary, omitted for
+ * `anonymous` actors and zero-affected renames).
+ */
 export const RenamePathSuccessSchema = z
   .object({
     renamed: z.array(RenamedDocMappingSchema),
+    rewrittenDocs: z.array(RenameRewrittenDocSchema).optional(),
+    summary: SummaryResponseFieldSchema.optional(),
   })
   .loose() satisfies StandardSchemaV1;
 export type RenamePathSuccess = z.infer<typeof RenamePathSuccessSchema>;
@@ -1246,7 +1254,7 @@ export type RescueListSuccess = z.infer<typeof RescueListSuccessSchema>;
 // `handleMetricsReconciliation`, `handleMetricsParseHealth`,
 // `handleMetricsAgentPresence`, `handleInstalledAgentsRoute`. No new URN
 // tokens — every error path reuses existing tokens (`invalid-request`,
-// `reserved-docname`, `no-active-session`, `not-found`, `loopback-required`,
+// `reserved-doc-name`, `no-active-session`, `not-found`, `loopback-required`,
 // `host-not-allowed`, `invalid-origin`, `method-not-allowed`,
 // `backlink-index-not-configured`, `internal-server-error`).
 //

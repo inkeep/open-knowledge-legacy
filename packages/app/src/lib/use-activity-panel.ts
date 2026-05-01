@@ -22,6 +22,9 @@
  * (NF-P3).
  */
 import {
+  type ActivityAgentHeader,
+  type ActivityBurst,
+  type ActivityFile,
   AgentActivitySuccessSchema,
   AgentBurstDiffSuccessSchema,
   ProblemDetailsSchema,
@@ -34,35 +37,19 @@ import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { LruStringCache } from '@/lib/lru-string-cache';
 
 // ---------------------------------------------------------------
-// Types (mirror the server's AgentActivityResult / BurstStat shape).
+// Types — schema-inferred via `z.infer` in core. Re-exported under the
+// historical names (`BurstData`, `FileData`) for callers that already import
+// these symbols, so the server schema is the single source of truth and
+// drift between client + server is impossible.
 // ---------------------------------------------------------------
 
-export interface BurstData {
-  stackIndex: number;
-  ts: number;
-  additions: number;
-  deletions: number;
-}
-
-export interface FileData {
-  docName: string;
-  additionsTotal: number;
-  deletionsTotal: number;
-  lastTs: number;
-  bursts: BurstData[];
-}
-
-interface AgentHeader {
-  displayName: string;
-  color: string;
-  icon?: string;
-  connectionId: string;
-}
+export type BurstData = ActivityBurst;
+export type FileData = ActivityFile;
 
 interface ActivityPanelData {
   sessionAlive: boolean;
-  agent: AgentHeader | null;
-  files: FileData[];
+  agent: ActivityAgentHeader | null;
+  files: ActivityFile[];
   /** Set of docNames this agent is currently writing to (FR-P17). */
   writingDocs: Set<string>;
 }
@@ -101,8 +88,8 @@ const BURST_DIFF_CACHE_LIMIT = 64;
 
 async function fetchAgentActivity(connectionId: string): Promise<{
   sessionAlive: boolean;
-  agent: AgentHeader | null;
-  files: FileData[];
+  agent: ActivityAgentHeader | null;
+  files: ActivityFile[];
 }> {
   const url = `/api/agent-activity?agentId=${encodeURIComponent(connectionId)}`;
   const res = await fetch(url);
