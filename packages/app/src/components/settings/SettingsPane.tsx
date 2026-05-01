@@ -43,7 +43,12 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
+import {
+  type ControllerRenderProps,
+  type FieldPath,
+  type UseFormReturn,
+  useFormContext,
+} from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
@@ -65,6 +70,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
+import { FoldersSection } from './FoldersSection';
 import {
   getEnumOptions,
   getFieldDefault,
@@ -84,6 +90,14 @@ interface SectionDef {
   title: string;
   description: string;
   fields: FieldDef[];
+  /**
+   * Specialized renderer dispatch. When set, the SettingsForm render path
+   * skips the `fields` map and delegates to a custom component (e.g.
+   * `<FoldersSection>` for `'folders'`). The `fields` array stays present
+   * (typically empty) so the rest of the section pipeline — title +
+   * description rendering, scope filtering — still runs.
+   */
+  custom?: 'folders';
 }
 
 interface FieldDef {
@@ -158,6 +172,14 @@ const SECTIONS: SectionDef[] = [
         description: 'URL of your team’s deployed wiki (project-only).',
       },
     ],
+  },
+  {
+    id: 'folders',
+    title: 'Folders',
+    description:
+      'Default frontmatter applied to documents matching glob patterns. Order matters: later rules override earlier ones.',
+    fields: [],
+    custom: 'folders',
   },
   {
     id: 'mcp',
@@ -414,21 +436,39 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
 
   return (
     <Form {...form}>
-      <SettingsForm scope={scope} commitField={commitField} flashedPath={flashedPath} />
+      <SettingsForm scope={scope} form={form} commitField={commitField} flashedPath={flashedPath} />
     </Form>
   );
 }
 
 interface SettingsFormProps {
   scope: SettingsScope;
+  form: UseFormReturn<Config>;
   commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
+function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
+        if (section.custom === 'folders') {
+          // Custom-rendered section. The schema's `folders` field is
+          // `scope: 'either'` so the section renders on both sub-tabs;
+          // FoldersSection edits the active tab's array. FoldersSection
+          // owns its own `<section>` + heading (no SettingsSection wrap)
+          // because its add/remove/reorder UX needs full control over
+          // the heading-row layout.
+          return (
+            <FoldersSection
+              key={section.id}
+              form={form}
+              commitField={commitField}
+              scope={scope}
+              flashedPath={flashedPath}
+            />
+          );
+        }
         const visibleFields = section.fields.filter((field) =>
           isFieldVisibleAtScope(field.path, scope),
         );

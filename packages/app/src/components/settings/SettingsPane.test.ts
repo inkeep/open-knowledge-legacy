@@ -100,3 +100,35 @@ describe('SettingsPane source-level guards', () => {
     expect(SRC).toContain('useConfigForm(');
   });
 });
+
+describe('SettingsPane folders section integration (US-003 / FR-41)', () => {
+  test('imports FoldersSection from the settings module', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/FoldersSection['"]/);
+    expect(SRC).toContain('FoldersSection');
+  });
+
+  test("SectionDef carries the optional `custom?: 'folders'` discriminator", () => {
+    expect(SRC).toMatch(/custom\?:\s*'folders'/);
+  });
+
+  test("SECTIONS includes a folders entry with custom: 'folders' and empty fields[]", () => {
+    // Locate the 'folders' SECTIONS entry by id and verify the custom tag
+    // + empty fields array. A regression that flips this to the scalar
+    // path would silently lose the FoldersSection render.
+    const idMatch = SRC.match(/\{[\s\S]{0,400}id:\s*'folders'[\s\S]{0,400}custom:\s*'folders'/);
+    expect(idMatch).toBeTruthy();
+    expect(SRC).toMatch(/id:\s*'folders'[\s\S]{0,400}fields:\s*\[\]/);
+  });
+
+  test("SettingsForm dispatches on section.custom === 'folders'", () => {
+    expect(SRC).toContain("section.custom === 'folders'");
+    expect(SRC).toMatch(/<FoldersSection\b/);
+  });
+
+  test('SettingsForm passes form into FoldersSection (atomic-array commit needs it)', () => {
+    // FoldersSection consumes form for useFieldArray + setFocus; without
+    // this prop the section can't drive the array.
+    expect(SRC).toMatch(/SettingsFormProps[\s\S]{0,400}form:\s*UseFormReturn<Config>/);
+    expect(SRC).toMatch(/<SettingsForm[\s\S]{0,200}form=\{form\}/);
+  });
+});
