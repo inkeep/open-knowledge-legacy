@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { ALL_EDITOR_IDS, EDITOR_TARGETS } from '@inkeep/open-knowledge';
 import {
-  computeForce,
   type ForceComputeTarget,
   formatPartialFailureMessage,
   type IpcMainEventLike,
   type IpcMainLike,
+  isPublishedCanonical,
   type McpStatusMarker,
   type McpWiringCliSurface,
   type McpWiringFsOps,
@@ -306,90 +306,73 @@ describe('resolveCliPath — hybrid symlink-or-bundle resolution', () => {
   });
 });
 
-describe('computeForce — isCompatible-based merge classification', () => {
+describe('isPublishedCanonical — exact canonical-shape predicate', () => {
   const claude = EDITOR_TARGETS.claude;
   const vscode = EDITOR_TARGETS.vscode;
 
-  test('Fixture A — canonical published npx shape → force=true (Claude)', () => {
+  test('Fixture A — canonical published npx shape → true (Claude)', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
 
-  test('Fixture A — canonical published npx shape → force=true (VS Code with type:stdio)', () => {
+  test('Fixture A — canonical published npx shape → true (VS Code with type:stdio)', () => {
     const existing: Record<string, unknown> = {
       type: 'stdio',
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, vscode)).toBe(true);
+    expect(isPublishedCanonical(existing, vscode)).toBe(true);
   });
 
-  test('Fixture B — historical -y variant → force=true', () => {
-    const existing: Record<string, unknown> = {
-      command: 'npx',
-      args: ['-y', '@inkeep/open-knowledge', 'mcp'],
-    };
-    expect(computeForce(existing, claude)).toBe(true);
-  });
-
-  test('Fixture C — canonical + user-augmented env → force=true', () => {
+  test('Fixture C — canonical + user-augmented env → true', () => {
     const existing: Record<string, unknown> = {
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
       env: { OK_LOG_LEVEL: 'debug' },
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(true);
   });
 
-  test('Fixture D — foreign customization → force=false', () => {
+  test('historical -y variant → false (foreign-customized; left alone)', () => {
     const existing: Record<string, unknown> = {
-      command: 'custom-wrapper',
-      args: ['--special-mode', 'run-mcp'],
+      command: 'npx',
+      args: ['-y', '@inkeep/open-knowledge', 'mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Fixture D — foreign customization (VS Code with type:stdio) → force=false', () => {
-    const existing: Record<string, unknown> = {
-      type: 'stdio',
-      command: 'custom-wrapper',
-      args: ['--special-mode', 'run-mcp'],
-    };
-    expect(computeForce(existing, vscode)).toBe(false);
-  });
-
-  test('Prior cliPath shape (bundle-absolute from earlier first-launch run) → force=true', () => {
+  test('prior cliPath shape (bundle-absolute) → false (foreign-customized; left alone)', () => {
     const existing: Record<string, unknown> = {
       command: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
       args: ['mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Prior cliPath shape (symlink /usr/local/bin/ok) → force=true', () => {
+  test('prior cliPath shape (symlink /usr/local/bin/ok) → false (foreign-customized)', () => {
     const existing: Record<string, unknown> = {
       command: '/usr/local/bin/ok',
       args: ['mcp'],
     };
-    expect(computeForce(existing, claude)).toBe(true);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Entry with non-string command → force=false', () => {
+  test('Entry with non-string command → false', () => {
     const existing: Record<string, unknown> = { command: 42, args: ['mcp'] };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Entry with non-array args → force=false', () => {
+  test('Entry with non-array args → false', () => {
     const existing: Record<string, unknown> = { command: 'npx', args: 'mcp' };
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
-  test('Empty shape → force=false (no command match)', () => {
+  test('Empty shape → false (no command match)', () => {
     const existing: Record<string, unknown> = {};
-    expect(computeForce(existing, claude)).toBe(false);
+    expect(isPublishedCanonical(existing, claude)).toBe(false);
   });
 
   test('Accepts any structurally-compatible target (interface assignability)', () => {
@@ -406,9 +389,12 @@ describe('computeForce — isCompatible-based merge classification', () => {
       },
     };
     expect(
-      computeForce({ command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] }, minimalTarget),
+      isPublishedCanonical(
+        { command: 'npx', args: ['@inkeep/open-knowledge', 'mcp'] },
+        minimalTarget,
+      ),
     ).toBe(true);
-    expect(computeForce({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
+    expect(isPublishedCanonical({ command: 'custom', args: ['foo'] }, minimalTarget)).toBe(false);
   });
 });
 
@@ -994,7 +980,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     }
   });
 
-  test('confirm with existing canonical npx entry → editor is included in the write call (main PR #282 reconciliation: always-overwrite semantic)', async () => {
+  test('confirm with existing canonical npx entry → editor is included in the write call', async () => {
     const { fs } = createVirtualFs();
     const ipcMain = createIpcMainStub();
     const { cli, writeCalls } = createCliSurface({

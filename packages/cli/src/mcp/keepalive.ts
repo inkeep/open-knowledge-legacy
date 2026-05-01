@@ -12,7 +12,7 @@ export interface MinimalWebSocket {
 interface KeepaliveOptions {
   resolveWsUrl: () => Promise<string | undefined>;
   connectionId?: string;
-  logger?: import('./logger.ts').McpLogger;
+  logger?: import('@inkeep/open-knowledge-server').McpLogger;
   log?: (msg: string) => void;
   scheduler?: KeepaliveScheduler;
   initialBackoffMs?: number;

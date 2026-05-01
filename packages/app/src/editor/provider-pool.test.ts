@@ -16,6 +16,15 @@ function uniqueDocName(prefix = 'pp-us003'): string {
   return `${prefix}-${randomUUID()}`;
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await wait(10);
+  }
+  return predicate();
+}
+
 const DUMMY_WS = 'ws://localhost:1/collab';
 
 const TEST_SERVER_INSTANCE_ID = 'test-server-instance';
@@ -839,13 +848,10 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
       await pool.awaitMismatchSettled();
 
-      const replaced = pool.getActive();
-      if (!replaced) throw new Error('expected replaced entry');
-      const resolved = replaced.provider.configuration.token;
-      if (typeof resolved === 'string') {
-        const parsed = parseHocuspocusAuthToken(resolved);
-        expect(parsed?.expectedServerInstanceId).toBeUndefined();
-      }
+      const next = pool.open('doc2');
+      if (!next) throw new Error('expected next entry');
+      const parsed = parseHocuspocusAuthToken(next.provider.configuration.token as string);
+      expect(parsed?.expectedServerInstanceId).toBeUndefined();
     });
 
     test('null storage — pool runs without persistence', () => {
@@ -881,7 +887,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
 
 describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-mismatch')", () => {
   test("reason 'server-instance-mismatch' recycles every pool entry", async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
 
     const e1 = pool.open('doc1');
@@ -903,15 +909,23 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test("reason 'server-instance-mismatch' clears the stale current instance claim", async () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
 
     entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
 
+    const claimCleared = await waitFor(() => {
+      const replaced = pool.entries.get('doc1');
+      if (!replaced || replaced === entry) return false;
+      const resolved = replaced.provider.configuration.token;
+      if (typeof resolved !== 'string') return true;
+      const parsed = parseHocuspocusAuthToken(resolved);
+      return parsed?.expectedServerInstanceId === undefined;
+    });
+    expect(claimCleared).toBe(true);
     const replaced = pool.entries.get('doc1');
     if (!replaced) throw new Error('expected replaced entry');
     const resolved = replaced.provider.configuration.token;
@@ -922,7 +936,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   });
 
   test('other reasons do not trigger recycle', () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
@@ -939,7 +953,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
   test('second mismatch event is a no-op after cache is cleared (idempotence)', async () => {
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      pool = new ProviderPool(3, DUMMY_WS);
+      pool = new ProviderPool(3, DUMMY_WS, { storage: null });
       pool.setExpectedServerInstanceId('server-old');
       pool.setObservedBranch('telemetry-branch-idem');
       const entry = pool.open('doc1');
@@ -947,7 +961,11 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
       pool.setActive('doc1');
 
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      const firstRecycled = await waitFor(() => {
+        const postFirstEntry = pool.entries.get('doc1');
+        return postFirstEntry !== undefined && postFirstEntry.provider !== entry.provider;
+      });
+      expect(firstRecycled).toBe(true);
       const postFirstEntry = pool.entries.get('doc1');
       if (!postFirstEntry) throw new Error('expected post-first entry');
       const postFirstProvider = postFirstEntry.provider;
@@ -963,7 +981,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
       expect(epochSignals.length).toBe(1);
 
       postFirstProvider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      await wait(0);
       const epochAfterSecond = warnSpy.mock.calls.filter(([first]) => {
         if (typeof first !== 'string') return false;
         try {
@@ -983,7 +1001,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
   test('server-instance-mismatch exposes recovery state and clears it after fresh sync', async () => {
     __resetSyncPromiseCache();
-    pool = new ProviderPool(3, DUMMY_WS);
+    pool = new ProviderPool(3, DUMMY_WS, { storage: null });
     pool.setExpectedServerInstanceId('server-old');
     const entry = pool.open('doc1');
     if (!entry?.persistence) throw new Error('expected entry');

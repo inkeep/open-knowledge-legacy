@@ -1,5 +1,5 @@
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import type { Config } from '../index.ts';
 import { runSync } from './sync.ts';
 
 export function pushCommand(getConfig: () => Config): Command {

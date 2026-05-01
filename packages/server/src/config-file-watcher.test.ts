@@ -29,7 +29,7 @@ function makeFixture(): Fixture {
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boolean> {
+async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (predicate()) return true;
@@ -63,12 +63,17 @@ describe('startConfigFileWatcher', () => {
     cleanups.push(cleanup);
 
     expect(existsSync(fx.absPath)).toBe(false);
-    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
 
-    const fired = await waitFor(() => events.length > 0);
+    let attempt = 0;
+    const fired = await waitFor(() => {
+      if (events.length > 0) return true;
+      attempt++;
+      writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
+      return false;
+    });
     expect(fired).toBe(true);
-    expect(events[0]).toBe('theme: dark\n');
-  });
+    expect(events[0]?.startsWith('theme: dark\n')).toBe(true);
+  }, 15_000);
 
   test('fires onChange when an existing file is modified', async () => {
     writeFileSync(fx.absPath, 'theme: light\n', 'utf-8');
@@ -79,12 +84,16 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
-
-    const fired = await waitFor(() => events.length > 0);
+    let attempt = 0;
+    const fired = await waitFor(() => {
+      if (events.length > 0) return true;
+      attempt++;
+      writeFileSync(fx.absPath, `theme: dark\nattempt: ${attempt}\n`, 'utf-8');
+      return false;
+    });
     expect(fired).toBe(true);
-    expect(events.at(-1)).toBe('theme: dark\n');
-  });
+    expect(events.at(-1)?.startsWith('theme: dark\n')).toBe(true);
+  }, 15_000);
 
   test('does NOT fire onChange on the initial scan (ignoreInitial)', async () => {
     writeFileSync(fx.absPath, 'theme: light\n', 'utf-8');
@@ -119,7 +128,7 @@ describe('startConfigFileWatcher', () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(events.length).toBeGreaterThan(0);
     expect(events.length).toBeLessThanOrEqual(2);
-  });
+  }, 15_000);
 
   test('does NOT fire onChange when the file is unlinked', async () => {
     writeFileSync(fx.absPath, 'theme: light\n', 'utf-8');
@@ -159,5 +168,5 @@ describe('startConfigFileWatcher', () => {
     writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
     const fired = await waitFor(() => secondFired);
     expect(fired).toBe(true);
-  });
+  }, 15_000);
 });

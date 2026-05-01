@@ -112,7 +112,6 @@ export interface ServerOptions {
   onAgentWrite?: () => void;
   localOpCliArgs?: string[];
   lockKind?: 'interactive' | 'mcp-spawned';
-  parentPid?: number;
   skipStateManifestCheck?: boolean;
   configHomedirOverride?: string;
 }
@@ -172,7 +171,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
     kind: options.lockKind ?? 'interactive',
-    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
     capabilities: ['http', 'ws'],
   });
 

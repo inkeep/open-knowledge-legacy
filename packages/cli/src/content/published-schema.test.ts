@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,18 @@ const VERSIONED_USER_PATH = resolve(VERSIONED_DIR, 'config.user.schema.json');
 const ALIAS_PROJECT_PATH = resolve(DIST, 'config.project.schema.json');
 const ALIAS_USER_PATH = resolve(DIST, 'config.user.schema.json');
 
+let schemaBuildNonce = 0;
+
+async function ensurePublishedSchemas(): Promise<void> {
+  schemaBuildNonce += 1;
+  await import(`../../scripts/build-config-schema.mjs?test=${schemaBuildNonce}`);
+}
+
 describe('published dist/config-schema.json', () => {
+  beforeEach(async () => {
+    await ensurePublishedSchemas();
+  });
+
   test('artifact exists at the path npm ships via files:["dist"]', () => {
     expect(existsSync(PUBLISHED_SCHEMA_PATH)).toBe(true);
   });

@@ -14,7 +14,7 @@ import {
   releaseProcessLock,
   updateProcessLockPort,
 } from './process-lock';
-import { PROTOCOL_VERSION, RUNTIME_VERSION } from './version-constants';
+import { RUNTIME_VERSION } from './version-constants';
 
 const LOCK_NAME: LockName = 'ui';
 
@@ -225,7 +225,7 @@ describe('acquireProcessLock', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test('round-trips kind/parentPid/capabilities when provided', () => {
+  test('round-trips kind/capabilities when provided', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
@@ -233,17 +233,15 @@ describe('acquireProcessLock', () => {
         port: 4242,
         worktreeRoot: '/wt',
         kind: 'mcp-spawned',
-        parentPid: 99999,
         capabilities: ['http', 'ws'],
       },
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.kind).toBe('mcp-spawned');
-    expect(md.parentPid).toBe(99999);
     expect(md.capabilities).toEqual(['http', 'ws']);
   });
 
-  test('omits kind/parentPid/capabilities when not provided (legacy lock shape)', () => {
+  test('omits kind/capabilities when not provided (legacy lock shape)', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
@@ -251,7 +249,6 @@ describe('acquireProcessLock', () => {
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.kind).toBeUndefined();
-    expect(md.parentPid).toBeUndefined();
     expect(md.capabilities).toBeUndefined();
   });
 
@@ -263,7 +260,6 @@ describe('acquireProcessLock', () => {
         port: 0,
         worktreeRoot: '/wt',
         kind: 'interactive',
-        parentPid: 12345,
         capabilities: ['http', 'ws'],
       },
     });
@@ -271,7 +267,6 @@ describe('acquireProcessLock', () => {
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.port).toBe(8080);
     expect(md.kind).toBe('interactive');
-    expect(md.parentPid).toBe(12345);
     expect(md.capabilities).toEqual(['http', 'ws']);
   });
 
@@ -520,51 +515,46 @@ describe('releaseProcessLock', () => {
   });
 });
 
-describe('version metadata (protocolVersion + runtimeVersion)', () => {
-  test('acquireProcessLock auto-populates protocolVersion + runtimeVersion from constants', () => {
+describe('version metadata (runtimeVersion)', () => {
+  test('acquireProcessLock auto-populates runtimeVersion from constants', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
       metadata: { port: 3000, worktreeRoot: '/me' },
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    expect(md.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(md.runtimeVersion).toBe(RUNTIME_VERSION);
     expect(typeof md.runtimeVersion).toBe('string');
     expect(md.runtimeVersion?.length).toBeGreaterThan(0);
   });
 
-  test('acquireProcessLock honors explicit overrides on the metadata input', () => {
+  test('acquireProcessLock honors explicit override on the metadata input', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
       metadata: {
         port: 3000,
         worktreeRoot: '/me',
-        protocolVersion: 99,
         runtimeVersion: 'test-1.2.3',
       },
     });
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    expect(md.protocolVersion).toBe(99);
     expect(md.runtimeVersion).toBe('test-1.2.3');
   });
 
-  test('updateProcessLockPort preserves the version fields', () => {
+  test('updateProcessLockPort preserves runtimeVersion', () => {
     const handle = acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
       metadata: {
         port: 0,
         worktreeRoot: '/me',
-        protocolVersion: 7,
         runtimeVersion: 'preserve-test',
       },
     });
     handle.updatePort(4000);
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.port).toBe(4000);
-    expect(md.protocolVersion).toBe(7);
     expect(md.runtimeVersion).toBe('preserve-test');
   });
 });
@@ -575,7 +565,7 @@ describe('readProcessLockDetailed', () => {
     expect(result.status).toBe('absent');
   });
 
-  test('returns live with the parsed lock when fields are complete', () => {
+  test('returns live with the parsed lock', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
       lockDir,
@@ -585,11 +575,10 @@ describe('readProcessLockDetailed', () => {
     expect(result.status).toBe('live');
     if (result.status !== 'live') throw new Error('expected live');
     expect(result.lock.port).toBe(5000);
-    expect(result.lock.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(result.lock.runtimeVersion).toBe(RUNTIME_VERSION);
   });
 
-  test('returns incompatible.missing-fields for a live lock missing protocolVersion', () => {
+  test('returns live for a lock missing runtimeVersion (forward-compat tolerance)', () => {
     const versionless = {
       pid: 1,
       hostname: hostname(),
@@ -601,25 +590,9 @@ describe('readProcessLockDetailed', () => {
     writeFileSync(lockPath, JSON.stringify(versionless), 'utf-8');
 
     const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
-    expect(result.status).toBe('incompatible');
-    if (result.status !== 'incompatible') throw new Error('expected incompatible');
-    expect(result.reason).toBe('missing-fields');
-  });
-
-  test('returns incompatible.missing-fields for a live lock missing runtimeVersion only', () => {
-    const partial = {
-      pid: 1,
-      hostname: hostname(),
-      port: 6500,
-      startedAt: new Date().toISOString(),
-      worktreeRoot: '/legacy',
-      protocolVersion: 1,
-    };
-    require('node:fs').mkdirSync(lockDir, { recursive: true });
-    writeFileSync(lockPath, JSON.stringify(partial), 'utf-8');
-
-    const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
-    expect(result.status).toBe('incompatible');
+    expect(result.status).toBe('live');
+    if (result.status !== 'live') throw new Error('expected live');
+    expect(result.lock.runtimeVersion).toBeUndefined();
   });
 
   test('returns incompatible.corrupt for unparseable JSON', () => {
@@ -647,7 +620,6 @@ describe('readProcessLockDetailed', () => {
       port: 7000,
       startedAt: new Date().toISOString(),
       worktreeRoot: '/old',
-      protocolVersion: 1,
       runtimeVersion: '0.1.0',
     };
     require('node:fs').mkdirSync(lockDir, { recursive: true });
@@ -665,7 +637,6 @@ describe('readProcessLockDetailed', () => {
       port: 7100,
       startedAt: new Date().toISOString(),
       worktreeRoot: '/remote',
-      protocolVersion: 1,
       runtimeVersion: '0.1.0',
     };
     require('node:fs').mkdirSync(lockDir, { recursive: true });

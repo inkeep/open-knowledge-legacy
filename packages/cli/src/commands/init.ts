@@ -8,13 +8,14 @@ import {
   detectClaudeDesktopPresence,
   ensureProjectGit,
   installUserSkill,
+  MCP_SERVER_NAME,
   ProjectGitInitError,
   resolveBundledSkillDir,
 } from '@inkeep/open-knowledge-server';
 import checkbox from '@inquirer/checkbox';
 import { Command, Option } from 'commander';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
-import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
+import { OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
 import { accent, error, info, success, warning } from '../ui/colors.ts';
@@ -155,10 +156,8 @@ interface InitCommandOptions {
   cwd?: string;
   mcp?: boolean;
   devMcp?: boolean;
-  pin?: boolean;
   editors?: EditorId[];
   home?: string;
-  cliEntryPath?: string;
   installUserSkill?: (opts?: InstallUserSkillOptions) => Promise<InstallUserSkillResult>;
   scope?: McpScope;
   isTTY?: boolean;
@@ -207,7 +206,7 @@ function scaffoldLaunchJson(cwd: string, installOptions: McpInstallOptions = {})
       ? {
           name: LAUNCH_CONFIG_NAME,
           runtimeExecutable: 'node',
-          runtimeArgs: [resolveDevCliDistPath(installOptions.cliEntryPath), 'ui'],
+          runtimeArgs: [resolveDevCliDistPath(), 'ui'],
           port: 3000,
         }
       : {
@@ -460,8 +459,7 @@ export function readExistingMcpEntry(
 export async function runInit(options: InitCommandOptions = {}): Promise<InitCommandResult> {
   const cwd = resolve(options.cwd ?? process.cwd());
   const installOptions: McpInstallOptions = {
-    mode: options.pin ? 'pinned' : options.devMcp ? 'dev' : 'published',
-    cliEntryPath: options.cliEntryPath,
+    mode: options.devMcp ? 'dev' : 'published',
   };
 
   const gitResult = await ensureProjectGit(cwd);
@@ -837,12 +835,7 @@ export function initCommand(): Command {
         'Write MCP config at user level, project level, or both',
       ).choices(['user', 'project', 'both']),
     )
-    .option(
-      '--pin',
-      'Pin the MCP entry to the absolute path of the current CLI binary instead of `npx`. Use a stable shim like /usr/local/bin/ok for upgrade-safe pinning; npx-cache or worktree paths will go stale on reinstall.',
-    )
-    .option('--no-pin', 'Use the default unpinned `npx @inkeep/open-knowledge mcp` MCP entry')
-    .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope; pin?: boolean }) => {
+    .action(async (opts: { mcp?: boolean; devMcp?: boolean; scope?: McpScope }) => {
       const cwd = process.cwd();
 
       let result: InitCommandResult;
@@ -852,7 +845,6 @@ export function initCommand(): Command {
           mcp: opts.mcp,
           devMcp: opts.devMcp,
           scope: opts.scope,
-          pin: opts.pin,
         });
       } catch (err) {
         if (err instanceof ProjectGitInitError) {
@@ -869,7 +861,7 @@ export function initCommand(): Command {
       try {
         const { previewContent } = await import('../content/preview.ts');
         const { loadConfig } = await import('../config/loader.ts');
-        const { resolveContentDir } = await import('../config/paths.ts');
+        const { resolveContentDir } = await import('@inkeep/open-knowledge-server');
         const { config } = loadConfig(cwd);
         const contentDir = resolveContentDir(config, cwd);
         result.preview = previewContent({

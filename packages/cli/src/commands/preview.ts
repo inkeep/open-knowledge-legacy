@@ -1,6 +1,5 @@
+import { type Config, resolveContentDir } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import { resolveContentDir } from '../config/paths.ts';
-import type { Config } from '../config/schema.ts';
 import type { PreviewResult } from '../content/preview.ts';
 
 export function previewCommand(getConfig: () => Config): Command {
