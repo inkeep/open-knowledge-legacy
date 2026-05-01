@@ -146,7 +146,26 @@ interface LinkRowProps {
   /** Native title attribute on the title line — used for browser tooltip on truncation. */
   titleHover?: string;
   ariaLabel?: string;
-  onClick: () => void;
+  /**
+   * If set, the row's primary action is navigation: renders an `<a href>`. The link's
+   * `::after` pseudo-element expands its hit area to cover the whole row (linkbox
+   * pattern), so the user gets native browser features (Cmd/Ctrl-click → new tab,
+   * right-click → context menu, drag-and-drop URL, visited state) without nested
+   * interactive elements.
+   *
+   * If unset, the row's primary action is treated as a non-navigation action (e.g. opening
+   * a dialog) and renders a `<button>` instead.
+   */
+  href?: string;
+  /** When `href` is external, opens in a new tab with `rel="noopener noreferrer"`. */
+  external?: boolean;
+  /**
+   * Primary action handler. Required when `href` is unset (button mode); optional when
+   * `href` is set (called alongside native navigation, useful for telemetry). Native
+   * link semantics handle navigation on their own — don't `preventDefault` from this
+   * handler unless you intentionally mean to suppress navigation.
+   */
+  onClick?: () => void;
   hoverAction?: {
     icon: ReactNode;
     tooltip: string;
@@ -165,6 +184,8 @@ function LinkRow({
   snippet,
   titleHover,
   ariaLabel,
+  href,
+  external,
   onClick,
   hoverAction,
 }: LinkRowProps) {
@@ -172,22 +193,41 @@ function LinkRow({
   const iconNode = (
     <span className={cn('mt-0.5 shrink-0', iconColorClass ?? 'text-muted-foreground')}>{icon}</span>
   );
-  const row = (
-    // biome-ignore lint/a11y/useSemanticElements: outer is role="button" because the row contains a nested <button> for hover actions (folder index-note creator), and <button> inside <button> is invalid HTML.
-    <div
-      role="button"
-      tabIndex={0}
+
+  // The primary interactive sits inside the title slot. Its `::after` expands the
+  // clickable hit area to fill the relatively-positioned row container, so clicking
+  // anywhere in the row triggers the action. The visible content (path, snippet) lives
+  // in normal flow; the secondary [+] button uses `relative z-10` to stack above the
+  // overlay and remain independently clickable.
+  const overlayClassName =
+    'block w-full truncate text-left font-medium text-foreground no-underline outline-none after:absolute after:inset-0 after:rounded-md focus-visible:after:ring-2 focus-visible:after:ring-ring';
+  const primaryInteractive = href ? (
+    <a
+      href={href}
+      target={external ? '_blank' : undefined}
+      rel={external ? 'noopener noreferrer' : undefined}
       aria-label={ariaLabel}
-      className="group relative flex w-full cursor-pointer items-start gap-2.5 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-muted/80 focus-visible:bg-accent/40 focus-visible:outline-none"
+      title={titleHover}
       onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
+      className={overlayClassName}
     >
-      <div className="flex items-center mt-px">
+      {title}
+    </a>
+  ) : (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      title={titleHover}
+      onClick={onClick}
+      className={cn(overlayClassName, 'cursor-pointer bg-transparent p-0')}
+    >
+      {title}
+    </button>
+  );
+
+  const row = (
+    <div className="group relative flex items-start gap-2.5 rounded-md px-3 py-2.5 transition-colors hover:bg-muted/80">
+      <div className="mt-px flex items-center">
         {iconTooltip ? (
           <Tooltip>
             <TooltipTrigger asChild>{iconNode}</TooltipTrigger>
@@ -197,10 +237,8 @@ function LinkRow({
           iconNode
         )}
       </div>
-      <div className="min-w-0 flex-1 text-1sm space-y-0.5">
-        <div className="truncate font-medium" title={titleHover}>
-          {title}
-        </div>
+      <div className="min-w-0 flex-1 space-y-0.5 text-1sm">
+        {primaryInteractive}
         {showPath ? (
           <div className="truncate font-mono text-xs text-muted-foreground">
             {path}
@@ -214,11 +252,9 @@ function LinkRow({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus:opacity-100 focus:outline-none group-hover:opacity-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                hoverAction.onClick();
-              }}
+              aria-label={hoverAction.tooltip}
+              className="relative z-10 shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+              onClick={hoverAction.onClick}
             >
               {hoverAction.icon}
             </button>
@@ -277,27 +313,25 @@ function BacklinksSection({ docName }: { docName: string }) {
           ) : (
             <>
               <div className="flex flex-col gap-1">
-                {visible.map((backlink, index) => (
-                  <LinkRow
-                    // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
-                    key={`${backlink.source}-${index}`}
-                    icon={<File className="size-3.5" />}
-                    title={backlink.title}
-                    path={compactDocPath(backlink.source)}
-                    titleHover={backlink.source}
-                    anchor={backlink.anchor}
-                    snippet={backlink.snippet}
-                    onClick={() => {
-                      const navigationIntent = resolveTargetNavigationIntent(backlink.source, {
-                        pages,
-                        folderPaths,
-                      });
-                      window.location.assign(
-                        hashFromDocName(navigationIntent.hashDocName, backlink.anchor),
-                      );
-                    }}
-                  />
-                ))}
+                {visible.map((backlink, index) => {
+                  const navigationIntent = resolveTargetNavigationIntent(backlink.source, {
+                    pages,
+                    folderPaths,
+                  });
+                  return (
+                    <LinkRow
+                      // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
+                      key={`${backlink.source}-${index}`}
+                      icon={<File className="size-3.5" />}
+                      title={backlink.title}
+                      path={compactDocPath(backlink.source)}
+                      titleHover={backlink.source}
+                      anchor={backlink.anchor}
+                      snippet={backlink.snippet}
+                      href={hashFromDocName(navigationIntent.hashDocName, backlink.anchor)}
+                    />
+                  );
+                })}
               </div>
               <ShowMoreButton
                 total={backlinks.length}
@@ -350,24 +384,6 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           }
         : folderIndexCreateSeed(createDialogIntent);
 
-  function handleRowClick(link: ForwardLinkItem) {
-    if (link.kind === 'external') {
-      window.open(link.url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    const linkIntent = resolveLinkTargetIntent(link.docName, {
-      pages,
-      folderPaths,
-      pagesBySlug,
-    });
-    if (!pagesLoading && linkIntent.kind === 'create') {
-      setCreateTarget(link);
-      return;
-    }
-    const hashDocName = linkIntent.kind === 'navigate' ? linkIntent.hashDocName : link.docName;
-    window.location.assign(hashFromDocName(hashDocName, link.anchor));
-  }
-
   function renderRow(link: ForwardLinkItem) {
     if (link.kind === 'external') {
       const titleIsUrl = link.title === link.url;
@@ -380,7 +396,8 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           path={titleIsUrl ? undefined : link.url}
           titleHover={link.url}
           snippet={link.snippet}
-          onClick={() => handleRowClick(link)}
+          href={link.url}
+          external
         />
       );
     }
@@ -397,6 +414,11 @@ function ForwardLinksSection({ docName }: { docName: string }) {
     const titleEqualsDocName = link.title === link.docName;
     const displayTitle = titleEqualsDocName ? path : link.title;
     const key = `doc:${link.docName}:${link.anchor ?? ''}`;
+    // Resolved & folder rows navigate; missing rows fall back to the raw docName which
+    // never produces a usable href (we render as a button instead — see below).
+    const navigateHashDocName =
+      linkIntent.kind === 'navigate' ? linkIntent.hashDocName : link.docName;
+    const navigateHref = hashFromDocName(navigateHashDocName, link.anchor);
 
     if (unresolved) {
       return (
@@ -411,7 +433,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           titleHover={link.docName}
           anchor={link.anchor}
           snippet={link.snippet}
-          onClick={() => handleRowClick(link)}
+          onClick={() => setCreateTarget(link)}
         />
       );
     }
@@ -429,7 +451,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           titleHover={link.docName}
           anchor={link.anchor}
           snippet={link.snippet}
-          onClick={() => handleRowClick(link)}
+          href={navigateHref}
           hoverAction={{
             icon: <Plus className="size-3.5" />,
             tooltip: 'Create index note',
@@ -448,7 +470,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
         titleHover={link.docName}
         anchor={link.anchor}
         snippet={link.snippet}
-        onClick={() => handleRowClick(link)}
+        href={navigateHref}
       />
     );
   }

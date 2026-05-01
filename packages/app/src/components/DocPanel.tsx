@@ -18,7 +18,7 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
 
 /**
  * Top-level mode for the DocPanel container. Two values:
- *   - `'doc'`:   existing per-document info tabs (outline / backlinks / …).
+ *   - `'doc'`:   existing per-document info tabs (outline / links / …).
  *   - `'agent'`: Agent Activity view keyed to a `connectionId`.
  *
  * The mode is a drill-in, not a persistent toggle: agent avatar click enters
@@ -62,7 +62,7 @@ export function DocPanel({
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   return (
     <>
-      {/* In `'doc'` mode: the 5 info sub-tabs render as the panel header.
+      {/* In `'doc'` mode: the info sub-tabs render as the panel header.
           In `'agent'` mode: no header row — `ActivityModeContent` owns its
           own header (avatar + back-arrow), which eliminates the empty-row
           footprint the standalone back-arrow used to have. */}
