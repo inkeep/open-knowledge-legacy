@@ -140,18 +140,19 @@ function redirectForKey(key: 'include' | 'exclude'): string {
 /**
  * Detect `content.include` / `content.exclude` in a parsed YAML file. These
  * keys were removed from `ConfigSchema`; path rules now live in `.okignore`
- * files at the project root. Returns the first removed-key error found, or
- * `undefined` when neither key is present.
+ * files at the project root. Returns ALL removed-key errors found (a config
+ * with both keys gets both errors in one pass — no two-trip fix cycle).
  *
  * The schema's `content` block is a `looseObject`, so unknown nested keys
  * pass through validation silently — explicit detection is required to
  * surface the migration directive.
  */
-function detectRemovedContentKey(file: LoadedYamlFile): ConfigValidationError | undefined {
+function detectRemovedContentKeys(file: LoadedYamlFile): ConfigValidationError[] {
   const value = file.value;
-  if (!isObject(value)) return undefined;
+  if (!isObject(value)) return [];
   const content = value.content;
-  if (!isObject(content)) return undefined;
+  if (!isObject(content)) return [];
+  const errors: ConfigValidationError[] = [];
   for (const key of REMOVED_CONTENT_KEYS) {
     if (key in content) {
       const path = ['content', key];
@@ -164,15 +165,15 @@ function detectRemovedContentKey(file: LoadedYamlFile): ConfigValidationError | 
           path,
         });
       }
-      return {
+      errors.push({
         code: 'REMOVED_KEY',
         path,
         redirect: redirectForKey(key),
         ...(source !== undefined ? { source } : {}),
-      };
+      });
     }
   }
-  return undefined;
+  return errors;
 }
 
 /**
@@ -232,9 +233,9 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   const projectConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
   const projectFile = loadYamlFile(projectConfigPath);
   if (projectFile.value !== null) {
-    const removedKeyError = detectRemovedContentKey(projectFile);
-    if (removedKeyError !== undefined) {
-      throw new Error(humanFormat(removedKeyError));
+    const removedKeyErrors = detectRemovedContentKeys(projectFile);
+    if (removedKeyErrors.length > 0) {
+      throw new Error(removedKeyErrors.map(humanFormat).join('\n\n'));
     }
     merged = deepMerge(merged, projectFile.value);
     sources.push(projectConfigPath);

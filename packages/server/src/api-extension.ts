@@ -1076,9 +1076,8 @@ export interface ApiExtensionOptions {
   /**
    * Active ContentFilter (the same instance threaded into the file watcher).
    * When present, `POST /api/rename-path` rejects destinations excluded by
-   * the workspace's `content.include`/`content.exclude` config so renames
-   * cannot land outside the watched scope. Omit in tests where admission
-   * checks aren't relevant.
+   * `.gitignore` / `.okignore` rules so renames cannot land outside the
+   * watched scope. Omit in tests where admission checks aren't relevant.
    */
   contentFilter?: ContentFilter;
   /**

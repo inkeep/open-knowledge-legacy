@@ -195,6 +195,31 @@ mcp:
     expect(caught?.message).toContain('1:1 migration');
   });
 
+  test('content.include AND content.exclude together emit BOTH REMOVED_KEY errors in one pass', () => {
+    writeWorkspaceConfig(`content:
+  include:
+    - "**/*.md"
+  exclude:
+    - "**/drafts/**"
+`);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    // Both keys should appear in the error message — no two-trip fix cycle
+    // where the user fixes include, restarts, then sees exclude as a fresh
+    // error.
+    expect(caught?.message).toContain('content.include');
+    expect(caught?.message).toContain('content.exclude');
+    // Each key carries its own redirect (include → content.dir + exclude-only;
+    // exclude → 1:1 migration).
+    expect(caught?.message).toContain('content.dir');
+    expect(caught?.message).toContain('1:1 migration');
+  });
+
   test('partial section override preserves sibling defaults within that section', () => {
     writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: 25\n');
 

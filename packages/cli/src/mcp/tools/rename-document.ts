@@ -67,7 +67,7 @@ export const DESCRIPTION = [
   '',
   '**Errors:**',
   '- 400 — case-only renames (e.g. `Auth` → `auth`) are not supported.',
-  '- 400 — destination document is excluded by the workspace `content.include` / `content.exclude` config.',
+  '- 400 — destination document is excluded by `.gitignore` / `.okignore` rules.',
   '- 404 — source document does not exist.',
   '- 409 — destination document already exists.',
 ].join('\n');
