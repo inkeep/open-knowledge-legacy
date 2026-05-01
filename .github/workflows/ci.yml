@@ -91,7 +91,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
-      - run: bunx turbo run ${{ matrix.task }}
+      # `--no-daemon` because turbo's daemon has historically held the foreground
+      # process open after all tasks finish on ubuntu-latest (vercel/turbo#5908,
+      # #7382). Combined with bun's own `child_process.spawn(...).kill()`
+      # unreliability (oven-sh/bun#11892), the CI test job has hung for the full
+      # 15-minute budget after `Ran N tests across M files. 0 fail` printed. The
+      # per-package wrappers in `packages/{server,cli}/scripts/run-tests.mjs`
+      # take care of bun's post-summary event-loop hangs; --no-daemon takes
+      # turbo's daemon path out of the loop on top of that.
+      - run: bunx turbo run ${{ matrix.task }} --no-daemon
 
   playwright:
     # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`
