@@ -493,6 +493,21 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
   const dottedName = field.path.join('.') as FieldPath<Config>;
 
   const [savedTick, setSavedTick] = useState(false);
+  // Tracks the SavedIndicator timeout so an unmount mid-flash doesn't fire
+  // `setSavedTick(false)` on a torn-down component (React warning).
+  const savedTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (savedTickTimerRef.current) clearTimeout(savedTickTimerRef.current);
+    },
+    [],
+  );
+
+  const flashSavedTick = () => {
+    setSavedTick(true);
+    if (savedTickTimerRef.current) clearTimeout(savedTickTimerRef.current);
+    savedTickTimerRef.current = setTimeout(() => setSavedTick(false), 1200);
+  };
 
   /**
    * Run `commitField` (the harness-owned binding.patch + form.setError /
@@ -504,8 +519,27 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
    */
   const runCommit = (): boolean => {
     const ok = commitField(dottedName);
-    if (ok) flashSaved(setSavedTick);
+    if (ok) flashSavedTick();
     return ok;
+  };
+
+  /**
+   * Per-interaction commit (blur/change/Enter). Skips no-op commits where
+   * the field is not dirty against its current `defaultValue` baseline —
+   * after a successful commit, `useConfigForm` re-baselines via
+   * `form.resetField(name, { defaultValue: value })`, so subsequent
+   * blurs on an unchanged field correctly report `isDirty: false` and
+   * the unconditional `binding.patch → Y.Text delete+insert` cycle is
+   * avoided. Returns true on no-op (no error to surface).
+   *
+   * The reset path bypasses this guard by calling `runCommit` directly:
+   * `form.setValue(name, target, { shouldDirty: false })` leaves the
+   * field non-dirty, but the commit is still intentional (the user
+   * clicked Reset).
+   */
+  const runCommitIfDirty = (): boolean => {
+    if (!form.getFieldState(dottedName).isDirty) return true;
+    return runCommit();
   };
 
   /**
@@ -599,7 +633,7 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
                     ctl={ctl}
                     typeTag={typeTag}
                     enumOptions={enumOptions}
-                    onCommit={runCommit}
+                    onCommit={runCommitIfDirty}
                   />
                 </FormControl>
                 <SavedIndicator visible={savedTick} />
@@ -863,7 +897,7 @@ function StringArrayControlBody({
         commitText();
       }}
       rows={Math.max(2, Math.min(6, pendingText.split('\n').length))}
-      className="min-h-16 w-full rounded-md border bg-background px-3 py-1.5 font-mono text-xs"
+      className="min-h-16 w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40"
     />
   );
 }
@@ -884,11 +918,6 @@ function SavedIndicator({ visible }: { visible: boolean }) {
       ) : null}
     </span>
   );
-}
-
-function flashSaved(setter: (next: boolean) => void): void {
-  setter(true);
-  setTimeout(() => setter(false), 1200);
 }
 
 function valuesEqual(a: unknown, b: unknown): boolean {
