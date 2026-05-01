@@ -135,8 +135,7 @@ function ShowMoreButton({
 interface LinkRowProps {
   icon: ReactNode;
   iconColorClass?: string;
-  iconTooltip?: string;
-  /** Tooltip shown on hover/focus of the entire row. Use for state hints that should be discoverable from anywhere in the row, not just the icon. */
+  /** Tooltip shown on hover/focus of the entire row. Use for state hints that should be discoverable from anywhere in the row. */
   rowTooltip?: string;
   title: string;
   /** Secondary mono path line. Omitted when equal to title. */
@@ -176,7 +175,6 @@ interface LinkRowProps {
 function LinkRow({
   icon,
   iconColorClass,
-  iconTooltip,
   rowTooltip,
   title,
   path,
@@ -212,6 +210,7 @@ function LinkRow({
       className={overlayClassName}
     >
       {title}
+      {external ? <span className="sr-only"> (opens in new tab)</span> : null}
     </a>
   ) : (
     <button
@@ -227,16 +226,7 @@ function LinkRow({
 
   const row = (
     <div className="group relative flex items-start gap-2.5 rounded-md px-3 py-2.5 transition-colors hover:bg-muted/80">
-      <div className="mt-px flex items-center">
-        {iconTooltip ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{iconNode}</TooltipTrigger>
-            <TooltipContent side="top">{iconTooltip}</TooltipContent>
-          </Tooltip>
-        ) : (
-          iconNode
-        )}
-      </div>
+      <div className="mt-px flex items-center">{iconNode}</div>
       <div className="min-w-0 flex-1 space-y-0.5 text-1sm">
         {primaryInteractive}
         {showPath ? (
@@ -391,7 +381,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
         <LinkRow
           key={`ext:${link.url}`}
           icon={<ArrowUpRight className="size-3.5" />}
-          iconTooltip="Opens in a new tab"
+          rowTooltip="Opens in a new tab"
           title={link.title}
           path={titleIsUrl ? undefined : link.url}
           titleHover={link.url}
@@ -444,7 +434,6 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           key={key}
           icon={<Folder className="size-3.5" />}
           iconColorClass="text-sky-600 dark:text-sky-400"
-          iconTooltip="Folder — click for overview"
           ariaLabel={`Folder target: ${link.title}. Click to open the overview.`}
           title={displayTitle}
           path={path}
