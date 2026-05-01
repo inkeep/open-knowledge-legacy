@@ -13,8 +13,8 @@ import { OK_DIR } from '@inkeep/open-knowledge-core';
  * unit tests. Keeps this test so `bun test` never runs zero-files.
  */
 describe('desktop scaffold', () => {
-  test('OK_DIR from core resolves to .open-knowledge', () => {
-    expect(OK_DIR).toBe('.open-knowledge');
+  test('OK_DIR from core resolves to .ok', () => {
+    expect(OK_DIR).toBe('.ok');
   });
 
   test('server package is importable', async () => {

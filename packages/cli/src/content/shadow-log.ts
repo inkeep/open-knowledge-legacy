@@ -1,7 +1,7 @@
 /**
  * CLI-side reader for shadow-repo per-path activity history.
  *
- * Reads the bare shadow repo at `.git/open-knowledge/` via simple-git — NO
+ * Reads the bare shadow repo at `.git/ok/` via simple-git — NO
  * HTTP endpoint (D18). The on-disk layout
  * (`refs/wip/<project-branch>/<writer-id>`) is shared with the server writer
  * through `@inkeep/open-knowledge-core`'s `shadow-repo-layout` helpers

@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 describe('initShadowRepo', () => {
-  test('creates shadow at .git/open-knowledge/ when project .git/ exists', async () => {
+  test('creates shadow at .git/ok/ when project .git/ exists', async () => {
     const projectRoot = resolve(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -48,7 +48,7 @@ describe('initShadowRepo', () => {
 
     const shadow = await initShadowRepo(projectRoot);
 
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/open-knowledge'));
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/ok'));
     expect(shadow.workTree).toBe(projectRoot);
     expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
 
@@ -93,7 +93,7 @@ describe('initShadowRepo', () => {
     expect(existsSync(resolve(shadow2.gitDir, 'HEAD'))).toBe(true);
   });
 
-  test('R9 rename shim: legacy .git/openknowledge/ is renamed to .git/open-knowledge/', async () => {
+  test('R9 rename shim: legacy .git/openknowledge/ is renamed to .git/ok/', async () => {
     const projectRoot = resolve(tmpDir, 'legacy');
     mkdirSync(projectRoot, { recursive: true });
 
@@ -114,10 +114,10 @@ describe('initShadowRepo', () => {
 
     const shadow = await initShadowRepo(projectRoot);
 
-    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/open-knowledge'));
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/ok'));
     expect(existsSync(legacyDir)).toBe(false);
-    expect(existsSync(resolve(projectRoot, '.git/open-knowledge/SENTINEL'))).toBe(true);
-    expect(existsSync(resolve(projectRoot, '.git/open-knowledge/HEAD'))).toBe(true);
+    expect(existsSync(resolve(projectRoot, '.git/ok/SENTINEL'))).toBe(true);
+    expect(existsSync(resolve(projectRoot, '.git/ok/HEAD'))).toBe(true);
   });
 
   test('R9 defensive: both legacy and new shadow present — no rename, warning logged', async () => {
@@ -131,7 +131,7 @@ describe('initShadowRepo', () => {
 
     // Seed BOTH locations so the shim hits the defensive branch
     const legacyDir = resolve(projectRoot, '.git/openknowledge');
-    const newDir = resolve(projectRoot, '.git/open-knowledge');
+    const newDir = resolve(projectRoot, '.git/ok');
     mkdirSync(legacyDir, { recursive: true });
     mkdirSync(newDir, { recursive: true });
     writeFileSync(resolve(legacyDir, 'LEGACY_SENTINEL'), 'legacy');

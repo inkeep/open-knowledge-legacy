@@ -274,10 +274,10 @@ describe('T5: Branch switch while tab open', () => {
     expect((diskAfter.match(/\[\[feature-sibling\]\]/g) ?? []).length).toBe(1);
     expect((diskAfter.match(/\[\[main-sibling\]\]/g) ?? []).length).toBe(0);
 
-    // Server-side `.open-knowledge/ystate/` must not exist — restart recovery
+    // Server-side `.ok/ystate/` must not exist — restart recovery
     // moved to client-side y-indexeddb. A leftover directory here would
     // indicate stale scaffolding or a reintroduced sidecar write path.
-    const ystateDir = join(contentDir, '.open-knowledge', 'ystate');
+    const ystateDir = join(contentDir, '.ok', 'ystate');
     expect(existsSync(ystateDir)).toBe(false);
 
     // Client-side invalidation fired: `handleBranchSwitched` called

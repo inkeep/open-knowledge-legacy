@@ -557,13 +557,13 @@ describe('recordHandoff', () => {
     ]);
   });
 
-  test('writes to ~/.open-knowledge/stats.jsonl with mkdir(parent) called first', async () => {
+  test('writes to ~/.ok/stats.jsonl with mkdir(parent) called first', async () => {
     const { calls, deps } = makeStubs();
     await recordHandoff(deps, sampleLine);
-    expect(calls.mkdir).toEqual(['/Users/test/.open-knowledge']);
+    expect(calls.mkdir).toEqual(['/Users/test/.ok']);
     expect(calls.appendFile).toHaveLength(1);
-    expect(calls.appendFile[0]?.path).toBe('/Users/test/.open-knowledge/stats.jsonl');
-    expect(STATS_FILE_RELATIVE_PATH).toEqual(['.open-knowledge', 'stats.jsonl']);
+    expect(calls.appendFile[0]?.path).toBe('/Users/test/.ok/stats.jsonl');
+    expect(STATS_FILE_RELATIVE_PATH).toEqual(['.ok', 'stats.jsonl']);
   });
 
   test('serializes the full schema verbatim including optional reason on errors', async () => {

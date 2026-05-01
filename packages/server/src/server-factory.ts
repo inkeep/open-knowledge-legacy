@@ -116,10 +116,6 @@ export interface ServerOptions {
   shadowRepo?: ShadowHandle;
   /** Content root relative to project dir. */
   contentRoot?: string;
-  /** Glob patterns for files to include (default: ['**\/*.md']). */
-  includePatterns?: string[];
-  /** Glob patterns for files to explicitly exclude. */
-  excludePatterns?: string[];
   /**
    * Maximum time (ms) `destroy()` waits for all pending stores to drain
    * before giving up and continuing with the rest of the shutdown sequence.
@@ -211,7 +207,7 @@ export interface ServerInstance {
    */
   readonly degraded: readonly string[];
   /**
-   * Directory holding the server lock (`<contentDir>/.open-knowledge`).
+   * Directory holding the server lock (`<contentDir>/.ok`).
    * Callers update the lock's port field via `updateServerLockPort(lockDir, port)`
    * once the HTTP listener has bound to a kernel-assigned port.
    */
@@ -252,8 +248,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
-    includePatterns = ['**/*.md', '**/*.mdx'],
-    excludePatterns = [],
     destroyTimeoutMs = 10_000,
     localOpCliArgs,
     skipStateManifestCheck = false,
@@ -277,7 +271,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   // HTTP listen, etc.). Collides fast with another running server in the same
   // contentDir. Port may be 0 here — the CLI rewrites it post-listen via
   // `updateServerLockPort(lockDir, realPort)`. See V0-1 spec.
-  const lockDir = resolve(contentDir, '.open-knowledge');
+  const lockDir = resolve(contentDir, '.ok');
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
@@ -353,8 +347,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentFilter = createContentFilter({
       projectDir,
       contentDir,
-      includePatterns,
-      excludePatterns,
     });
     backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 
@@ -445,7 +437,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     // claim otherwise (falling back to SERVICE_WRITER via resolveWriterFromOrigin).
     // This closes attribution-forgery on the single-user loopback deployment
     // without requiring a signed token. When multi-principal support is ever
-    // added, upgrade this to a signed handshake from .open-knowledge/principal.json.
+    // added, upgrade this to a signed handshake from .ok/principal.json.
     const principalAuthExtension: Extension & { __kind: 'principal-auth' } = {
       // Named marker so test code can find THIS extension specifically rather
       // than "the first extension with an onAuthenticate hook" — future
@@ -1588,7 +1580,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     // SPEC §6 FR-2 / streaming-upload-refactor D5: reap orphaned tempfiles
-    // from .open-knowledge/tmp/ older than the 24h grace window. Adversarial
+    // from .ok/tmp/ older than the 24h grace window. Adversarial
     // or buggy clients that abort mid-upload leave a tempfile behind; the
     // in-request cleanup handles the common path but a SIGKILL between
     // pipeline completion and rename/unlink leaks the inode. Boot sweep is

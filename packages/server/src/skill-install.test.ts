@@ -111,7 +111,7 @@ function freshHome(): string {
   return mkdtempSync(join(tmpdir(), 'ok-skill-install-'));
 }
 
-const SIDECAR_REL = ['.open-knowledge', 'skill-installed-version'] as const;
+const SIDECAR_REL = ['.ok', 'skill-installed-version'] as const;
 function sidecarPathFor(home: string): string {
   return join(home, ...SIDECAR_REL);
 }
@@ -133,7 +133,7 @@ function writeCentralSkill(home: string): void {
 }
 
 function writeSidecar(home: string, content: string): void {
-  const dir = join(home, '.open-knowledge');
+  const dir = join(home, '.ok');
   mkdirSync(dir, { recursive: true });
   writeFileSync(sidecarPathFor(home), content, 'utf-8');
 }

@@ -41,7 +41,7 @@ Renames produce a `rename:` row on every affected document's timeline. For a sin
 | File-watcher external `mv`              | `file-system` writer (anonymous in the row author chip) |
 | `git pull` upstream import              | `git-upstream` writer                                   |
 
-The principal identity is loaded server-side from `<contentDir>/.open-knowledge/principal.json` at boot. UI clients do not send principal identity in the request body — the server is the only source of principal truth. If no principal is loaded (server-bootstrap failure) and no agent identity is supplied, the row stays anonymous.
+The principal identity is loaded server-side from `<contentDir>/.ok/principal.json` at boot. UI clients do not send principal identity in the request body — the server is the only source of principal truth. If no principal is loaded (server-bootstrap failure) and no agent identity is supplied, the row stays anonymous.
 
 ## Inspecting changes
 

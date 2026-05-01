@@ -29,7 +29,7 @@
  *
  * Fields:
  * - `principalId` — browser-principal identity (stable UUID from
- *   `.open-knowledge/principal.json`). Empty/absent → write falls through
+ *   `.ok/principal.json`). Empty/absent → write falls through
  *   to SERVICE_WRITER attribution.
  * - `tabSessionId` — per-tab UUID, generated once at tab open. Used by the
  *   server only for telemetry/correlation today.

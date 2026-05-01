@@ -52,9 +52,9 @@ interface SeededHome {
 function seedHomeWithLastOpenedProject(prefix: string): SeededHome {
   const tmpHome = mkdtempSync(join(tmpdir(), `ok-navigator-return-${prefix}-`));
   const projectDir = mkdtempSync(join(tmpdir(), `ok-navigator-return-${prefix}-project-`));
-  mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(projectDir, '.ok'), { recursive: true });
   writeFileSync(
-    join(projectDir, '.open-knowledge', 'config.yml'),
+    join(projectDir, '.ok', 'config.yml'),
     "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
   );
   const userDataDir = join(tmpHome, 'Library', 'Application Support', DESKTOP_PRODUCT_NAME);

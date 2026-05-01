@@ -11,7 +11,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP config for every detected editor
+bunx @inkeep/open-knowledge init      # Scaffold .ok/ + register MCP config for every detected editor
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
@@ -49,12 +49,12 @@ The CLI ships with a pair of long-lived processes and three utility commands so 
 | Command (long / short)                | Role                                                                                                   |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `open-knowledge start` / `ok start`   | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
-| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.ok/ui.lock`.             |
 | `open-knowledge stop` / `ok stop`     | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
-| `open-knowledge clean` / `ok clean`   | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge clean` / `ok clean`   | Prune stale `.ok/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
 | `open-knowledge status` / `ok status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
-Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
+Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.ok/{server,ui}.lock` with distinct ports.
 
 ### Windows support
 
@@ -89,7 +89,7 @@ bun run build
 ```bash
 bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
 bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
-bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs init     # Scaffold .ok/ + MCP configs
 bun packages/cli/dist/cli.mjs init --dev-mcp --force
                                  # Point editor MCP + Claude preview launcher at this local build
 bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)
@@ -137,7 +137,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP config for every detected editor
+bunx @inkeep/open-knowledge init      # Scaffold .ok/ + register MCP config for every detected editor
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
@@ -175,12 +175,12 @@ The CLI ships with a pair of long-lived processes and three utility commands so 
 | Command (long / short)                | Role                                                                                                   |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `open-knowledge start` / `ok start`   | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
-| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.ok/ui.lock`.             |
 | `open-knowledge stop` / `ok stop`     | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
-| `open-knowledge clean` / `ok clean`   | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge clean` / `ok clean`   | Prune stale `.ok/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
 | `open-knowledge status` / `ok status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
-Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
+Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.ok/{server,ui}.lock` with distinct ports.
 
 ### Windows support
 
@@ -215,7 +215,7 @@ bun run build
 ```bash
 bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
 bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
-bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs init     # Scaffold .ok/ + MCP configs
 bun packages/cli/dist/cli.mjs init --dev-mcp --force
                                  # Point editor MCP + Claude preview launcher at this local build
 bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)
@@ -263,7 +263,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP config for every detected editor
+bunx @inkeep/open-knowledge init      # Scaffold .ok/ + register MCP config for every detected editor
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
@@ -301,12 +301,12 @@ The CLI ships with a pair of long-lived processes and three utility commands so 
 | Command (long / short)                | Role                                                                                                   |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `open-knowledge start` / `ok start`   | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
-| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.ok/ui.lock`.             |
 | `open-knowledge stop` / `ok stop`     | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
-| `open-knowledge clean` / `ok clean`   | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge clean` / `ok clean`   | Prune stale `.ok/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
 | `open-knowledge status` / `ok status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
-Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
+Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.ok/{server,ui}.lock` with distinct ports.
 
 ### Windows support
 
@@ -341,7 +341,7 @@ bun run build
 ```bash
 bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
 bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
-bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs init     # Scaffold .ok/ + MCP configs
 bun packages/cli/dist/cli.mjs init --dev-mcp --force
                                  # Point editor MCP + Claude preview launcher at this local build
 bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)
@@ -389,7 +389,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP config for every detected editor
+bunx @inkeep/open-knowledge init      # Scaffold .ok/ + register MCP config for every detected editor
 bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
@@ -427,12 +427,12 @@ The CLI ships with a pair of long-lived processes and three utility commands so 
 | Command (long / short)                | Role                                                                                                   |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `open-knowledge start` / `ok start`   | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
-| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge ui` / `ok ui`         | Serve the React editor on port 3000 (respects `PORT` env); owns `.ok/ui.lock`.             |
 | `open-knowledge stop` / `ok stop`     | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
-| `open-knowledge clean` / `ok clean`   | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge clean` / `ok clean`   | Prune stale `.ok/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
 | `open-knowledge status` / `ok status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
-Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
+Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.ok/{server,ui}.lock` with distinct ports.
 
 ### Windows support
 
@@ -467,7 +467,7 @@ bun run build
 ```bash
 bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
 bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
-bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs init     # Scaffold .ok/ + MCP configs
 bun packages/cli/dist/cli.mjs init --dev-mcp --force
                                  # Point editor MCP + Claude preview launcher at this local build
 bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)

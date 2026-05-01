@@ -98,7 +98,7 @@ The `summaries` field is flat (per-contributor, not per-doc) and omitted entirel
 2. No `agentId`, server has a loaded principal → `principal-<uuid>` contributor with the principal's display name. UI drag-rename in FileTree and the in-editor Restore button hit this branch — both post with no identity, both attribute to the loaded principal.
 3. No `agentId`, no principal → no contributor entry (anonymous). When principal load fails at server start, rename and rollback rows stay anonymous rather than inventing identity.
 
-**Trust boundary.** `extractActorIdentity` does NOT read `body.principalId` — the HTTP body is unauthenticated and a body-supplied principal could be spoofed. The server's `getPrincipal()` (loaded from `<contentDir>/.open-knowledge/principal.json` at boot) is the only source of principal identity for HTTP handlers.
+**Trust boundary.** `extractActorIdentity` does NOT read `body.principalId` — the HTTP body is unauthenticated and a body-supplied principal could be spoofed. The server's `getPrincipal()` (loaded from `<contentDir>/.ok/principal.json` at boot) is the only source of principal identity for HTTP handlers.
 
 **Side-effect carve-out.** When a rename rewrites inbound wiki-links and markdown links across N linking docs, those linking docs do NOT receive an actor contributor entry — they flow through the existing `defaultWriter` (anonymous) path. The renamed doc itself records the actor via `recordContributor`; the cascading rewrites stay mechanical. Applies symmetrically to agent-driven and principal-driven renames.
 

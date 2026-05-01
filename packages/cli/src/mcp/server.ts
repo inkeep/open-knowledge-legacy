@@ -9,7 +9,7 @@
  * per-file enrichment renders the same view on demand without the
  * persisted INDEX.md artifacts.
  *
- * Scaffolding (`.open-knowledge/` directory creation plus editor MCP config wiring) is a
+ * Scaffolding (`.ok/` directory creation plus editor MCP config wiring) is a
  * terminal-side operation handled by the CLI `init` subcommand.
  *
  * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
@@ -185,17 +185,15 @@ let logger: McpLogger | undefined;
  * them here (SPEC D13).
  */
 export function buildInstructions(config: Config, _opts?: { dynamicConfig?: boolean }): string {
-  const { dir, include, exclude } = config.content;
-  const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
-  const includeLine = include.map((p) => `\`${p}\``).join(', ');
+  const { dir } = config.content;
 
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-**STOP** *(when \`.open-knowledge/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
+**STOP** *(when \`.ok/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
 
 **Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
-Content dir: ${dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
+Content dir: ${dir}. Path rules: see \`.okignore\` at the project root (gitignore syntax).
 
 ## Reads
 
@@ -209,7 +207,7 @@ Claude Code Desktop: \`preview_start("open-knowledge-ui")\`. Other hosts: open-U
 
 Detailed conventions (wiki-link authoring, frontmatter, anti-patterns) live in the installed \`open-knowledge\` Agent Skill. If missing, run \`npx @inkeep/open-knowledge init\`.
 
-**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.open-knowledge/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
+**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.ok/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
 `;
 }
 

@@ -8,10 +8,9 @@
  *   - tags: concat across ALL matching rules in declaration order, then
  *     dedup preserving first-occurrence order
  *
- * Matching uses picomatch with `{ dot: true }` — same options as
- * `content.include`. Compiled matchers are memoized via a module-level
- * WeakMap keyed on the rules array so repeated calls with the same
- * (stable) array avoid recompilation.
+ * Matching uses picomatch with `{ dot: true }`. Compiled matchers are
+ * memoized via a module-level WeakMap keyed on the rules array so repeated
+ * calls with the same (stable) array avoid recompilation.
  *
  * Pure: no I/O, does not mutate the input rules array.
  */

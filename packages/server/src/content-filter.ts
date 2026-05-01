@@ -1,25 +1,36 @@
 /**
- * Unified content filter — encapsulates exclusion logic (gitignore + config content.exclude)
- * and inclusion logic (config content.include) in a single module.
+ * Unified content filter — encapsulates exclusion logic in one module.
  *
- * Used by the file watcher to determine which files belong in the content index.
- * Exclusion always supersedes inclusion.
+ * Pattern sources, all unioned in a single `ignore`-lib instance so cross-source
+ * `!`-negation works (e.g. a `!secret.md` line in `.okignore` re-includes a
+ * file that `.gitignore` excluded):
+ *   - root `.gitignore` (project-relative)
+ *   - root `.okignore`  (project-relative)
+ *   - nested `.gitignore` and `.okignore` files at any folder depth
+ *   - the `.git` directory (always excluded — `node-ignore` does not auto-add it)
+ *
+ * Extension gating happens upstream via `isSupportedDocFile()`
+ * (`packages/server/src/doc-extensions.ts`); exclusions live in `.okignore`
+ * (no YAML include/exclude keys).
+ *
+ * Used by the file watcher to decide which files belong in the content index
+ * and by the CLI preview helper to enumerate the same set without booting the
+ * server.
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import ignore, { type Ignore } from 'ignore';
-import picomatch from 'picomatch';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 /**
- * Directories that are always skipped during traversal, independent of gitignore or user config.
+ * Directories that are always skipped during traversal, independent of
+ * `.gitignore` / `.okignore`.
  *
- * Criteria: never contains user-authored markdown AND either (a) uses symlinks aggressively,
- * (b) is a massive tree, or (c) is a framework/tool cache. Overridable in the future via
- * config if a project genuinely needs to serve docs from one of these locations.
+ * Criteria: never contains user-authored markdown AND either (a) uses symlinks
+ * aggressively, (b) is a massive tree, or (c) is a framework/tool cache.
  *
  * Package managers / language runtimes:
  *   node_modules  — pnpm broken symlinks crash statSync; massive tree
@@ -33,8 +44,11 @@ import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
  *   .turbo / .cache / .parcel-cache     — build tool caches
  *   coverage                            — test coverage reports
  *
- * VCS:
+ * VCS / per-project state:
  *   .git — already in the ig instance; hardcoded here for the fast-path
+ *   .ok  — per-project state dir; the committed `.ok/.gitignore` already
+ *          self-ignores its contents for git, but adding it here lets the
+ *          walker skip the descent entirely
  */
 const BUILTIN_SKIP_DIRS = new Set([
   // Package managers / language runtimes
@@ -57,28 +71,27 @@ const BUILTIN_SKIP_DIRS = new Set([
   '.cache',
   '.parcel-cache',
   'coverage',
-  // VCS
+  // VCS / per-project state
   '.git',
+  '.ok',
 ]);
 
+/** File names recognized as ignore-pattern sources, in load order. */
+const IGNORE_FILE_NAMES = ['.gitignore', '.okignore'] as const;
+
 export interface ContentFilterOptions {
-  /** Project root directory (where .gitignore lives). */
+  /** Project root directory (where `.gitignore` / `.okignore` live). */
   projectDir: string;
   /** Content directory to serve files from (may equal projectDir). */
   contentDir: string;
-  /** Glob patterns for files to include (default: ['**\/*.md']). */
-  includePatterns: string[];
-  /** Glob patterns for files to explicitly exclude. */
-  excludePatterns: string[];
 }
 
 export interface ContentFilter {
   /** True if the file at relativePath should be excluded from the document system. */
   isExcluded(relativePath: string): boolean;
   /**
-   * True if the directory at relativePath is excluded by gitignore/config rules.
-   * Unlike isExcluded(), this does NOT check include patterns — directories don't
-   * need to match include globs, only files do. Used for traversal decisions.
+   * True if the directory at relativePath is excluded by ignore-file rules.
+   * Used for traversal decisions.
    */
   isDirExcluded(relativePath: string): boolean;
   /** Relative glob patterns for @parcel/watcher ignore option (best-effort). */
@@ -99,92 +112,73 @@ export interface ContentFilter {
 }
 
 /**
- * Create a ContentFilter that applies the union of .gitignore rules and
- * config content.exclude patterns, gated by content.include patterns.
- *
- * Uses a two-pass .gitignore bootstrap:
- *   Pass 1: Load root .gitignore + content.exclude into a bootstrap filter.
- *   Pass 2: Walk contentDir for nested .gitignore files, skipping dirs the
- *           bootstrap filter already excludes (avoids walking node_modules/).
+ * Create a ContentFilter that applies `.gitignore` + `.okignore` rules in a
+ * single unified `ignore`-lib instance. Extensions are gated upstream by
+ * `isSupportedDocFile()`; this filter handles only path-pattern exclusion plus
+ * the sibling-asset rule (D11) that admits assets next to included `.md`.
  */
 export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
-  const { projectDir, contentDir, includePatterns, excludePatterns } = opts;
+  const { projectDir, contentDir } = opts;
 
-  // Build the include matcher from content.include patterns
-  const isIncluded = picomatch(includePatterns, { dot: true });
-
-  // --- Pass 1: Bootstrap ignore with root .gitignore + config exclude ---
+  // --- Pass 1: Bootstrap ignore with root .gitignore + .okignore ---
   const ig = ignore();
 
   // Always exclude .git directory itself
   ig.add('.git');
 
-  const rootGitignorePath = join(projectDir, '.gitignore');
-  const rootGitignorePatterns: string[] = [];
-  if (existsSync(rootGitignorePath)) {
+  const rootIgnorePatterns: string[] = [];
+  for (const name of IGNORE_FILE_NAMES) {
+    const path = join(projectDir, name);
+    if (!existsSync(path)) continue;
     try {
-      const content = readFileSync(rootGitignorePath, 'utf-8');
-      const patterns = parseGitignorePatterns(content);
-      rootGitignorePatterns.push(...patterns);
+      const patterns = parseIgnorePatterns(readFileSync(path, 'utf-8'));
+      rootIgnorePatterns.push(...patterns);
       ig.add(patterns);
     } catch (err) {
-      console.warn(`[content-filter] Failed to read .gitignore at ${rootGitignorePath}:`, err);
+      console.warn(`[content-filter] Failed to read ${name} at ${path}:`, err);
     }
   }
 
   // Precompute the contentDir-to-projectDir prefix for path conversion.
   // When contentDir is outside projectDir, the relative path starts with ".."
-  // and the `ignore` library rejects such paths. Skip gitignore-based exclusion
-  // entirely in that case — gitignore rules from projectDir do not apply.
+  // and the `ignore` library rejects such paths. Skip ignore-based exclusion
+  // entirely in that case — ignore rules from projectDir do not apply.
   const contentRelPrefix = relative(projectDir, contentDir);
   const contentOutsideProject = contentRelPrefix.startsWith('..');
 
-  // Add config content.exclude patterns after .gitignore.
-  // Config patterns are relative to contentDir, so prefix them when contentDir != projectDir.
-  if (excludePatterns.length > 0) {
-    if (contentRelPrefix) {
-      ig.add(excludePatterns.map((p) => `${contentRelPrefix}/${p}`));
-    } else {
-      ig.add(excludePatterns);
-    }
-  }
-
-  // --- Pass 2: Walk contentDir for nested .gitignore files ---
+  // --- Pass 2: Walk contentDir for nested .gitignore + .okignore files ---
   // Use the bootstrap filter to skip already-excluded directories.
-  // When contentDir != projectDir, the .gitignore at contentDir itself is not
-  // covered by Pass 1 (which only loads projectDir/.gitignore). Load it explicitly.
-  if (contentRelPrefix) {
-    const contentDirGitignore = join(contentDir, '.gitignore');
-    if (existsSync(contentDirGitignore)) {
+  // When contentDir != projectDir, ignore files at contentDir itself are not
+  // covered by Pass 1 (which only loads projectDir's). Load them explicitly.
+  if (contentRelPrefix && !contentOutsideProject) {
+    for (const name of IGNORE_FILE_NAMES) {
+      const path = join(contentDir, name);
+      if (!existsSync(path)) continue;
       try {
-        const content = readFileSync(contentDirGitignore, 'utf-8');
-        const patterns = parseGitignorePatterns(content);
-        const prefixed = patterns.map((p) => {
-          if (p.startsWith('!')) return `!${contentRelPrefix}/${p.slice(1)}`;
-          return `${contentRelPrefix}/${p}`;
-        });
+        const patterns = parseIgnorePatterns(readFileSync(path, 'utf-8'));
+        const prefixed = patterns.map((p) => prefixPattern(p, contentRelPrefix));
         ig.add(prefixed);
       } catch (err) {
-        console.warn(`[content-filter] Failed to read .gitignore at ${contentDirGitignore}:`, err);
+        console.warn(`[content-filter] Failed to read ${name} at ${path}:`, err);
       }
     }
   }
-  loadNestedGitignores(contentDir, projectDir, ig);
+  loadNestedIgnoreFiles(contentDir, projectDir, ig);
 
   // Collect raw patterns for watcher ignore (best-effort optimization)
-  const watcherIgnoreGlobs = [...rootGitignorePatterns, ...excludePatterns].filter(
-    // Only include patterns that are useful as glob patterns for the watcher.
+  const watcherIgnoreGlobs = rootIgnorePatterns.filter(
+    // Only include patterns useful as glob patterns for the watcher.
     // Skip negation patterns (!) and comment lines (#).
     (p) => p.length > 0 && !p.startsWith('!') && !p.startsWith('#'),
   );
 
   // --- Sibling-asset refcount map (D11) ---
-  // Count of included .md files per directory (contentDir-relative).
+  // Count of supported doc files per directory (contentDir-relative).
   // '' represents the contentDir root itself.
   const dirCount = new Map<string, number>();
 
-  function isGitignoreExcluded(relativePath: string): boolean {
-    // When contentDir is outside projectDir, gitignore rules from projectDir
+  function isIgnored(relativePath: string): boolean {
+    // When contentDir is outside projectDir, ignore rules from projectDir
     // do not apply — and the `ignore` library rejects paths starting with `..`.
     if (contentOutsideProject) return false;
     const projectRelPath = contentRelPrefix ? `${contentRelPrefix}/${relativePath}` : relativePath;
@@ -192,7 +186,7 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   }
 
   // Walk contentDir at construct time to populate dirCount.
-  populateDirCount(contentDir, '', isIncluded, isGitignoreExcluded, dirCount);
+  populateDirCount(contentDir, '', isIgnored, dirCount);
 
   return {
     isExcluded(relativePath: string): boolean {
@@ -201,15 +195,17 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       const docName = stripDocExtension(relativePath);
       if (isSystemDoc(docName) || isConfigDoc(docName)) return true;
 
-      // D11 4-step ordered logic:
-      // (1) gitignore/exclude wins — but skip when contentDir is outside projectDir
-      //     (test-isolation case: gitignore rules from projectDir don't apply).
-      if (!contentOutsideProject && isGitignoreExcluded(relativePath)) return true;
+      // (1) ignore-file (gitignore + okignore) match → exclude.
+      //     Skipped when contentDir is outside projectDir (test-isolation).
+      if (!contentOutsideProject && isIgnored(relativePath)) return true;
 
-      // (2) include-pattern match → include
-      if (isIncluded(relativePath)) return false;
+      // (2) Supported doc extension → include.
+      //     `isSupportedDocFile` is the upstream extension gate (`.md`/`.mdx`).
+      //     Callers like file-watcher.ts already pre-filter, but cover it here
+      //     so this filter behaves correctly when called in isolation.
+      if (isSupportedDocFile(relativePath)) return false;
 
-      // (3) sibling-asset rule: extension in ASSET_EXTENSIONS AND dir has included .md
+      // (3) Sibling-asset rule: extension in ASSET_EXTENSIONS AND dir has an included doc.
       const ext = extname(relativePath).slice(1).toLowerCase();
       if (ASSET_EXTENSIONS.has(ext)) {
         const dir = dirname(relativePath);
@@ -217,12 +213,12 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
         if ((dirCount.get(normalizedDir) ?? 0) > 0) return false;
       }
 
-      // (4) else → exclude
+      // (4) Default → exclude.
       return true;
     },
 
     isDirExcluded(relativePath: string): boolean {
-      // Fast-path: built-in skips are always excluded regardless of gitignore config.
+      // Fast-path: built-in skips are always excluded regardless of ignore-file config.
       const topSegment = relativePath.split('/')[0];
       if (BUILTIN_SKIP_DIRS.has(topSegment)) return true;
       if (contentOutsideProject) return false;
@@ -253,20 +249,19 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
     rebuildDirCount(): void {
       dirCount.clear();
-      populateDirCount(contentDir, '', isIncluded, isGitignoreExcluded, dirCount);
+      populateDirCount(contentDir, '', isIgnored, dirCount);
     },
   };
 }
 
 /**
- * Walk contentDir to count included .md files per directory.
+ * Walk contentDir to count included `.md`/`.mdx` files per directory.
  * Populates the refcount map used by the sibling-asset inclusion rule (D11).
  */
 function populateDirCount(
   dir: string,
   relPath: string,
-  isIncluded: (path: string) => boolean,
-  isGitignoreExcluded: (path: string) => boolean,
+  isIgnored: (path: string) => boolean,
   dirCount: Map<string, number>,
 ): void {
   let entries: import('node:fs').Dirent[];
@@ -279,36 +274,39 @@ function populateDirCount(
     const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       if (BUILTIN_SKIP_DIRS.has(entry.name)) continue;
-      if (isGitignoreExcluded(childRel) || isGitignoreExcluded(`${childRel}/`)) continue;
-      populateDirCount(join(dir, entry.name), childRel, isIncluded, isGitignoreExcluded, dirCount);
-    } else if (
-      entry.isFile() &&
-      isSupportedDocFile(entry.name) &&
-      isIncluded(childRel) &&
-      !isGitignoreExcluded(childRel)
-    ) {
-      const normalizedDir = relPath === '' ? '' : relPath;
-      dirCount.set(normalizedDir, (dirCount.get(normalizedDir) ?? 0) + 1);
+      if (isIgnored(childRel) || isIgnored(`${childRel}/`)) continue;
+      populateDirCount(join(dir, entry.name), childRel, isIgnored, dirCount);
+    } else if (entry.isFile() && isSupportedDocFile(entry.name) && !isIgnored(childRel)) {
+      dirCount.set(relPath, (dirCount.get(relPath) ?? 0) + 1);
     }
   }
 }
 
 /**
- * Parse gitignore file content into an array of non-empty, non-comment patterns.
+ * Parse a `.gitignore`/`.okignore` file into an array of non-empty,
+ * non-comment patterns. Whitespace trimmed; CRLF-safe via `split('\n')`
+ * + `trim()`.
  */
-function parseGitignorePatterns(content: string): string[] {
+function parseIgnorePatterns(content: string): string[] {
   return content
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith('#'));
 }
 
+/** Prefix a single pattern with a relative path, preserving `!` negation. */
+function prefixPattern(pattern: string, relPrefix: string): string {
+  if (pattern.startsWith('!')) return `!${relPrefix}/${pattern.slice(1)}`;
+  return `${relPrefix}/${pattern}`;
+}
+
 /**
- * Recursively walk a directory looking for nested .gitignore files.
- * Skips directories that the ignore instance already excludes.
- * Adds found patterns to the ignore instance with correct relative path prefixes.
+ * Recursively walk a directory looking for nested `.gitignore` / `.okignore`
+ * files. Skips directories the ignore instance already excludes plus
+ * `BUILTIN_SKIP_DIRS`. Adds found patterns to the ignore instance with
+ * correct relative path prefixes.
  */
-function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void {
+function loadNestedIgnoreFiles(dir: string, projectDir: string, ig: Ignore): void {
   let entries: import('node:fs').Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -320,7 +318,7 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
-    // Fast-path: built-in skips never contain user .gitignore files and can
+    // Fast-path: built-in skips never contain user ignore files and can
     // be massive trees (node_modules) or contain broken symlinks (pnpm).
     if (BUILTIN_SKIP_DIRS.has(entry.name)) continue;
 
@@ -335,29 +333,19 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
     // Skip directories that are already excluded by the bootstrap filter
     if (ig.ignores(relToProject) || ig.ignores(`${relToProject}/`)) continue;
 
-    // Check for .gitignore in this subdirectory
-    const nestedGitignore = join(dirPath, '.gitignore');
-    if (existsSync(nestedGitignore)) {
+    for (const name of IGNORE_FILE_NAMES) {
+      const filePath = join(dirPath, name);
+      if (!existsSync(filePath)) continue;
       try {
-        const content = readFileSync(nestedGitignore, 'utf-8');
-        const patterns = parseGitignorePatterns(content);
-        // Prefix patterns with the relative path from project root
-        const prefixed = patterns.map((p) => {
-          if (p.startsWith('!')) {
-            return `!${relToProject}/${p.slice(1)}`;
-          }
-          return `${relToProject}/${p}`;
-        });
+        const patterns = parseIgnorePatterns(readFileSync(filePath, 'utf-8'));
+        const prefixed = patterns.map((p) => prefixPattern(p, relToProject));
         ig.add(prefixed);
       } catch (err) {
-        console.warn(
-          `[content-filter] Failed to read nested .gitignore at ${nestedGitignore}:`,
-          err,
-        );
+        console.warn(`[content-filter] Failed to read nested ${name} at ${filePath}:`, err);
       }
     }
 
     // Recurse into subdirectory
-    loadNestedGitignores(dirPath, projectDir, ig);
+    loadNestedIgnoreFiles(dirPath, projectDir, ig);
   }
 }

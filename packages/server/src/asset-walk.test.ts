@@ -70,8 +70,6 @@ describe('seedBasenameIndex — initial walk (with ContentFilter sibling-asset a
     const contentFilter = createContentFilter({
       projectDir: baseDir,
       contentDir,
-      includePatterns: ['**/*.md', '**/*.mdx'],
-      excludePatterns: [],
     });
     // Prime dirCount the same way the file-watcher does for every .md found.
     contentFilter.incrementMdDir('docs');
@@ -81,21 +79,20 @@ describe('seedBasenameIndex — initial walk (with ContentFilter sibling-asset a
     expect(idx.resolveEmbed('orphan.png', 'docs/meeting.md')).toBeNull();
   });
 
-  test('respects explicit exclude globs', () => {
+  test('respects .okignore exclusion patterns', () => {
     write('docs/meeting.md');
     write('docs/photo.png');
     write('secret/hidden.png');
+    writeFileSync(join(contentDir, '.okignore'), 'secret/\n', 'utf-8');
 
     const idx = createBasenameIndex();
     const contentFilter = createContentFilter({
       projectDir: baseDir,
       contentDir,
-      includePatterns: ['**/*.md', '**/*.mdx'],
-      excludePatterns: ['secret/**'],
     });
     contentFilter.incrementMdDir('docs');
-    // 'secret/' doesn't have a markdown doc, AND the explicit exclude
-    // glob wins regardless.
+    // 'secret/' doesn't have a markdown doc, AND the .okignore exclusion
+    // wins regardless.
     seedBasenameIndex({ contentDir, contentFilter, basenameIndex: idx });
 
     expect(idx.resolveEmbed('photo.png', 'docs/meeting.md')).toBe('docs/photo.png');

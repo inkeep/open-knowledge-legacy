@@ -21,7 +21,7 @@ function scaffoldOkDir(dir: string): void {
 }
 
 describe('handleSeedPlan', () => {
-  test('returns {ok:true, plan} when a project is bound and .open-knowledge/ exists', async () => {
+  test('returns {ok:true, plan} when a project is bound and .ok/ exists', async () => {
     scaffoldOkDir(testDir);
     const result = await handleSeedPlan({ resolveProjectRoot: () => testDir });
     expect(result.ok).toBe(true);
@@ -39,8 +39,8 @@ describe('handleSeedPlan', () => {
     }
   });
 
-  test('returns {ok:false, prerequisite-missing} when .open-knowledge/ is absent', async () => {
-    // testDir exists, but no `.open-knowledge/` inside — triggers prerequisite error
+  test('returns {ok:false, prerequisite-missing} when .ok/ is absent', async () => {
+    // testDir exists, but no `.ok/` inside — triggers prerequisite error
     const result = await handleSeedPlan({ resolveProjectRoot: () => testDir });
     expect(result.ok).toBe(false);
     if (!result.ok) {

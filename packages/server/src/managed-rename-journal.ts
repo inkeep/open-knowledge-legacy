@@ -57,7 +57,7 @@ interface ManagedRenameRecoveryResult {
 type MaybePromise<T> = T | Promise<T>;
 
 function journalDir(contentDir: string): string {
-  return resolve(contentDir, '.open-knowledge');
+  return resolve(contentDir, '.ok');
 }
 
 export function managedRenameJournalPath(contentDir: string): string {

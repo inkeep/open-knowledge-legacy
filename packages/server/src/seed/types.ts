@@ -120,7 +120,7 @@ export interface SeedOptions {
 }
 
 /**
- * Thrown by planSeed() when `.open-knowledge/` is absent (user must run `ok init` first).
+ * Thrown by planSeed() when `.ok/` is absent (user must run `ok init` first).
  */
 export class SeedPrerequisiteError extends Error {
   constructor(message: string) {
@@ -145,7 +145,7 @@ export class SeedRootDirError extends Error {
 }
 
 /**
- * Filename of the project config under `.open-knowledge/`. Duplicates the
+ * Filename of the project config under `.ok/`. Duplicates the
  * same literal defined in `packages/cli/src/constants.ts:CONFIG_FILENAME` —
  * kept local so the server-side seed module has no CLI dependency.
  */

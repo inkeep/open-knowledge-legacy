@@ -4,8 +4,7 @@ import { ConfigSchema } from './schema';
 describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
     const config = ConfigSchema.parse({});
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual([]);
+    expect(config.content.dir).toBe('.');
     expect(config.server.host).toBe('localhost');
     expect(config.server.openOnAgentEdit).toBe(false);
     expect(config.mcp.autoStart).toBe(true);
@@ -45,7 +44,7 @@ describe('ConfigSchema', () => {
     });
     expect(config.server.host).toBe('0.0.0.0');
     expect(config.server.openOnAgentEdit).toBe(false); // default preserved
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // other section default preserved
+    expect(config.content.dir).toBe('.'); // other section default preserved
   });
 
   test('invalid host type produces error', () => {
@@ -80,31 +79,22 @@ describe('ConfigSchema', () => {
     }
   });
 
-  test('custom include patterns override defaults', () => {
-    const config = ConfigSchema.parse({
-      content: {
-        include: ['**/*.md', '**/*.mdx'],
-      },
-    });
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual([]);
-  });
-
-  test('empty include array produces error', () => {
+  test('content.include and content.exclude pass loose-mode (removed from schema)', () => {
+    // `content.include` / `content.exclude` were removed from `ConfigSchema`;
+    // path rules now live in `.okignore` files. Existing keys parse silently
+    // via `z.looseObject` so existing configs don't crash; the loader's
+    // REMOVED_KEY check rejects them at the YAML layer with a migration hint.
     const result = ConfigSchema.safeParse({
-      content: { include: [] },
+      content: { include: ['**/*.md'], exclude: ['drafts/**'] },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  test('custom exclude patterns', () => {
+  test('content.dir is preserved', () => {
     const config = ConfigSchema.parse({
-      content: {
-        exclude: ['node_modules/**', '.claude/**'],
-      },
+      content: { dir: 'docs' },
     });
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // default preserved
-    expect(config.content.exclude).toEqual(['node_modules/**', '.claude/**']);
+    expect(config.content.dir).toBe('docs');
   });
 
   test('preview block absent parses to empty default', () => {

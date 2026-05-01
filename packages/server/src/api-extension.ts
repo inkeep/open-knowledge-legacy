@@ -1076,9 +1076,8 @@ export interface ApiExtensionOptions {
   /**
    * Active ContentFilter (the same instance threaded into the file watcher).
    * When present, `POST /api/rename-path` rejects destinations excluded by
-   * the workspace's `content.include`/`content.exclude` config so renames
-   * cannot land outside the watched scope. Omit in tests where admission
-   * checks aren't relevant.
+   * `.gitignore` / `.okignore` rules so renames cannot land outside the
+   * watched scope. Omit in tests where admission checks aren't relevant.
    */
   contentFilter?: ContentFilter;
   /**
@@ -4544,19 +4543,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
-      // Reject paths whose first segment is `.open-knowledge` — that directory
+      // Reject paths whose first segment is `.ok` — that directory
       // holds per-machine OK runtime state (server.lock, principal.json, cache,
       // etc.) and is symmetric with the `__system__` carve-out above. The
-      // `AGENTS.md` file inside `.open-knowledge/` is a tracked content file
+      // `AGENTS.md` file inside `.ok/` is a tracked content file
       // by design, but a rename TO or FROM this directory would clobber OK
       // bookkeeping.
       if (
-        fromPath === '.open-knowledge' ||
-        fromPath.startsWith('.open-knowledge/') ||
-        toPath === '.open-knowledge' ||
-        toPath.startsWith('.open-knowledge/')
+        fromPath === '.ok' ||
+        fromPath.startsWith('.ok/') ||
+        toPath === '.ok' ||
+        toPath.startsWith('.ok/')
       ) {
-        json(res, 400, { ok: false, error: '.open-knowledge is a reserved directory' });
+        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
         return;
       }
       if (fromPath === toPath) {
@@ -5348,7 +5347,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.open-knowledge');
+    const lockDir = resolve(absDir, '.ok');
 
     // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
@@ -5417,7 +5416,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { dir: string }
    * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
