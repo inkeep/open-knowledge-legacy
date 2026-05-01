@@ -124,16 +124,21 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
     return {} as DocumentFragment;
   }
 
+  // Inner-scoped save so we don't shadow the module-level `origWarn` that
+  // the text-serializer block's hooks captured. Without this, a future
+  // test added below this describe block would restore to a no-op rather
+  // than the true original `console.warn`.
   let warnCalls: string[];
+  let innerOrigWarn: typeof console.warn;
   beforeEach(() => {
     warnCalls = [];
-    origWarn = console.warn;
+    innerOrigWarn = console.warn;
     console.warn = (msg: unknown) => {
       warnCalls.push(typeof msg === 'string' ? msg : String(msg));
     };
   });
   afterEach(() => {
-    console.warn = origWarn;
+    console.warn = innerOrigWarn;
   });
 
   test('view attached + active selection + walker throws → catch fires + markdown tier returns target', () => {
@@ -212,11 +217,12 @@ describe('createClipboardHtmlSerializer — walker→markdown tier dispatch', ()
     handle.setView(view);
 
     const target = sentinelTarget();
-    expect(() =>
-      handle.serializer.serializeFragment(emptyFragment(), undefined, target),
-    ).not.toThrow();
+    const result = handle.serializer.serializeFragment(emptyFragment(), undefined, target);
 
     // No walker-tier engagement — content() was never called.
     expect(warnCalls.find((w) => w.includes('walker:'))).toBeUndefined();
+    // Markdown tier returned the target sentinel — sibling-symmetric
+    // assertion with the two preceding tests.
+    expect(result).toBe(target);
   });
 });
