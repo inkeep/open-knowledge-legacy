@@ -10,9 +10,10 @@
  *
  * Convention per `/eng:type-safety`: `.loose()` preserves unknown
  * fields for forward-compat; inferred types via `z.infer`. Every
- * exported schema satisfies `StandardSchemaV1<...>` so non-Zod
- * consumers (form libraries, validators) can interop without binding
- * to Zod directly. Zod v4 schemas natively expose `~standard`.
+ * exported schema asserts conformance via inline `satisfies
+ * StandardSchemaV1<unknown, T>` so non-Zod consumers (form libraries,
+ * validators) can interop without binding to Zod directly. Zod v4
+ * schemas natively expose `~standard`.
  */
 
 import type { StandardSchemaV1 } from '@standard-schema/spec';
@@ -54,15 +55,8 @@ export const ServerInfoResponseSchema = z
     currentBranch: z.string().min(1).optional(),
     currentDiskAckSVs: z.record(z.string().min(1), z.string().min(1)).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ServerInfoResponse = z.infer<typeof ServerInfoResponseSchema>;
-// Compile-time assertion: Zod v4 native `~standard` is a `StandardSchemaV1`.
-// The cast is a structural identity check — Zod v4 schemas conform to
-// StandardSchemaV1 at runtime, but TypeScript doesn't accept the structural
-// match without help because the input type is unknown by default.
-const _ServerInfoResponseSchemaIsStandard: StandardSchemaV1<unknown, ServerInfoResponse> =
-  ServerInfoResponseSchema;
-void _ServerInfoResponseSchemaIsStandard;
 
 /**
  * Response shape for `GET /api/principal`.
@@ -99,11 +93,8 @@ export const PrincipalResponseSchema = z
     source: z.enum(['git-config', 'synthesized']),
     created_at: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type PrincipalResponse = z.infer<typeof PrincipalResponseSchema>;
-const _PrincipalResponseSchemaIsStandard: StandardSchemaV1<unknown, PrincipalResponse> =
-  PrincipalResponseSchema;
-void _PrincipalResponseSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // RFC 9457 Problem Details (D22, D38)
@@ -223,10 +214,8 @@ export const ProblemTypeSchema = z.enum([
   // running. Surfaced through the same RFC 9457 contract as the in-process
   // server emits so client `ProblemDetailsSchema.safeParse` flows match.
   'urn:ok:error:collab-server-not-running',
-]);
+]) satisfies StandardSchemaV1;
 export type ProblemType = z.infer<typeof ProblemTypeSchema>;
-const _ProblemTypeSchemaIsStandard: StandardSchemaV1<unknown, ProblemType> = ProblemTypeSchema;
-void _ProblemTypeSchemaIsStandard;
 
 /**
  * Per-DU exhaustiveness helper for `ProblemType` (and any subset thereof —
@@ -261,11 +250,8 @@ export const ProblemDetailsSchema = z
     instance: z.string().uuid().optional(),
     detail: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ProblemDetails = z.infer<typeof ProblemDetailsSchema>;
-const _ProblemDetailsSchemaIsStandard: StandardSchemaV1<unknown, ProblemDetails> =
-  ProblemDetailsSchema;
-void _ProblemDetailsSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Per-handler request + success schemas
@@ -293,11 +279,8 @@ export const UploadRequestSchema = z
     agentId: z.string().min(1).optional(),
     agentName: z.string().min(1).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type UploadRequest = z.infer<typeof UploadRequestSchema>;
-const _UploadRequestSchemaIsStandard: StandardSchemaV1<unknown, UploadRequest> =
-  UploadRequestSchema;
-void _UploadRequestSchemaIsStandard;
 
 /**
  * Success response for `POST /api/upload` — flat `{ ...data }` shape with
@@ -316,11 +299,8 @@ export const UploadAssetSuccessSchema = z
     path: z.string().min(1).optional(),
     deduped: z.boolean().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type UploadAssetSuccess = z.infer<typeof UploadAssetSuccessSchema>;
-const _UploadAssetSuccessSchemaIsStandard: StandardSchemaV1<unknown, UploadAssetSuccess> =
-  UploadAssetSuccessSchema;
-void _UploadAssetSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/local-op/clone`.
@@ -337,11 +317,8 @@ export const LocalOpCloneRequestSchema = z
     url: z.string().min(1),
     dir: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpCloneRequest = z.infer<typeof LocalOpCloneRequestSchema>;
-const _LocalOpCloneRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpCloneRequest> =
-  LocalOpCloneRequestSchema;
-void _LocalOpCloneRequestSchemaIsStandard;
 
 /**
  * Mid-stream error event emitted on NDJSON streaming endpoints (D36 c).
@@ -360,11 +337,8 @@ export const StreamingProblemEventSchema = z
     type: z.literal('error'),
     problem: ProblemDetailsSchema,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type StreamingProblemEvent = z.infer<typeof StreamingProblemEventSchema>;
-const _StreamingProblemEventSchemaIsStandard: StandardSchemaV1<unknown, StreamingProblemEvent> =
-  StreamingProblemEventSchema;
-void _StreamingProblemEventSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster A: agent-write / -write-md / -patch / -undo (US-006)
@@ -429,11 +403,8 @@ export const AgentWriteRequestSchema = z
     content: z.string().optional(),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentWriteRequest = z.infer<typeof AgentWriteRequestSchema>;
-const _AgentWriteRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteRequest> =
-  AgentWriteRequestSchema;
-void _AgentWriteRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/agent-write-md`. The canonical agent-write
@@ -450,11 +421,8 @@ export const AgentWriteMdRequestSchema = z
     position: z.enum(['append', 'prepend', 'replace']).optional(),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentWriteMdRequest = z.infer<typeof AgentWriteMdRequestSchema>;
-const _AgentWriteMdRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteMdRequest> =
-  AgentWriteMdRequestSchema;
-void _AgentWriteMdRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/agent-patch`. `find` REQUIRED non-empty (the
@@ -473,11 +441,8 @@ export const AgentPatchRequestSchema = z
     offset: z.number().int().nonnegative().optional(),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentPatchRequest = z.infer<typeof AgentPatchRequestSchema>;
-const _AgentPatchRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentPatchRequest> =
-  AgentPatchRequestSchema;
-void _AgentPatchRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/agent-undo`. `connectionId` REQUIRED — names
@@ -493,11 +458,8 @@ export const AgentUndoRequestSchema = z
     scope: z.enum(['last', 'session', 'file']).optional(),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentUndoRequest = z.infer<typeof AgentUndoRequestSchema>;
-const _AgentUndoRequestSchemaIsStandard: StandardSchemaV1<unknown, AgentUndoRequest> =
-  AgentUndoRequestSchema;
-void _AgentUndoRequestSchemaIsStandard;
 
 /**
  * Sub-schema for the optional `summary` field on every mutating-handler
@@ -511,11 +473,8 @@ export const SummaryResponseFieldSchema = z
     truncatedFrom: z.number().int().nonnegative().optional(),
     hint: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SummaryResponseField = z.infer<typeof SummaryResponseFieldSchema>;
-const _SummaryResponseFieldSchemaIsStandard: StandardSchemaV1<unknown, SummaryResponseField> =
-  SummaryResponseFieldSchema;
-void _SummaryResponseFieldSchemaIsStandard;
 
 /**
  * Orphan-hint emitted by `handleAgentWriteMd` when the just-written doc has
@@ -528,10 +487,8 @@ export const OrphanHintSchema = z
     parentCandidates: z.array(z.string()),
     message: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type OrphanHint = z.infer<typeof OrphanHintSchema>;
-const _OrphanHintSchemaIsStandard: StandardSchemaV1<unknown, OrphanHint> = OrphanHintSchema;
-void _OrphanHintSchemaIsStandard;
 
 /** Success body for `POST /api/agent-write`. Flat shape per D22 (no `ok: true`). */
 export const AgentWriteSuccessSchema = z
@@ -539,11 +496,8 @@ export const AgentWriteSuccessSchema = z
     timestamp: z.string().min(1),
     summary: SummaryResponseFieldSchema.optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentWriteSuccess = z.infer<typeof AgentWriteSuccessSchema>;
-const _AgentWriteSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteSuccess> =
-  AgentWriteSuccessSchema;
-void _AgentWriteSuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/agent-write-md`. `subscriberCount` and
@@ -558,11 +512,8 @@ export const AgentWriteMdSuccessSchema = z
     hints: z.array(OrphanHintSchema).optional(),
     summary: SummaryResponseFieldSchema.optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentWriteMdSuccess = z.infer<typeof AgentWriteMdSuccessSchema>;
-const _AgentWriteMdSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentWriteMdSuccess> =
-  AgentWriteMdSuccessSchema;
-void _AgentWriteMdSuccessSchemaIsStandard;
 
 /** Success body for `POST /api/agent-patch`. */
 export const AgentPatchSuccessSchema = z
@@ -572,11 +523,8 @@ export const AgentPatchSuccessSchema = z
     systemSubscriberCount: z.number().int().nonnegative(),
     summary: SummaryResponseFieldSchema.optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentPatchSuccess = z.infer<typeof AgentPatchSuccessSchema>;
-const _AgentPatchSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentPatchSuccess> =
-  AgentPatchSuccessSchema;
-void _AgentPatchSuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/agent-undo`. `scope` reflects the resolved
@@ -589,11 +537,8 @@ export const AgentUndoSuccessSchema = z
     scope: z.enum(['last', 'session']),
     undone: z.boolean(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentUndoSuccess = z.infer<typeof AgentUndoSuccessSchema>;
-const _AgentUndoSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentUndoSuccess> =
-  AgentUndoSuccessSchema;
-void _AgentUndoSuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster B: pages CRUD (US-007)
@@ -617,17 +562,12 @@ export const RenamedDocMappingSchema = z
     fromDocName: z.string().min(1),
     toDocName: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenamedDocMapping = z.infer<typeof RenamedDocMappingSchema>;
-const _RenamedDocMappingSchemaIsStandard: StandardSchemaV1<unknown, RenamedDocMapping> =
-  RenamedDocMappingSchema;
-void _RenamedDocMappingSchemaIsStandard;
 
 /** Empty request schema for GET endpoints whose body is unused. */
-export const EmptyRequestSchema = z.object({}).loose();
+export const EmptyRequestSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type EmptyRequest = z.infer<typeof EmptyRequestSchema>;
-const _EmptyRequestSchemaIsStandard: StandardSchemaV1<unknown, EmptyRequest> = EmptyRequestSchema;
-void _EmptyRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/create-page`. `path` is the relative
@@ -641,22 +581,16 @@ export const CreatePageRequestSchema = z
     path: z.string().min(1),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type CreatePageRequest = z.infer<typeof CreatePageRequestSchema>;
-const _CreatePageRequestSchemaIsStandard: StandardSchemaV1<unknown, CreatePageRequest> =
-  CreatePageRequestSchema;
-void _CreatePageRequestSchemaIsStandard;
 
 /** Success body for `POST /api/create-page`. */
 export const CreatePageSuccessSchema = z
   .object({
     docName: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type CreatePageSuccess = z.infer<typeof CreatePageSuccessSchema>;
-const _CreatePageSuccessSchemaIsStandard: StandardSchemaV1<unknown, CreatePageSuccess> =
-  CreatePageSuccessSchema;
-void _CreatePageSuccessSchemaIsStandard;
 
 /**
  * Single page entry in the `pages` array of `GET /api/pages`. `docExt` is
@@ -671,20 +605,16 @@ export const PageEntrySchema = z
     size: z.number().int().nonnegative(),
     modified: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type PageEntry = z.infer<typeof PageEntrySchema>;
-const _PageEntrySchemaIsStandard: StandardSchemaV1<unknown, PageEntry> = PageEntrySchema;
-void _PageEntrySchemaIsStandard;
 
 /** Success body for `GET /api/pages`. Sorted alphabetically by docName. */
 export const PagesSuccessSchema = z
   .object({
     pages: z.array(PageEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type PagesSuccess = z.infer<typeof PagesSuccessSchema>;
-const _PagesSuccessSchemaIsStandard: StandardSchemaV1<unknown, PagesSuccess> = PagesSuccessSchema;
-void _PagesSuccessSchemaIsStandard;
 
 /** ATX heading entry (level + slug) emitted by `GET /api/page-headings`. */
 export const HeadingEntrySchema = z
@@ -693,10 +623,8 @@ export const HeadingEntrySchema = z
     text: z.string(),
     slug: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HeadingEntry = z.infer<typeof HeadingEntrySchema>;
-const _HeadingEntrySchemaIsStandard: StandardSchemaV1<unknown, HeadingEntry> = HeadingEntrySchema;
-void _HeadingEntrySchemaIsStandard;
 
 /** Success body for `GET /api/page-headings?docName=...`. */
 export const PageHeadingsSuccessSchema = z
@@ -704,11 +632,8 @@ export const PageHeadingsSuccessSchema = z
     docName: z.string().min(1),
     headings: z.array(HeadingEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type PageHeadingsSuccess = z.infer<typeof PageHeadingsSuccessSchema>;
-const _PageHeadingsSuccessSchemaIsStandard: StandardSchemaV1<unknown, PageHeadingsSuccess> =
-  PageHeadingsSuccessSchema;
-void _PageHeadingsSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/rename`. Mirrors `handleRename`'s legacy
@@ -725,11 +650,8 @@ export const RenameRequestSchema = z
     summary: summaryField,
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
-const _RenameRequestSchemaIsStandard: StandardSchemaV1<unknown, RenameRequest> =
-  RenameRequestSchema;
-void _RenameRequestSchemaIsStandard;
 
 /** Backlink-rewrite summary entry returned by `/api/rename`. */
 export const RenameRewrittenDocSchema = z
@@ -737,11 +659,8 @@ export const RenameRewrittenDocSchema = z
     docName: z.string().min(1),
     rewrites: z.number().int().nonnegative(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenameRewrittenDoc = z.infer<typeof RenameRewrittenDocSchema>;
-const _RenameRewrittenDocSchemaIsStandard: StandardSchemaV1<unknown, RenameRewrittenDoc> =
-  RenameRewrittenDocSchema;
-void _RenameRewrittenDocSchemaIsStandard;
 
 /** Success body for `POST /api/rename`. */
 export const RenameSuccessSchema = z
@@ -750,11 +669,8 @@ export const RenameSuccessSchema = z
     rewrittenDocs: z.array(RenameRewrittenDocSchema),
     summary: SummaryResponseFieldSchema.optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenameSuccess = z.infer<typeof RenameSuccessSchema>;
-const _RenameSuccessSchemaIsStandard: StandardSchemaV1<unknown, RenameSuccess> =
-  RenameSuccessSchema;
-void _RenameSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/rename-path`. `kind` selects file vs folder
@@ -767,22 +683,16 @@ export const RenamePathRequestSchema = z
     toPath: z.string().min(1),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenamePathRequest = z.infer<typeof RenamePathRequestSchema>;
-const _RenamePathRequestSchemaIsStandard: StandardSchemaV1<unknown, RenamePathRequest> =
-  RenamePathRequestSchema;
-void _RenamePathRequestSchemaIsStandard;
 
 /** Success body for `POST /api/rename-path`. */
 export const RenamePathSuccessSchema = z
   .object({
     renamed: z.array(RenamedDocMappingSchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RenamePathSuccess = z.infer<typeof RenamePathSuccessSchema>;
-const _RenamePathSuccessSchemaIsStandard: StandardSchemaV1<unknown, RenamePathSuccess> =
-  RenamePathSuccessSchema;
-void _RenamePathSuccessSchemaIsStandard;
 
 /** Request body for `POST /api/delete-path`. */
 export const DeletePathRequestSchema = z
@@ -791,22 +701,16 @@ export const DeletePathRequestSchema = z
     path: z.string().min(1),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DeletePathRequest = z.infer<typeof DeletePathRequestSchema>;
-const _DeletePathRequestSchemaIsStandard: StandardSchemaV1<unknown, DeletePathRequest> =
-  DeletePathRequestSchema;
-void _DeletePathRequestSchemaIsStandard;
 
 /** Success body for `POST /api/delete-path`. */
 export const DeletePathSuccessSchema = z
   .object({
     deletedDocNames: z.array(z.string().min(1)),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DeletePathSuccess = z.infer<typeof DeletePathSuccessSchema>;
-const _DeletePathSuccessSchemaIsStandard: StandardSchemaV1<unknown, DeletePathSuccess> =
-  DeletePathSuccessSchema;
-void _DeletePathSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/rollback`. `commitSha` is a 40-char git SHA;
@@ -825,11 +729,8 @@ export const RollbackRequestSchema = z
     summary: summaryField,
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RollbackRequest = z.infer<typeof RollbackRequestSchema>;
-const _RollbackRequestSchemaIsStandard: StandardSchemaV1<unknown, RollbackRequest> =
-  RollbackRequestSchema;
-void _RollbackRequestSchemaIsStandard;
 
 /** Success body for `POST /api/rollback`. */
 export const RollbackSuccessSchema = z
@@ -838,11 +739,8 @@ export const RollbackSuccessSchema = z
     timestamp: z.string().min(1),
     summary: SummaryResponseFieldSchema.optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RollbackSuccess = z.infer<typeof RollbackSuccessSchema>;
-const _RollbackSuccessSchemaIsStandard: StandardSchemaV1<unknown, RollbackSuccess> =
-  RollbackSuccessSchema;
-void _RollbackSuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster C: document/links read part 1 (US-008)
@@ -858,11 +756,8 @@ export const DocumentReadSuccessSchema = z
     docName: z.string().min(1),
     content: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DocumentReadSuccess = z.infer<typeof DocumentReadSuccessSchema>;
-const _DocumentReadSuccessSchemaIsStandard: StandardSchemaV1<unknown, DocumentReadSuccess> =
-  DocumentReadSuccessSchema;
-void _DocumentReadSuccessSchemaIsStandard;
 
 /**
  * Single document entry in the `documents` array of `GET /api/documents`.
@@ -880,22 +775,16 @@ export const DocumentListEntrySchema = z
     canonicalDocName: z.string().nullable(),
     targetPath: z.string().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DocumentListEntry = z.infer<typeof DocumentListEntrySchema>;
-const _DocumentListEntrySchemaIsStandard: StandardSchemaV1<unknown, DocumentListEntry> =
-  DocumentListEntrySchema;
-void _DocumentListEntrySchemaIsStandard;
 
 /** Success body for `GET /api/documents`. Sorted alphabetically by docName. */
 export const DocumentListSuccessSchema = z
   .object({
     documents: z.array(DocumentListEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DocumentListSuccess = z.infer<typeof DocumentListSuccessSchema>;
-const _DocumentListSuccessSchemaIsStandard: StandardSchemaV1<unknown, DocumentListSuccess> =
-  DocumentListSuccessSchema;
-void _DocumentListSuccessSchemaIsStandard;
 
 /**
  * Single backlink edge returned by `/api/backlinks`. `anchor` is null when
@@ -909,11 +798,8 @@ export const BacklinkEntrySchema = z
     title: z.string(),
     snippet: z.string().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type BacklinkEntry = z.infer<typeof BacklinkEntrySchema>;
-const _BacklinkEntrySchemaIsStandard: StandardSchemaV1<unknown, BacklinkEntry> =
-  BacklinkEntrySchema;
-void _BacklinkEntrySchemaIsStandard;
 
 /** Success body for `GET /api/backlinks?docName=...`. */
 export const BacklinksSuccessSchema = z
@@ -921,11 +807,8 @@ export const BacklinksSuccessSchema = z
     docName: z.string().min(1),
     backlinks: z.array(BacklinkEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type BacklinksSuccess = z.infer<typeof BacklinksSuccessSchema>;
-const _BacklinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, BacklinksSuccess> =
-  BacklinksSuccessSchema;
-void _BacklinksSuccessSchemaIsStandard;
 
 /**
  * Success body for `GET /api/backlink-counts?docNames=a,b,c`. Sparse map —
@@ -936,11 +819,8 @@ export const BacklinkCountsSuccessSchema = z
   .object({
     counts: z.record(z.string().min(1), z.number().int().nonnegative()),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type BacklinkCountsSuccess = z.infer<typeof BacklinkCountsSuccessSchema>;
-const _BacklinkCountsSuccessSchemaIsStandard: StandardSchemaV1<unknown, BacklinkCountsSuccess> =
-  BacklinkCountsSuccessSchema;
-void _BacklinkCountsSuccessSchemaIsStandard;
 
 /**
  * Single forward-link entry returned by `/api/forward-links`. Discriminated
@@ -956,11 +836,8 @@ export const ForwardLinkDocEntrySchema = z
     title: z.string(),
     snippet: z.string().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ForwardLinkDocEntry = z.infer<typeof ForwardLinkDocEntrySchema>;
-const _ForwardLinkDocEntrySchemaIsStandard: StandardSchemaV1<unknown, ForwardLinkDocEntry> =
-  ForwardLinkDocEntrySchema;
-void _ForwardLinkDocEntrySchemaIsStandard;
 
 export const ForwardLinkExternalEntrySchema = z
   .object({
@@ -969,22 +846,14 @@ export const ForwardLinkExternalEntrySchema = z
     title: z.string(),
     snippet: z.string().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ForwardLinkExternalEntry = z.infer<typeof ForwardLinkExternalEntrySchema>;
-const _ForwardLinkExternalEntrySchemaIsStandard: StandardSchemaV1<
-  unknown,
-  ForwardLinkExternalEntry
-> = ForwardLinkExternalEntrySchema;
-void _ForwardLinkExternalEntrySchemaIsStandard;
 
 export const ForwardLinkEntrySchema = z.discriminatedUnion('kind', [
   ForwardLinkDocEntrySchema,
   ForwardLinkExternalEntrySchema,
-]);
+]) satisfies StandardSchemaV1;
 export type ForwardLinkEntry = z.infer<typeof ForwardLinkEntrySchema>;
-const _ForwardLinkEntrySchemaIsStandard: StandardSchemaV1<unknown, ForwardLinkEntry> =
-  ForwardLinkEntrySchema;
-void _ForwardLinkEntrySchemaIsStandard;
 
 /** Success body for `GET /api/forward-links?docName=...`. */
 export const ForwardLinksSuccessSchema = z
@@ -992,11 +861,8 @@ export const ForwardLinksSuccessSchema = z
     docName: z.string().min(1),
     forwardLinks: z.array(ForwardLinkEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ForwardLinksSuccess = z.infer<typeof ForwardLinksSuccessSchema>;
-const _ForwardLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, ForwardLinksSuccess> =
-  ForwardLinksSuccessSchema;
-void _ForwardLinksSuccessSchemaIsStandard;
 
 /**
  * Single graph node in `/api/link-graph`. Discriminated by `kind`. Doc nodes
@@ -1014,11 +880,8 @@ export const LinkGraphDocNodeSchema = z
     category: z.string().nullable(),
     tags: z.array(z.string()).nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LinkGraphDocNode = z.infer<typeof LinkGraphDocNodeSchema>;
-const _LinkGraphDocNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphDocNode> =
-  LinkGraphDocNodeSchema;
-void _LinkGraphDocNodeSchemaIsStandard;
 
 export const LinkGraphExternalNodeSchema = z
   .object({
@@ -1027,20 +890,14 @@ export const LinkGraphExternalNodeSchema = z
     url: z.string().min(1),
     label: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LinkGraphExternalNode = z.infer<typeof LinkGraphExternalNodeSchema>;
-const _LinkGraphExternalNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphExternalNode> =
-  LinkGraphExternalNodeSchema;
-void _LinkGraphExternalNodeSchemaIsStandard;
 
 export const LinkGraphNodeSchema = z.discriminatedUnion('kind', [
   LinkGraphDocNodeSchema,
   LinkGraphExternalNodeSchema,
-]);
+]) satisfies StandardSchemaV1;
 export type LinkGraphNode = z.infer<typeof LinkGraphNodeSchema>;
-const _LinkGraphNodeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphNode> =
-  LinkGraphNodeSchema;
-void _LinkGraphNodeSchemaIsStandard;
 
 /** Single edge in `/api/link-graph`. `source` / `target` are node ids. */
 export const LinkGraphEdgeSchema = z
@@ -1048,11 +905,8 @@ export const LinkGraphEdgeSchema = z
     source: z.string().min(1),
     target: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LinkGraphEdge = z.infer<typeof LinkGraphEdgeSchema>;
-const _LinkGraphEdgeSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphEdge> =
-  LinkGraphEdgeSchema;
-void _LinkGraphEdgeSchemaIsStandard;
 
 /** Success body for `GET /api/link-graph[?docName=...&degrees=N]`. */
 export const LinkGraphSuccessSchema = z
@@ -1060,11 +914,8 @@ export const LinkGraphSuccessSchema = z
     nodes: z.array(LinkGraphNodeSchema),
     links: z.array(LinkGraphEdgeSchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LinkGraphSuccess = z.infer<typeof LinkGraphSuccessSchema>;
-const _LinkGraphSuccessSchemaIsStandard: StandardSchemaV1<unknown, LinkGraphSuccess> =
-  LinkGraphSuccessSchema;
-void _LinkGraphSuccessSchemaIsStandard;
 
 // -----------------------------------------------------------------------------
 // Cluster D: orphans / hubs / dead-links / suggest-links (US-009).
@@ -1083,21 +934,16 @@ export const OrphanEntrySchema = z
     docName: z.string().min(1),
     title: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type OrphanEntry = z.infer<typeof OrphanEntrySchema>;
-const _OrphanEntrySchemaIsStandard: StandardSchemaV1<unknown, OrphanEntry> = OrphanEntrySchema;
-void _OrphanEntrySchemaIsStandard;
 
 /** Success body for `GET /api/orphans[?mode=incoming|outgoing|both]`. */
 export const OrphansSuccessSchema = z
   .object({
     orphans: z.array(OrphanEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type OrphansSuccess = z.infer<typeof OrphansSuccessSchema>;
-const _OrphansSuccessSchemaIsStandard: StandardSchemaV1<unknown, OrphansSuccess> =
-  OrphansSuccessSchema;
-void _OrphansSuccessSchemaIsStandard;
 
 /** Single entry in the hubs response. `count` is the inbound-backlink count. */
 export const HubEntrySchema = z
@@ -1106,20 +952,16 @@ export const HubEntrySchema = z
     title: z.string(),
     count: z.number().int().nonnegative(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HubEntry = z.infer<typeof HubEntrySchema>;
-const _HubEntrySchemaIsStandard: StandardSchemaV1<unknown, HubEntry> = HubEntrySchema;
-void _HubEntrySchemaIsStandard;
 
 /** Success body for `GET /api/hubs[?limit=N]`. */
 export const HubsSuccessSchema = z
   .object({
     hubs: z.array(HubEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HubsSuccess = z.infer<typeof HubsSuccessSchema>;
-const _HubsSuccessSchemaIsStandard: StandardSchemaV1<unknown, HubsSuccess> = HubsSuccessSchema;
-void _HubsSuccessSchemaIsStandard;
 
 /**
  * Single source-pointer for a dead-link entry — references the page that
@@ -1131,11 +973,8 @@ export const DeadLinkSourceSchema = z
     title: z.string(),
     snippet: z.string().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DeadLinkSource = z.infer<typeof DeadLinkSourceSchema>;
-const _DeadLinkSourceSchemaIsStandard: StandardSchemaV1<unknown, DeadLinkSource> =
-  DeadLinkSourceSchema;
-void _DeadLinkSourceSchemaIsStandard;
 
 /** Single dead-link entry — one missing target plus the sources that point at it. */
 export const DeadLinkEntrySchema = z
@@ -1143,22 +982,16 @@ export const DeadLinkEntrySchema = z
     target: z.string().min(1),
     sources: z.array(DeadLinkSourceSchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DeadLinkEntry = z.infer<typeof DeadLinkEntrySchema>;
-const _DeadLinkEntrySchemaIsStandard: StandardSchemaV1<unknown, DeadLinkEntry> =
-  DeadLinkEntrySchema;
-void _DeadLinkEntrySchemaIsStandard;
 
 /** Success body for `GET /api/dead-links[?sourceDocName=...&sourceDocName=...]`. */
 export const DeadLinksSuccessSchema = z
   .object({
     deadLinks: z.array(DeadLinkEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DeadLinksSuccess = z.infer<typeof DeadLinksSuccessSchema>;
-const _DeadLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, DeadLinksSuccess> =
-  DeadLinksSuccessSchema;
-void _DeadLinksSuccessSchemaIsStandard;
 
 /** Target page metadata in a `/api/suggest-links` response. */
 export const SuggestLinksTargetSchema = z
@@ -1167,11 +1000,8 @@ export const SuggestLinksTargetSchema = z
     title: z.string(),
     aliases: z.array(z.string()),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SuggestLinksTarget = z.infer<typeof SuggestLinksTargetSchema>;
-const _SuggestLinksTargetSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksTarget> =
-  SuggestLinksTargetSchema;
-void _SuggestLinksTargetSchemaIsStandard;
 
 /** Single mention discovered while scanning the corpus. */
 export const SuggestLinksMentionSchema = z
@@ -1180,11 +1010,8 @@ export const SuggestLinksMentionSchema = z
     excerpt: z.string(),
     offset: z.number().int().nonnegative(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SuggestLinksMention = z.infer<typeof SuggestLinksMentionSchema>;
-const _SuggestLinksMentionSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksMention> =
-  SuggestLinksMentionSchema;
-void _SuggestLinksMentionSchemaIsStandard;
 
 /** Success body for `GET /api/suggest-links?docName=...`. */
 export const SuggestLinksSuccessSchema = z
@@ -1193,11 +1020,8 @@ export const SuggestLinksSuccessSchema = z
     mentions: z.array(SuggestLinksMentionSchema),
     truncated: z.boolean(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SuggestLinksSuccess = z.infer<typeof SuggestLinksSuccessSchema>;
-const _SuggestLinksSuccessSchemaIsStandard: StandardSchemaV1<unknown, SuggestLinksSuccess> =
-  SuggestLinksSuccessSchema;
-void _SuggestLinksSuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster E: save-version / history / history/<sha> / diff / workspace /
@@ -1220,11 +1044,8 @@ export const SaveVersionWriterSchema = z
     name: z.string().optional(),
     email: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SaveVersionWriter = z.infer<typeof SaveVersionWriterSchema>;
-const _SaveVersionWriterSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionWriter> =
-  SaveVersionWriterSchema;
-void _SaveVersionWriterSchemaIsStandard;
 
 /** Optional principal identity passed to `POST /api/save-version` (US-020 D12). */
 export const SaveVersionPrincipalSchema = z
@@ -1232,11 +1053,8 @@ export const SaveVersionPrincipalSchema = z
     name: z.string().optional(),
     email: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SaveVersionPrincipal = z.infer<typeof SaveVersionPrincipalSchema>;
-const _SaveVersionPrincipalSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionPrincipal> =
-  SaveVersionPrincipalSchema;
-void _SaveVersionPrincipalSchemaIsStandard;
 
 /**
  * Request body for `POST /api/save-version`. Every field optional — the
@@ -1254,11 +1072,8 @@ export const SaveVersionRequestSchema = z
     principal: SaveVersionPrincipalSchema.optional(),
     ...agentIdentityFields,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SaveVersionRequest = z.infer<typeof SaveVersionRequestSchema>;
-const _SaveVersionRequestSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionRequest> =
-  SaveVersionRequestSchema;
-void _SaveVersionRequestSchemaIsStandard;
 
 /**
  * Success response for `POST /api/save-version`. `checkpointRef` is the
@@ -1271,11 +1086,8 @@ export const SaveVersionSuccessSchema = z
     checkpointRef: z.string().min(1),
     versionTag: z.string().min(1).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SaveVersionSuccess = z.infer<typeof SaveVersionSuccessSchema>;
-const _SaveVersionSuccessSchemaIsStandard: StandardSchemaV1<unknown, SaveVersionSuccess> =
-  SaveVersionSuccessSchema;
-void _SaveVersionSuccessSchemaIsStandard;
 
 /**
  * Single shadow contributor entry (parsed from a checkpoint commit). Mirrors
@@ -1290,13 +1102,8 @@ export const HistoryShadowContributorSchema = z
     actor: z.unknown().optional(),
     colorSeed: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HistoryShadowContributor = z.infer<typeof HistoryShadowContributorSchema>;
-const _HistoryShadowContributorSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  HistoryShadowContributor
-> = HistoryShadowContributorSchema;
-void _HistoryShadowContributorSchemaIsStandard;
 
 /** Single timeline entry returned from `GET /api/history`. */
 export const HistoryEntrySchema = z
@@ -1310,10 +1117,8 @@ export const HistoryEntrySchema = z
     contributors: z.array(HistoryShadowContributorSchema),
     checkpoint: z.unknown().nullable(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
-const _HistoryEntrySchemaIsStandard: StandardSchemaV1<unknown, HistoryEntry> = HistoryEntrySchema;
-void _HistoryEntrySchemaIsStandard;
 
 /**
  * Success response for `GET /api/history?docName=...&branch=...`. The
@@ -1327,11 +1132,8 @@ export const HistorySuccessSchema = z
     total: z.number().int().nonnegative().optional(),
     truncated: z.boolean().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HistorySuccess = z.infer<typeof HistorySuccessSchema>;
-const _HistorySuccessSchemaIsStandard: StandardSchemaV1<unknown, HistorySuccess> =
-  HistorySuccessSchema;
-void _HistorySuccessSchemaIsStandard;
 
 /**
  * Success response for `GET /api/history/<sha>?docName=...`. Returns the
@@ -1344,11 +1146,8 @@ export const HistoryVersionSuccessSchema = z
     timestamp: z.string(),
     author: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type HistoryVersionSuccess = z.infer<typeof HistoryVersionSuccessSchema>;
-const _HistoryVersionSuccessSchemaIsStandard: StandardSchemaV1<unknown, HistoryVersionSuccess> =
-  HistoryVersionSuccessSchema;
-void _HistoryVersionSuccessSchemaIsStandard;
 
 /** Single line of a `GET /api/diff` response. */
 export const DiffLineSchema = z
@@ -1356,10 +1155,8 @@ export const DiffLineSchema = z
     type: z.enum(['added', 'removed', 'unchanged']),
     text: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DiffLine = z.infer<typeof DiffLineSchema>;
-const _DiffLineSchemaIsStandard: StandardSchemaV1<unknown, DiffLine> = DiffLineSchema;
-void _DiffLineSchemaIsStandard;
 
 /**
  * Success response for `GET /api/diff?docName=...&from=...&to=...`. `from`
@@ -1371,10 +1168,8 @@ export const DiffSuccessSchema = z
     additions: z.number().int().nonnegative(),
     deletions: z.number().int().nonnegative(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type DiffSuccess = z.infer<typeof DiffSuccessSchema>;
-const _DiffSuccessSchemaIsStandard: StandardSchemaV1<unknown, DiffSuccess> = DiffSuccessSchema;
-void _DiffSuccessSchemaIsStandard;
 
 /**
  * Success response for `GET /api/workspace`. Loopback-only endpoint —
@@ -1391,11 +1186,8 @@ export const WorkspaceSuccessSchema = z
     pathSeparator: z.enum(['/', '\\']),
     symlinkResolved: z.boolean(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type WorkspaceSuccess = z.infer<typeof WorkspaceSuccessSchema>;
-const _WorkspaceSuccessSchemaIsStandard: StandardSchemaV1<unknown, WorkspaceSuccess> =
-  WorkspaceSuccessSchema;
-void _WorkspaceSuccessSchemaIsStandard;
 
 /** Single rescue buffer entry — flat-file (shutdown-flush) source. */
 export const RescueEntryFlatSchema = z
@@ -1405,11 +1197,8 @@ export const RescueEntryFlatSchema = z
     size: z.number().int().nonnegative(),
     source: z.literal('flat'),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RescueEntryFlat = z.infer<typeof RescueEntryFlatSchema>;
-const _RescueEntryFlatSchemaIsStandard: StandardSchemaV1<unknown, RescueEntryFlat> =
-  RescueEntryFlatSchema;
-void _RescueEntryFlatSchemaIsStandard;
 
 /** Single rescue buffer entry — timeline-ref (saveInMemoryCheckpoint) source. */
 export const RescueEntryTimelineSchema = z
@@ -1419,11 +1208,8 @@ export const RescueEntryTimelineSchema = z
     source: z.literal('timeline'),
     sha: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type RescueEntryTimeline = z.infer<typeof RescueEntryTimelineSchema>;
-const _RescueEntryTimelineSchemaIsStandard: StandardSchemaV1<unknown, RescueEntryTimeline> =
-  RescueEntryTimelineSchema;
-void _RescueEntryTimelineSchemaIsStandard;
 
 /**
  * Success response for `GET /api/rescue` — flat array of rescue buffers
@@ -1439,11 +1225,8 @@ export const RescueListSuccessSchema = z
   .array(z.union([RescueEntryFlatSchema, RescueEntryTimelineSchema]))
   .meta({
     description: 'Flat array of rescue buffer entries; discriminated via `source`.',
-  });
+  }) satisfies StandardSchemaV1;
 export type RescueListSuccess = z.infer<typeof RescueListSuccessSchema>;
-const _RescueListSuccessSchemaIsStandard: StandardSchemaV1<unknown, RescueListSuccess> =
-  RescueListSuccessSchema;
-void _RescueListSuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster F: metrics + agent activity + test handlers (US-011)
@@ -1474,11 +1257,8 @@ export const ActivityBurstSchema = z
     additions: z.number().int().min(0),
     deletions: z.number().int().min(0),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ActivityBurst = z.infer<typeof ActivityBurstSchema>;
-const _ActivityBurstSchemaIsStandard: StandardSchemaV1<unknown, ActivityBurst> =
-  ActivityBurstSchema;
-void _ActivityBurstSchemaIsStandard;
 
 /** One file-level activity entry on `AgentActivitySuccessSchema.files`. */
 export const ActivityFileSchema = z
@@ -1489,10 +1269,8 @@ export const ActivityFileSchema = z
     lastTs: z.number().int().min(0),
     bursts: z.array(ActivityBurstSchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ActivityFile = z.infer<typeof ActivityFileSchema>;
-const _ActivityFileSchemaIsStandard: StandardSchemaV1<unknown, ActivityFile> = ActivityFileSchema;
-void _ActivityFileSchemaIsStandard;
 
 /** Header info for the agent on `AgentActivitySuccessSchema.agent`. */
 export const ActivityAgentHeaderSchema = z
@@ -1502,11 +1280,8 @@ export const ActivityAgentHeaderSchema = z
     icon: z.string().optional(),
     connectionId: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ActivityAgentHeader = z.infer<typeof ActivityAgentHeaderSchema>;
-const _ActivityAgentHeaderSchemaIsStandard: StandardSchemaV1<unknown, ActivityAgentHeader> =
-  ActivityAgentHeaderSchema;
-void _ActivityAgentHeaderSchemaIsStandard;
 
 /**
  * Success response for `GET /api/agent-activity?agentId=<connId>`. Returns
@@ -1523,11 +1298,8 @@ export const AgentActivitySuccessSchema = z
     agent: ActivityAgentHeaderSchema.nullable(),
     files: z.array(ActivityFileSchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentActivitySuccess = z.infer<typeof AgentActivitySuccessSchema>;
-const _AgentActivitySuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentActivitySuccess> =
-  AgentActivitySuccessSchema;
-void _AgentActivitySuccessSchemaIsStandard;
 
 /**
  * Success response for
@@ -1543,11 +1315,8 @@ export const AgentBurstDiffSuccessSchema = z
     diff: z.string(),
     generatedAt: z.number().int().min(0),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentBurstDiffSuccess = z.infer<typeof AgentBurstDiffSuccessSchema>;
-const _AgentBurstDiffSuccessSchemaIsStandard: StandardSchemaV1<unknown, AgentBurstDiffSuccess> =
-  AgentBurstDiffSuccessSchema;
-void _AgentBurstDiffSuccessSchemaIsStandard;
 
 /**
  * Success response for `POST /api/test-reset?docName=<name>` and
@@ -1556,19 +1325,11 @@ void _AgentBurstDiffSuccessSchemaIsStandard;
  * confirmation. `.loose()` preserves forward-compat for adding diagnostic
  * fields if needed (nothing relies on emptiness today).
  */
-export const TestResetSuccessSchema = z.object({}).loose();
+export const TestResetSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type TestResetSuccess = z.infer<typeof TestResetSuccessSchema>;
-const _TestResetSuccessSchemaIsStandard: StandardSchemaV1<unknown, TestResetSuccess> =
-  TestResetSuccessSchema;
-void _TestResetSuccessSchemaIsStandard;
 
-export const TestRescanBacklinksSuccessSchema = z.object({}).loose();
+export const TestRescanBacklinksSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type TestRescanBacklinksSuccess = z.infer<typeof TestRescanBacklinksSuccessSchema>;
-const _TestRescanBacklinksSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  TestRescanBacklinksSuccess
-> = TestRescanBacklinksSuccessSchema;
-void _TestRescanBacklinksSuccessSchemaIsStandard;
 
 /**
  * Success response for `GET /api/metrics/reconciliation`. Returns the raw
@@ -1578,13 +1339,8 @@ void _TestRescanBacklinksSuccessSchemaIsStandard;
  * counter map; pinning every field would force lockstep maintenance with
  * every counter addition without catching a real regression.
  */
-export const MetricsReconciliationSuccessSchema = z.object({}).loose();
+export const MetricsReconciliationSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type MetricsReconciliationSuccess = z.infer<typeof MetricsReconciliationSuccessSchema>;
-const _MetricsReconciliationSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  MetricsReconciliationSuccess
-> = MetricsReconciliationSuccessSchema;
-void _MetricsReconciliationSuccessSchemaIsStandard;
 
 /**
  * Success response for `GET /api/metrics/parse-health`. Returns the raw
@@ -1592,13 +1348,8 @@ void _MetricsReconciliationSuccessSchemaIsStandard;
  * (a mix of nested counters and per-descriptor records). Permissive for the
  * same reason as `MetricsReconciliationSuccessSchema`.
  */
-export const MetricsParseHealthSuccessSchema = z.object({}).loose();
+export const MetricsParseHealthSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type MetricsParseHealthSuccess = z.infer<typeof MetricsParseHealthSuccessSchema>;
-const _MetricsParseHealthSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  MetricsParseHealthSuccess
-> = MetricsParseHealthSuccessSchema;
-void _MetricsParseHealthSuccessSchemaIsStandard;
 
 /** One agent-presence entry on `MetricsAgentPresenceSuccessSchema.presence`. */
 export const AgentPresenceEntrySchema = z
@@ -1610,11 +1361,8 @@ export const AgentPresenceEntrySchema = z
     mode: z.enum(['idle', 'writing']),
     ts: z.number().int().min(0),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type AgentPresenceEntryWire = z.infer<typeof AgentPresenceEntrySchema>;
-const _AgentPresenceEntrySchemaIsStandard: StandardSchemaV1<unknown, AgentPresenceEntryWire> =
-  AgentPresenceEntrySchema;
-void _AgentPresenceEntrySchemaIsStandard;
 
 /**
  * Success response for `GET /api/metrics/agent-presence`. Returns the
@@ -1626,13 +1374,8 @@ export const MetricsAgentPresenceSuccessSchema = z
   .object({
     presence: z.record(z.string().min(1), AgentPresenceEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type MetricsAgentPresenceSuccess = z.infer<typeof MetricsAgentPresenceSuccessSchema>;
-const _MetricsAgentPresenceSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  MetricsAgentPresenceSuccess
-> = MetricsAgentPresenceSuccessSchema;
-void _MetricsAgentPresenceSuccessSchemaIsStandard;
 
 /**
  * Success response for `GET /api/installed-agents`. Returns a flat boolean
@@ -1647,11 +1390,8 @@ void _MetricsAgentPresenceSuccessSchemaIsStandard;
 export const InstalledAgentsSuccessSchema = z.record(z.string().min(1), z.boolean()).meta({
   description:
     'Flat boolean record keyed by agent-scheme name (claude / codex / cursor). True = installed.',
-});
+}) satisfies StandardSchemaV1;
 export type InstalledAgentsSuccess = z.infer<typeof InstalledAgentsSuccessSchema>;
-const _InstalledAgentsSuccessSchemaIsStandard: StandardSchemaV1<unknown, InstalledAgentsSuccess> =
-  InstalledAgentsSuccessSchema;
-void _InstalledAgentsSuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster G: LocalOp + auth handlers (US-012)
@@ -1676,11 +1416,8 @@ export const LocalOpOpenRequestSchema = z
   .object({
     dir: z.string().min(1),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpOpenRequest = z.infer<typeof LocalOpOpenRequestSchema>;
-const _LocalOpOpenRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpOpenRequest> =
-  LocalOpOpenRequestSchema;
-void _LocalOpOpenRequestSchemaIsStandard;
 
 /**
  * Success body for `POST /api/local-op/open`. Flat shape per D22 — the client
@@ -1690,11 +1427,8 @@ export const LocalOpOpenSuccessSchema = z
   .object({
     port: z.number().int().positive(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpOpenSuccess = z.infer<typeof LocalOpOpenSuccessSchema>;
-const _LocalOpOpenSuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpOpenSuccess> =
-  LocalOpOpenSuccessSchema;
-void _LocalOpOpenSuccessSchemaIsStandard;
 
 /**
  * Request body shared by `POST /api/local-op/auth/{login,status,repos,signout}`.
@@ -1707,11 +1441,8 @@ export const LocalOpAuthHostRequestSchema = z
   .object({
     host: z.string().min(1).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthHostRequest = z.infer<typeof LocalOpAuthHostRequestSchema>;
-const _LocalOpAuthHostRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthHostRequest> =
-  LocalOpAuthHostRequestSchema;
-void _LocalOpAuthHostRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/local-op/auth/pat`. `pat` REQUIRED non-empty
@@ -1723,11 +1454,8 @@ export const LocalOpAuthPatRequestSchema = z
     pat: z.string().min(1),
     host: z.string().min(1).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthPatRequest = z.infer<typeof LocalOpAuthPatRequestSchema>;
-const _LocalOpAuthPatRequestSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthPatRequest> =
-  LocalOpAuthPatRequestSchema;
-void _LocalOpAuthPatRequestSchemaIsStandard;
 
 /**
  * Request body for `POST /api/local-op/auth/set-identity`. `name` and `email`
@@ -1739,13 +1467,8 @@ export const LocalOpAuthSetIdentityRequestSchema = z
     name: z.string().refine((s) => s.trim().length > 0, { message: 'name must be non-empty' }),
     email: z.string().refine((s) => s.trim().length > 0, { message: 'email must be non-empty' }),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthSetIdentityRequest = z.infer<typeof LocalOpAuthSetIdentityRequestSchema>;
-const _LocalOpAuthSetIdentityRequestSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  LocalOpAuthSetIdentityRequest
-> = LocalOpAuthSetIdentityRequestSchema;
-void _LocalOpAuthSetIdentityRequestSchemaIsStandard;
 
 /**
  * Resolved git identity emitted by `GET /api/local-op/auth/identity`. `null`
@@ -1758,24 +1481,16 @@ export const LocalOpAuthIdentitySchema = z
     email: z.string().min(1),
   })
   .loose()
-  .nullable();
+  .nullable() satisfies StandardSchemaV1;
 export type LocalOpAuthIdentity = z.infer<typeof LocalOpAuthIdentitySchema>;
-const _LocalOpAuthIdentitySchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthIdentity> =
-  LocalOpAuthIdentitySchema;
-void _LocalOpAuthIdentitySchemaIsStandard;
 
 /** Success body for `GET /api/local-op/auth/identity`. Flat shape per D22. */
 export const LocalOpAuthIdentitySuccessSchema = z
   .object({
     identity: LocalOpAuthIdentitySchema,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthIdentitySuccess = z.infer<typeof LocalOpAuthIdentitySuccessSchema>;
-const _LocalOpAuthIdentitySuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  LocalOpAuthIdentitySuccess
-> = LocalOpAuthIdentitySuccessSchema;
-void _LocalOpAuthIdentitySuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/local-op/auth/status`. `authenticated` is the
@@ -1788,13 +1503,8 @@ export const LocalOpAuthStatusSuccessSchema = z
   .object({
     authenticated: z.boolean(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthStatusSuccess = z.infer<typeof LocalOpAuthStatusSuccessSchema>;
-const _LocalOpAuthStatusSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  LocalOpAuthStatusSuccess
-> = LocalOpAuthStatusSuccessSchema;
-void _LocalOpAuthStatusSuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/local-op/auth/pat`. The CLI emits a `complete`
@@ -1807,11 +1517,8 @@ export const LocalOpAuthPatSuccessSchema = z
     type: z.literal('complete').optional(),
     login: z.string().min(1).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type LocalOpAuthPatSuccess = z.infer<typeof LocalOpAuthPatSuccessSchema>;
-const _LocalOpAuthPatSuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthPatSuccess> =
-  LocalOpAuthPatSuccessSchema;
-void _LocalOpAuthPatSuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/local-op/auth/signout` and
@@ -1819,11 +1526,8 @@ void _LocalOpAuthPatSuccessSchemaIsStandard;
  * on HTTP status (200 = success). `.loose()` for forward-compat (e.g., a
  * future `signedOutAt: ISO` echo).
  */
-export const LocalOpAuthEmptySuccessSchema = z.object({}).loose();
+export const LocalOpAuthEmptySuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type LocalOpAuthEmptySuccess = z.infer<typeof LocalOpAuthEmptySuccessSchema>;
-const _LocalOpAuthEmptySuccessSchemaIsStandard: StandardSchemaV1<unknown, LocalOpAuthEmptySuccess> =
-  LocalOpAuthEmptySuccessSchema;
-void _LocalOpAuthEmptySuccessSchemaIsStandard;
 
 // ---------------------------------------------------------------------------
 // Cluster H: sync + seed handlers (US-013)
@@ -1856,10 +1560,8 @@ export const SyncStateSchema = z.enum([
   'offline',
   'auth-error',
   'disabled',
-]);
+]) satisfies StandardSchemaV1;
 export type SyncStateWire = z.infer<typeof SyncStateSchema>;
-const _SyncStateSchemaIsStandard: StandardSchemaV1<unknown, SyncStateWire> = SyncStateSchema;
-void _SyncStateSchemaIsStandard;
 
 /**
  * Full sync engine status — emitted as the flat success body of
@@ -1884,10 +1586,8 @@ export const SyncStatusSchema = z
     error: z.string().optional(),
     pausedReason: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncStatusWire = z.infer<typeof SyncStatusSchema>;
-const _SyncStatusSchemaIsStandard: StandardSchemaV1<unknown, SyncStatusWire> = SyncStatusSchema;
-void _SyncStatusSchemaIsStandard;
 
 /** Success body for `GET /api/sync/status`. Wire shape IS the status object. */
 export const SyncStatusSuccessSchema = SyncStatusSchema;
@@ -1903,11 +1603,8 @@ export const SyncTriggerRequestSchema = z
   .object({
     op: z.enum(['sync', 'push', 'pull']).optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncTriggerRequest = z.infer<typeof SyncTriggerRequestSchema>;
-const _SyncTriggerRequestSchemaIsStandard: StandardSchemaV1<unknown, SyncTriggerRequest> =
-  SyncTriggerRequestSchema;
-void _SyncTriggerRequestSchemaIsStandard;
 
 /**
  * Success body for `POST /api/sync/trigger`. Returns 202 Accepted with the
@@ -1917,33 +1614,24 @@ export const SyncTriggerSuccessSchema = z
   .object({
     op: z.enum(['sync', 'push', 'pull']),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncTriggerSuccess = z.infer<typeof SyncTriggerSuccessSchema>;
-const _SyncTriggerSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncTriggerSuccess> =
-  SyncTriggerSuccessSchema;
-void _SyncTriggerSuccessSchemaIsStandard;
 
 /** Request body for `POST /api/sync/set-enabled`. */
 export const SyncSetEnabledRequestSchema = z
   .object({
     enabled: z.boolean(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncSetEnabledRequest = z.infer<typeof SyncSetEnabledRequestSchema>;
-const _SyncSetEnabledRequestSchemaIsStandard: StandardSchemaV1<unknown, SyncSetEnabledRequest> =
-  SyncSetEnabledRequestSchema;
-void _SyncSetEnabledRequestSchemaIsStandard;
 
 /** Success body for `POST /api/sync/set-enabled`. Echoes the post-toggle status. */
 export const SyncSetEnabledSuccessSchema = z
   .object({
     status: SyncStatusSchema,
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncSetEnabledSuccess = z.infer<typeof SyncSetEnabledSuccessSchema>;
-const _SyncSetEnabledSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncSetEnabledSuccess> =
-  SyncSetEnabledSuccessSchema;
-void _SyncSetEnabledSuccessSchemaIsStandard;
 
 /**
  * Single conflict entry shape. Mirrors `ConflictEntry` from
@@ -1958,22 +1646,16 @@ export const ConflictEntrySchema = z
     theirsSha: z.string().optional(),
     baseSha: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type ConflictEntryWire = z.infer<typeof ConflictEntrySchema>;
-const _ConflictEntrySchemaIsStandard: StandardSchemaV1<unknown, ConflictEntryWire> =
-  ConflictEntrySchema;
-void _ConflictEntrySchemaIsStandard;
 
 /** Success body for `GET /api/sync/conflicts`. */
 export const SyncConflictsSuccessSchema = z
   .object({
     conflicts: z.array(ConflictEntrySchema),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncConflictsSuccess = z.infer<typeof SyncConflictsSuccessSchema>;
-const _SyncConflictsSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncConflictsSuccess> =
-  SyncConflictsSuccessSchema;
-void _SyncConflictsSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/sync/resolve-conflict`. `content` is required
@@ -1988,25 +1670,15 @@ export const SyncResolveConflictRequestSchema = z
     strategy: z.enum(['mine', 'theirs', 'content']),
     content: z.string().optional(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncResolveConflictRequest = z.infer<typeof SyncResolveConflictRequestSchema>;
-const _SyncResolveConflictRequestSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  SyncResolveConflictRequest
-> = SyncResolveConflictRequestSchema;
-void _SyncResolveConflictRequestSchemaIsStandard;
 
 /**
  * Success body for `POST /api/sync/resolve-conflict`. Empty — clients only
  * branch on HTTP status. `.loose()` for forward-compat.
  */
-export const SyncResolveConflictSuccessSchema = z.object({}).loose();
+export const SyncResolveConflictSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type SyncResolveConflictSuccess = z.infer<typeof SyncResolveConflictSuccessSchema>;
-const _SyncResolveConflictSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  SyncResolveConflictSuccess
-> = SyncResolveConflictSuccessSchema;
-void _SyncResolveConflictSuccessSchemaIsStandard;
 
 /**
  * Success body for `GET /api/sync/conflict-content?file=<path>`. Each stage
@@ -2020,23 +1692,15 @@ export const SyncConflictContentSuccessSchema = z
     ours: z.string(),
     theirs: z.string(),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SyncConflictContentSuccess = z.infer<typeof SyncConflictContentSuccessSchema>;
-const _SyncConflictContentSuccessSchemaIsStandard: StandardSchemaV1<
-  unknown,
-  SyncConflictContentSuccess
-> = SyncConflictContentSuccessSchema;
-void _SyncConflictContentSuccessSchemaIsStandard;
 
 /**
  * Success body for `POST /api/sync/abort-merge`. Empty — clients branch on
  * HTTP status only. `.loose()` for forward-compat.
  */
-export const SyncAbortMergeSuccessSchema = z.object({}).loose();
+export const SyncAbortMergeSuccessSchema = z.object({}).loose() satisfies StandardSchemaV1;
 export type SyncAbortMergeSuccess = z.infer<typeof SyncAbortMergeSuccessSchema>;
-const _SyncAbortMergeSuccessSchemaIsStandard: StandardSchemaV1<unknown, SyncAbortMergeSuccess> =
-  SyncAbortMergeSuccessSchema;
-void _SyncAbortMergeSuccessSchemaIsStandard;
 
 /**
  * Success body for `GET /api/seed/plan`. The `plan` field is the in-process
@@ -2055,11 +1719,8 @@ export const SeedPlanSuccessSchema = z
   .object({
     plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SeedPlanSuccess = z.infer<typeof SeedPlanSuccessSchema>;
-const _SeedPlanSuccessSchemaIsStandard: StandardSchemaV1<unknown, SeedPlanSuccess> =
-  SeedPlanSuccessSchema;
-void _SeedPlanSuccessSchemaIsStandard;
 
 /**
  * Request body for `POST /api/seed/apply`. Carries the `ScaffoldPlan`
@@ -2071,11 +1732,8 @@ export const SeedApplyRequestSchema = z
   .object({
     plan: z.custom<unknown>((v) => v !== undefined, { message: 'plan is required' }),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SeedApplyRequest = z.infer<typeof SeedApplyRequestSchema>;
-const _SeedApplyRequestSchemaIsStandard: StandardSchemaV1<unknown, SeedApplyRequest> =
-  SeedApplyRequestSchema;
-void _SeedApplyRequestSchemaIsStandard;
 
 /**
  * Success body for `POST /api/seed/apply`. The `result` field is the
@@ -2087,8 +1745,5 @@ export const SeedApplySuccessSchema = z
   .object({
     result: z.custom<unknown>((v) => v !== undefined, { message: 'result is required' }),
   })
-  .loose();
+  .loose() satisfies StandardSchemaV1;
 export type SeedApplySuccess = z.infer<typeof SeedApplySuccessSchema>;
-const _SeedApplySuccessSchemaIsStandard: StandardSchemaV1<unknown, SeedApplySuccess> =
-  SeedApplySuccessSchema;
-void _SeedApplySuccessSchemaIsStandard;
