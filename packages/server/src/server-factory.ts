@@ -13,7 +13,11 @@ import {
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
+import {
+  readConfigSafely,
+  resolveConfigPath,
+  writeConfigPatch,
+} from '@inkeep/open-knowledge-core/server';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
@@ -161,6 +165,15 @@ export function createServer(options: ServerOptions): ServerInstance {
   } = options;
 
   const log = getLogger('server');
+
+  function readProjectAutoSyncEnabled(): boolean {
+    const result = readConfigSafely({
+      absPath: resolveConfigPath('project', projectDir),
+      sideline: false,
+      warn: (message) => log.warn({ message }, '[config] could not read project config'),
+    });
+    return result.value.autoSync?.enabled === true;
+  }
 
   initTelemetry();
 
@@ -1246,6 +1259,12 @@ export function createServer(options: ServerOptions): ServerInstance {
             { docName: configDocName, outcome },
             '[config-file-watcher] applyExternalConfigChange outcome',
           );
+          if (configDocName === CONFIG_DOC_NAME_PROJECT) {
+            const enabled = readProjectAutoSyncEnabled();
+            void syncEngine?.setEnabled(enabled).catch((err) => {
+              log.warn({ err, enabled }, '[sync] failed to apply autoSync.enabled from config');
+            });
+          }
         });
         configFileWatcherCleanups.push({ docName: configDocName, cleanup });
         log.info({ docName: configDocName, path: absPath }, '[config-file-watcher] started');
@@ -1591,6 +1610,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         contentDir,
         contentFilter,
         contentRoot,
+        syncEnabled: readProjectAutoSyncEnabled(),
         credentialArgs: syncCredentialArgs,
         cc1Broadcaster,
         setBatchInProgress: (value) => {
@@ -1603,6 +1623,20 @@ export function createServer(options: ServerOptions): ServerInstance {
         },
         onStateChange: (state) => {
           log.info({ state }, `[sync] state → ${state}`);
+        },
+        onAutoDisable: async (reason) => {
+          log.warn({ reason }, '[sync] auto-disabled — persisting to project config');
+          const result = await writeConfigPatch({
+            cwd: projectDir,
+            scope: 'project',
+            patch: { autoSync: { enabled: false } },
+          });
+          if (!result.ok) {
+            log.warn(
+              { result, reason },
+              '[sync] failed to persist auto-disable to project config — restart will re-enable',
+            );
+          }
         },
       });
       await syncEngine.start();

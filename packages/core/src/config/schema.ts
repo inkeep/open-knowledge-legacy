@@ -154,6 +154,18 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
+  autoSync: z
+    .looseObject({
+      enabled: z
+        .boolean()
+        .register(fieldRegistry, {
+          scope: 'project',
+          agentSettable: false,
+          defaultScope: 'project',
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
