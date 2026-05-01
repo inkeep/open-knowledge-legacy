@@ -123,15 +123,40 @@ export interface DirectoryMeta {
   /** `true` when the recursive scan hit `DIRECTORY_SCAN_CAP`. */
   truncated: boolean;
   /**
+   * Merged folder-default frontmatter for THIS folder, surfaced explicitly
+   * so agents can reason about what new docs in this folder will inherit.
+   * Sources (highest → lowest precedence): nested `<folder>/.ok/frontmatter.yml`
+   * (root → leaf cascade) > matching `folders[]` rules in `.ok/config.yml`.
+   * Mirrors the same scalars that also surface as flat `title`/`description`/
+   * `tags` above (kept for backward compat with sidebar / search consumers).
+   *
+   * Spec: 2026-05-01-folder-level-metadata-and-templates §5.2 / §5.3, FR4.
+   */
+  frontmatter_defaults?: {
+    title?: string;
+    description?: string;
+    tags?: string[];
+  };
+  /**
    * Templates available when creating a new doc inside this folder. Aggregated
    * leaf → root walk-up (closest-wins on filename collision per D7). Empty array
    * when no nested `.ok/templates/` exists at this level or any ancestor.
    *
-   * Each entry carries `name` + optional `title`/`description` (D16 soft contract)
+   * Each entry carries `name` + optional `title`/`description` (D14 soft contract)
    * + `scope` (`local` | `inherited` | `descendant`) so the agent can pick
    * intelligently. Spec: 2026-05-01-folder-level-metadata-and-templates §5.2.
    */
   templates_available?: TemplateEntry[];
+  /**
+   * Recursive subfolder enrichment. Populated when a caller (e.g.
+   * `list_documents({ depth: N })`) asks for subtree visibility — each entry
+   * carries its own `frontmatter_defaults` + `templates_available` so agents
+   * can plan navigation without a follow-up call. `depth: 1` (default) leaves
+   * this absent.
+   *
+   * Spec: §5.1, FR4.
+   */
+  subfolders?: DirectoryMeta[];
 }
 
 /**
@@ -602,6 +627,17 @@ export async function enrichDirectory(
   if (description !== undefined) result.description = description;
   if (tags.length > 0) result.tags = tags;
 
+  // Spec §5.2 / §5.3 / FR4: surface the merged folder defaults as an
+  // explicit named block so agents can reason about what new docs in this
+  // folder will inherit. Mirrors the flat fields above.
+  const fmDefaults: { title?: string; description?: string; tags?: string[] } = {};
+  if (title !== undefined) fmDefaults.title = title;
+  if (description !== undefined) fmDefaults.description = description;
+  if (tags.length > 0) fmDefaults.tags = tags;
+  if (fmDefaults.title !== undefined || fmDefaults.description !== undefined || fmDefaults.tags) {
+    result.frontmatter_defaults = fmDefaults;
+  }
+
   // Templates available for creating a new doc in this folder (FR3, FR4).
   // Default depth=1 — local + walk-up ancestors only. Callers wanting
   // descendant visibility pass depth via the dedicated list_documents API.
@@ -610,3 +646,74 @@ export async function enrichDirectory(
 
   return result;
 }
+
+/**
+ * Recursively enrich a directory + its subfolders up to `depth` levels.
+ *
+ * Mirrors `find -maxdepth N` semantics (D13): `depth=1` is just the target
+ * folder (equivalent to `enrichDirectory`); `depth=2` adds direct children's
+ * folder metadata; `depth=Infinity` walks the full subtree. Honors the same
+ * `BUILTIN_SKIP_DIRS`-style skip list that `templates-resolver.ts` uses to
+ * keep listings clean (no node_modules, no `.git`, no `.ok` directory entries
+ * — `.ok/` contents are surfaced as structured fields, not as children).
+ *
+ * Spec: 2026-05-01-folder-level-metadata-and-templates §5.1, FR4.
+ */
+export async function enrichDirectoryRecursive(
+  relPathInput: string,
+  depth: number,
+  deps: Pick<EnrichPathDeps, 'projectDir' | 'folderRules'>,
+): Promise<DirectoryMeta> {
+  const top = await enrichDirectory(relPathInput, deps);
+  if (depth <= 1) return top;
+
+  const relPath = top.path;
+  const absDir = resolve(deps.projectDir, relPath);
+
+  let entries: Dirent[];
+  try {
+    entries = await readdir(absDir, { withFileTypes: true });
+  } catch {
+    return top;
+  }
+
+  const subfolders: DirectoryMeta[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (RECURSIVE_LISTING_SKIP_DIRS.has(entry.name)) continue;
+    const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
+    const child = await enrichDirectoryRecursive(childRel, depth - 1, deps);
+    subfolders.push(child);
+  }
+
+  if (subfolders.length > 0) top.subfolders = subfolders;
+  return top;
+}
+
+/**
+ * Skip dirs for the recursive listing surface. Mirrors content-filter's
+ * BUILTIN_SKIP_DIRS spirit + adds `.ok` (its contents are structured
+ * fields, not directory entries — FR13 / D16).
+ */
+const RECURSIVE_LISTING_SKIP_DIRS = new Set<string>([
+  '.git',
+  '.ok',
+  'node_modules',
+  '.venv',
+  'venv',
+  'env',
+  '__pycache__',
+  'vendor',
+  'dist',
+  'build',
+  'out',
+  'output',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.astro',
+  '.turbo',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+]);
