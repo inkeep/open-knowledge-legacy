@@ -300,6 +300,8 @@ const bridge: OkDesktopBridge = {
     clone: {
       start: (request) => createLocalOpCloneStream(request),
     },
+    authStatus: (request) => invoke('ok:local-op:auth:status', request),
+    authRepos: (request) => invoke('ok:local-op:auth:repos', request),
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',

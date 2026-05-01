@@ -18,7 +18,11 @@ import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
-import type { OkDesktopConfig } from './bridge-contract.ts';
+import type {
+  OkDesktopConfig,
+  OkLocalOpAuthReposResponse,
+  OkLocalOpAuthStatusResponse,
+} from './bridge-contract.ts';
 
 /** Recent-project row as surfaced to the Navigator. */
 export interface RecentProject {
@@ -345,4 +349,19 @@ export interface RequestChannels {
     result: { ok: true; streamId: string } | { ok: false; error: string };
   };
   'ok:local-op:clone:cancel': { args: [streamId: string]; result: undefined };
+
+  /**
+   * One-shot auth queries — Navigator uses these in place of the HTTP
+   * `/api/local-op/auth/{status,repos}` endpoints. Bounded responses
+   * (status: one line; repos: bounded list) so no streaming surface
+   * needed.
+   */
+  'ok:local-op:auth:status': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthStatusResponse;
+  };
+  'ok:local-op:auth:repos': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthReposResponse;
+  };
 }

@@ -19,8 +19,12 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  type AuthReposResponse,
+  type AuthStatusResponse,
   type RunCloneController,
   type RunDeviceFlowController,
+  runAuthReposSubprocess,
+  runAuthStatusSubprocess,
   runCloneSubprocess,
   runDeviceFlowSubprocess,
   validateCloneInputs,
@@ -100,6 +104,11 @@ export function handleAuthStart(
 export function handleAuthCancel(deps: LocalOpDeps, streamId: string): void {
   if (deps.state.authInFlight && deps.state.authInFlight.streamId === streamId) {
     deps.state.authInFlight.controller.cancel();
+    // Clear the slot synchronously so a back-to-back start doesn't trip
+    // the busy guard during the SIGTERM-to-exit window (~50–100ms). The
+    // `controller.done.finally` hook will fire later but no-ops because
+    // it streamId-checks against the (now-different or null) slot.
+    deps.state.authInFlight = null;
   }
 }
 
@@ -146,5 +155,36 @@ export function handleCloneStart(
 export function handleCloneCancel(deps: LocalOpDeps, streamId: string): void {
   if (deps.state.cloneInFlight && deps.state.cloneInFlight.streamId === streamId) {
     deps.state.cloneInFlight.controller.cancel();
+    // Clear synchronously — see auth-cancel for rationale.
+    deps.state.cloneInFlight = null;
   }
+}
+
+/**
+ * Handler for `ok:local-op:auth:status`. One-shot — spawns the CLI, waits
+ * for completion, returns the parsed status response. No streaming surface
+ * because the CLI emits a single line then exits.
+ */
+export function handleAuthStatus(
+  deps: LocalOpDeps,
+  request?: { host?: string },
+): Promise<AuthStatusResponse> {
+  return runAuthStatusSubprocess({
+    cliArgs: deps.resolveCliArgs(),
+    host: request?.host,
+  });
+}
+
+/**
+ * Handler for `ok:local-op:auth:repos`. One-shot — spawns the CLI, waits
+ * for the bounded repo list, returns it.
+ */
+export function handleAuthRepos(
+  deps: LocalOpDeps,
+  request?: { host?: string },
+): Promise<AuthReposResponse> {
+  return runAuthReposSubprocess({
+    cliArgs: deps.resolveCliArgs(),
+    host: request?.host,
+  });
 }

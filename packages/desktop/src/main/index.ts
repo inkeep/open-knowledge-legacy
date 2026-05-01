@@ -69,7 +69,9 @@ import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-ski
 import {
   createLocalOpState,
   handleAuthCancel,
+  handleAuthRepos,
   handleAuthStart,
+  handleAuthStatus,
   handleCloneCancel,
   handleCloneStart,
   type LocalOpDeps,
@@ -966,6 +968,12 @@ function registerIpcHandlers() {
   handle('ok:local-op:clone:cancel', async (_event, streamId) => {
     handleCloneCancel(localOpDeps, streamId);
     return undefined;
+  });
+  handle('ok:local-op:auth:status', async (_event, request) => {
+    return handleAuthStatus(localOpDeps, request);
+  });
+  handle('ok:local-op:auth:repos', async (_event, request) => {
+    return handleAuthRepos(localOpDeps, request);
   });
 }
 

@@ -19,6 +19,7 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { ipcAuthQueryTransport } from '@/lib/transports/auth-query-transport';
 import { ipcAuthTransport } from '@/lib/transports/auth-transport';
 import { ipcCloneTransport } from '@/lib/transports/clone-transport';
 import { AuthModal } from './AuthModal';
@@ -196,6 +197,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
         open={cloneDialogOpen}
         onOpenChange={setCloneDialogOpen}
         transport={ipcCloneTransport(bridge)}
+        authQueryTransport={ipcAuthQueryTransport(bridge)}
         onSignIn={() => {
           setCloneDialogOpen(false);
           setReturnToCloneAfterAuth(true);

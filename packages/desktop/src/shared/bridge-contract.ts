@@ -153,6 +153,26 @@ export interface OkLocalOpStream<E> {
   cancel(): void;
 }
 
+/** One-shot result for `localOp.auth.status()`. Also imported by
+ *  `./ipc-channels.ts` as the IPC channel result type so the wire shape
+ *  and the bridge method signature can't drift. */
+export type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+/** Bounded repo entry returned by `localOp.auth.repos()`. */
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+/** One-shot result for `localOp.auth.repos()`. Also imported by
+ *  `./ipc-channels.ts` — see `OkLocalOpAuthStatusResponse`. */
+export type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
@@ -385,6 +405,13 @@ export interface OkDesktopBridge {
        */
       start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
     };
+    /**
+     * One-shot auth queries. Bounded responses (status: one line; repos:
+     * bounded list) so no streaming surface needed. Used by Navigator in
+     * place of the HTTP `/api/local-op/auth/{status,repos}` endpoints.
+     */
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

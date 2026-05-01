@@ -114,6 +114,8 @@ export {
 } from './live-derived-index.ts';
 export {
   type AuthEvent,
+  type AuthReposResponse,
+  type AuthStatusResponse,
   type CloneCompleteEvent,
   type CloneErrorEvent,
   type CloneEvent,
@@ -122,10 +124,14 @@ export {
   type DeviceErrorEvent,
   type DeviceVerificationEvent,
   type RawCloneEvent,
+  type RepoEntry,
+  type RunAuthQueryOptions,
   type RunCloneController,
   type RunCloneOptions,
   type RunDeviceFlowController,
   type RunDeviceFlowOptions,
+  runAuthReposSubprocess,
+  runAuthStatusSubprocess,
   runCloneSubprocess,
   runDeviceFlowSubprocess,
   validateCloneInputs,

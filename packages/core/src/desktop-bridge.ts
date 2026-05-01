@@ -251,6 +251,20 @@ interface OkLocalOpStream<E> {
   cancel(): void;
 }
 
+type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
 /**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
@@ -515,6 +529,8 @@ export interface OkDesktopBridge {
     clone: {
       start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
     };
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

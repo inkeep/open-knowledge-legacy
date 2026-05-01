@@ -11,6 +11,10 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  type AuthQueryTransport,
+  httpAuthQueryTransport,
+} from '@/lib/transports/auth-query-transport';
 import { type CloneTransport, httpCloneTransport } from '@/lib/transports/clone-transport';
 import { Button } from './ui/button';
 import {
@@ -93,6 +97,14 @@ interface CloneDialogProps {
    * no backing API server.
    */
   transport?: CloneTransport;
+  /**
+   * Transport for the one-shot auth-status / repos queries. Defaults to
+   * the HTTP path (POST /api/local-op/auth/{status,repos}). Navigator
+   * passes an IPC transport — without it the queries 404 on the renderer
+   * dev server and the dialog persistently shows the Sign-in button even
+   * when the user is signed in.
+   */
+  authQueryTransport?: AuthQueryTransport;
 }
 
 export function CloneDialog({
@@ -101,8 +113,10 @@ export function CloneDialog({
   onSignIn,
   onCloneComplete,
   transport,
+  authQueryTransport,
 }: CloneDialogProps) {
   const resolvedTransport = transport ?? httpCloneTransport();
+  const resolvedAuthQuery = authQueryTransport ?? httpAuthQueryTransport();
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
@@ -113,75 +127,47 @@ export function CloneDialog({
   const cancelRef = useRef<(() => void) | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
-  // Check auth status when dialog opens. The server resolves host (defaults
-  // to github.com today; will read from config/last-used when enterprise lands).
+  // Check auth status when the dialog opens. The transport defaults to the
+  // HTTP path; Navigator passes an IPC transport because its window has no
+  // backing API server (apiOrigin === '') — the HTTP fetch would 404 on the
+  // renderer dev server and the dialog would persistently show "Sign in".
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!open) return;
-    void fetch('/api/local-op/auth/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-      .then((r) => r.json())
-      .then((data: { authenticated?: boolean }) => {
-        setIsSignedIn(!!data.authenticated);
+    let cancelled = false;
+    void resolvedAuthQuery
+      .status()
+      .then((data) => {
+        if (!cancelled) setIsSignedIn(data.authenticated);
       })
-      .catch(() => setIsSignedIn(false));
+      .catch(() => {
+        if (!cancelled) setIsSignedIn(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
-  async function fetchRepos(signal: AbortSignal) {
-    setLoadingRepos(true);
-    // No try/finally — React Compiler doesn't yet lower TryStatement finalizers.
-    // All exit paths set repos + clear loading explicitly before returning.
-    let list: RepoEntry[] = [];
-    let aborted = false;
-    try {
-      const res = await fetch('/api/local-op/auth/repos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-        signal,
-      });
-      const reader = res.ok ? res.body?.getReader() : null;
-      if (reader) {
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          for (const line of buffer.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line) as { type?: string; repos?: RepoEntry[] };
-              if (event.repos) list.push(...event.repos);
-            } catch {
-              /* ignore malformed NDJSON line */
-            }
-          }
-          buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        aborted = true;
-      } else {
-        list = [];
-      }
-    }
-    // Skip state writes on abort — the effect already tore down and React
-    // would warn about a state update on an unmounted dialog.
-    if (aborted || signal.aborted) return;
-    setRepos(list);
-    setLoadingRepos(false);
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!isSignedIn || !open) return;
-    const ac = new AbortController();
-    void fetchRepos(ac.signal);
-    return () => ac.abort();
+    let cancelled = false;
+    setLoadingRepos(true);
+    void resolvedAuthQuery
+      .repos()
+      .then((result) => {
+        if (cancelled) return;
+        setRepos(result.ok ? result.repos : []);
+        setLoadingRepos(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRepos([]);
+        setLoadingRepos(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isSignedIn, open]);
 
   function handleUrlChange(value: string) {

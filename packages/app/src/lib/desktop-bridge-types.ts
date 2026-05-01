@@ -171,6 +171,20 @@ interface OkLocalOpStream<E> {
   cancel(): void;
 }
 
+export type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+export type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
 /**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
  * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
@@ -328,6 +342,8 @@ export interface OkDesktopBridge {
     clone: {
       start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
     };
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;

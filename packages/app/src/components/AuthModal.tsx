@@ -153,8 +153,22 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
   useEffect(() => {
-    void startDeviceFlow();
+    // Defer the start by one microtask so React StrictMode's dev-mode
+    // mount→cleanup→remount cycle coalesces into a single start. Without
+    // this, the first mount's IPC `:start` fires, the cleanup chains a
+    // cancel onto its (still-pending) promise, and the second mount's
+    // `:start` reaches main BEFORE the chained cancel — main's
+    // single-in-flight guard then rejects the second start with "An auth
+    // login operation is already in progress". The microtask defer lets
+    // the first mount's cleanup set `cancelled = true` before its start
+    // ever fires, leaving only the second mount's start to run.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void startDeviceFlow();
+    });
     return () => {
+      cancelled = true;
       cancelRef.current?.();
       cancelRef.current = null;
       if (timerRef.current) clearInterval(timerRef.current);

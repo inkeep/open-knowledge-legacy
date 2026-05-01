@@ -4,6 +4,14 @@ export {
   runDeviceFlowSubprocess,
 } from './auth-flow.ts';
 export {
+  type AuthReposResponse,
+  type AuthStatusResponse,
+  type RepoEntry,
+  type RunAuthQueryOptions,
+  runAuthReposSubprocess,
+  runAuthStatusSubprocess,
+} from './auth-query.ts';
+export {
   type RawCloneEvent,
   type RunCloneController,
   type RunCloneOptions,
