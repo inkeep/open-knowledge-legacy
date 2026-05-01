@@ -38,7 +38,7 @@ import { type Editor, Extension } from '@tiptap/core';
 import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
-import { OPT_OUT_ATTR } from '../clipboard/clipboard-sanitize.ts';
+import { OPT_OUT_ATTR } from '../clipboard/index.ts';
 import { getDescriptor } from '../registry/index.ts';
 import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.tsx';
 

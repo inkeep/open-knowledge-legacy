@@ -54,7 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../components/ui/popover.tsx';
-import { OPT_OUT_ATTR } from '../clipboard/clipboard-sanitize.ts';
+import { OPT_OUT_ATTR } from '../clipboard/index.ts';
 import { DescriptorPlaceholder } from '../components/DescriptorPlaceholder.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';

@@ -237,12 +237,11 @@ function tryBranchHtml(
   source: ClipboardSource,
 ): boolean {
   // Each stage has its own try block so the structured telemetry pinpoints
-  // the failing pipeline component (SPEC §7 Observability). A failure at
-  // any stage falls through to the dispatcher's later branches (PM default
-  // text/plain parse via clipboardTextParser) — user content is preserved
-  // but the rich-HTML fidelity is lost. We emit a throttled user-visible
-  // toast so the degradation is not silent: Consider-4 finding from the
-  // review pass.
+  // the failing pipeline component. A failure at any stage falls through
+  // to the dispatcher's later branches (PM default text/plain parse via
+  // clipboardTextParser) — user content is preserved but the rich-HTML
+  // fidelity is lost. We emit a throttled user-visible toast so the
+  // degradation is not silent.
   let mdast: ReturnType<typeof htmlToMdast>;
   try {
     mdast = htmlToMdast(html);
