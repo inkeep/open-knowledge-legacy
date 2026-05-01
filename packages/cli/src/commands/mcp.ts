@@ -17,9 +17,12 @@
  * side-effect of the auto-spawned `ok start`.
  */
 
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import { createProjectConfigResolver } from '../config/loader.ts';
 import type { Config } from '../config/schema.ts';
+import { OK_DIR } from '../constants.ts';
 import { startMcpServer } from '../mcp/server.ts';
 import { createProjectServerUrlResolver, parseSpawnTimeoutEnv } from '../mcp/server-discovery.ts';
 
@@ -35,6 +38,19 @@ export function mcpCommand(getConfig: () => Config): Command {
       try {
         const startupConfig = getConfig();
         const projectDir = process.cwd();
+
+        // Refuse to start in directories that haven't been `ok init`'d. Without
+        // this gate, a globally-registered MCP would treat any cwd as an OK
+        // project and (transitively, via auto-spawned `ok start`) scaffold
+        // `.open-knowledge/`, `.git/`, and a shadow repo there. `--port`
+        // bypasses — explicit user intent.
+        if (opts.port === undefined && !existsSync(resolve(projectDir, OK_DIR))) {
+          process.stderr.write(
+            `[mcp] ${projectDir} is not an Open Knowledge project (no ${OK_DIR}/); exiting. Run \`ok init\` to scaffold one.\n`,
+          );
+          return;
+        }
+
         const resolveConfig = createProjectConfigResolver({
           startupCwd: projectDir,
           startupConfig,
