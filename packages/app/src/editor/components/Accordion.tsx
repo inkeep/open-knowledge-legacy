@@ -89,6 +89,7 @@ export function Accordion(props: AccordionProps) {
       name={props.name}
     >
       <summary className="accordion-summary" contentEditable={false}>
+        <ChevronRight size={14} className="accordion-chevron" aria-hidden="true" />
         {IconOverride ? (
           <IconOverride size={16} className="accordion-icon" aria-hidden="true" />
         ) : null}

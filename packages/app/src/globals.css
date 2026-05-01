@@ -1798,11 +1798,11 @@ button:active:not(:disabled) {
   margin-bottom: 0;
 }
 
-/* Collapsible variant — native <details>/<summary> with styled chevron.
- * The open/close animation is deferred: details-content animation requires
- * either ::details-content (broader 2024+ support) or a React transition;
- * native open-state is already smooth enough for v1. Chevron rotates via
- * CSS transform on `[open]`, honoring prefers-reduced-motion. */
+/* Collapsible variant — native <details>/<summary> with a real <svg> chevron.
+ * The chevron is a lucide ChevronRight rendered as an actual DOM child of
+ * <summary>, so cloneNode(true) (used by the clipboard live-DOM walker) can
+ * carry it across to the pasted-HTML output in destination apps. CSS rotates
+ * it on the `[open]` attribute, honoring prefers-reduced-motion. */
 .callout-collapsible > summary {
   cursor: pointer;
   list-style: none;
@@ -1816,25 +1816,19 @@ button:active:not(:disabled) {
   display: none;
 }
 
-.callout-collapsible > summary::before {
-  content: "";
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 6px solid var(--callout-type-color);
+.callout-chevron {
   flex: none;
+  color: var(--callout-type-color);
   transform: rotate(0deg);
-  transform-origin: 25% 50%;
+  transform-origin: 50% 50%;
 }
 
-.callout-collapsible[open] > summary::before {
+.callout-collapsible[open] > summary > .callout-chevron {
   transform: rotate(90deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .callout-collapsible > summary::before {
+  .callout-chevron {
     transition: transform 180ms var(--ease-out-strong);
   }
 }
@@ -1891,26 +1885,20 @@ button:active:not(:disabled) {
   display: none;
 }
 
-.accordion > summary::before {
-  content: "";
-  display: inline-block;
-  width: 0;
-  height: 0;
-  border-top: 5px solid transparent;
-  border-bottom: 5px solid transparent;
-  border-left: 6px solid var(--muted-foreground);
+.accordion-chevron {
   flex: none;
+  color: var(--muted-foreground);
+  margin-top: 0.25rem;
   transform: rotate(0deg);
-  transform-origin: 25% 50%;
-  margin-top: 0.375rem;
+  transform-origin: 50% 50%;
 }
 
-.accordion[open] > summary::before {
+.accordion[open] > summary > .accordion-chevron {
   transform: rotate(90deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .accordion > summary::before {
+  .accordion-chevron {
     transition: transform 180ms var(--ease-out-strong);
   }
 }

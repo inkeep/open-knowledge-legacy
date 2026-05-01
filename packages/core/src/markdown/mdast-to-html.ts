@@ -51,15 +51,8 @@ import { type Plugin, unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import { customNodeHandlers } from './mdast-to-hast-handlers.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
+import { isSafeUrl } from './safe-url.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
-
-const SAFE_URL_SCHEME = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
-
-function isSafeUrl(url: string): boolean {
-  const trimmed = url.trim();
-  if (trimmed === '') return true; // empty href — benign, keep.
-  return SAFE_URL_SCHEME.test(trimmed);
-}
 
 /**
  * hast-walking plugin: strip dangerous URL schemes from attributes that

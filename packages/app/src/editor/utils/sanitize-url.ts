@@ -53,9 +53,18 @@
  *   past the rate limit and produces visible aggregate counters).
  */
 
-import { incrementJsxPropDropped } from '@inkeep/open-knowledge-core';
+import {
+  incrementJsxPropDropped,
+  isRelativeUrl,
+  SAFE_URL_SCHEMES,
+} from '@inkeep/open-knowledge-core';
 
-const URL_SCHEME_ALLOWLIST = new Set(['http:', 'https:', 'mailto:', 'tel:', 'ftp:', 'sms:']);
+// Derived from the canonical `SAFE_URL_SCHEMES` array so the JSX-prop
+// sanitizer, the markdown pipeline (`isSafeUrl`), and the clipboard
+// walker (`isSafeWalkerUrl`) all classify URL schemes from a single
+// source. Adding / removing a scheme in `SAFE_URL_SCHEMES` updates all
+// three sites by construction.
+const URL_SCHEME_ALLOWLIST = new Set(SAFE_URL_SCHEMES.map((s) => `${s}:`));
 
 /**
  * Per-prop-name warn-emit rate limit window. 10 warns per minute per
@@ -205,19 +214,13 @@ export function sanitizeUrlValue(raw: unknown): unknown {
   // can't be used as a scheme-smuggling path.
   if (value.startsWith('//')) return raw;
 
-  // Relative paths (no scheme, no leading `//`) — anything up to the first
-  // `:` that isn't `/`, `?`, `#`, or `.` is a potential scheme.
-  const colonIdx = value.indexOf(':');
-  if (colonIdx === -1) return raw;
-  // Path or query separator comes before a colon → treat as relative path.
-  const slashIdx = value.indexOf('/');
-  const questionIdx = value.indexOf('?');
-  const hashIdx = value.indexOf('#');
-  const firstSep = [slashIdx, questionIdx, hashIdx]
-    .filter((i) => i !== -1)
-    .reduce((a, b) => Math.min(a, b), Number.POSITIVE_INFINITY);
-  if (colonIdx > firstSep) return raw;
+  // Relative paths (no scheme, no leading `//`) — defer to the canonical
+  // `isRelativeUrl` helper from @inkeep/open-knowledge-core. The clipboard
+  // walker shares the same helper, so a future refinement of relative-URL
+  // semantics propagates to both sites by construction.
+  if (isRelativeUrl(value)) return raw;
 
+  const colonIdx = value.indexOf(':');
   const scheme = value.slice(0, colonIdx + 1).toLowerCase();
   if (URL_SCHEME_ALLOWLIST.has(scheme)) return raw;
   return '#';

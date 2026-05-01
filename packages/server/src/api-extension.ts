@@ -146,6 +146,7 @@ import {
   isAllowedGitUrl,
   isSafeLocalPath,
 } from './local-op-security.ts';
+import { type AuthEvent, runCloneSubprocess, runDeviceFlowSubprocess } from './local-ops/index.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -5185,111 +5186,63 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
-    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
-    const targetDir = expandTilde(dir);
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
-
-    let timedOut = false;
-    let settled = false;
     // The CLI emits `{type:'complete', dir}` on success, but the browser
     // client expects `{type:'complete', port}`. We intercept the CLI's
     // complete event, boot a server at the cloned dir, then emit a rewritten
     // complete with the port. Non-terminal events (progress / error) flow
     // through unchanged.
     let cloneCompleteDir: string | null = null;
-    let stdoutBuffer = '';
 
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    const killTimer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let parsed: { type?: unknown; dir?: unknown } | null = null;
-        try {
-          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
-        } catch {
-          /* non-JSON — ignore */
+    const flow = runCloneSubprocess({
+      cliArgs: localOpCliArgs,
+      url,
+      dir,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event) => {
+        if (event.type === 'complete') {
+          cloneCompleteDir = event.dir;
+          return;
         }
-        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
-          // Swallow this line; we'll emit our own complete after starting the server.
-          cloneCompleteDir = parsed.dir;
-          continue;
+        if (event.type === 'error') {
+          if (event.message) {
+            log.warn({ stderr: event.message, url, dir }, '[local-op/clone] clone failed');
+          }
         }
-        if (!res.writableEnded) res.write(`${line}\n`);
-      }
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
 
-    // Buffer stderr so we can surface it when the clone fails; also log.
-    const stderrChunks: Buffer[] = [];
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
-      if (settled) {
-        localOpGuard.release(LOCAL_OP_CLONE_KEY);
-        return;
-      }
-      settled = true;
-
-      void (async () => {
-        try {
-          if (timedOut && !res.writableEnded) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
-            );
-          } else if (code !== 0 && !res.writableEnded) {
-            if (stderrOutput) {
-              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
-            }
-            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
-            );
-          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
-            // Chain into server-start so the client can redirect.
-            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
-            if (!res.writableEnded) {
-              if ('port' in result) {
-                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
-              } else {
-                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
-              }
+    void (async () => {
+      try {
+        await flow.done;
+        if (cloneCompleteDir && !res.writableEnded) {
+          // Chain into server-start so the client can redirect.
+          const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+          if (!res.writableEnded) {
+            if ('port' in result) {
+              // `dir` is the absolute, tilde-expanded path to the cloned
+              // repo. Web clients ignore it and redirect via `port`; the
+              // Electron Navigator uses it to spawn a new editor window
+              // instead of navigating the launcher to a dev-server URL.
+              res.write(
+                `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
+              );
+            } else {
+              res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
             }
           }
-        } finally {
-          if (!res.writableEnded) res.end();
-          localOpGuard.release(LOCAL_OP_CLONE_KEY);
         }
-      })();
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
+      } finally {
+        if (!res.writableEnded) res.end();
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
       }
-      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    })();
+
+    // Cancel the subprocess if the client disconnects.
+    res.on('close', () => {
+      flow.cancel();
     });
   }
 
@@ -5490,86 +5443,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
-
-    let settled = false;
-    let sawTerminalEvent = false;
-    let stdoutBuffer = '';
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+    const flow = runDeviceFlowSubprocess({
+      cliArgs: localOpCliArgs,
+      host,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event: AuthEvent) => {
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
-
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
 
     // Kill the child if the client disconnects so `auth login` doesn't keep
     // polling in the background and write a token to the keychain that the
     // user never saw confirmation for.
     const onClientClose = () => {
-      if (!child.killed) child.kill('SIGTERM');
+      flow.cancel();
     };
     res.on('close', onClientClose);
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
-      // Parse line-by-line to detect whether the CLI emitted a terminal event
-      // (`complete` | `error`). If it didn't but the process exits 0, we
-      // synthesize one below so the client never hangs on a silent exit.
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as { type?: unknown };
-          if (parsed.type === 'complete' || parsed.type === 'error') {
-            sawTerminalEvent = true;
-          }
-        } catch {
-          /* non-JSON line (e.g. keychain-backend log) — ignore */
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
+    void flow.done.finally(() => {
       res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          if (code === 0 && !sawTerminalEvent) {
-            // CLI exited cleanly without emitting a terminal event — synthesize
-            // one so the client's stream reader can resolve. Login name will be
-            // filled in by the next /api/local-op/auth/status poll.
-            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
-          } else if (code !== 0) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
-            );
-          }
-        }
-        res.end();
-      }
-      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
-      }
+      if (!res.writableEnded) res.end();
       localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
     });
   }

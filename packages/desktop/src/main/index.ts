@@ -56,6 +56,7 @@ import {
   getInstallStatus,
   installCli,
   uninstallCli,
+  wrapperPathInBundle,
 } from './cli-install.ts';
 import { createDebugIpc, type DebugIpcHandle } from './debug-ipc.ts';
 import { promptForFolder } from './dialog-helpers.ts';
@@ -65,6 +66,16 @@ import {
   runDriverBootSmoke,
 } from './driver-boot-smoke.ts';
 import { handleBuildAndOpen, handleDetectClaudeDesktop } from './ipc/install-skill.ts';
+import {
+  createLocalOpState,
+  handleAuthCancel,
+  handleAuthRepos,
+  handleAuthStart,
+  handleAuthStatus,
+  handleCloneCancel,
+  handleCloneStart,
+  type LocalOpDeps,
+} from './ipc/local-op.ts';
 import { handleSeedApply, handleSeedPlan } from './ipc/seed.ts';
 import {
   detectProtocol as detectProtocolImpl,
@@ -921,6 +932,48 @@ function registerIpcHandlers() {
   });
   handle('ok:skill:build-and-open', async () => {
     return handleBuildAndOpen({ app, shell });
+  });
+
+  // Pre-project local-op flows for the Navigator window. The Navigator has
+  // no backing API server (apiOrigin === ''), so the renderer's HTTP path
+  // to `/api/local-op/auth/login` + `/api/local-op/clone` 404s on the
+  // electron-vite dev server. These IPC handlers spawn the same CLI
+  // subprocess directly from main and stream events back via webContents.
+  // Editor windows continue to use the HTTP path — no regression.
+  const localOpDeps: LocalOpDeps = {
+    resolveCliArgs: () => {
+      // Packaged: invoke the bundled wrapper at <bundle>/Contents/Resources/cli/bin/ok.sh.
+      // Dev mode: fall back to PATH lookup of `open-knowledge`, matching the
+      // utility-process default. Dev users with the workspace CLI on PATH
+      // (via `bun link` or the Install Command-Line Tools menu) get a
+      // working clone + auth flow; users without it get a clear "command
+      // not found" stderr in the toast.
+      if (app.isPackaged) {
+        return [wrapperPathInBundle(app.getPath('exe'))];
+      }
+      return ['open-knowledge'];
+    },
+    state: createLocalOpState(),
+  };
+  handle('ok:local-op:auth:start', async (event) => {
+    return handleAuthStart(localOpDeps, event.sender);
+  });
+  handle('ok:local-op:auth:cancel', async (_event, streamId) => {
+    handleAuthCancel(localOpDeps, streamId);
+    return undefined;
+  });
+  handle('ok:local-op:clone:start', async (event, request) => {
+    return handleCloneStart(localOpDeps, event.sender, request);
+  });
+  handle('ok:local-op:clone:cancel', async (_event, streamId) => {
+    handleCloneCancel(localOpDeps, streamId);
+    return undefined;
+  });
+  handle('ok:local-op:auth:status', async (_event, request) => {
+    return handleAuthStatus(localOpDeps, request);
+  });
+  handle('ok:local-op:auth:repos', async (_event, request) => {
+    return handleAuthRepos(localOpDeps, request);
   });
 }
 
