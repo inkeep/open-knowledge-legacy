@@ -127,8 +127,11 @@ export async function buildSearchResult(
     return !filter.isExcluded(contentRelPath);
   });
 
-  const truncated = matches.length > maxResults;
-  const visible = truncated ? matches.slice(0, maxResults) : matches;
+  // Truncation signal must reflect the grep cap, not the post-filter set —
+  // a query whose hits land mostly in `.okignore`-excluded paths can shrink
+  // below `maxResults` even though grep stopped early.
+  const truncated = rawMatches.length > maxResults;
+  const visible = matches.slice(0, maxResults);
 
   const { resolve, ui } = await buildListResolver(
     {
@@ -213,7 +216,7 @@ export async function buildSearchResult(
 
   if (truncated) {
     lines.push(
-      `_${visible.length} of ${matches.length}+ matches shown. Raise \`mcp.tools.search.maxResults\` in config.yml to see more._`,
+      `_${visible.length} of ${rawMatches.length}+ matches shown. Raise \`mcp.tools.search.maxResults\` in config.yml to see more._`,
     );
   }
 
