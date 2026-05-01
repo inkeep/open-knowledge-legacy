@@ -3,8 +3,6 @@ import { getCollector, recordMark, recordVital } from './collector';
 
 describe('getCollector', () => {
   beforeEach(() => {
-    // Ensure a fresh buffer per test; reset() preserves the same object ref
-    // so consumers reading the global don't see a stale one.
     getCollector()?.reset();
   });
 
@@ -24,9 +22,6 @@ describe('getCollector', () => {
 
   test('attaches the collector at globalThis.__ok_perf', () => {
     getCollector();
-    // `globalThis.__ok_perf === window.__ok_perf` in a browser; using
-    // globalThis lets the same test run under both browser (Playwright) and
-    // Node (Bun test) environments.
     expect((globalThis as { __ok_perf?: unknown }).__ok_perf).toBeDefined();
   });
 });

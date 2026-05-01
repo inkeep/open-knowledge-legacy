@@ -1,18 +1,3 @@
-/**
- * D24 layer (b) — fidelity PBT for the FM-region parse-edit-stringify pipeline.
- *
- * Invariants:
- *   I-rt-1: parse(serialize(parse(fenced))) === parse(fenced) — round-trip
- *           through yaml@2 Document is fixed-point on the second pass.
- *   I-rt-2: applyPatchToFm with an empty patch is a no-op (canonicalization
- *           may rewrite scalar styles, but the parsed map is invariant).
- *   I-rt-3: applyRenameToFm preserves source order (FR2). After renaming the
- *           i-th key, the position-i key in the output is the new name.
- *   I-rt-4: applyReorderToFm with the identity permutation is a no-op.
- *   I-rt-5: a permutation of keys is exactly the new key order on output.
- *   I-rt-6: round-trip survives comments on subsequent keys (A1 — yaml@2's
- *           Document.toString preserves leading-comment placement).
- */
 import { describe, expect, test } from 'bun:test';
 import {
   applyPatchToFm,
@@ -29,15 +14,6 @@ const safeKey = fc
   .string({ minLength: 1, maxLength: MAX_KEY_BYTES })
   .filter((s) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(s) && s !== 'frontmatter');
 
-// Conservative alphanumeric values to keep generated YAML in plain-scalar
-// territory across yaml@2's stringification rules. Adversarial value shapes
-// (special characters, unicode, leading-special) belong in the malformed-YAML
-// fuzz layer, not the round-trip arbitrary.
-// Conservative alphanumeric values that always parse as plain string
-// scalars. Adversarial value shapes (special characters, unicode,
-// leading-special) belong in the malformed-YAML fuzz layer, not the
-// round-trip arbitrary. The regex requires a leading letter so the value
-// can't be confused with a number, dash, or YAML reserved literal.
 const stringValue = fc
   .string({ minLength: 1, maxLength: MAX_VALUE_BYTES })
   .filter(

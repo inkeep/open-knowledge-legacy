@@ -96,18 +96,6 @@ export const WikiLink = Node.create({
         },
       },
       {
-        // Clipboard round-trip shape emitted by the mdast→hast pipeline
-        // (`mdast-to-hast-handlers.ts:wikiLinkHandler`): `<a class="wiki-link"
-        // data-target="..." data-anchor="..." data-alias="..." href="#slug">Alias</a>`.
-        // When an OK→OK paste lands through Branch C (PM's `parseFromClipboard`
-        // via `data-pm-slice`), PM's DOMParser must reconstruct a wikiLink node
-        // from this shape — otherwise it falls back to a generic Link mark and
-        // the `[[Page|Alias]]` round-trip is lost.
-        //
-        // priority > 60 (Link mark's priority) is load-bearing — PM's
-        // `matchTag` iterates rules in priority-desc order and returns the
-        // first match. Without this, the `a[href]` link mark rule matches
-        // first and we never get here. See wiki-link parser ordering doc.
         tag: 'a.wiki-link[data-target]',
         priority: 100,
         getAttrs: (node) => {
@@ -118,15 +106,6 @@ export const WikiLink = Node.create({
             target,
             alias: normalizeNullableString(node.getAttribute('data-alias')),
             anchor: normalizeNullableString(node.getAttribute('data-anchor')),
-            // Hardcoded `false` diverges from the `span[data-wiki-link]` rule
-            // above, which reads `data-resolved` off the DOM. That's correct:
-            // the mdast→hast clipboard pipeline
-            // (`mdast-to-hast-handlers.ts:57-79`) intentionally omits
-            // `data-resolved` from the `<a class="wiki-link">` shape — pasted
-            // wikiLinks start unresolved and get re-resolved by the editor's
-            // resolver after insertion. Reading `data-resolved` here would
-            // always read `null` → `false` anyway, but the explicit constant
-            // makes the source-of-truth asymmetry obvious. (D-Q16 LOCKED).
             resolved: false,
           };
         },

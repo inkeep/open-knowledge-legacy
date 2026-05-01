@@ -1,22 +1,3 @@
-/**
- * D19 enforcement — `no-loosely-typed-webcontents-ipc` lint rule.
- *
- * Forbids direct `webContents.send(...)`, `ipcMain.handle(...)`, and
- * `ipcRenderer.invoke/on/once(...)` calls in `packages/desktop/src/` outside
- * the allowlisted IPC wrapper files. Consumers must route through the typed
- * factories from `src/shared/ipc-invoke.ts` + `src/shared/ipc-handler.ts`.
- *
- * Implementation note: spec D19 originally targeted Biome v2 GritQL custom
- * rules for this enforcement. Biome 2.4's `plugins` config field is scoped
- * to assist actions / refactors, not pure lint rules — GritQL custom lint
- * rules are roadmapped but not shipping in this version. Per the spec's §16
- * STOP_IF escape hatch, we fall back to I3 (CI grep assertion) implemented
- * as a Bun test. Same enforcement guarantee, same `bun run check` gating.
- *
- * If Biome ships GritQL lint plugins in a future minor and the test ratchet
- * gets noisy, port the patterns into `biome.jsonc#plugins` and delete this
- * test file.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -24,7 +5,6 @@ import { join, relative, sep } from 'node:path';
 
 const SRC_ROOT = join(__dirname, '..', '..', 'src');
 
-/** Files that ARE allowed to use raw electron IPC primitives — they ARE the wrappers. */
 const ALLOWLIST: ReadonlySet<string> = new Set([
   'shared/ipc-invoke.ts',
   'shared/ipc-handler.ts',
@@ -35,7 +15,6 @@ const ALLOWLIST: ReadonlySet<string> = new Set([
   'main/index.ts',
 ]);
 
-/** Patterns that, when found OUTSIDE the allowlist, fail this rule. */
 const BANNED_PATTERNS: ReadonlyArray<{ pattern: RegExp; description: string }> = [
   {
     pattern: /\bwebContents\.send\s*\(/,
@@ -131,10 +110,6 @@ describe('D19 — no-loosely-typed-webcontents-ipc', () => {
   });
 
   test('removing the allowlist would surface real raw-IPC use (positive regression)', () => {
-    // Mutation test — re-run the scan with an EMPTY allowlist; this should
-    // surface known-good usage in the wrapper files, proving the scan is
-    // actually reading the right files. If this test passes with an empty
-    // allowlist, the BANNED_PATTERNS regexes don't match anything.
     let mutationCount = 0;
     for (const file of walk(SRC_ROOT)) {
       const lines = readFileSync(file, 'utf-8').split('\n');

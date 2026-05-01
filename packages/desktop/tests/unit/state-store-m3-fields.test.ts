@@ -1,19 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { emptyState, parseAppState } from '../../src/main/state-store.ts';
 
-/**
- * US-003 regression set for the four M3-added AppState fields
- * (versionPendingInstall, lastSeenVersion, lastSuccessfulCheckAt,
- * stuckHintShown). Paired with the existing state-store tests in
- * `packages/desktop/tests/main/state-store.test.ts` which exercise the
- * recentProjects / lastOpenedProject / atomic-writer behavior; this file
- * owns the M3-field-specific invariants.
- *
- * The anchoring invariant is M1-forward-compat: a pre-M3 state.json that
- * lacks these four keys MUST return a valid AppState (no quarantine, no
- * null) so users upgrading from M1 don't see their recent-projects list
- * wiped on first M3 launch.
- */
 
 describe('AppState M3 fields — defaults', () => {
   test('emptyState has the four M3 defaults', () => {
@@ -44,7 +31,6 @@ describe('parseAppState M3 fields — coercion', () => {
   });
 
   test('M1-forward-compat: pre-M3 blob without M3 keys returns valid state with defaults', () => {
-    // Shape a real M1-written state.json would have.
     const raw = {
       recentProjects: [
         { path: '/tmp/m1-project', name: 'm1-project', lastOpenedAt: '2026-02-01T00:00:00Z' },
@@ -53,10 +39,8 @@ describe('parseAppState M3 fields — coercion', () => {
     };
     const parsed = parseAppState(raw);
     expect(parsed).not.toBeNull();
-    // Existing M1 data preserved.
     expect(parsed?.recentProjects.length).toBe(1);
     expect(parsed?.lastOpenedProject).toBe('/tmp/m1-project');
-    // M3 fields populate with emptyState() defaults — no quarantine.
     expect(parsed?.versionPendingInstall).toBeNull();
     expect(parsed?.lastSeenVersion).toBeNull();
     expect(parsed?.lastSuccessfulCheckAt).toBeNull();

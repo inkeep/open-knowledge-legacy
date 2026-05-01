@@ -1,6 +1,3 @@
-/**
- * Tests for MCP shared helpers — textResult, routing helpers, httpGet, httpPost.
- */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { Config } from '../../config/schema.ts';
 import {
@@ -82,8 +79,6 @@ describe('normalizeDocName', () => {
   });
 
   test('strips only one trailing extension (not recursive)', () => {
-    // `foo.md.md` strips once → `foo.md`; avoids over-eager stripping on paths
-    // that happen to have compound-looking extensions.
     const result = normalizeDocName('notes/meeting.md.md');
     expect(result).toEqual({ ok: true, docName: 'notes/meeting.md' });
   });
@@ -103,7 +98,6 @@ describe('normalizeDocName', () => {
   });
 
   test('leaves unrelated dotted names untouched', () => {
-    // A docName like "v1.0" is a legitimate extension-less name with a dot.
     const result = normalizeDocName('releases/v1.0');
     expect(result).toEqual({ ok: true, docName: 'releases/v1.0' });
   });
@@ -202,7 +196,6 @@ describe('resolveProjectServerContext', () => {
   });
 });
 
-// ── HTTP helpers — test against a local test server ──
 
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
@@ -226,7 +219,6 @@ beforeAll(() => {
         return req.json().then((body) => Response.json({ ok: true, received: body }));
       }
       if (url.pathname === '/slow') {
-        // Respond after 100ms (won't timeout with our 30s limit)
         return new Promise((resolve) =>
           setTimeout(() => resolve(Response.json({ ok: true })), 100),
         );

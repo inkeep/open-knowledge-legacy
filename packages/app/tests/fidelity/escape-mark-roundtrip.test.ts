@@ -1,12 +1,3 @@
-/**
- * escapeMark round-trip — R16(h), D20.
- *
- * Verifies that structurally-ambiguous backslash escapes (per CommonMark
- * section 2.4) are preserved on round-trip via the D20 escapeMark PM mark.
- *
- * Scope: only structurally-ambiguous escapes are preserved. Non-ambiguous
- * escapes (e.g., `\foo`) lose the backslash on round-trip (documented NG).
- */
 import { describe, expect, test } from 'bun:test';
 import { mdRoundTrip, normalize } from './helpers';
 
@@ -79,8 +70,6 @@ describe('escapeMark — end-of-line trailing literal backslash', () => {
 describe('escapeMark — non-ambiguous escapes (documented NG: backslash drops)', () => {
   test('\\A (non-special char) — backslash may drop', () => {
     const input = '\\A non-special\n';
-    // Non-ambiguous escapes lose the backslash — this is acceptable
-    // Just verify it doesn't crash
     expect(() => mdRoundTrip(input)).not.toThrow();
   });
 });

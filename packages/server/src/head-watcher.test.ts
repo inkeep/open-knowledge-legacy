@@ -30,7 +30,6 @@ describe('resolveGitDir', () => {
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(realGitDir, { recursive: true });
 
-    // .git is a file with gitdir: pointer
     writeFileSync(resolve(projectRoot, '.git'), `gitdir: ${realGitDir}\n`);
 
     const result = resolveGitDir(projectRoot);

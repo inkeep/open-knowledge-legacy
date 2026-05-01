@@ -16,15 +16,6 @@ export const TABS: { id: PanelTab; label: string; icon: typeof ListTree }[] = [
   { id: 'timeline', label: 'Timeline', icon: Clock },
 ];
 
-/**
- * Top-level mode for the DocPanel container. Two values:
- *   - `'doc'`:   existing per-document info tabs (outline / links / …).
- *   - `'agent'`: Agent Activity view keyed to a `connectionId`.
- *
- * The mode is a drill-in, not a persistent toggle: agent avatar click enters
- * `'agent'` mode; the back arrow (shown only in `'agent'` mode) returns to
- * `'doc'` mode via `closeActivityPanel()`.
- */
 type DocPanelMode = 'doc' | 'agent';
 
 function loadGraphPanelModule() {
@@ -46,7 +37,6 @@ interface DocPanelProps {
   isSourceMode: boolean;
   activeTab: PanelTab;
   onActiveTabChange: (tab: PanelTab) => void;
-  /** Active mode — controlled by presence-bar avatar clicks + the back arrow. */
   mode: DocPanelMode;
 }
 
@@ -57,8 +47,6 @@ export function DocPanel({
   onActiveTabChange,
   mode,
 }: DocPanelProps) {
-  // Lifted from TimelineContent so the choice survives sub-tab switches —
-  // TimelineContent unmounts when activeTab leaves 'timeline'.
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   return (
     <>

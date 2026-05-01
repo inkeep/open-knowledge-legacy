@@ -4,11 +4,6 @@ import { javascript } from '@codemirror/lang-javascript';
 import { markdown } from '@codemirror/lang-markdown';
 import { LanguageDescription } from '@codemirror/language';
 
-/**
- * Hand-written allowlist of fenced-code languages for CM6 nested syntax highlighting.
- * Each entry uses a lazy `load()` so only the grammars actually encountered in the doc
- * are fetched — avoids the 150+ Vite chunks that `@codemirror/language-data` would emit.
- */
 export const codeLanguages: LanguageDescription[] = [
   LanguageDescription.of({
     name: 'javascript',

@@ -98,7 +98,6 @@ describe('exec — happy path', () => {
     expect(files.length).toBe(1);
     expect(files[0].path).toBe('content/auth.md');
     expect(files[0].title).toBe('Auth');
-    // rich shape on single-path cat
     expect(files[0].historySource).toBe('shadow-repo-absent');
   });
 
@@ -117,7 +116,6 @@ describe('exec — happy path', () => {
     const s = structured(result);
     const files = fileEntries(s);
     expect(files.length).toBe(2);
-    // Slim shape: rich fields null
     for (const m of files) {
       expect(m.backlinkCount).toBe(null);
       expect(m.history).toBe(null);
@@ -168,7 +166,6 @@ describe('exec — happy path', () => {
       (e): e is Extract<typeof e, { type: 'directory' }> =>
         (e as { type?: string }).type === 'directory',
     );
-    // Parent `specs` + two children (`specs/spec-a`, `specs/spec-b`).
     expect(dirs.length).toBe(3);
     const parentEntry = dirs.find((d) => d.path === 'specs');
     expect(parentEntry).toBeDefined();
@@ -178,7 +175,6 @@ describe('exec — happy path', () => {
     expect(specAEntry?.recursiveMdCount).toBe(2);
     expect(specAEntry?.childDirCount).toBe(1);
     expect(specAEntry?.mostRecentMd).toBeDefined();
-    // Content block renders folder summary
     expect(result.content[0].text).toContain('specs/spec-a/');
     expect(result.content[0].text).toContain('md file');
   });
@@ -276,7 +272,6 @@ describe('exec — stdout provenance headers', () => {
 
     const s = structured(result);
     expect(s.stdout).not.toContain('==>');
-    // enrichedPaths still lists every file read, so provenance is preserved.
     const files = fileEntries(s);
     expect(files.map((f) => f.path).sort()).toEqual(['articles/a.md', 'articles/b.md']);
   });
@@ -393,11 +388,8 @@ describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
     )) as ExecResult;
 
     const text = result.content[0].text;
-    // Leader should use the folder title, with path in parens
     expect(text).toContain('**Specifications** (specs/)');
-    // Description rendered
     expect(text).toContain('Product + technical specs');
-    // Tags rendered in the same format as file entries
     expect(text).toContain('tags: spec, wip');
   });
 
@@ -407,7 +399,6 @@ describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
     mkdirSync(reports, { recursive: true });
     writeFileSync(resolve(reports, 'report.md'), '# Report\n');
 
-    // Rule exists but does not match the `reports/` folder.
     const configWithRules: Config = ConfigSchema.parse({
       folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }],
     });
@@ -418,7 +409,6 @@ describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
     )) as ExecResult;
 
     const text = result.content[0].text;
-    // No folder-rule title applied → falls back to path-label format
     expect(text).toContain('**reports/** (directory)');
     expect(text).not.toContain('**Specs** (reports/)');
   });
@@ -515,14 +505,12 @@ describe('exec — CC9 parity with read_document', () => {
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
     await commitWip(shadow, writer, contentDir, 'wrote parity', branch);
 
-    // exec("cat articles/parity.md") → pulls rich enrichment
     const execResult = (await buildExecResult(
       { command: 'cat articles/parity.md' },
       { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
     const execMeta = fileEntries(structured(execResult))[0];
 
-    // read_document("articles/parity.md") — same data source (enrichPath)
     const readOutput = await buildReadResult(
       { path: 'articles/parity.md' },
       {
@@ -532,8 +520,6 @@ describe('exec — CC9 parity with read_document', () => {
       },
     );
 
-    // CC9 parity: exec's structuredContent fields should be derivable from
-    // read_document's rendered output (both go through the shared enrichPath).
     expect(execMeta.title).toBe('Parity');
     expect(execMeta.tags).toEqual(['x']);
     expect(execMeta.historySource).toBe('shadow-repo');
@@ -751,8 +737,4 @@ describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', (
     expect(s.ui).toEqual({ baseUrl: null, port: null });
   });
 
-  // Removed after merge: "without config" back-compat test. Post-merge, main's
-  // folder-rule work made `config` required on ExecDeps (it's threaded through
-  // to `enrichPath` for folder-frontmatter resolution), so the optional-config
-  // path no longer exists. Callers always pass config via tools/index.ts.
 });

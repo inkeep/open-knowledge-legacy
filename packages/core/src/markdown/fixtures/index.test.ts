@@ -7,24 +7,7 @@ import {
 } from './index.ts';
 
 describe('fixture loaders — count + shape contracts', () => {
-  test('loadBuiltInFixtures returns 39 entries (28 6-pack + 11 parse-path)', () => {
-    // 6-pack-canonical breakdown:
-    //   - 6 Callout fixtures (base + self-closing + info-alias + boolean-shorthand
-    //     + widened-foldable + color-override)
-    //   - 3 Accordion fixtures (title-only + name-grouping + defaultOpen-id)
-    //   - 2 img fixtures (basic + with-srcset-loading)
-    //   - 2 video fixtures (basic + with-poster-autoplay)
-    //   - 2 audio fixtures (basic + widened-preload)
-    //   - 2 Math fixtures (basic + with-id) — added 2026-04-29 per FR-M1
-    //   - 5 nested-composition fixtures (Callout>Accordion, Accordion>Callout,
-    //     Accordion>Accordion, Callout>Callout, Callout-collapsible>Accordion)
-    //   - 3 wildcard/expression fixtures (Unregistered-CustomThing,
-    //     Comp-expression-attr, Comp-spread-attr)
-    //   - 3 inline thin-shape fixtures (Icon, Badge, Comp-inline-expression)
-    // Parse-path breakdown:
-    //   - 7 GFM-alert fixtures (5 GFM + 2 Obsidian foldable)
-    //   - 4 <details>→Accordion fixtures
-    // Math parse-path fixtures (`$$…$$`, ` ```math `) land in Phase 2.
+  test('loadBuiltInFixtures returns 39 entries (28 canonical + 11 parse-path)', () => {
     const fixtures = loadBuiltInFixtures();
     expect(fixtures).toHaveLength(39);
   });
@@ -40,7 +23,6 @@ describe('fixture loaders — count + shape contracts', () => {
 
   test('BuiltInFixture JSON deserializes into the exported interface shape', () => {
     const fixtures: BuiltInFixture[] = loadBuiltInFixtures();
-    // At least one should demonstrate the `notes` optional field populated.
     const withNotes = fixtures.filter((f) => typeof f.notes === 'string' && f.notes.length > 0);
     expect(withNotes.length).toBeGreaterThan(0);
   });
@@ -54,7 +36,6 @@ describe('fixture loaders — count + shape contracts', () => {
     const cases = loadNgPinnedCases();
     const highlighted = cases.filter((c) => c.highlighted);
     expect(highlighted).toHaveLength(4);
-    // IDs that must be highlighted:
     const highlightedIds = new Set(highlighted.map((c) => c.id));
     expect(highlightedIds.has('case-2')).toBe(true);
     expect(highlightedIds.has('case-5')).toBe(true);

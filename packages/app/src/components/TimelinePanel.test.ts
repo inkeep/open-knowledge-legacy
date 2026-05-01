@@ -1,11 +1,3 @@
-/**
- * Unit tests for the pure-function helpers in TimelinePanel.tsx
- * (bridge-correctness SPEC §6 R7c — kind-aware rendering).
- *
- * The React rendering itself is exercised via the Playwright e2e suite; this
- * test focuses on the string/variant mapping so refactors of label text
- * survive without a browser.
- */
 import { describe, expect, test } from 'bun:test';
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { allSummariesFor, checkpointHeadlineLabel, checkpointVariant } from './TimelinePanel.tsx';

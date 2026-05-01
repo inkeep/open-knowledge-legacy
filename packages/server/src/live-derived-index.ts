@@ -28,7 +28,6 @@ function isLocalOriginLike(origin: unknown): origin is LocalOriginLike {
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
   const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
   const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
   return prependFrontmatter(fm, body);
 }
@@ -66,7 +65,6 @@ export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions
     async onChange({ documentName, document, transactionOrigin }) {
       if (isSystemDoc(documentName) || isConfigDoc(documentName)) return;
 
-      // Disk events already update the derived views directly in the watcher path.
       if (
         isLocalOriginLike(transactionOrigin) &&
         transactionOrigin.context?.origin === 'file-watcher'
@@ -74,8 +72,6 @@ export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions
         return;
       }
 
-      // Give the source/tree bridge a short trailing window to converge so we
-      // derive links from settled live document state instead of the 2s store debounce.
       schedule(documentName, document);
     },
 

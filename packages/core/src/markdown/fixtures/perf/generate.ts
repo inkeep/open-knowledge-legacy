@@ -1,20 +1,3 @@
-/**
- * Seeded synthetic-corpus generator for the perf benchmark harness.
- *
- * Committed alongside the .md outputs so the corpus is reproducible. Run via:
- *
- *   bun run packages/core/src/markdown/fixtures/perf/generate.ts
- *
- * Emits `<blockCount>.md` under this directory for each entry in BLOCK_COUNTS.
- * Determinism comes from a single seeded Mulberry32 PRNG shared across block
- * selection AND per-block content — identical seed ⇒ byte-identical output.
- *
- * Block-type mix (per SPEC §6 US-002 + fixtures/perf/README.md):
- *   paragraph 40% | heading 25% | list 15% | code 10% | table 5% | mdx 5%
- *
- * The generator is intentionally small and free of runtime dependencies so
- * regenerating the corpus is a zero-friction operation.
- */
 
 import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -22,22 +5,13 @@ import { fileURLToPath } from 'node:url';
 
 const OUT_DIR = dirname(fileURLToPath(import.meta.url));
 
-// Primary block counts pinned by SPEC §6 (R1/R18) — benchmark corpus.
 const BLOCK_COUNTS = [100, 1000, 5000, 10000, 20000] as const;
 
-// Intermediate counts used by the R2 baseline evidence at `evidence/
-// perf-baseline-measured.md` for curve-shape readability. The R1 harness
-// and R4 regression gate only measure the primary counts above; these
-// extras exist so baseline re-measurements reuse the same methodology.
 const BASELINE_ONLY_COUNTS = [500, 2500] as const;
 
-// Single seed governs block selection AND per-block content. Changing the
-// seed changes every fixture — recompute the R2 baseline when you do.
 const SEED = 0xf1de1117;
 
-// ───────────────────────────── PRNG ───────────────────────────────────────
 
-/** Mulberry32 — small, seedable, well-distributed. Deterministic across runs. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -61,11 +35,9 @@ function pickWeighted<T>(rand: () => number, items: readonly [T, number][]): T {
     r -= w;
     if (r <= 0) return item;
   }
-  // Guarded by total check; unreachable under normal inputs.
   return items[items.length - 1][0];
 }
 
-// ─────────────────────── Content fragments ────────────────────────────────
 
 const WORDS = [
   'lorem',
@@ -131,7 +103,6 @@ function paragraphBlock(rand: () => number): string {
   const parts: string[] = [];
   for (let i = 0; i < sentences; i++) {
     let s = sentence(rand);
-    // ~15% sentences carry inline emphasis/strong — exercises text handlers.
     const roll = rand();
     if (roll < 0.08) s = `${s.slice(0, -1)} with **bold** and _italic_ runs.`;
     else if (roll < 0.15) s = `${s.slice(0, -1)} with \`inline code\`.`;
@@ -182,11 +153,9 @@ function tableBlock(rand: () => number): string {
 
 function mdxBlock(rand: () => number): string {
   const name = MDX_COMPONENTS[pickIndex(rand, MDX_COMPONENTS.length)];
-  // Block form with blank lines — avoids NG8 inline-flatten edge case.
   return `<${name}>\n\n${sentence(rand)}\n\n</${name}>`;
 }
 
-// ─────────────────────── Mix + assembly ───────────────────────────────────
 
 type BlockKind = 'paragraph' | 'heading' | 'list' | 'code' | 'table' | 'mdx';
 
@@ -223,11 +192,9 @@ function generateDocument(blockCount: number, seed: number): string {
     const kind = pickWeighted(rand, MIX);
     blocks.push(renderBlock(kind, rand, i));
   }
-  // Trailing newline on final block — matches canonical serialize output.
   return `${blocks.join('\n\n')}\n`;
 }
 
-// ─────────────────────── Driver ───────────────────────────────────────────
 
 function main(): void {
   for (const count of [...BLOCK_COUNTS, ...BASELINE_ONLY_COUNTS]) {

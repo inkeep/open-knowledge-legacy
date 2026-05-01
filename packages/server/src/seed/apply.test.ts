@@ -42,7 +42,6 @@ describe('applySeed — fresh plan writes everything', () => {
     expect(config).toContain('external-sources/**');
     expect(config).toContain('research/**');
     expect(config).toContain('articles/**');
-    // At least 3 folder entries created + some folders for the files too
     expect(result.applied).toBeGreaterThanOrEqual(7); // 3 folders + 1 file + 3 config entries
   });
 
@@ -127,7 +126,6 @@ server:
     scaffoldOkDir(testDir, yml);
 
     const plan = await planSeed({ projectDir: testDir });
-    // planSeed should skip external-sources (user has it) and queue the other two
     expect(plan.configEdits.map((e) => e.folderMatch)).toEqual(['research/**', 'articles/**']);
 
     await applySeed(plan, { projectDir: testDir });
@@ -137,7 +135,6 @@ server:
     expect(updated).toContain('My custom description for external-sources');
     expect(updated).toContain('- custom');
     expect(updated).toContain('- override');
-    // And the new entries
     expect(updated).toContain('research/**');
     expect(updated).toContain('articles/**');
   });
@@ -149,7 +146,6 @@ server:
 
     const updated = readFileSync(join(testDir, OK_DIR, SEED_CONFIG_FILENAME), 'utf-8');
     expect(updated).toContain('folders:');
-    // content: dir: . preserved
     expect(updated).toContain('content:');
     expect(updated).toContain('dir: .');
   });
@@ -160,7 +156,6 @@ describe('applySeed — file write guards', () => {
     scaffoldOkDir(testDir);
     writeFileSync(join(testDir, 'log.md'), '# User-written log\n', 'utf-8');
 
-    // Construct a plan manually that CLAIMS log.md needs creation (stale plan simulation)
     const plan = {
       created: [{ path: 'log.md', kind: 'file' as const }],
       skipped: [],
@@ -169,7 +164,6 @@ describe('applySeed — file write guards', () => {
     };
     await applySeed(plan, { projectDir: testDir });
 
-    // User content preserved
     const after = readFileSync(join(testDir, 'log.md'), 'utf-8');
     expect(after).toBe('# User-written log\n');
   });
@@ -188,7 +182,6 @@ describe('applySeed — rootDir scaffolding', () => {
     }
     expect(existsSync(join(testDir, 'brain', 'log.md'))).toBe(true);
     expect(readFileSync(join(testDir, 'brain', 'log.md'), 'utf-8')).toBe(LOG_MD_TEMPLATE);
-    // Nothing leaked to the project root.
     expect(existsSync(join(testDir, 'log.md'))).toBe(false);
     for (const folder of STARTER_FOLDERS) {
       expect(existsSync(join(testDir, folder.path))).toBe(false);

@@ -1,43 +1,3 @@
-/**
- * Unified pipeline factory.
- *
- * Parse direction (post-R17 chain, wired in `createParseProcessor` below):
- *   [R23 `protectFromMdx` pre-pass on source bytes]
- *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
- *     → remark-gfm → remarkWikiLink
- *     → remarkGithubAlerts → `calloutTransformerPlugin`
- *        (US-010 / FR-7: GFM-alerts + Obsidian foldable → Callout mdxJsxFlow)
- *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
- *     → `detailsAccordionPromoterPlugin`
- *        (US-011 / FR-8: HTML5 <details> → Accordion mdxJsxFlow)
- *     → `imagePromoterPlugin`
- *        (CommonMark `![alt](src)` → `<CommonMarkImage>` mdxJsxFlow compat)
- *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
- *        doc-start thematic fix + position slice + unknown-mdast guard)
- *     → `ensureNonEmptyDoc` → remarkProseMirror
- *
- * Serialize direction:
- *   fromProseMirror → remark-stringify (with custom mdast-util-to-markdown handlers)
- *
- * Plugin order for parser extensions is empirically commutative (see
- * tech-probes/plugin-ordering/REPORT.md), but transformer ordering matters:
- * Phase A must run before Phase B (Phase B's autolink regex reads the literal
- * `<`/`>` that Phase A restores — see `merged-walker.ts` header + precedent
- * #16 in CLAUDE.md). Inside Phase B, position-slice runs AFTER all syntax
- * extensions produce their mdast (so positions are final) and the final
- * `remarkProseMirror` step reads `node.data.*` written by position-slice.
- *
- * R16 caching (spec 2026-04-16 markdown-pipeline-engineering-health):
- * processors are built once per MarkdownManager instance via
- * `createParseProcessor` / `createSerializeProcessor`, then reused across
- * every `parse()` / `serialize()` call. `parseMd` / `serializeMd` accept
- * the pre-built processor and run the stateless per-document work
- * (protectFromMdx, VFile binding, PM↔mdast conversion). The attacher for
- * `remarkMdxAgnostic` and `remarkWikiLink` is made idempotent under
- * re-entry via module-level singleton extension values, which means
- * pathological re-attach would not duplicate entries in `data()` arrays.
- */
-
 import {
   type FromProseMirrorOptions,
   fromProseMirror,
@@ -55,7 +15,6 @@ import remarkStringify from 'remark-stringify';
 import { type Processor, unified } from 'unified';
 import { VFile } from 'vfile';
 
-// Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { calloutTransformerPlugin, REMARK_GITHUB_ALERTS_OPTIONS } from './callout-transformer.ts';
@@ -68,135 +27,43 @@ import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 interface PipelineOptions {
   schema: Schema;
-  /** mdast → PM handlers (keyed by mdast node type) */
   handlers: RemarkProseMirrorOptions['handlers'];
-  /** PM → mdast node handlers (keyed by PM node type name) */
   pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
-  /** PM → mdast mark handlers (keyed by PM mark type name) */
   pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
-  /** Custom mdast-util-to-markdown handlers for fidelity (wired in US-005) */
   toMarkdownHandlers?: Record<string, unknown>;
 }
 
-/** Options needed by `serializeMd` for the PM→mdast pre-pass. Kept separate
- * from the (pre-baked) processor so one cached serialize processor can serve
- * calls that share schema/handler registrations. */
 interface SerializeMdOptions {
   schema: Schema;
   pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
 }
 
-/**
- * Ensure the mdast tree has at least one renderable block. remark-prosemirror
- * maps certain mdast types to `ignore` by default (yaml, toml, definition,
- * footnoteDefinition — see §19.1) or via our registered handlers. When the
- * source consists solely of ignore-typed nodes (e.g., `---\n\n---` parses as
- * empty YAML frontmatter; `[a]: url` is only a link definition), the PM doc
- * would have zero children and `doc.content: 'block+'` validation would throw
- * `Invalid content for node doc: <>`. Inject an empty paragraph so parse()
- * always returns a valid PM doc — a real user document with only definitions
- * would still editable as a blank page with those definitions preserved on
- * serialize via the `linkDefinition` PM atom handler (R12) and frontmatter
- * Y.Map bridge.
- *
- * mdast types that remark-prosemirror's `toProseMirror` filters out (either
- * via default ignore or via user-registered ignore mappings):
- *   - yaml, toml (frontmatter — handled via Y.Map on observer sync path)
- *   - definition, footnoteDefinition (linkDefinition PM atom is registered
- *     but not every caller uses it; default is ignore)
- *
- * This guard runs on the mdast tree BEFORE remark-prosemirror dispatch, so
- * we never encounter the `createAndFill` failure.
- */
 function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
   const renderable = tree.children.some((n) => {
     const type = (n as { type: string }).type;
-    // Known ignore-only mdast types — list must stay in sync with
-    // remark-prosemirror's default ignores + any explicit ignores we register.
     return type !== 'yaml' && type !== 'toml' && type !== 'footnoteDefinition';
   });
   if (renderable) return tree;
-  // Synthesize an empty paragraph alongside existing ignore-typed nodes.
   return {
     ...tree,
     children: [...tree.children, { type: 'paragraph', children: [] } as never],
   };
 }
 
-/**
- * Build the cached parse processor. Called once per MarkdownManager instance;
- * the result is reused across every `parseMd` call.
- *
- * `processor.freeze()` is called eagerly — unified otherwise lazy-freezes on
- * the first `.parse()` / `.runSync()` / `.stringify()`. Eager freeze surfaces
- * attacher misconfiguration (e.g. a plugin whose `create` throws, an option
- * mismatch between `parse` and `serialize` config) at MarkdownManager
- * construction time rather than on the first real document. This is
- * load-bearing — the `freeze()` calls here and in `createSerializeProcessor`
- * must not be deleted during refactors. See US-006 notes in spec.json.
- */
 export function createParseProcessor(opts: PipelineOptions): Processor {
-  // R17 — post-parse tree transformation is 2 phases (down from 5):
-  //
-  //   Phase A (`restoreFromMdx`): restore PUA sentinels → literal `<`, `>`,
-  //     `:`, `@`, `{` in text/URL/title/alt fields. Must be its own pass so
-  //     Phase B's autolink regex sees literal chars (see `merged-walker.ts`
-  //     header + `evidence/pipeline-refactor-audit.md` §R17).
-  //
-  //   Phase B (`mergedPostParseWalkerPlugin`): a single `unist-util-visit`
-  //     callback dispatching autolink promotion + doc-start thematic fix +
-  //     position-slice + unknown-mdast guard. `ensureNonEmptyDoc` and
-  //     `remarkProseMirror` run after (both outside R17's scope).
   const processor = unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
-    // SPEC 2026-04-29-math-canonical-and-syntax (FR-M3, Phase 3 revision):
-    // math parsing covers `$$…$$` (block when multi-line, inline when
-    // single-line/mid-paragraph) + ` ```math ` fence + `<Math>` /
-    // `<InlineMath>` MDX JSX. `singleDollarTextMath: false` keeps single
-    // `$x$` out of the math surface — currency (`$5.00`), shell vars
-    // (`$PATH`), and paired-dollar prose ("Pay $5 to $10") all stay as
-    // plain text. Authors who want inline math write `$$x$$`, `<InlineMath
-    // formula="x" />`, or use the `/inline math` slash entry. Fenced
-    // ` ```math ` is NOT claimed by remark-math; it lands as `code` mdast
-    // with `lang: 'math'` and is promoted by the math promoter alongside
-    // block `math` mdast nodes.
     .use(remarkMath, { singleDollarTextMath: false })
     .use(remarkWikiLink)
-    // US-010 / FR-7: GFM-alerts + Obsidian foldable parse path. The upstream
-    // plugin tags blockquotes starting with `[!TYPE]` (data.hName+class) and
-    // strips the opener line; our downstream transformer consumes that output
-    // and emits `mdxJsxFlowElement(Callout, ...)` in the blockquote's place,
-    // copying `.position` so Phase B's position-slice walker attaches the
-    // original source bytes as `data.sourceRaw` (γ pristine preservation).
     .use(remarkGithubAlerts, REMARK_GITHUB_ALERTS_OPTIONS)
     .use(calloutTransformerPlugin)
     .use(restoreFromMdx) // Phase A
-    // US-011 / FR-8: HTML5 <details> → Accordion mdast promoter. Must run
-    // AFTER Phase A so the `<` sentinels have been restored to literal
-    // characters in text nodes (the recognizer regexes key off literal
-    // `<details>` / `</details>`); and BEFORE Phase B so position-slice
-    // attaches data.sourceRaw onto the emitted mdxJsxFlowElement using its
-    // copied opener..closer position span.
     .use(detailsAccordionPromoterPlugin)
-    // CommonMark `![alt](src)` → `<CommonMarkImage>` promoter.
-    // Both authoring forms land on a jsxComponent PM node — `<img>` via
-    // the canonical descriptor, `![alt](src)` via the CommonMarkImage
-    // compat. γ sourceRaw keeps `![alt](src)` byte-identical on disk.
-    // Runs after details promoter so image nodes inside a <details> body
-    // (already shallow-wrapped into the Accordion's children) get
-    // promoted in the accordion's subtree too.
     .use(imagePromoterPlugin)
-    // SPEC 2026-04-29-math-canonical-and-syntax (FR-M4 + FR-M5): promote
-    // `math` mdast (`$$…$$` from remark-math) to `<DollarMath>` compat
-    // descriptors and `code` mdast with `lang: 'math'` to `<MathFence>`
-    // compat descriptors. Both render through the canonical `<Math>`
-    // component (rendersAs: 'Math'). Position is copied so Phase B's
-    // position-slice walker attaches `data.sourceRaw` for byte-identical
-    // pristine round-trip.
     .use(mathPromoterPlugin)
     .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
@@ -208,39 +75,12 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
   return processor as unknown as Processor;
 }
 
-/**
- * Build the cached serialize processor. Called once per MarkdownManager
- * instance; reused across every `serializeMd` call.
- *
- * The `fromProseMirror` step runs per-document (needs the PM doc) and is not
- * part of the cached processor — see `serializeMd`.
- *
- * The eager `processor.freeze()` below is the same fail-fast discipline
- * documented on `createParseProcessor` — do not delete without
- * understanding what it catches.
- */
 export function createSerializeProcessor(opts: PipelineOptions): Processor {
-  // Note: `remarkWikiLink` is intentionally absent here. The PM → mdast
-  // handler for the `wikiLink` PM atom emits `{ type: 'html', value: '[[…]]' }`
-  // (see index.ts), so by the time the mdast reaches stringify there are no
-  // wikiLink nodes to dispatch — the HTML stringifier carries the bytes.
   const processor = unified()
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
-    .use(remarkMdxAgnostic)
-    // remarkMath on the serialize side registers `mathToMarkdown` handlers
-    // so `math` mdast (emitted by DollarMath's dirty-path serialize) is
-    // stringified back to `$$…$$`, and `inlineMath` mdast (emitted by the
-    // `mathInline` PM-to-mdast handler) stringifies to `$$x$$` — single
-    // dollars are intentionally never produced because parse-side has
-    // `singleDollarTextMath: false`. Mirroring the option here keeps the
-    // serializer from emitting a single-dollar form that wouldn't re-parse
-    // as math.
     .use(remarkMath, { singleDollarTextMath: false })
-    // remarkWikiLink registers mdast-util-to-markdown handlers for the
-    // `wikiLink` mdast type (see wiki-link-micromark.ts:wikiLinkToMarkdown).
-    // Required now that PM→mdast (index.ts) emits first-class wikiLink nodes
-    // instead of `{type:'html'}` passthrough (D7 / US-004).
+    .use(remarkMdxAgnostic)
     .use(remarkWikiLink)
     .use(remarkStringify, {
       bullet: '-',
@@ -252,22 +92,9 @@ export function createSerializeProcessor(opts: PipelineOptions): Processor {
   return processor as unknown as Processor;
 }
 
-/**
- * Parse a markdown string to a ProseMirror document node.
- *
- * Stateless with respect to the processor: the caller owns processor lifetime.
- * Per-call work is the R23 protect pass, VFile binding, parse/runSync/stringify
- * against the pre-built processor. The VFile's `.value` is swapped post-parse
- * back to the ORIGINAL source so the position-slice walker can slice by offset
- * against authoring-form text.
- */
 export function parseMd(source: string, processor: Processor): PmNode {
-  // R23: Protect autolinks, void HTML, bare <, unmatched {, and other
-  // crash-triggering patterns from remark-mdx claiming.
   const protected_ = protectFromMdx(source);
 
-  // Create VFile so the position-slice walker can access the ORIGINAL source text
-  // (not the protected version) for accurate position slicing.
   const file = new VFile(protected_);
   const tree = processor.parse(file);
   file.value = source;
@@ -275,14 +102,6 @@ export function parseMd(source: string, processor: Processor): PmNode {
   return (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
 }
 
-/**
- * Parse markdown to mdast only (stopping BEFORE the remark-prosemirror
- * stringifier). Used by V2's Option E walker (`to-react.ts`) which
- * converts mdast directly to a React-element tree, bypassing ProseMirror
- * entirely. Shares the same parser + plugin pipeline as `parseMd` so the
- * fallback render uses exactly the same parse behavior as the editor —
- * identical Phase A restoreFromMdx + Phase B merged walker output.
- */
 export function parseMdToMdast(source: string, processor: Processor): MdastRoot {
   const protected_ = protectFromMdx(source);
   const file = new VFile(protected_);
@@ -291,13 +110,6 @@ export function parseMdToMdast(source: string, processor: Processor): MdastRoot 
   return processor.runSync(tree, file) as MdastRoot;
 }
 
-/**
- * Serialize a ProseMirror document node to a markdown string.
- *
- * Stateless with respect to the processor. The PM→mdast pre-pass uses the
- * schema + handlers passed in `opts`, then the cached processor's
- * `.stringify(mdast)` produces the final string.
- */
 export function serializeMd(doc: PmNode, processor: Processor, opts: SerializeMdOptions): string {
   const mdast: MdastRoot = fromProseMirror(doc, {
     schema: opts.schema,

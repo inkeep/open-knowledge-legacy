@@ -79,9 +79,6 @@ describe('get_config tool', () => {
   });
 
   test('returns null + exists:false for a nonexistent path', async () => {
-    // Wire-format note: `JSON.stringify(undefined)` returns the JS value
-    // `undefined` rather than a JSON string, so we surface absence as
-    // `{ value: null, exists: false }` and a human-readable text body.
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-'));
     const handler = captureRegistration(cwd);
     const result = await handler({ path: ['nonexistent', 'leaf'] });
@@ -112,7 +109,6 @@ describe('get_config tool', () => {
       join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
     );
-    // Simulate the resolver pattern (loads on-disk config per cwd).
     const merged: Config = {
       ...BASE_CONFIG,
       mcp: {

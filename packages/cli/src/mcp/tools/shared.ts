@@ -1,11 +1,3 @@
-/**
- * Shared helpers for MCP workflow tool registration.
- *
- * Each workflow file in this directory exports a `register(server)` function
- * that calls `server.tool(...)` with its name, description, optional arg
- * schema, and handler. `index.ts` aggregates all three into a single
- * `registerAllTools` function that `server.ts` calls during startup.
- */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
@@ -15,29 +7,9 @@ export type ConfigOrResolver = Config | ((cwd?: string) => Promise<Config>);
 export const ROUTED_CWD_DESCRIPTION =
   'Absolute host path to resolve the request against. Defaults only when the MCP client advertises exactly one root; otherwise pass `cwd` explicitly.';
 
-// ─── Agent-write summary schema (shared across the four MCP write tools) ─────
-//
-// The 200-char Zod cap (D21 — transport-safety bound) and the "≤80 chars"
-// render-cap description (D24 — render bound, enforced server-side by
-// `MAX_SUMMARY_LENGTH` in packages/server/src/agent-write-summary.ts) were
-// previously duplicated across write-document, edit-document, rename-document,
-// and rollback-to-version. Centralizing them here keeps the two bounds in
-// sync and localizes future re-tuning to one place.
 
-/**
- * Transport-safety upper bound for `summary` at the MCP layer.
- * Rejects payloads > 200 chars BEFORE they hit the HTTP boundary. Separate
- * from the server-side render cap (80) — see `MAX_SUMMARY_LENGTH`.
- */
 const SUMMARY_TRANSPORT_CAP = 200;
 
-/**
- * Shared Zod schema for the `summary` param on write_document, edit_document,
- * rename_document, and rollback_to_version. Includes the description that
- * surfaces in tool introspection for agents — keep the "(≤80 chars)" phrasing
- * here as the single source of truth (matches the API-side `MAX_SUMMARY_LENGTH`
- * constant).
- */
 export const summaryArgSchema = z
   .string()
   .max(SUMMARY_TRANSPORT_CAP)
@@ -46,10 +18,6 @@ export const summaryArgSchema = z
     'Optional one-line user-outcome description (≤80 chars). Appears as a bullet in the timeline.',
   );
 
-/**
- * Wrap a single string into the content shape MCP tools require for text results.
- * Pass `isError: true` to signal a tool-level error to the caller.
- */
 export function textResult(text: string, isError?: boolean) {
   return {
     content: [{ type: 'text' as const, text }],
@@ -57,11 +25,6 @@ export function textResult(text: string, isError?: boolean) {
   };
 }
 
-/**
- * Dual-channel result (text `content` + machine-readable `structuredContent`)
- * per D10/FR6. Used by `exec` to return enriched metadata in structured form
- * alongside the raw-stdout + markdown-block content.
- */
 export function textPlusStructured<T>(text: string, structured: T, isError?: boolean) {
   return {
     content: [{ type: 'text' as const, text }],
@@ -70,26 +33,9 @@ export function textPlusStructured<T>(text: string, structured: T, isError?: boo
   };
 }
 
-/** Error message for tools that require Hocuspocus to be running. */
 export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
-// ─── Karpathy three-layer wiki frame (shared by the three workflow tools) ───
-//
-// The three workflow tools — `ingest`, `research`, `consolidate` — accrete a
-// persistent knowledge base over time, following the pattern described in
-// Karpathy's "LLM Wiki: Personal Knowledge Bases" gist:
-//
-//   https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
-//
-// Project-level scaffolding (schema + starter folders) lives OUTSIDE this
-// MCP surface — users run `ok seed` once from a terminal to populate the
-// `external-sources/`, `research/`, `articles/` layout plus matching
-// `config.yml` `folders:` entries.
-//
-// Each tool body prepends a common "Where this fits" section so the agent
-// orients on the layer + sibling tools + typical flow before diving into
-// step-by-step instructions. One definition, three consumers.
 
 type WorkflowRole = 'ingest' | 'research' | 'consolidate';
 
@@ -115,12 +61,6 @@ const ROLE_AFTER: Record<WorkflowRole, string> = {
     'update 2–3 neighbor docs to link the new canonical article; research articles it supersedes gain a `superseded_by` pointer',
 };
 
-/**
- * Prepend a "Where this fits" orientation block to a workflow tool body.
- * Names Karpathy's three-layer pattern, the tool's role, and the typical
- * Before/After flow. Keep this short — the bulk of instructional depth lives
- * in each tool's own step-by-step body that follows.
- */
 export function buildWorkflowFrame(role: WorkflowRole): string {
   return `## Where this fits
 
@@ -142,34 +82,19 @@ Karpathy's insight: "The tedious part of maintaining a knowledge base is not the
 `;
 }
 
-/**
- * Either an eagerly-known server URL, an absent URL, or a lazy resolver that
- * computes the URL per-call. The lazy resolver receives the effective cwd of
- * the current tool invocation when available so one MCP process can route
- * different tool calls to different Open Knowledge project servers.
- *
- * See `packages/cli/src/mcp/server.ts` for the resolver wired in at startup.
- */
 export type ServerUrlOrResolver =
   | string
   | undefined
   | ((cwd?: string) => Promise<string | undefined>);
 
-/**
- * Normalize a `ServerUrlOrResolver` to a concrete URL (or `undefined` when the
- * server is not reachable). Call this at the top of every tool handler that
- * hits the Hocuspocus HTTP API.
- */
 async function resolveServerUrl(x: ServerUrlOrResolver, cwd?: string): Promise<string | undefined> {
   return typeof x === 'function' ? await x(cwd) : x;
 }
 
-/** Normalize a `ConfigOrResolver` to a concrete config for the current cwd. */
 export async function resolveConfig(x: ConfigOrResolver, cwd?: string): Promise<Config> {
   return typeof x === 'function' ? await x(cwd) : x;
 }
 
-/** Resolve the effective project cwd plus the matching config for this call. */
 export async function resolveProjectConfigContext(
   resolveCwd: (explicit?: string) => Promise<string>,
   config: ConfigOrResolver,
@@ -189,12 +114,6 @@ export async function resolveProjectConfigContext(
   }
 }
 
-/**
- * Resolve the effective project cwd/config for this tool call, then resolve
- * the matching project server URL. Returns a structured error instead of
- * throwing so tool handlers can surface config-load or auto-start failures as
- * normal tool errors.
- */
 export async function resolveProjectServerContext(
   resolveCwd: (explicit?: string) => Promise<string>,
   config: ConfigOrResolver,
@@ -216,23 +135,6 @@ export async function resolveProjectServerContext(
   }
 }
 
-/**
- * Normalize a user-supplied `docName`. The server keys documents by the
- * extension-less docName, so a caller that passes `"notes/meeting.md"` would
- * otherwise produce `meeting.md.md`. The server auto-detects the extension
- * (`.md` vs `.mdx`) from what it finds on disk.
- *
- * Policy:
- * - Trailing `.md` / `.mdx` is stripped silently (case-insensitive).
- * - Trailing `.markdown` returns an error — unsupported extension.
- * - Any other trailing `.x` is left alone; a dotted docName is valid
- *   (e.g. `releases/v1.0`).
- *
- * Note: when creating a new document, the server defaults to `.md` regardless
- * of the suffix passed by the caller. To create a `.mdx` file, create it on
- * disk first — the watcher will register the extension and subsequent writes
- * will route to `.mdx` automatically.
- */
 export function normalizeDocName(
   raw: string,
 ): { ok: true; docName: string } | { ok: false; error: string } {
@@ -252,10 +154,6 @@ export function normalizeDocName(
   return { ok: true, docName: raw };
 }
 
-/**
- * HTTP GET helper for Hocuspocus API calls.
- * Returns `{ ok: false, error }` on network failure or non-JSON response.
- */
 export async function httpGet(
   baseUrl: string,
   path: string,
@@ -273,10 +171,6 @@ export async function httpGet(
   }
 }
 
-/**
- * HTTP POST helper for Hocuspocus API calls.
- * Returns `{ ok: false, error }` on network failure or non-JSON response.
- */
 export async function httpPost(
   baseUrl: string,
   path: string,
@@ -300,12 +194,6 @@ export async function httpPost(
   }
 }
 
-/**
- * Structured collision pair returned by `POST /api/rename-path` when two
- * affected docs would resolve to the same destination. Both rename tools
- * surface this in their error response so callers can render the offending
- * pairs without re-parsing the human-readable error message.
- */
 export interface RenameCollisionPair {
   existing: string;
   incoming: string;

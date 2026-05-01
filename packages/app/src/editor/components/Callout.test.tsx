@@ -1,14 +1,3 @@
-/**
- * Callout — unit coverage for the chevron-as-real-DOM refactor.
- *
- * The collapsible-mode chevron is rendered as a real `<svg>` child of
- * `<summary>` (lucide ChevronRight) so the clipboard live-DOM walker
- * captures it via `cloneNode(true)`. A pseudo-element ::before would be
- * silently dropped on cross-app paste, losing the chevron decoration.
- *
- * Repo convention: no @testing-library, no happy-dom. Structural cases via
- * `renderToString` per PropPanel.test.tsx + ActivityPanelBurstRow.test.tsx.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { renderToString } from 'react-dom/server';
@@ -30,7 +19,6 @@ describe('Callout — chevron refactor (collapsible mode)', () => {
         body
       </Callout>,
     );
-    // Real <svg> child of <summary>, not a ::before pseudo.
     expect(html).toContain('callout-chevron');
     expect(html).toMatch(/<summary[^>]*>[^<]*<svg[^>]*callout-chevron/);
   });
@@ -41,7 +29,6 @@ describe('Callout — chevron refactor (collapsible mode)', () => {
         body
       </Callout>,
     );
-    // Open attr would appear as `open=""` or `open` — neither should be present.
     expect(html).not.toMatch(/<details[^>]+open[\s=>]/);
   });
 

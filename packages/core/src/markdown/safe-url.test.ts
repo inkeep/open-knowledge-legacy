@@ -1,22 +1,9 @@
-/**
- * Co-located tests for the canonical URL-scheme allowlist module.
- *
- * `safe-url.ts` is the single source of truth for "which URL schemes can
- * flow into outbound HTML at the OK→external boundary?" Three downstream
- * sanitizers (markdown pipeline, clipboard walker, JSX-prop filter) all
- * derive from it. A subtle regex regression (dropped `i` flag, missing
- * scheme, narrowed grammar) could pass downstream tests if their inputs
- * don't exercise the right edge case — so we pin acceptance / rejection
- * boundary semantics here.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { isRelativeUrl, isSafeUrl, SAFE_URL_SCHEME_RE, SAFE_URL_SCHEMES } from './safe-url.ts';
 
 describe('SAFE_URL_SCHEMES — canonical scheme array', () => {
   test('contains the documented allowlist and nothing else', () => {
-    // Exact match — adding or removing schemes here drives both the
-    // regex and `URL_SCHEME_ALLOWLIST` in sanitize-url.ts.
     expect([...SAFE_URL_SCHEMES]).toEqual(['https', 'http', 'mailto', 'tel', 'ftp', 'sms']);
   });
 
@@ -104,22 +91,12 @@ describe('isSafeUrl — public allowlist classifier', () => {
   });
 
   test('trims leading whitespace before classifying (WHATWG URL §4)', () => {
-    // Browsers strip leading ASCII whitespace from URLs before navigating.
-    // The classifier MUST mirror that or a `<a href=" javascript:...">`
-    // payload (with the space) bypasses the allowlist while the browser
-    // still navigates.
     expect(isSafeUrl(' javascript:alert(1)')).toBe(false);
     expect(isSafeUrl('\tjavascript:alert(1)')).toBe(false);
     expect(isSafeUrl('  https://example.com')).toBe(true);
   });
 
   test('rejects bare relative paths without leading delimiter (mdast scope)', () => {
-    // `isSafeUrl` operates on URLs after resolution at the mdast/hast
-    // boundary. Bare paths like `one.png` or `path/file.jpg` aren't
-    // expected here — the markdown parser detects relative paths and
-    // resolves them upstream. The clipboard walker layers an additional
-    // "no-scheme = relative URL = safe" check on top for live-DOM
-    // values where bare paths CAN appear (`<img src="one.png">`).
     expect(isSafeUrl('one.png')).toBe(false);
     expect(isSafeUrl('path/file.jpg')).toBe(false);
   });
@@ -138,9 +115,6 @@ describe('isRelativeUrl — relative-URL detection (clipboard walker + sanitize-
   });
 
   test('returns true when path delimiter precedes the colon', () => {
-    // `/x:y` is a path containing a colon, not a scheme. `?q=a:b` is a
-    // query containing a colon. `#sec:1` is a fragment with a colon.
-    // The first separator determines whether the colon is structural.
     expect(isRelativeUrl('/path/with:colon')).toBe(true);
     expect(isRelativeUrl('?query=a:b')).toBe(true);
     expect(isRelativeUrl('#section:1')).toBe(true);
@@ -155,10 +129,6 @@ describe('isRelativeUrl — relative-URL detection (clipboard walker + sanitize-
   });
 
   test('combined with isSafeUrl forms the walker / sanitize-url full safety check', () => {
-    // The composed predicate `isSafeUrl(url) || isRelativeUrl(url)` is
-    // what both consumers (walker `isSafeWalkerUrl` and sanitize-url
-    // `sanitizeUrlValue`) rely on. Verify the composition behaves as
-    // expected across the canonical input matrix.
     const cases: Array<[string, boolean]> = [
       ['https://safe.example', true],
       ['mailto:foo@bar', true],
@@ -180,10 +150,6 @@ describe('isRelativeUrl — relative-URL detection (clipboard walker + sanitize-
 
 describe('drift parity invariant — sanitize-url.ts derivation', () => {
   test('SAFE_URL_SCHEMES is the source for both the regex and the Set', () => {
-    // Mirror of `URL_SCHEME_ALLOWLIST = new Set(SAFE_URL_SCHEMES.map(s => `${s}:`))`
-    // in sanitize-url.ts. If the derivation pattern changes here without
-    // updating sanitize-url.ts (or vice versa), the parity contract breaks
-    // silently. The deriver MUST stay in lockstep with sanitize-url.ts.
     const setForm = new Set(SAFE_URL_SCHEMES.map((s) => `${s}:`));
     expect(setForm.has('https:')).toBe(true);
     expect(setForm.has('http:')).toBe(true);
@@ -198,7 +164,6 @@ describe('drift parity invariant — sanitize-url.ts derivation', () => {
   test('every Set member is accepted by isSafeUrl, every dangerous scheme rejected', () => {
     const setForm = new Set(SAFE_URL_SCHEMES.map((s) => `${s}:`));
     for (const member of setForm) {
-      // Each scheme:foo URL is safe.
       expect(isSafeUrl(`${member}example`)).toBe(true);
     }
     const dangerous = ['javascript:', 'vbscript:', 'data:', 'file:', 'chrome-extension:'];

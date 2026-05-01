@@ -1,30 +1,7 @@
-/**
- * Layer C (Tier 2): Multi-agent presence — FR-9 E2E coverage.
- *
- * End-to-end verification of the bug-bash repro scenario: two distinct
- * agents writing to the same doc must render as two badges (never stomp).
- * Third test exercises the cross-doc sectioned-bar UX (D12 Design B) and
- * the tooltip wiki-link nav (FR-14 / D11).
- *
- * Timing note: publish agent presence AFTER `page.goto` so entries are
- * fresh when the assertion runs. The client-side TTL filter
- * (AGENT_PRESENCE_STALE_MS = 5_000ms) means writes older than 5s get
- * filtered out — seeding before navigation + Playwright's cold-boot wait
- * + a final polling wait easily blows past 5s.
- *
- * Reads from the sectioned bar's data attributes:
- *   [data-slot="presence-bar"]
- *   [data-presence-section="current"|"crossdoc"]
- *   [data-presence-badge="agent"|"human"]
- *   [data-presence-crossdoc="true"]
- *   [data-slot="presence-divider"]
- */
 
 import { expect, test, waitForActiveProviderSynced } from './_helpers';
 
 function agentId(label: string): string {
-  // UUID-shape with `label` embedded so test logs are readable. Must match
-  // AGENT_ID_RE `/^[a-zA-Z0-9_-]+$/` on the server.
   return `${label}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
@@ -41,8 +18,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     const bar = page.locator('[data-slot="presence-bar"]');
     await expect(bar).toBeVisible();
 
-    // Publish agents AFTER navigation so the TTL window hasn't elapsed by
-    // the time the assertion polls.
     const claudeId = agentId('claude');
     const cursorId = agentId('cursor');
     await Promise.all([
@@ -58,12 +33,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
       }),
     ]);
 
-    // Both named agents MUST render in the current-doc section. The bug
-    // being fixed would have collapsed them to a single entry. Asserting
-    // on specific aria-labels avoids depending on the seed-agent's
-    // (claude-1) TTL race — seedDocs publishes as default 'claude-1' and
-    // it either ages out mid-test (5s TTL) or still shows up, so we
-    // filter by name rather than counting total agents.
     const currentSection = bar.locator('[data-presence-section="current"]');
     await expect
       .poll(
@@ -92,11 +61,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     const bar = page.locator('[data-slot="presence-bar"]');
     await expect(bar).toBeVisible();
 
-    // Publish after navigation so the TTL is fresh.
-    // Write order: Claude (current-doc) first, Cursor (cross-doc) last. Cursor
-    // is the tighter constraint because its assertion runs LAST and its `ts`
-    // ages linearly against the 5s TTL filter. Writing Cursor last puts its
-    // freshest timestamp closest to the cross-doc poll, reducing the race.
     await api.writeAsAgent(docFoo, '# Claude on foo', {
       agentId: agentId('claude-foo'),
       agentName: 'Claude',
@@ -112,23 +76,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     const currentSection = bar.locator('[data-presence-section="current"]');
     const crossDocSection = bar.locator('[data-presence-section="crossdoc"]');
 
-    // Atomic polling loop: divider visible + Claude in current + Cursor in
-    // cross-doc all at once. Individual polls back-to-back risked burning
-    // through Cursor's 5s TTL budget (AGENT_PRESENCE_STALE_MS) between the
-    // divider/Claude checks and the Cursor check — under CI load the Cursor
-    // entry aged out before the last assertion fired (see PR #246 review).
-    // A unified poll catches the valid-state snapshot within a single 100ms
-    // tick, eliminating the TTL-vs-sequential-assertion race.
-    //
-    // Selector uses aria-label^="Name" (starts-with) because cross-doc
-    // avatars render as interactive <button>s whose aria-label carries the
-    // target doc ("Cursor, editing doc-mp-cross-bar"). Current-doc avatars
-    // render as <div role="img"> with just the name ("Claude"). Starts-with
-    // matches both shapes and survives the a11y evolution — review pass 2
-    // finding #6 dropped a redundant "Press Enter to open" suffix; the
-    // prior exact-match selector `[aria-label="Open activity panel for Cursor"]` had been silently
-    // broken since US-008's pass-1 accessibility refactor made the
-    // cross-doc avatar a <button> (CI's retries: 2 masked the failure).
     await expect
       .poll(
         async () => ({
@@ -144,7 +91,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
       )
       .toEqual({ divider: 1, claude: 1, cursor: 1 });
 
-    // Cross-doc avatar carries the data-presence-crossdoc marker.
     const crossAvatar = crossDocSection.locator(
       '[data-presence-badge="agent"][aria-label*="Cursor"]',
     );
@@ -155,12 +101,6 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     page,
     api,
   }) => {
-    // SPEC 2026-04-23-agent-activity-panel D-P9 LOCKED. The prior UX wired
-    // cross-doc avatar clicks to `window.location.hash = hashFromDocName(docName)`;
-    // that path was REMOVED in US-008 so that clicking any agent avatar —
-    // current OR cross-doc — opens the Activity Panel keyed to that agent's
-    // connectionId. Equivalent nav is available via the panel's filename-click
-    // affordance (covered in agent-activity-panel.e2e.ts).
     const docFoo = 'doc-mp-nav-foo';
     const docBar = 'doc-mp-nav-bar';
     await api.seedDocs([
@@ -190,19 +130,10 @@ test.describe('multi-agent presence — sectioned PresenceBar (FR-9)', () => {
     await expect(crossDocAvatar.first()).toBeVisible({ timeout: 10_000 });
     await crossDocAvatar.first().click();
 
-    // Activity Panel opens. URL hash is UNCHANGED — clicking the cross-doc
-    // avatar no longer navigates. (Previous behavior flipped hash to docBar.)
     const panel = page.locator('[data-testid="activity-panel"]');
     await expect(panel).toBeVisible({ timeout: 10_000 });
     expect(page.url()).toContain(`#/${docFoo}`);
     expect(page.url()).not.toContain(`#/${docBar}`);
   });
 
-  // Note: the prior `.mdx target doc` cross-doc-nav test was removed when
-  // D-P9 (agent-activity-panel SPEC) flipped the cross-doc-avatar click
-  // contract from "navigate to target doc" to "open activity panel for that
-  // agent". The `.md` sibling test above now asserts the new contract;
-  // adding a parallel `.mdx`-target variant would test the activity-panel
-  // feature, not the `.mdx` extension. `.mdx`-extension nav coverage stays
-  // through F0-mdx in `docs-open.e2e.ts` (sidebar click → .mdx file loads).
 });

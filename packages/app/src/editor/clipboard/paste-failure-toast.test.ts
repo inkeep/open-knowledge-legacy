@@ -1,12 +1,3 @@
-/**
- * Unit tests for the throttled paste-failure toast helper.
- *
- * Covers:
- *   - Toast fires on first call within a scope.
- *   - Toast is throttled — a second call within the window is suppressed.
- *   - Separate scopes have independent throttle windows.
- *   - The internal reset helper clears the throttle.
- */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
@@ -14,7 +5,6 @@ type ToastFn = { error: ReturnType<typeof mock> };
 const toastMock: ToastFn = { error: mock(() => {}) };
 mock.module('sonner', () => ({ toast: toastMock }));
 
-// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let mod: any;
 
 beforeEach(async () => {

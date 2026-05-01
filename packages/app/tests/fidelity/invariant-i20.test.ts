@@ -1,26 +1,3 @@
-/**
- * Invariant I20 — Obsidian foldable Callout round-trip (US-010 / D-MF17).
- *
- * Two claims:
- *
- * 1. Structural equivalence: `parse('> [!TYPE]-\nText')` produces the same
- *    PM tree (modulo γ source-raw fields) as `parse('<Callout type="<type>" collapsible defaultOpen={false}>Text</Callout>')`;
- *    and analogous for the `+` marker with `defaultOpen={true}`. This is
- *    what lets the DIY Callout renderer treat both authoring forms
- *    identically when the collapsible prop is true.
- *
- * 2. γ pristine preservation: `parse → serialize` on a foldable GFM-alert
- *    input emits the original source bytes (including the `+`/`-` marker)
- *    when no user edit has occurred.
- *
- * Scope (D-MF17): foldable marker recognition is limited to the 5 GFM types
- * (note, tip, important, warning, caution). Broader Obsidian foldable
- * syntax with non-GFM types (e.g. `> [!success]+`) still normalizes the
- * type via the alias map but MAY lose the foldable marker — see the
- * scope-boundary test below for the exact behavior.
- *
- * Complements I18 (static GFM alerts).
- */
 
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
@@ -36,7 +13,6 @@ function stripGammaAttrs(node: JSONContent): JSONContent {
     delete (attrs as Record<string, unknown>).content;
     delete (attrs as Record<string, unknown>).attributes;
     delete (attrs as Record<string, unknown>).sourceDirty;
-    // componentName differs by source form post canonical/compat split.
     delete (attrs as Record<string, unknown>).componentName;
   }
   const content = node.content?.map(stripGammaAttrs);
@@ -133,9 +109,6 @@ describe('I20 — props shape after parse', () => {
 
 describe('I20 — scope boundary (D-MF17)', () => {
   test('foldable marker on alias that folds to GFM type is honored', () => {
-    // `success` aliases to `tip`, which is a GFM type. Per the transformer
-    // comment: "the alias map is about token normalization, foldable scope
-    // follows the normalized type." So the marker IS preserved here.
     const gfmForm = '> [!success]-\n> Body\n';
     const json = mdManager.parse(gfmForm);
     const callout = findFirstNode(json, 'jsxComponent');
@@ -151,12 +124,6 @@ describe('I20 — scope boundary (D-MF17)', () => {
   });
 
   test('unknown-type foldable marker honored under "fallback to note" path (M1 fix)', () => {
-    // `MYSTERY` is NOT in the alias map, so type resolution falls back to
-    // `note` (a GFM type). Pre-M1 the foldable-marker capture was gated on
-    // pre-resolution `type` and dropped the marker for any unknown token —
-    // even though the resolved type was always a GFM-5 member. Post-M1 the
-    // capture gates on `resolvedType`, so unknown-type + foldable combos
-    // emit the foldable attrs the author intended.
     const minus = '> [!MYSTERY]-\n> Body\n';
     const minusJson = mdManager.parse(minus);
     const minusCallout = findFirstNode(minusJson, 'jsxComponent');
@@ -175,17 +142,12 @@ describe('I20 — scope boundary (D-MF17)', () => {
   });
 
   test('unknown-type foldable round-trips pristine (γ sourceRaw)', () => {
-    // γ pristine path preserves the authored bytes verbatim regardless of
-    // type resolution. Both the alias coercion AND the M1 foldable
-    // honoring stay invisible on disk until the user edits.
     const gfmForm = '> [!MYSTERY]-\n> Body\n';
     expect(mdRoundTrip(gfmForm)).toBe(gfmForm);
   });
 });
 
 describe('I20 — PBT: every GFM type × marker round-trips', () => {
-  // Same body-shape discipline as I18: letter-prefix + conservative
-  // punctuation. See I18 comment for the rationale.
   const bodyChars = fc.stringMatching(/^[A-Za-z][\w .,!?;:()']{0,40}$/);
 
   test('GFM type × foldable marker × body text → pristine round-trip', () => {

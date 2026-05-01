@@ -1,13 +1,3 @@
-/**
- * Save-version integration tests (US-021, D45, D33).
- *
- * Verifies the graceful-availability contract:
- *   - History checkpoint ALWAYS lands (plumbing path, no hooks/signing).
- *   - Parent-git step is best-effort: only attempted when projectDir is a git repo.
- *   - Non-git: response 200, checkpointRef present, versionTag undefined, warn logged.
- *   - Git: response 200, checkpointRef + versionTag present.
- *   - State-transition: non-git → git init → second save-version produces fresh tag.
- */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -48,7 +38,6 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
       try {
         captured.parsed = JSON.parse(body ?? '{}') as Record<string, unknown>;
       } catch {
-        // non-JSON body
       }
     },
   } as unknown as ServerResponse;
@@ -109,7 +98,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       expect(typeof captured.parsed.checkpointRef).toBe('string');
       expect(captured.parsed.versionTag).toBeUndefined();
 
-      // Warning must be emitted for non-git dir
       const svWarn = warnings.find((w) => w.includes('[save-version] parent-git unavailable:'));
       expect(svWarn).toBeDefined();
     } finally {
@@ -118,7 +106,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
   });
 
   test('git dir: history checkpoint + ok/v1 tag both land', async () => {
-    // Set up a real git repo in tmpDir
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -161,7 +148,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       expect(typeof captured.parsed.checkpointRef).toBe('string');
       expect(captured.parsed.versionTag).toBe('ok/v1');
 
-      // No parent-git unavailable warning for git dir
       const svWarn = warnings.find((w) => w.includes('[save-version] parent-git unavailable:'));
       expect(svWarn).toBeUndefined();
     } finally {
@@ -170,7 +156,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
   });
 
   test('QA-003: Co-Authored-By trailers appear per contributing agent session (FR-9, D12)', async () => {
-    // Set up a real git repo
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -189,10 +174,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const sessionManager = new AgentSessionManager(hocuspocus);
 
-    // Seed two agent contributors + one principal contributor via the
-    // contributor-tracker before save-version. This mirrors what a real
-    // session does during an agent-write and lets us verify save-version's
-    // trailer emission without a live MCP subprocess.
     clearContributors();
     recordContributor('doc.md', 'agent-a4f2', 'Claude (a4f2)', 'claude-code');
     recordContributor('doc.md', 'agent-9d2e', 'Cursor (9d2e)', 'cursor');
@@ -223,21 +204,16 @@ describe('save-version graceful availability (US-021, D45)', () => {
       expect(captured.status).toBe(200);
       expect(captured.parsed.versionTag).toBe('ok/v1');
 
-      // Read the parent-git HEAD commit body and assert the trailer shape.
       const headMessage = await git.raw(['log', '-1', '--pretty=%B']);
-      // Subject: checkpoint: <user message>
       expect(headMessage).toContain('checkpoint: feat: update section A');
-      // Co-Authored-By trailers: one per distinct agent/principal contributor
       expect(headMessage).toMatch(
         /Co-Authored-By:\s+Claude \(a4f2\)\s+<agent-a4f2@openknowledge\.local>/,
       );
       expect(headMessage).toMatch(
         /Co-Authored-By:\s+Cursor \(9d2e\)\s+<agent-9d2e@openknowledge\.local>/,
       );
-      // principal- writers also emit trailers (non-agent-session contributor path)
       expect(headMessage).toMatch(/Co-Authored-By:\s+Alice\s+<principal-test-123@/);
 
-      // Author = principal, not a classified writer
       const headAuthor = (await git.raw(['log', '-1', '--pretty=%an <%ae>'])).trim();
       expect(headAuthor).toBe('Alice <alice@example.com>');
     } finally {
@@ -269,7 +245,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
         getFileIndex: () => new Map(),
       });
 
-      // First save-version: no git repo → versionTag undefined
       const req1 = makeJsonPostReq('/api/save-version', { message: 'pre-git' });
       const { res: res1, captured: captured1 } = makeRes();
       await (
@@ -282,7 +257,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       expect(captured1.parsed.ok).toBe(true);
       expect(captured1.parsed.versionTag).toBeUndefined();
 
-      // Now run git init (state transition)
       const git = simpleGit(projectDir);
       await git.init();
       await git.addConfig('user.name', 'Test User');
@@ -290,7 +264,6 @@ describe('save-version graceful availability (US-021, D45)', () => {
       await git.add('.');
       await git.commit('initial');
 
-      // Second save-version: git repo now available → gets ok/v1 tag
       const req2 = makeJsonPostReq('/api/save-version', { message: 'post-git-init' });
       const { res: res2, captured: captured2 } = makeRes();
       await (

@@ -456,14 +456,6 @@ describe('releaseProcessLock', () => {
     expect(md.pid).toBe(1);
   });
 
-  // Refcounting protects the Vite dev plugin's per-`configureServer`
-  // createServer lifecycle: pass-1's destroy runs releaseProcessLock at the
-  // moment pass-2's createServer has already idempotently re-acquired the
-  // lock. Without refcounting, pass-1's release unlinks the lock file out
-  // from under pass-2 — silently breaking FR10 (cross-process collision).
-  // The pre-fix variant would FAIL the "still exists after single release"
-  // expectation below; the post-fix variant keeps the file until the LAST
-  // release.
   test('double acquire then single release keeps lock file in place', () => {
     acquireProcessLock({
       lockName: LOCK_NAME,
@@ -479,9 +471,6 @@ describe('releaseProcessLock', () => {
 
     releaseProcessLock({ lockName: LOCK_NAME, lockDir });
 
-    // Other active acquire still holds the lock — file must remain so
-    // a foreign-process acquire (`ok start` against the same contentDir)
-    // still throws ProcessLockCollisionError per FR10.
     expect(existsSync(lockPath)).toBe(true);
     const md: ProcessLockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.pid).toBe(process.pid);
@@ -506,9 +495,6 @@ describe('releaseProcessLock', () => {
   });
 
   test('release without prior acquire is a no-op (untracked release path)', () => {
-    // Process-exit handlers may fire after the close-handler path already
-    // drained the refcount — those untracked releases must remain
-    // ownership-guarded but otherwise no-op.
     expect(existsSync(lockPath)).toBe(false);
     releaseProcessLock({ lockName: LOCK_NAME, lockDir });
     expect(existsSync(lockPath)).toBe(false);
@@ -604,15 +590,12 @@ describe('readProcessLockDetailed', () => {
   });
 
   test('returns incompatible.missing-fields for a live lock missing protocolVersion', () => {
-    // Hand-craft a lock as if a pre-version-constants binary wrote it. PID 1
-    // is init/launchd — always alive on POSIX, so liveness passes.
     const versionless = {
       pid: 1,
       hostname: hostname(),
       port: 6000,
       startedAt: new Date().toISOString(),
       worktreeRoot: '/legacy',
-      // No protocolVersion, no runtimeVersion — simulates a v0.x lock.
     };
     require('node:fs').mkdirSync(lockDir, { recursive: true });
     writeFileSync(lockPath, JSON.stringify(versionless), 'utf-8');
@@ -631,7 +614,6 @@ describe('readProcessLockDetailed', () => {
       startedAt: new Date().toISOString(),
       worktreeRoot: '/legacy',
       protocolVersion: 1,
-      // No runtimeVersion.
     };
     require('node:fs').mkdirSync(lockDir, { recursive: true });
     writeFileSync(lockPath, JSON.stringify(partial), 'utf-8');
@@ -691,7 +673,6 @@ describe('readProcessLockDetailed', () => {
 
     const result = readProcessLockDetailed({ lockName: LOCK_NAME, lockDir });
     expect(result.status).toBe('stale');
-    // We do NOT unlink cross-host locks (they're owned by another machine).
     expect(existsSync(lockPath)).toBe(true);
   });
 });

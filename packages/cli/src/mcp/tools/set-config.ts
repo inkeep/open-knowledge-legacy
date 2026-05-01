@@ -1,28 +1,3 @@
-/**
- * `set_config` MCP tool — fs-direct upsert against the agent-settable
- * allowlist.
- *
- * **Allowlist** (3 paths in `ConfigSchema` tagged `agentSettable: true`):
- *   - `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
- *   - `mcp.tools.read_document.historyDepth`
- *   - `mcp.tools.search.maxResults`
- *
- * **No `scope` parameter.** The server picks the write target via the ladder:
- *   `inspectConfig(path).project
- *      ?? inspectConfig(path).user
- *      ?? fieldRegistry.get(field).defaultScope
- *      ?? 'user'`
- *
- * If multiple leaves in a single patch resolve to different scopes, fail with
- * `error.code: 'MIXED_SCOPE'` so the agent retries per-scope.
- *
- * **No `expectedVersion`.** Last-writer-wins for cross-process writes —
- * agents that need read-modify-write safety can re-`get_config` after their
- * write to verify.
- *
- * Works without a running OK server (resolves cwd via
- * `resolveProjectConfigContext`, NOT `resolveProjectServerContext`).
- */
 
 import {
   type ConfigPatch,
@@ -67,17 +42,9 @@ export const DESCRIPTION = [
 interface SetConfigDeps {
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  /**
-   * Test-only: overrides `os.homedir()` for the user-global write target.
-   * Production callers omit this; defaults to the OS-reported homedir.
-   */
   homedirOverride?: string;
 }
 
-// `looseObject` so unknown keys flow through to server-side allowlist gating
-// rather than getting silently stripped here. The actual rejection is
-// `NOT_AGENT_SETTABLE` per leaf — this gives the agent an actionable error
-// rather than a "your patch was silently empty" debugging headache.
 const InputSchema = {
   patch: z
     .looseObject({})
@@ -104,14 +71,6 @@ const OutputSchema = {
   result: z.union([SuccessOutputSchema, ErrorOutputSchema]),
 } as const;
 
-/**
- * Walk a deep-partial patch tree and return the dotted-path of every leaf.
- * A leaf is any value that's NOT a plain object — primitives, null, arrays.
- * (Arrays replace wholesale per RFC 7396 §1, so we don't walk into them.)
- *
- * Mirrors `applyPatchToDocument`'s walker so leaf identity is consistent
- * across the gate + the writer.
- */
 function collectPatchLeaves(patch: ConfigPatch): (string | number)[][] {
   const leaves: (string | number)[][] = [];
 
@@ -138,11 +97,6 @@ interface LeafWithMeta {
   meta: FieldMeta | undefined;
 }
 
-/**
- * For every leaf, look up its registered metadata. Leaves that don't have
- * registry entries (typically because the path didn't resolve in the
- * schema) come back with `meta: undefined`.
- */
 function annotateLeaves(leaves: ReadonlyArray<readonly (string | number)[]>): LeafWithMeta[] {
   return leaves.map((path) => ({
     path: [...path],
@@ -150,10 +104,6 @@ function annotateLeaves(leaves: ReadonlyArray<readonly (string | number)[]>): Le
   }));
 }
 
-/**
- * Scope inference ladder: pick the scope where the field is already set;
- * fall back to the field's `defaultScope`; final fallback `'user'`.
- */
 function inferScopeForLeaf(
   _path: (string | number)[],
   presence: { user: boolean; project: boolean } | undefined,
@@ -259,8 +209,6 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
         });
       }
 
-      // Allowlist gating: reject the FIRST non-allowlisted path so the agent
-      // gets one actionable error to fix.
       const annotated = annotateLeaves(leaves);
       const blocked = annotated.find((leaf) => leaf.meta?.agentSettable !== true);
       if (blocked) {
@@ -270,7 +218,6 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
         });
       }
 
-      // Scope inference. Mixed-scope rejection → agent retries per-scope.
       const inference = inferScopes(annotated, cwd, deps.homedirOverride);
       if ('mixed' in inference) {
         return makeErrorResult(inference.mixed);
@@ -299,6 +246,4 @@ export function register(server: ServerInstance, deps: SetConfigDeps): void {
   );
 }
 
-// Re-exports for tests + future consumers that want to exercise the gating
-// logic without going through the registered tool surface.
 export { collectPatchLeaves };

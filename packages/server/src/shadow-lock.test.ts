@@ -30,7 +30,6 @@ describe('acquireLock', () => {
     expect(metadata.hostname).toBe(hostname());
     expect(metadata.worktreeRoot).toBe('/some/worktree');
     expect(typeof metadata.startedAt).toBe('string');
-    // Verify startedAt is a valid ISO date
     expect(Number.isNaN(Date.parse(metadata.startedAt))).toBe(false);
   });
 
@@ -38,7 +37,6 @@ describe('acquireLock', () => {
     const shadowDir = resolve(tmpDir, 'shadow');
     mkdirSync(shadowDir, { recursive: true });
 
-    // Write a lock with a dead PID (99999999 is almost certainly not running)
     const staleLock: LockMetadata = {
       pid: 99999999,
       hostname: hostname(),
@@ -47,7 +45,6 @@ describe('acquireLock', () => {
     };
     writeFileSync(resolve(shadowDir, 'lock'), JSON.stringify(staleLock), 'utf-8');
 
-    // Should succeed — stale lock is replaced
     const lockPath = acquireLock(shadowDir, '/new/worktree');
 
     const metadata: LockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
@@ -59,7 +56,6 @@ describe('acquireLock', () => {
     const shadowDir = resolve(tmpDir, 'shadow');
     mkdirSync(shadowDir, { recursive: true });
 
-    // Use PID 1 (init/launchd — always running) to simulate another live writer
     const liveLock: LockMetadata = {
       pid: 1,
       hostname: hostname(),
@@ -77,7 +73,6 @@ describe('acquireLock', () => {
 
     writeFileSync(resolve(shadowDir, 'lock'), 'not valid json', 'utf-8');
 
-    // Should succeed — corrupt lock treated as stale
     const lockPath = acquireLock(shadowDir, '/my/worktree');
     const metadata: LockMetadata = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(metadata.pid).toBe(process.pid);
@@ -88,7 +83,6 @@ describe('acquireLock', () => {
     mkdirSync(shadowDir, { recursive: true });
 
     acquireLock(shadowDir, '/first/worktree');
-    // Same process re-acquires — should not throw
     acquireLock(shadowDir, '/second/worktree');
 
     const metadata: LockMetadata = JSON.parse(readFileSync(resolve(shadowDir, 'lock'), 'utf-8'));
@@ -100,7 +94,6 @@ describe('acquireLock', () => {
     const shadowDir = resolve(tmpDir, 'shadow');
     mkdirSync(shadowDir, { recursive: true });
 
-    // Lock from a different host — can't verify liveness, treat as stale
     const remoteLock: LockMetadata = {
       pid: 1,
       hostname: 'some-other-host-that-does-not-exist',
@@ -131,7 +124,6 @@ describe('releaseLock', () => {
     const shadowDir = resolve(tmpDir, 'shadow');
     mkdirSync(shadowDir, { recursive: true });
 
-    // Should not throw
     releaseLock(shadowDir);
   });
 });

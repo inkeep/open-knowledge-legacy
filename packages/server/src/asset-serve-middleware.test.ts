@@ -1,14 +1,3 @@
-/**
- * Unit tests for `createAssetServeMiddleware`.
- *
- * Verifies the pure-logic branches of the Content-Disposition + fail-
- * closed 404 policy using stubbed `contentFilter` + `contentSirv`. The
- * `makeReq/makeRes` pattern mirrors `packages/server/src/api-file-ops.test.ts:24-51`.
- *
- * Narrow-integration coverage (real sirv + real contentFilter + real
- * `http.createServer` + `fetch`) lives in
- * `asset-serve-middleware.integration.test.ts`.
- */
 
 import { describe, expect, test } from 'bun:test';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -61,22 +50,17 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
   return { res, captured };
 }
 
-/** A sirv stub that always falls through (simulating file-not-found). */
 const sirvFallThrough: SirvLikeMiddleware = (_req, _res, fallback) => fallback();
 
-/** A sirv stub that "serves" — marks headersSent + ended without calling fallback. */
 const sirvServes: SirvLikeMiddleware = (_req, res, _fallback) => {
   res.writeHead(200);
   res.end();
 };
 
-/** Filter that admits everything. */
 const admitAll: AssetServeFilter = { isExcluded: () => false };
 
-/** Filter that excludes everything. */
 const excludeAll: AssetServeFilter = { isExcluded: () => true };
 
-/** Realistic extension sets (subset of the production ones — enough to drive the branches). */
 const INLINE = new Set(['png', 'jpg', 'pdf', 'mp4', 'm4v', 'svg']);
 const ASSETS = new Set([...INLINE, 'docx', 'csv', 'json', 'txt', 'zip']);
 const BLOCKLIST = new Set(['exe', 'dmg', 'sh', 'html']);
@@ -154,7 +138,6 @@ describe('createAssetServeMiddleware', () => {
       const { res, captured } = makeRes();
       middleware(makeReq('/notes.md'), res, () => {});
       expect(captured.headers['Content-Disposition']).toBeUndefined();
-      // Other headers still set.
       expect(captured.headers['X-Content-Type-Options']).toBe('nosniff');
     });
 
@@ -206,17 +189,11 @@ describe('createAssetServeMiddleware', () => {
         nextCalled = true;
       });
       expect(nextCalled).toBe(true);
-      // Headers were still set pre-sirv (Content-Disposition: attachment
-      // for unknown ext, nosniff always). But status stays 0 — we
-      // delegated to next(), not emitted 404.
       expect(captured.status).toBe(0);
       expect(captured.ended).toBe(false);
     });
 
     test('sirv fall-through on .md falls through to next() (doc-path, not asset)', () => {
-      // Regression guard: markdown paths that sirv didn't serve must NOT
-      // hit the 404 branch — .md is neither in ASSET_EXTENSIONS nor in
-      // EXECUTABLE_BLOCKLIST_EXTENSIONS, so the guard should not fire.
       let nextCalled = false;
       const middleware = buildMiddleware(sirvFallThrough);
       const { res, captured } = makeRes();
@@ -228,8 +205,6 @@ describe('createAssetServeMiddleware', () => {
     });
 
     test('404 guard is skipped if sirv already sent headers (race safety)', () => {
-      // If sirv started writing the response before calling fallback
-      // (unlikely but not impossible), the guard must not double-write.
       const sirvRaced: SirvLikeMiddleware = (_req, res, fallback) => {
         res.writeHead(200);
         fallback();
@@ -240,8 +215,6 @@ describe('createAssetServeMiddleware', () => {
       middleware(makeReq('/clip.m4v'), res, () => {
         nextCalled = true;
       });
-      // headersSent was true before the fallback, so neither 404 nor
-      // next() fires.
       expect(captured.status).toBe(200);
       expect(nextCalled).toBe(false);
     });
@@ -270,9 +243,6 @@ describe('createAssetServeMiddleware', () => {
     });
 
     test('malformed percent-encoding (`/%`) falls through to next() — URIError caught', () => {
-      // decodeURIComponent('%') throws URIError; the middleware must treat
-      // it as a miss rather than letting the throw propagate to http.Server
-      // (which would leave the request hanging on the prod CLI path).
       const middleware = buildMiddleware(sirvServes);
       const { res, captured } = makeRes();
       let nextCalled = false;

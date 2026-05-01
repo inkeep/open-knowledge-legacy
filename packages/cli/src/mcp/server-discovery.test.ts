@@ -29,7 +29,6 @@ const aliveLock: ServerLockMetadata = {
 
 const bootingLock: ServerLockMetadata = { ...aliveLock, port: 0 };
 
-/** Pre-version-field lock — simulates a v0.x binary that wrote a lock without protocolVersion. */
 const versionlessLock: ServerLockMetadata = {
   pid: 4242,
   hostname: 'test-host',
@@ -38,7 +37,6 @@ const versionlessLock: ServerLockMetadata = {
   worktreeRoot: '/tmp/test',
 };
 
-/** Lock owner running an older protocol — simulates DMG vN+1 driving CLI vN's lock. */
 const olderProtocolLock: ServerLockMetadata = {
   ...aliveLock,
   protocolVersion: 0,
@@ -496,8 +494,6 @@ describe('server-discovery', () => {
     };
 
     function makeMockSpawn(calls: SpawnCall[]): never {
-      // Typed as never so callers can drop it into the opts.spawn slot without
-      // fighting the full ChildProcess return-type tree in tests.
       return ((cmd: string, args: readonly string[], opts: unknown) => {
         calls.push({
           cmd,
@@ -586,9 +582,6 @@ describe('server-discovery', () => {
       });
       expect(result.serverUrl).toBe(`ws://localhost:${aliveLock.port}`);
       expect(calls.length).toBe(1);
-      // Re-exec via the current CLI binary (not npx) to avoid cross-version
-      // lockfile-ABI drift. `cmd` is the current runtime (node/bun), `args[0]` is
-      // the CLI entry script, followed by the `start` subcommand.
       expect(calls[0]?.cmd).toBe(process.execPath);
       expect(calls[0]?.args.length).toBe(2);
       expect(calls[0]?.args[1]).toBe('start');
@@ -596,7 +589,6 @@ describe('server-discovery', () => {
       expect(calls[0]?.opts.cwd).toBe(tmpDir);
       expect(calls[0]?.opts.stdio?.[0]).toBe('ignore');
       expect(calls[0]?.opts.stdio?.[1]).toBe('ignore');
-      // stdio[2] is a numeric fd — kernel captures child's stderr.
       expect(typeof calls[0]?.opts.stdio?.[2]).toBe('number');
     });
 
@@ -619,25 +611,19 @@ describe('server-discovery', () => {
           timeoutMs: 3,
         });
       } catch {
-        // timeout expected
       }
       expect(existsSync(lockDir)).toBe(true);
       expect(existsSync(resolve(lockDir, 'last-spawn-error.log'))).toBe(true);
     });
 
     test('poll timeout surfaces stderr content in thrown error', async () => {
-      // Pre-populate error log (simulating what the spawn would have written).
       const errorLog = resolve(lockDir, 'last-spawn-error.log');
       const calls: SpawnCall[] = [];
-      // Mock openErrorLog so we can write simulated stderr without truncation
-      // fighting the test. We write the content AFTER the mock "opens" it.
       const openErrorLog = (path: string) => {
-        // Create dir + empty file so poll-timeout read succeeds below.
         if (!existsSync(lockDir)) {
           mkdirSync(lockDir, { recursive: true });
         }
         writeFileSync(path, 'spawn npx ENOENT\n', 'utf-8');
-        // Return a fake fd; ensureServerRunning's closeFd will swallow errors.
         return 1234567;
       };
 
@@ -660,7 +646,6 @@ describe('server-discovery', () => {
         }),
       ).rejects.toThrow(/server did not start within.*stderr:/s);
 
-      // Confirm the content made it to the log.
       expect(readFileSync(errorLog, 'utf-8')).toContain('ENOENT');
     });
 

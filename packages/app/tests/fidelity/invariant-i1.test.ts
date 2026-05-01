@@ -1,9 +1,3 @@
-/**
- * Invariant I1 — Identity: serialize(parse(md)) === md for supported constructs.
- *
- * Uses PBT with structured markdown generators. Generated markdown is
- * canonical (no exotic syntax), so round-trip should be byte-identical.
- */
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
@@ -104,7 +98,6 @@ describe('I1 — identity: serialize(parse(md)) === md', () => {
     );
   });
 
-  // Non-default delimiter forms — exercises fidelity extension preservation
   test('code block with tilde fence (~)', () => {
     fc.assert(
       fc.property(codeBlockTilde, (md) => {

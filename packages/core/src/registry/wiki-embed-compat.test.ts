@@ -1,15 +1,3 @@
-/**
- * WikiEmbed* compat descriptors — convergence on the canonical img/video/audio
- * render path. `![[file.ext]]` parsed from external sources lands as one of
- * three compat descriptors (WikiEmbedImage / WikiEmbedVideo / WikiEmbedAudio)
- * keyed by extension. Each renders through its canonical sibling
- * (`rendersAs: 'img' | 'video' | 'audio'`) via `translateProps` and serializes
- * back to source-form `wikiLinkEmbed` mdast so the round-trip is
- * byte-identical.
- *
- * PropPanel narrows automatically because each descriptor declares only the
- * single user-editable prop the source syntax can encode (`alias`).
- */
 import { describe, expect, test } from 'bun:test';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { builtInComponents } from './index.ts';
@@ -199,11 +187,6 @@ describe('WikiEmbedImage.serialize — source-form mdast emit', () => {
   });
 });
 
-// ── WikiEmbedVideo ───────────────────────────────────────────────────────────
-//
-// Mirrors the WikiEmbedImage shape with `rendersAs: 'video'`. Alias maps to the
-// canonical video's `title` prop (HTML5 `<video title>` tooltip) — Video.tsx
-// has no `alt` slot, so `title` is the closest authored-string analog.
 
 describe('WikiEmbedVideo descriptor — registration', () => {
   test('is registered in builtInComponents as a compat descriptor', () => {
@@ -383,10 +366,6 @@ describe('WikiEmbedVideo.serialize — source-form mdast emit', () => {
   });
 });
 
-// ── WikiEmbedAudio ───────────────────────────────────────────────────────────
-//
-// Mirrors the WikiEmbedVideo shape with `rendersAs: 'audio'`. Audio.tsx also
-// has no `alt` slot — alias maps to the canonical audio's `title` prop.
 
 describe('WikiEmbedAudio descriptor — registration', () => {
   test('is registered in builtInComponents as a compat descriptor', () => {

@@ -1,15 +1,3 @@
-/**
- * Unknown mdast type handling — R8 + R16(i) contract.
- *
- * Post-R8: unknown mdast types produce a rawMdxFallback node (block) or
- * plain text (inline) + console.warn structured event — no throw, no
- * silent drop. Content is preserved AND developer signal is louder than
- * the previous throw-on-unknown behavior.
- *
- * R8 contract (finalized in US-004): unknown mdast types produce
- * rawMdxFallback for block types and plain text for inline types +
- * console.warn structured event — no throw, no silent drop.
- */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 
@@ -30,8 +18,6 @@ describe('unknown mdast type handling (R8 + R16i)', () => {
   });
 
   test('ESM import under agnostic mode re-parses as prose (not thrown, not structured)', () => {
-    // Under agnostic mode (R1), ESM import/export are no longer recognized
-    // as mdxjsEsm — they re-parse as prose paragraphs per NG1.
     const result = mdManager.parse("import x from 'y'\n");
     const serialized = mdManager.serialize(result);
     expect(serialized).toContain('import');
@@ -42,8 +28,6 @@ describe('unknown mdast type handling (R8 + R16i)', () => {
   });
 
   test('directive syntax renders as literal text (D14 — remark-directive removed)', () => {
-    // After D14, :::note syntax is no longer parsed as a directive.
-    // It renders as literal text containing the colons.
     const result = mdManager.parse(':::note\ncontent\n:::\n');
     const serialized = mdManager.serialize(result);
     expect(serialized).toContain(':::note');

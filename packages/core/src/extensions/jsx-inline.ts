@@ -1,23 +1,5 @@
 import { Node } from '@tiptap/core';
 
-/**
- * jsxInline — thin inline PM node for MDX inline JSX.
- *
- * Per NG14, inline JSX renders as visible source text in WYSIWYG — no live
- * React render, no PropPanel, no descriptor dispatch, no chrome. The node
- * exists only to preserve `<` and `>` characters through the markdown
- * serializer without escape (mdast-util-to-markdown would otherwise escape
- * `<word` patterns per CommonMark safety).
- *
- * Shape: atom:false, content:'text*', isolating:false, selectable:true.
- * Zero attrs — the text content IS the source. No NodeView, no
- * contentEditable:false, no sourceDirty, no sourceRaw attr.
- *
- * Greenfield rewrite of the #136 jsxInline shape. content:'text*' per
- * Precedent #10 preserves Y.Item identity on per-keystroke text mutation.
- *
- * See SPEC §9.8, FR-4, NG14.
- */
 export const JsxInline = Node.create({
   name: 'jsxInline',
   group: 'inline',

@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { fieldRegistry } from './field-registry.ts';
 import { ConfigSchema } from './schema.ts';
 
-// Single shared Ajv instance for the equivalence fixture run.
 function buildAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
@@ -24,14 +23,9 @@ const validate = ajv.compile(jsonSchema);
 interface Fixture {
   name: string;
   input: unknown;
-  /** True if both validators should accept; false if both should reject. */
   shouldAccept: boolean;
 }
 
-// Representative coverage across leaves and section defaults. Both ajv (over
-// the published JSON Schema) and ConfigSchema.safeParse must agree on every
-// fixture — guards against `.transform()` / `.coerce()` slipping into the
-// schema and silently breaking IDE/runtime equivalence.
 const FIXTURES: Fixture[] = [
   { name: 'empty object — defaults fill in', input: {}, shouldAccept: true },
   {
@@ -127,9 +121,7 @@ describe('loose-mode forgiveness', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.server.host).toBe('example.dev');
-      // Defaults still resolve for known fields.
       expect(result.data.mcp.autoStart).toBe(true);
-      // Unknown top-level passes through into the loose-typed payload.
       expect((result.data as Record<string, unknown>).sync).toEqual({
         pushIntervalSeconds: 30,
         autoCommit: true,

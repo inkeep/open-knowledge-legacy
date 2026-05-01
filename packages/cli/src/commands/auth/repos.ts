@@ -17,7 +17,6 @@ async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Promise<voi
     process.exit(1);
   }
 
-  // Fallback for github enterprise instances
   const baseUrl = host === 'github.com' ? undefined : `https://${host}/api/v3`;
   const octokit = new Octokit({ auth: entry.token, ...(baseUrl ? { baseUrl } : {}) });
 

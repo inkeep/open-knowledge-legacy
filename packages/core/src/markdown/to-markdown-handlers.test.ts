@@ -1,9 +1,3 @@
-/**
- * Tests for custom mdast-util-to-markdown serialization handlers.
- *
- * Verifies that fidelity data survives parse→serialize round-trips:
- * delimiters, fence chars, bullet markers, heading styles, etc.
- */
 import { describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
@@ -50,10 +44,6 @@ describe('to-markdown: code block fence preservation', () => {
 });
 
 describe('to-markdown: thematic break preservation', () => {
-  // NG10: doc-start `---` thematicBreak normalizes to `***` on serialize
-  // to avoid remark-frontmatter interference on re-parse. The parse-side
-  // docStartThematicFixPlugin handles the complementary case (empty yaml
-  // at doc start → thematicBreak). Both protections work together.
   test('doc-start --- normalizes to *** (NG10 serialize-side)', () => {
     expect(roundTrip('---\n')).toBe('***\n');
   });
@@ -144,9 +134,6 @@ describe('to-markdown: link URL preservation', () => {
   });
 });
 
-// US-010 (R6b/c): URL handler parity for links + images.
-// Root cause + fix rationale: see evidence/r6-failure-modes.md (Findings 5+6)
-// and the formatLinkUrl docblock in to-markdown-handlers.ts.
 describe('to-markdown: formatLinkUrl unit', () => {
   test('empty URL → empty', () => {
     expect(formatLinkUrl('')).toBe('');
@@ -169,13 +156,10 @@ describe('to-markdown: formatLinkUrl unit', () => {
   });
 
   test('URL with unbalanced closing paren → escape all parens', () => {
-    // depth goes negative → unbalanced
     expect(formatLinkUrl('a)b')).toBe('a\\)b');
   });
 
   test('URL with literal angle chars + balanced parens → verbatim', () => {
-    // Literal `<` / `>` in URL value survive R23 round-trip (PUA substitute
-    // → restoreFromMdx puts them back). Verbatim output keeps the cycle stable.
     expect(formatLinkUrl('<url>')).toBe('<url>');
     expect(formatLinkUrl('foo<bar')).toBe('foo<bar');
     expect(formatLinkUrl('foo>bar')).toBe('foo>bar');
@@ -186,18 +170,14 @@ describe('to-markdown: formatLinkUrl unit', () => {
   });
 
   test('URL with backslash AND unbalanced parens → escape backslash too', () => {
-    // Doubling pre-existing backslashes prevents them combining with
-    // the inserted escape backslashes on re-parse.
     expect(formatLinkUrl('foo\\(bar')).toBe('foo\\\\\\(bar');
   });
 });
 
 describe('to-markdown: link handler URL parity (US-010 R6b)', () => {
   test('link with unbalanced escaped parens round-trips byte-identically', () => {
-    // CommonMark example 475 — was 1.1% of Links section idempotence failure
     const md = '[link](foo\\(and\\(bar\\))\n';
     expect(roundTrip(md)).toBe(md);
-    // Idempotence: r2 == r1
     expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
   });
 
@@ -207,16 +187,12 @@ describe('to-markdown: link handler URL parity (US-010 R6b)', () => {
   });
 
   test('link with literal angle chars in URL value', () => {
-    // R23 PUA round-trip: input `<url>` → URL value `<url>` (literal angles)
-    // → output `<url>` → R23 PUA → URL value `<url>`. Stable.
     const md = '[link](<url>)\n';
     expect(roundTrip(md)).toBe(md);
     expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
   });
 
   test('autolink form (sourceStyle=autolink) preserved as <url>', () => {
-    // autolink-promotion.ts attaches data.sourceStyle='autolink' so the link
-    // handler short-circuits; formatLinkUrl is not called for autolinks.
     const md = '<https://example.com>\n';
     expect(roundTrip(md)).toBe(md);
   });
@@ -224,10 +200,8 @@ describe('to-markdown: link handler URL parity (US-010 R6b)', () => {
 
 describe('to-markdown: image handler URL parity (US-010 R6c)', () => {
   test('image with angle-bracket URL form round-trips byte-identically', () => {
-    // CommonMark example 557 — was 4.5% of Images section idempotence failure
     const md = '![foo](<url>)\n';
     expect(roundTrip(md)).toBe(md);
-    // Idempotence: r2 == r1
     expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
   });
 

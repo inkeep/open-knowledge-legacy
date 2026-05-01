@@ -1,18 +1,3 @@
-/**
- * C11 — Agent Activity Panel: multi-writer undo safety + CC1 signal emission.
- *
- * Covers SPEC AC-P4, AC-P5, AC-P6 (per-session undo isolation across docs and
- * agents) plus the CC1 'session-activity' push-signal contract (FR-P25).
- *
- * Reuses createTestServer / agentWriteMd / agentUndo / wait from the shared
- * test-harness — no new primitives introduced.
- *
- * StackItem capture note: Y.UndoManager.captureTimeout is 500ms.  To get
- * distinct StackItems the test must wait >500ms between writes (wait(600)).
- * CC1 signal note: signal('session-activity') fires only after a successful
- * shadow-repo git commit.  The CC1 sub-test creates its own server with
- * gitEnabled: true + commitDebounceMs: 200 so the commit fires quickly.
- */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import { listAgentActivity } from '../../../../packages/server/src/agent-activity.ts';
@@ -29,7 +14,6 @@ afterAll(async () => {
   await server.cleanup();
 });
 
-/** POST agent-write-md as a specific agentId suffix (connectionId = 'agent-<suffix>'). */
 async function writeAs(
   agentIdSuffix: string,
   markdown: string,
@@ -51,12 +35,10 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     const connectionId = `agent-${agentSuffix}`;
     const sessionManager = server.instance.sessionManager;
 
-    // Two separate bursts to docX (wait 600ms between so captureTimeout=500ms elapses).
     await writeAs(agentSuffix, 'burst 1\n', docX);
     await wait(600);
     await writeAs(agentSuffix, 'burst 2\n', docX);
     await wait(600);
-    // One burst to docY.
     await writeAs(agentSuffix, 'burst Y\n', docY);
     await wait(400);
 
@@ -66,15 +48,12 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     const stackXBefore = sessX.um.undoStack.length;
     const stackYBefore = sessY.um.undoStack.length;
 
-    // Must have at least 2 StackItems on docX so we can verify exactly one was popped.
     expect(stackXBefore).toBeGreaterThanOrEqual(2);
     expect(stackYBefore).toBeGreaterThanOrEqual(1);
 
-    // Undo the last burst on docX only.
     await agentUndo(server.port, { docName: docX, connectionId, scope: 'last' });
     await wait(300);
 
-    // fileX stack shrank by exactly one; fileY stack unchanged.
     expect(sessX.um.undoStack.length).toBe(stackXBefore - 1);
     expect(sessY.um.undoStack.length).toBe(stackYBefore);
 
@@ -89,7 +68,6 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     const connectionId = `agent-${agentSuffix}`;
     const sessionManager = server.instance.sessionManager;
 
-    // Two separate bursts to docX.
     await writeAs(agentSuffix, 'alpha\n', docX);
     await wait(600);
     await writeAs(agentSuffix, 'beta\n', docX);
@@ -108,17 +86,13 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     expect(stackXBefore).toBeGreaterThanOrEqual(2);
     expect(stackYBefore).toBeGreaterThanOrEqual(1);
 
-    // 'session' scope pops the entire docX stack.
     await agentUndo(server.port, { docName: docX, connectionId, scope: 'session' });
     await wait(400);
 
-    // fileX stack fully drained.
     expect(sessX.um.undoStack.length).toBe(0);
 
-    // fileX content reverted to empty.
     expect(ytextX.toString().trim()).toBe('');
 
-    // fileY stack + content unchanged.
     expect(sessY.um.undoStack.length).toBe(stackYBefore);
     expect(ytextY.toString()).toContain('Y-content');
 
@@ -133,11 +107,9 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     const connectionIdA = `agent-${agentA}`;
     const sessionManager = server.instance.sessionManager;
 
-    // Agent A + B write via HTTP.
     await writeAs(agentA, 'A-unique-content\n', docZ);
     await writeAs(agentB, 'B-unique-content\n', docZ);
 
-    // Human writes directly via transact with no origin (simulates WYSIWYG).
     const sessA = await sessionManager.getSession(docZ, connectionIdA);
     const ytext = sessA.dc.document.getText('source');
     sessA.dc.document.transact(() => {
@@ -150,13 +122,11 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     expect(ytext.toString()).toContain('B-unique-content');
     expect(ytext.toString()).toContain('human-unique-content');
 
-    // Undo all of agent A's session on docZ.
     await agentUndo(server.port, { docName: docZ, connectionId: connectionIdA, scope: 'session' });
     await wait(400);
 
     const finalText = ytext.toString();
 
-    // A's writes gone; B's and human's writes survive.
     expect(finalText).not.toContain('A-unique-content');
     expect(finalText).toContain('B-unique-content');
     expect(finalText).toContain('human-unique-content');
@@ -165,9 +135,6 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
   });
 
   test('CC1: agent write triggers signal("session-activity") on cc1Broadcaster', async () => {
-    // Dedicated server with gitEnabled: true + fast commit debounce so the
-    // shadow-repo commit (which fires onAgentCommit → cc1Broadcaster.signal)
-    // completes within the test's wait window.
     const ccServer = await createTestServer({ gitEnabled: true, commitDebounceMs: 200 });
 
     try {
@@ -180,9 +147,6 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
 
       await writeAs(agentSuffix, '# CC1 test\n\ncontent\n', docName, ccServer);
 
-      // Persistence debounce (200ms) + git commit (variable, ~100-500ms on
-      // warm cache) + CC1 100ms debounce. Poll for up to 5s — more robust
-      // than a fixed wait because commit latency varies with filesystem load.
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
         const called = spy.mock.calls.some((args) => args[0] === 'session-activity');
@@ -210,8 +174,6 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     const connectionId = `agent-${agentSuffix}`;
     const sessionManager = server.instance.sessionManager;
 
-    // docFirst gets one write, then docSecond gets two writes (with wait between).
-    // docSecond's last burst is more recent → should appear first in listAgentActivity.
     await writeAs(agentSuffix, 'first-doc-burst1\n', docFirst);
     await wait(600);
     await writeAs(agentSuffix, 'second-doc-burst1\n', docSecond);
@@ -219,7 +181,6 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     await writeAs(agentSuffix, 'second-doc-burst2\n', docSecond);
     await wait(400);
 
-    // Ensure sessions exist before calling listAgentActivity.
     await sessionManager.getSession(docFirst, connectionId);
     await sessionManager.getSession(docSecond, connectionId);
 
@@ -228,13 +189,11 @@ describe('C11 — Activity Panel undo isolation + CC1 signal', () => {
     expect(result.sessionAlive).toBe(true);
     expect(result.files.length).toBeGreaterThanOrEqual(2);
 
-    // docSecond (most recent) should come before docFirst.
     const fileNames = result.files.map((f) => f.docName);
     const idxFirst = fileNames.indexOf(docFirst);
     const idxSecond = fileNames.indexOf(docSecond);
     expect(idxSecond).toBeLessThan(idxFirst);
 
-    // Bursts within docSecond ordered by stackIndex DESC (newest first).
     const secondFile = result.files.find((f) => f.docName === docSecond);
     expect(secondFile).toBeDefined();
     if (secondFile && secondFile.bursts.length >= 2) {

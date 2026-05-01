@@ -1,19 +1,3 @@
-/**
- * `mark(name, props?)` — emit a semantic perf event.
- *
- * Wraps `performance.measure` with the Chrome DevTools Extensibility API
- * `detail.devtools` shape so the measure appears as a custom track in the
- * Performance panel under `ok/<subsystem>` (track group derived from the
- * second `/` segment of the name — e.g. `ok/nav/hash-change` → track `ok/nav`).
- *
- * Naming convention (D4 LOCKED): `ok/<subsystem>/<event>` where subsystem is
- * one of `nav`, `sync`, `activity`, `render`, `editor`, `sidebar`, `outline`,
- * `vitals`. `validatePerfMarkName` is a dev-only lint of the shape; it
- * `console.warn`s in dev and returns silently so emission is always best-effort.
- *
- * Production cost is one `performance.measure` call. The collector push is
- * `no-op` in non-DEV builds (see `collector.ts`).
- */
 
 import { recordMark } from './collector';
 import type { DevToolsTrackEntry, PerfMarkDetail } from './types';
@@ -49,21 +33,13 @@ function propsToDevToolsTuples(
 }
 
 interface MarkOptions {
-  /** Explicit start time (defaults to performance.now() at call time). */
   startTime?: number;
-  /** Duration in ms. If omitted, a zero-duration marker is emitted. */
   duration?: number;
-  /** Override tooltip. */
   tooltipText?: string;
 }
 
-/**
- * Emit a perf mark. Call at the moment the semantic event completes — pass
- * `startTime` to produce a measured span, or leave it off for a point event.
- */
 export function mark(name: string, props?: Record<string, unknown>, opts?: MarkOptions): void {
   if (!import.meta.env?.PROD && !validatePerfMarkName(name)) {
-    // eslint-disable-next-line no-console -- dev-only lint
     console.warn(`[perf] mark name "${name}" does not match ok/<subsystem>/<event>`);
   }
 
@@ -90,8 +66,6 @@ export function mark(name: string, props?: Record<string, unknown>, opts?: MarkO
       detail,
     });
   } catch {
-    // `performance.measure` can throw if `start` is before `timeOrigin`
-    // on some browsers; swallow — instrumentation must never break the app.
   }
 
   recordMark({

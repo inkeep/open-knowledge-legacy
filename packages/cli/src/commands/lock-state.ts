@@ -1,12 +1,3 @@
-/**
- * Shared raw lockfile inspector for `ok stop` / `ok clean` / `ok status`.
- *
- * Unlike `readProcessLock` (which auto-removes a stale same-host lock as a
- * side effect), `inspectLock` is a pure peek — it classifies the lock state
- * but never mutates the filesystem. `ok clean` specifically needs this so it
- * can report the number of pruned locks rather than discovering them already
- * gone after a read.
- */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -25,9 +16,7 @@ export type LockState =
   | { status: 'alive'; lockPath: string; lock: ProcessLockMetadata };
 
 interface InspectLockOptions {
-  /** Override for tests. Defaults to `isProcessAlive` from the server package. */
   isAlive?: (pid: number) => boolean;
-  /** Override for tests. Defaults to `os.hostname()`. */
   host?: string;
 }
 

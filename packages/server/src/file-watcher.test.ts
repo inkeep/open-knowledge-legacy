@@ -31,7 +31,6 @@ describe('writeTracker', () => {
 
     registerWrite(filePath, hash);
 
-    // Watcher detects the change — same content → same hash → skip
     const queue = writeTracker.get(filePath);
     expect(queue).toBeTruthy();
     expect(queue?.some((e) => e.hash === hash)).toBe(true);
@@ -65,7 +64,6 @@ describe('writeTracker', () => {
     const queue = writeTracker.get(filePath);
     expect(queue).toHaveLength(2);
 
-    // First event matches hash1 — remove it, hash2 should remain
     const idx1 = queue?.findIndex((e) => e.hash === hash1) ?? -1;
     expect(idx1).toBeGreaterThanOrEqual(0);
     queue?.splice(idx1, 1);
@@ -171,7 +169,6 @@ describe('isSelfWrite', () => {
   });
 });
 
-// ─── classifyEvents ──────────────────────────────────────────────────────────
 
 describe('classifyEvents', () => {
   let tmpDir: string;
@@ -257,10 +254,8 @@ describe('classifyEvents', () => {
     const newPath = resolve(contentDir, 'new-name.md');
     const content = '# Same Content\n';
 
-    // Pre-seed the last known hash for the old path
     updateLastKnownHash(oldPath, contentHash(content));
 
-    // Write the new file
     writeFileSync(newPath, content);
 
     const events = await classifyEvents(
@@ -284,7 +279,6 @@ describe('classifyEvents', () => {
     const oldPath = resolve(contentDir, 'old.md');
     const newPath = resolve(contentDir, 'new.md');
 
-    // Pre-seed with different content
     updateLastKnownHash(oldPath, contentHash('old content'));
     writeFileSync(newPath, 'different content');
 
@@ -331,14 +325,12 @@ describe('classifyEvents', () => {
   });
 
   test('filters events through ContentFilter when provided', async () => {
-    // Create a filter that excludes dist/
     writeFileSync(resolve(tmpDir, '.gitignore'), 'dist/\n');
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
     });
 
-    // Create files in both included and excluded dirs
     mkdirSync(resolve(contentDir, 'dist'), { recursive: true });
     mkdirSync(resolve(contentDir, 'docs'), { recursive: true });
     writeFileSync(resolve(contentDir, 'dist', 'output.md'), '# Build Output\n');
@@ -361,7 +353,6 @@ describe('classifyEvents', () => {
   });
 });
 
-// ─── startWatcher file index ────────────────────────────────────────────────
 
 describe('startWatcher file index', () => {
   let tmpDir: string;
@@ -390,10 +381,8 @@ describe('startWatcher file index', () => {
       expect(index.size).toBe(2);
       expect(index.has('readme')).toBe(true);
       expect(index.has('docs/guide')).toBe(true);
-      // Non-.md files are not in the index
       expect(index.has('script')).toBe(false);
 
-      // Entries have size and modified
       const entry = index.get('readme');
       expect(entry).toBeTruthy();
       expect(entry?.size).toBeGreaterThan(0);
@@ -519,7 +508,6 @@ describe('startWatcher file index', () => {
   });
 });
 
-// ─── ContentFilter refcount integration ────────────────────────────────────
 
 describe('file-watcher ContentFilter refcount hooks', () => {
   let tmpDir: string;
@@ -546,11 +534,9 @@ describe('file-watcher ContentFilter refcount hooks', () => {
       contentDir,
     });
 
-    // Before rename: old-dir has an .md, so assets there should be included
     expect(filter.isExcluded('old-dir/img.png')).toBe(false);
     expect(filter.isExcluded('new-dir/img.png')).toBe(true);
 
-    // Simulate rename as classifyEvents would produce it
     const oldPath = resolve(contentDir, 'old-dir', 'doc.md');
     const newPath = resolve(contentDir, 'new-dir', 'doc.md');
     updateLastKnownHash(oldPath, contentHash('# Doc\n'));
@@ -568,50 +554,24 @@ describe('file-watcher ContentFilter refcount hooks', () => {
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe('rename');
 
-    // Apply filter hooks as handleRawEvents would
     if (events[0].kind === 'rename') {
       const { dirname } = await import('node:path');
       filter.decrementMdDir(dirname(events[0].oldDocName));
       filter.incrementMdDir(dirname(events[0].newDocName));
     }
 
-    // After rename: old-dir loses its .md, new-dir gains one
     expect(filter.isExcluded('old-dir/img.png')).toBe(true);
     expect(filter.isExcluded('new-dir/img.png')).toBe(false);
   });
 
   test('same-batch md+asset create in a brand-new directory: asset is dispatched (md-first ordering)', async () => {
-    // Reproduces the cycle-47/48 file-watcher race the bot flagged. Sequence:
-    //   `mkdir foo && cp note.md foo/ && cp pic.png foo/`
-    // arrives in a single watcher batch — @parcel/watcher's FSEvents
-    // backend coalesces with `latency=0.001` (1ms; FSEventsBackend.cc),
-    // and the chokidar fallback batches in `BATCH_WINDOW_MS=50`. Both
-    // windows easily span a quick mkdir+cp+cp burst.
-    //
-    // With assets-first ordering (the pre-fix shape) the asset hits
-    // `isExcluded()` while the new dir's `dirCount` is still 0; the
-    // sibling-asset rule (extension in ASSET_EXTENSIONS + dirCount > 0)
-    // fails closed and the asset never makes it to `onDiskEvent` — i.e.
-    // never lands in basenameIndex until the next server restart.
-    //
-    // This test runs `handleRawEvents` directly with a one-batch pair.
-    // Md-first ordering must dispatch BOTH events. Mutation: revert the
-    // ordering swap → only the md create event reaches the collector.
-    // Create filter FIRST while disk is empty — `createContentFilter`
-    // scans the tree at construction and would see the .md if it
-    // already existed, prefilling dirCount and masking the bug.
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      // No explicit asset include — admission depends entirely on the
-      // sibling-asset fallback rule, which is the path the bug lives on.
     });
 
-    // Pre-condition: dirCount for `fresh/` is 0 → asset is excluded.
     expect(filter.isExcluded('fresh/pic.png')).toBe(true);
 
-    // Now create the files — simulating the same-batch fs activity
-    // the watcher about to surface.
     const newDir = resolve(contentDir, 'fresh');
     mkdirSync(newDir);
     const mdPath = resolve(newDir, 'note.md');
@@ -640,12 +600,10 @@ describe('file-watcher ContentFilter refcount hooks', () => {
     if (asset?.kind === 'asset-create') {
       expect(asset.relativePath).toBe('fresh/pic.png');
     }
-    // dirCount is now 1 — assets in `fresh/` admit on subsequent checks too.
     expect(filter.isExcluded('fresh/pic.png')).toBe(false);
   });
 });
 
-// ─── Symlink-aware watcher ──────────────────────────────────────────────────
 
 describe('startWatcher symlink handling', () => {
   let tmpDir: string;
@@ -723,16 +681,11 @@ describe('startWatcher symlink handling', () => {
   });
 
   test('skips symlink-to-excluded-dir (node_modules inside contentDir) during startup walk', async () => {
-    // node_modules lives inside contentDir — NOT a symlink-escape, so the escape
-    // check does not fire. Only isDirExcluded() stops traversal.
     const realNm = resolve(contentDir, 'node_modules');
     mkdirSync(realNm, { recursive: true });
-    // Broken symlink inside — traversal would throw if isDirExcluded check is missing
     symlinkSync(resolve(realNm, 'nonexistent'), resolve(realNm, 'broken-pkg'));
     writeFileSync(resolve(realNm, 'README.md'), '# Pkg\n');
 
-    // Sub-package symlinking back to root node_modules (pnpm-style hoisting).
-    // Exercises the symlink → directory path at file-watcher.ts:455-459.
     const subPkg = resolve(contentDir, 'packages', 'foo');
     mkdirSync(subPkg, { recursive: true });
     symlinkSync(realNm, resolve(subPkg, 'node_modules'));
@@ -747,7 +700,6 @@ describe('startWatcher symlink handling', () => {
     const handle = await startWatcher(contentDir, async () => {}, filter);
     try {
       const index = handle.getFileIndex();
-      // docs.md indexed; node_modules contents are not
       expect(index.has('docs')).toBe(true);
       expect(index.has('node_modules/README')).toBe(false);
       expect(index.has('packages/foo/node_modules/README')).toBe(false);
@@ -830,10 +782,6 @@ describe('startWatcher symlink handling', () => {
   });
 
   test('classifyEvents live-resolves symlink created post-startup and updates aliasMap', async () => {
-    // Simulate a symlink that appears AFTER the watcher's startup walk — i.e.
-    // the aliasMap is empty but the path on disk is a live symlink. The watcher
-    // should lstat, realpath, populate the aliasMap, and emit the canonical
-    // docName on the resulting DiskEvent.
     const targetPath = resolve(contentDir, 'new-target.md');
     const linkPath = resolve(contentDir, 'new-link.md');
     writeFileSync(targetPath, '# Target\n');
@@ -857,9 +805,6 @@ describe('startWatcher symlink handling', () => {
   });
 
   test('classifyEvents re-resolves a repointed symlink and updates aliasMap', async () => {
-    // Symlink was originally pointing to old-target.md; now it's been repointed
-    // to fresh-target.md. The watcher should detect the change on the next
-    // event and update its aliasMap entry.
     const oldTargetPath = resolve(contentDir, 'old-target.md');
     const newTargetPath = resolve(contentDir, 'fresh-target.md');
     const aliasPath = resolve(contentDir, 'alias.md');
@@ -867,7 +812,6 @@ describe('startWatcher symlink handling', () => {
     writeFileSync(newTargetPath, '# Fresh\n');
     symlinkSync(newTargetPath, aliasPath);
 
-    // aliasMap is stale — still points to the old canonical
     const aliasMap = new Map<string, string>([['alias', 'old-target']]);
 
     const events = await classifyEvents(

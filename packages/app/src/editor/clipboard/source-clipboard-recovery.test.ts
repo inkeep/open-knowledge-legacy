@@ -1,21 +1,3 @@
-/**
- * Unit tests for `handleChunkedInsertFailure` — the recovery path for
- * FR-21's chunked Source-view paste when insertion fails mid-stream.
- *
- * Covers the Major finding from Pass 1 (`chunked-insert-failure-leaves-editor-empty`):
- *   1. Selection text is re-inserted at the anchor so the user does not lose
- *      the content they had selected.
- *   2. Structured telemetry is emitted via `logChunkedInsertFail` for
- *      typed `ChunkedInsertError`, or `logConversionFail` otherwise.
- *   3. A sonner toast surfaces a user-visible signal — without it the user
- *      sees their selection vanish with no feedback.
- *
- * We mock the CM6 `EditorView` as a minimal shape (just `dispatch`) and
- * spy on `console.warn` + the sonner module's `toast.error` export. This
- * keeps the test at the recovery-contract level — a full CM6 + Y.Doc
- * integration test would require wiring yCollab + DOM and belongs in a
- * Playwright E2E, not bun-test.
- */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { ChunkedInsertError } from '@inkeep/open-knowledge-core';
@@ -24,10 +6,7 @@ type ToastFn = { error: ReturnType<typeof mock> };
 const toastMock: ToastFn = { error: mock(() => {}) };
 mock.module('sonner', () => ({ toast: toastMock }));
 
-// Imported AFTER the mock so the module picks up our stub.
-// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let handleChunkedInsertFailure: any;
-// biome-ignore lint/suspicious/noExplicitAny: test-scoped dynamic import
 let mod: any;
 
 beforeEach(async () => {
@@ -49,7 +28,6 @@ interface DispatchCall {
 function makeFakeView(docLength = 1_000_000): {
   dispatch: ReturnType<typeof mock>;
   dispatches: DispatchCall[];
-  // biome-ignore lint/suspicious/noExplicitAny: fake view state for unit test
   state: any;
 } {
   const dispatches: DispatchCall[] = [];
@@ -85,7 +63,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'gdocs',
         html: '<p>1</p>'.repeat(10),
@@ -94,12 +71,9 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    // Partial chunks at [42, 42+100KB) are replaced with the restoreText —
-    // a single atomic change so yCollab sees no intermediate truncated state.
     expect(dispatches).toEqual([
       { from: 42, to: 42 + bytesWritten, insert: 'original user selection' },
     ]);
-    // Toast surfaces partial-progress info to the user.
     expect(toastMock.error).toHaveBeenCalledTimes(1);
     const msg = toastMock.error.mock.calls[0]?.[0];
     expect(msg).toContain('2 of 10 chunks');
@@ -117,7 +91,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'word',
         html: '<p>x</p>',
@@ -126,7 +99,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    // Deletes the partial range; no restoreText to merge back.
     expect(dispatches).toEqual([{ from: 10, to: 10 + bytesWritten, insert: '' }]);
     expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
@@ -141,7 +113,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -150,7 +121,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    // Zero bytes landed — no partial range to delete; restoreText inserted at anchor.
     expect(dispatches).toEqual([{ from: 0, to: 0, insert: 'x' }]);
     expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
@@ -165,7 +135,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -188,7 +157,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
@@ -197,7 +165,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    // anchor(10) + bytesWritten(100) = 110, but doc length is 60 — clamp to 60.
     expect(dispatches).toEqual([{ from: 10, to: 60, insert: 'abc' }]);
   });
 
@@ -205,7 +172,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     const { dispatch, dispatches, state } = makeFakeView();
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'notion',
         html: '<p>x</p>',
@@ -214,11 +180,8 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err: new Error('unrelated failure'),
       }),
     );
-    // Can't know bytesWritten — falls back to insert-at-anchor.
     expect(dispatches).toEqual([{ from: 5, to: 5, insert: 'abc' }]);
     expect(toastMock.error).toHaveBeenCalledTimes(1);
-    // The generic branch emits the "Paste failed" toast instead of the
-    // chunks-landed variant, so users know it wasn't a partial outcome.
     const msg = toastMock.error.mock.calls[0]?.[0];
     expect(msg).toContain('Paste failed');
   });
@@ -229,7 +192,6 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'gmail',
         html: '<p>x</p>',
@@ -243,21 +205,15 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         }),
       }),
     );
-    // Telemetry + toast path still runs.
     expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
 
   test('ChunkedInsertError + dispatch throw: toast accurately states selection NOT restored', () => {
-    // Regression for the misleading-toast-on-dispatch-failure finding.
-    // When dispatch throws (view destroyed by Activity-hidden unmount, Y.Doc
-    // GC'd, etc.), the user's selection is NOT restored. The toast must say
-    // so rather than claim a successful restoration.
     const throwingDispatch = mock(() => {
       throw new Error('view destroyed');
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'gmail',
         html: '<p>x</p>',
@@ -273,20 +229,16 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     );
     expect(toastMock.error).toHaveBeenCalledTimes(1);
     const msg = toastMock.error.mock.calls[0]?.[0] as string;
-    // Must NOT claim "selection has been restored" — dispatch threw.
     expect(msg).not.toContain('been restored');
-    // Should communicate the failed-restore state explicitly.
     expect(msg.toLowerCase()).toContain('could not be restored');
   });
 
   test('non-ChunkedInsertError + dispatch throw: toast accurately states selection NOT restored', () => {
-    // Same regression for the generic-error path.
     const throwingDispatch = mock(() => {
       throw new Error('view destroyed');
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'notion',
         html: '<p>x</p>',
@@ -302,12 +254,9 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
   });
 
   test('zero-bytes + empty selection: toast omits restoration claim entirely', () => {
-    // Edge case: nothing was selected, nothing was written. Don't claim
-    // "Your selection has been restored" — there was no selection.
     const { dispatch, state } = makeFakeView();
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
-        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
         view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',

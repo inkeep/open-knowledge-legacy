@@ -14,31 +14,9 @@ interface TagPillInputProps {
   'aria-describedby'?: string;
   'aria-invalid'?: boolean | 'true' | 'false';
   disabled?: boolean;
-  /**
-   * Forwarded onto the inner `<input>` so RHF's `form.setFocus(name)`
-   * resolves through `Controller.field.ref`. Without this, `setFocus` on
-   * a TagPillInput-bound field silently no-ops, breaking the L3 rejection
-   * focus path for any future schema constraint on `frontmatter.tags`.
-   * Matches sibling `Input` / `Textarea` / `Switch` ref-forwarding.
-   */
   ref?: Ref<HTMLInputElement>;
 }
 
-/**
- * String-array editor rendering each entry as a removable Badge pill plus
- * a native input for adding new entries. Used by FoldersSection for
- * `folders[].frontmatter.tags`.
- *
- * Commit triggers: Enter, comma, Tab (with non-empty draft — Tab on empty
- * preserves default focus shift), and blur. Backspace on an empty draft
- * removes the last pill. Duplicates are silently deduped.
- *
- * The wrapper carries the focus-ring and aria-invalid styling (matches the
- * shadcn `Input` look). The inner `<input>` accepts `id` so a
- * `<FormLabel htmlFor={id}>` resolves to a focusable element; `aria-invalid`
- * propagates onto the wrapper so the destructive ring appears regardless of
- * which child has focus.
- */
 function TagPillInput({
   value,
   onChange,
@@ -81,8 +59,6 @@ function TagPillInput({
     >
       {value.map((tag, i) => (
         <Badge
-          // Tags are unique within the list (dedup above) — `tag` itself
-          // is a stable key that survives reorders.
           key={tag}
           variant="secondary"
           className="gap-1 pl-2 pr-1"
@@ -112,10 +88,6 @@ function TagPillInput({
               addTag(draft);
             }
           } else if (e.key === ',') {
-            // Always swallow comma — it's the tag delimiter and must never
-            // appear as literal content. Empty-draft comma is a no-op
-            // (prevents pressing comma alone from inserting `,` and later
-            // being committed as a single-character `,` tag on blur).
             e.preventDefault();
             if (draft.trim()) {
               addTag(draft);
@@ -125,7 +97,6 @@ function TagPillInput({
               e.preventDefault();
               addTag(draft);
             }
-            // Empty draft: let default Tab focus-shift behavior run.
           } else if (e.key === 'Backspace' && draft === '' && value.length > 0) {
             e.preventDefault();
             removeAt(value.length - 1);
@@ -137,8 +108,6 @@ function TagPillInput({
         }}
         placeholder={value.length === 0 ? placeholder : ''}
         aria-describedby={ariaDescribedBy}
-        // aria-invalid lives on the wrapper for the visual ring; mirror onto
-        // the input so AT announces the field-level invalid state on focus.
         aria-invalid={ariaInvalid}
         disabled={disabled}
         className="min-w-[8ch] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"

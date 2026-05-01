@@ -185,11 +185,6 @@ describe('search — .okignore exclusion', () => {
     const project = await bootstrap();
     const drafts = resolve(project, 'drafts');
     mkdirSync(drafts, { recursive: true });
-    // 5 hits in drafts/ (excluded) + 1 hit in articles/ (included).
-    // With maxResults=2, grep is asked for 3 → returns all 6 (cap 3 hit).
-    // Post-filter leaves only 1 visible match. Without the rawMatches-based
-    // truncation signal, this would report `truncated=false` despite grep
-    // having stopped at the cap.
     for (let i = 0; i < 5; i++) {
       writeFileSync(resolve(drafts, `wip-${i}.md`), '# Draft\n\nsearchterm here\n');
     }

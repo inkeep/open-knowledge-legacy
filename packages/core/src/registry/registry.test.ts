@@ -5,12 +5,6 @@ import type { JsxComponentMeta } from './types.ts';
 
 describe('createRegistry', () => {
   test('returns the 6 canonical + 8 compat descriptors + wildcard', () => {
-    // 6 canonicals (Callout, Image, Video, Audio, Accordion, Math) + 8 compats
-    // (GFMCallout, CommonMarkImage, HtmlDetailsAccordion, DollarMath,
-    // MathFence, WikiEmbedImage, WikiEmbedVideo, WikiEmbedAudio) + '*'
-    // wildcard. Compats are registered for parse + render but filtered out
-    // of the slash menu; they preserve source-form fidelity through
-    // round-trip edits.
     const registry = createRegistry();
     const entries = [...registry.entries()];
     expect(entries.length).toBe(15);
@@ -42,11 +36,9 @@ describe('createRegistry', () => {
   test('registry.set() followed by get() picks up new descriptor (M3 hot-add)', () => {
     const registry = createRegistry();
 
-    // Before: DataViz is unregistered
     expect(registry.get('DataViz')).toBeUndefined();
     expect(registry.getOrWildcard('DataViz').name).toBe('*');
 
-    // Hot-add
     const dataVizMeta: JsxComponentMeta = {
       name: 'DataViz',
       surface: 'canonical',
@@ -60,7 +52,6 @@ describe('createRegistry', () => {
     };
     registry.set('DataViz', dataVizMeta);
 
-    // After: DataViz returns the new descriptor
     const result = registry.get('DataViz');
     expect(result).toBeDefined();
     expect(result?.name).toBe('DataViz');
@@ -83,20 +74,16 @@ describe('createRegistry', () => {
     expect(registry.has('Accordion')).toBe(true);
     expect(registry.has('Math')).toBe(true);
     expect(registry.has('*')).toBe(true);
-    // Lowercase media canonicals — capitalized forms now fall through to the
-    // wildcard. User content authored before the pivot would render with
-    // generic chrome but isn't registered as a fresh-insert canonical.
     expect(registry.has('Image')).toBe(false);
     expect(registry.has('Video')).toBe(false);
     expect(registry.has('Audio')).toBe(false);
-    // Other unregistered descriptors fall through to wildcard via getOrWildcard.
     expect(registry.has('Steps')).toBe(false);
     expect(registry.has('DataViz')).toBe(false);
   });
 });
 
 describe('builtInComponents manifest', () => {
-  test('contains 6 canonical + 8 compat entries (6-pack + source-form preservation + WikiEmbed)', () => {
+  test('contains 6 canonical + 8 compat entries (canonical pack + source-form preservation + math syntax compats)', () => {
     expect(builtInComponents.length).toBe(14);
     const canonical = builtInComponents.filter((m) => m.surface === 'canonical');
     const compat = builtInComponents.filter((m) => m.surface === 'compat');
@@ -113,9 +100,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('all canonical entries have description and searchTerms (slash-menu surface)', () => {
-    // Compat descriptors are filtered out of the slash menu, so searchTerms
-    // (which power slash-menu discoverability) are only required on canonicals.
-    // Description is required on both — surfaces in agent discovery / MCP.
     for (const meta of builtInComponents) {
       expect(meta.description).toBeTruthy();
       if (meta.surface === 'canonical') {
@@ -126,13 +110,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('every enum PropDef defaultValue is in enumValues (Mi1 manifest-drift guard)', () => {
-    // Mi1 review fix: PropDefEnum.defaultValue is typed loose (`string`),
-    // not as `enumValues[number]`, so a typo'd default would compile but
-    // ship as a runtime-invalid manifest entry. A type-generic refactor
-    // would propagate through every PropDef-array authoring site; this
-    // test-time guard catches the same drift class with no source-shape
-    // change. Add new descriptors with `defaultValue` that exists in
-    // their `enumValues` — anything else is a manifest defect.
     for (const meta of builtInComponents) {
       for (const prop of meta.props) {
         if (prop.type !== 'enum') continue;
@@ -146,17 +123,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('no registered descriptor has emptyChildName (5-pack is standalone-first — no compound parents)', () => {
-    // US-002/US-003 retired the compound-components bridge (precedent #29
-    // retracted on this branch). The surviving 5-pack descriptors ship without
-    // `emptyChildName` — they render standalone, not as compound parents.
-    // NG19 preserves the compound-tier revival path via PR #165 branch.
-    //
-    // Gate for A11Y07: the `.jsx-empty-child-placeholder` affordance (and
-    // its keyboard-activation coverage) only fires when a descriptor declares
-    // `emptyChildName`. `packages/app/tests/a11y/component-blocks.e2e.ts`
-    // carries `A11Y07` as `test.skip` while no such descriptor ships. If this
-    // assertion fails, a compound parent has landed — **re-enable A11Y07**
-    // so the keyboard-activation invariant gets live coverage again.
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
     expect(
@@ -168,11 +134,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Callout has GFM 5-type enum values for type prop', () => {
-    // US-005 narrows the enum to GFM's 5 canonical types per D-MF11.
-    // Parser alias map (US-010 callout-transformer) folds broader inputs
-    // (Obsidian/Mintlify `success`/`danger`/`idea`/etc.) into this subset
-    // pre-descriptor lookup. Precedent #9 schema-add-only makes future
-    // enum extension free if NG26 promotes.
     const callout = builtInComponents.find((m) => m.name === 'Callout');
     expect(callout).toBeDefined();
     if (!callout) return;
@@ -188,10 +149,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Callout exposes the 7-prop FR-1 surface', () => {
-    // D-MF17 added `collapsible` + `defaultOpen` within the GFM 5-type scope.
-    // Together with `type`, `title`, `icon`, `color`, and `children` that's
-    // the FR-1 surface — order-insensitive; a future PropPanel reshuffle
-    // should not break this guard.
     const callout = builtInComponents.find((m) => m.name === 'Callout');
     expect(callout).toBeDefined();
     if (!callout) return;
@@ -202,12 +159,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('img exposes the 12-prop HTML-native surface (2 common + 10 advanced)', () => {
-    // Lowercase media canonical pivot. Drops the OK-specific `caption` and
-    // `zoom` props from the descriptor — caption belongs on a future Frame
-    // wrapper; zoom is always-on inside the Image React component.
-    // Common: src + alt + width + height. Advanced: srcset + sizes + loading
-    // + title + decoding + fetchpriority + crossorigin + referrerpolicy.
-    // Order-insensitive — a future reshuffle should not break this.
     const img = builtInComponents.find((m) => m.name === 'img');
     expect(img).toBeDefined();
     if (!img) return;
@@ -244,27 +195,18 @@ describe('builtInComponents manifest', () => {
   });
 
   test('img drops the `zoom` and `caption` props (Frame v2 will host)', () => {
-    // Greenfield pivot: zoom is now always-on inside the Image React
-    // component; caption belongs on a compositional Frame wrapper.
     const img = builtInComponents.find((m) => m.name === 'img');
     expect(img?.props.find((p) => p.name === 'zoom')).toBeUndefined();
     expect(img?.props.find((p) => p.name === 'caption')).toBeUndefined();
   });
 
   test('img stays `isSelfClosing: true` (no children slot)', () => {
-    // The CommonMark image bridge (NG23) requires the canonical descriptor
-    // to declare `hasChildren: false` + `isSelfClosing: true` so the
-    // promotion path can map paragraph>image into a leaf descriptor cleanly.
     const img = builtInComponents.find((m) => m.name === 'img');
     expect(img?.hasChildren).toBe(false);
     expect(img?.isSelfClosing).toBe(true);
   });
 
   test('video exposes the 11-prop HTML-native surface (1 common + 10 advanced)', () => {
-    // Lowercase media canonical pivot. Adds `width` / `height` (today's
-    // canonical lacked them); HTML-attr lowercase names (`autoplay`,
-    // `playsinline`) so the rendered MDX matches the spec exactly.
-    // Order-insensitive — a future reshuffle should not break this guard.
     const video = builtInComponents.find((m) => m.name === 'video');
     expect(video).toBeDefined();
     if (!video) return;
@@ -287,10 +229,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('video has `controls` as a boolean with `true` default', () => {
-    // The default matches browser HTML5 authoring intuition — a video
-    // inserted via slash-menu renders with controls visible. Authors who
-    // want a chrome-less video (background loop, hero autoplay) set
-    // controls={false} explicitly.
     const video = builtInComponents.find((m) => m.name === 'video');
     const controls = video?.props.find((p) => p.name === 'controls');
     expect(controls).toBeDefined();
@@ -314,27 +252,18 @@ describe('builtInComponents manifest', () => {
   });
 
   test('video is a self-closing leaf (no PM children)', () => {
-    // HTML5 `<track>` / `<source>` require direct-child placement under
-    // `<video>`, but PM NodeViews mandate a wrapper DOM element — the two
-    // contracts are structurally incompatible. Authors who need captions /
-    // codec fallback write raw `<video>` + `<track>` HTML in MDX, which
-    // flows through rawMdxFallback.
     const video = builtInComponents.find((m) => m.name === 'video');
     expect(video?.hasChildren).toBe(false);
     expect(video?.isSelfClosing).toBe(true);
   });
 
   test('video has no `start` prop (matches Mintlify / Fumadocs)', () => {
-    // Runtime seek is not a persisted authoring concern.
     const video = builtInComponents.find((m) => m.name === 'video');
     const start = video?.props.find((p) => p.name === 'start');
     expect(start).toBeUndefined();
   });
 
   test('audio exposes the 7-prop HTML-native surface (1 common + 6 advanced)', () => {
-    // Lowercase media canonical pivot. `controls` is now an explicit prop
-    // (default true) — Audio.tsx no longer hardcodes always-on; authors who
-    // want a chrome-less audio set controls={false} from the descriptor.
     const audio = builtInComponents.find((m) => m.name === 'audio');
     expect(audio).toBeDefined();
     if (!audio) return;
@@ -363,8 +292,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('audio has `controls` as a boolean with `true` default (was hardcoded always-on)', () => {
-    // Lowercase pivot promotes controls to an explicit prop. Default true
-    // preserves the prior always-on behavior for the common case.
     const audio = builtInComponents.find((m) => m.name === 'audio');
     const controls = audio?.props.find((p) => p.name === 'controls');
     expect(controls).toBeDefined();
@@ -376,8 +303,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Accordion exposes the 6-prop FR-5 surface', () => {
-    // US-009 adds Accordion with the FR-5 6-prop shape — standalone per
-    // D-MF14/D-MF16 (no `variant`; renamed from Toggle). Order-insensitive.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     expect(accordion).toBeDefined();
     if (!accordion) return;
@@ -386,8 +311,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Accordion has `title` as a required string', () => {
-    // `title` is the only required prop — ensures a freshly-inserted Accordion
-    // always has a visible affordance in the summary.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     const title = accordion?.props.find((p) => p.name === 'title');
     expect(title).toBeDefined();
@@ -396,8 +319,6 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Accordion has `defaultOpen` as a boolean with `false` default', () => {
-    // Defaults to closed so slash-menu insertions don't immediately dominate
-    // page layout. Authors flip true for sections they want expanded up front.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     const defaultOpen = accordion?.props.find((p) => p.name === 'defaultOpen');
     expect(defaultOpen).toBeDefined();
@@ -409,78 +330,20 @@ describe('builtInComponents manifest', () => {
   });
 
   test('Accordion has `hasChildren: true` and no `isSelfClosing` (FR-5)', () => {
-    // Per FR-5: Accordion body is a content hole — the descriptor MUST
-    // declare hasChildren: true so the NodeView mounts a NodeViewContent
-    // slot. Flipping to self-closing would strip the body on re-serialize.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     expect(accordion?.hasChildren).toBe(true);
     expect(accordion?.isSelfClosing).toBeUndefined();
   });
 
   test('Accordion has no `variant` prop (D-MF14 — NG30 preserves Notion color-map path)', () => {
-    // D-MF14: the research-recommended 7-prop descriptor included a `variant`
-    // enum absorbing Notion's color map (default/gray/brown/_background) —
-    // those come from the de-prioritized Notion audience. Dropping now (when
-    // nothing consumes it) avoids permanent lock-in under precedent #9; NG30
-    // preserves the Notion color-map absorption path. Schema-add-only makes
-    // extension free later.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     const variant = accordion?.props.find((p) => p.name === 'variant');
     expect(variant).toBeUndefined();
   });
 
   test('Accordion has no `emptyChildName` (D-MF16 — ships standalone, not compound)', () => {
-    // D-MF16: Accordion ships standalone, not as a compound parent. The
-    // foundation does NOT require an `<Accordions>` parent wrapper —
-    // diverges from Fumadocs's Radix-requires-parent pattern. NG19 revives
-    // the compound tier for grouped-UX demand; standalone stays first.
     const accordion = builtInComponents.find((m) => m.name === 'Accordion');
     expect(accordion?.emptyChildName).toBeUndefined();
-  });
-
-  test('Math exposes the 3-prop FR-M1 surface', () => {
-    // SPEC 2026-04-29-math-canonical-and-syntax FR-M1: block-only descriptor.
-    // formula (required) + id (deep-link anchor) + language (forward-compat
-    // hint, NG-M5). No `display` prop — block-only at ship per D-M5; inline
-    // math is NG-M11.
-    const math = builtInComponents.find((m) => m.name === 'Math');
-    expect(math).toBeDefined();
-    if (!math) return;
-    const propNames = math.props.map((p) => p.name).sort();
-    expect(propNames).toEqual(['formula', 'id', 'language'].sort());
-  });
-
-  test('Math has `formula` as a required string with autoFocus', () => {
-    // formula is the only required prop — without it the descriptor renders
-    // an empty placeholder. autoFocus mounts the PropPanel cursor in the
-    // formula textarea on insert (consistent with `src` on img/video/audio).
-    const math = builtInComponents.find((m) => m.name === 'Math');
-    const formula = math?.props.find((p) => p.name === 'formula');
-    expect(formula).toBeDefined();
-    expect(formula?.type).toBe('string');
-    expect(formula?.required).toBe(true);
-    if (formula?.type === 'string') {
-      expect(formula.autoFocus).toBe(true);
-    }
-  });
-
-  test('Math is a self-closing leaf (no children slot)', () => {
-    // Math is content-leaf — formula is a string prop, not a content hole.
-    // `hasChildren: false` + `isSelfClosing: true` matches img/video/audio.
-    const math = builtInComponents.find((m) => m.name === 'Math');
-    expect(math?.hasChildren).toBe(false);
-    expect(math?.isSelfClosing).toBe(true);
-  });
-
-  test('Math has no `display` prop (D-M5 — block-only at ship; NG-M11 covers inline)', () => {
-    // D-M5: every existing canonical descriptor is block, and `jsxInline` is
-    // intentionally render-less per NG14, so a live-rendered inline math
-    // variant would set a new precedent. Inline math (`$x$`) is NG-M11. Bare
-    // assertion guards against a drive-by re-introduction of a `display`
-    // boolean before NG-M11 is properly scoped.
-    const math = builtInComponents.find((m) => m.name === 'Math');
-    const display = math?.props.find((p) => p.name === 'display');
-    expect(display).toBeUndefined();
   });
 
   test('each name is unique', () => {
@@ -504,13 +367,6 @@ describe('builtInComponents manifest', () => {
 });
 
 describe('placeholder contract — media descriptor src prop invariants', () => {
-  // The placeholder feature depends on a precise contract on each media
-  // descriptor's `src` prop. If a future PR drops `defaultValue: ''`, removes
-  // `autoFocus: true`, or marks `src` as `advanced`, the placeholder pill
-  // silently stops rendering and users get the broken-source icon back.
-  // Downstream tests (resolve-descriptor-placeholder.test.ts, e2e) would
-  // catch the regression eventually, but a manifest-level guard here flags
-  // it at `bun test` time with descriptor-named error messages.
   for (const name of ['img', 'video', 'audio'] as const) {
     test(`${name}.src satisfies the placeholder contract`, () => {
       const meta = builtInComponents.find((m) => m.name === name);
@@ -535,11 +391,6 @@ describe('placeholder contract — media descriptor src prop invariants', () => 
 });
 
 describe('common/advanced split per descriptor', () => {
-  // Locks down the exact prop classification shipped in this PR. The
-  // non-advanced (default-visible) section is calibrated to props the typical
-  // author actually picks (≥20% of inserts). A future PR that demotes or
-  // promotes a prop must update this test, surfacing the design decision
-  // rather than silently changing the PropPanel layout.
   type Split = { common: string[]; advanced: string[] };
   const expected: Record<string, Split> = {
     img: {

@@ -1,8 +1,3 @@
-/**
- * Tests for extractPageTitle — the title extraction logic used by GET /api/pages.
- *
- * Priority: frontmatter `title:` field → first `# heading` line → filename without extension.
- */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -48,15 +43,12 @@ describe('extractPageTitle', () => {
   });
 
   test('handles frontmatter with no closing delimiter gracefully — falls to heading', () => {
-    // Malformed frontmatter: no closing ---
     const content = '---\ntitle: Orphaned\n\n# Heading\n\nBody.';
-    // No closing ---, so frontmatter is not recognized — falls to heading
     expect(extractPageTitle(content, 'filename')).toBe('Heading');
   });
 
   test('trims ## and deeper headings — only # heading used', () => {
     const content = '## Second Level\n\n### Third Level\n\nBody.';
-    // No # heading, falls to filename
     expect(extractPageTitle(content, 'filename')).toBe('filename');
   });
 
@@ -106,9 +98,6 @@ describe('extractHeadings', () => {
   });
 
   test('ignores `#` comments inside fenced code blocks (parity with TipTap DOM output)', () => {
-    // Mirrors the shape of specs/2026-04-11-electron-desktop-app/SPEC.md §8.9 where
-    // a `# electron-builder.yml` YAML comment inside a ```yaml fence was being
-    // mis-counted as a level-1 heading, shifting every subsequent outline index by one.
     const content = [
       '# Top',
       '',
@@ -236,7 +225,6 @@ describe('GET /api/pages', () => {
           expect.objectContaining({ docName: 'root', title: 'Root' }),
         ]),
       );
-      // Verify new fields are present
       for (const page of body.pages ?? []) {
         expect(typeof page.size).toBe('number');
         expect(typeof page.modified).toBe('string');

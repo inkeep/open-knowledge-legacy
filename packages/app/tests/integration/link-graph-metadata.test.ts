@@ -1,7 +1,3 @@
-/**
- * Integration test: /api/link-graph returns frontmatter metadata (cluster, category, tags)
- * on doc nodes when present.
- */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';

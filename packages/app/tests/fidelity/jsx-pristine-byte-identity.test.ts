@@ -1,18 +1,3 @@
-/**
- * I12: Pristine jsxComponent byte-identity.
- *
- * For each block-form built-in component fixture, serialize(parse(md)) === md
- * (byte-exact) when no user edit has occurred (sourceDirty=false).
- *
- * The γ pattern's pristine path emits sourceRaw verbatim — this test
- * verifies that the parse→serialize round-trip is byte-identical for
- * the source forms that users/agents write.
- *
- * Fixtures load from `packages/core/src/markdown/fixtures/mdx/built-ins.json`
- * via `loadBuiltInFixtures()` (18 cases: 15 block + 3 inline). The fixtures
- * are the single source of truth — I12, I13 (edited-idempotence),
- * and I15 (cross-path-consistency) all consume them.
- */
 import { describe, expect, test } from 'bun:test';
 import { loadBuiltInFixtures } from '../../../core/src/markdown/fixtures/index.ts';
 import { mdManager, mdRoundTrip, normalize } from './helpers';
@@ -39,13 +24,8 @@ describe('I12 — Pristine jsxComponent byte-identity (block form)', () => {
 });
 
 describe('γ dirty-path serialization edge cases', () => {
-  /**
-   * Helper: parse MDX, force the first jsxComponent to sourceDirty:true,
-   * then serialize — exercises the reconstruction path.
-   */
   function dirtyRoundTrip(md: string): string {
     const json = mdManager.parse(md);
-    // Walk to find jsxComponent and flip sourceDirty
     function markDirty(node: import('@tiptap/core').JSONContent): void {
       if (node.type === 'jsxComponent' && node.attrs) {
         node.attrs.sourceDirty = true;
@@ -61,17 +41,14 @@ describe('γ dirty-path serialization edge cases', () => {
   test('String attr with double quotes escapes to expression form', () => {
     const input = '<Comp title="say hello">\n\nContent\n\n</Comp>\n';
     const output = dirtyRoundTrip(input);
-    // Should produce valid JSX — not malformed quotes
     expect(output).not.toContain('title="say "');
   });
 
   test('String attr with double quotes round-trips through dirty path', () => {
-    // Manually construct input with quote-containing attr via dirty path
     const json = mdManager.parse('<Comp title="test">\n\nContent\n\n</Comp>\n');
     function setDirtyWithQuotedTitle(node: import('@tiptap/core').JSONContent): void {
       if (node.type === 'jsxComponent' && node.attrs) {
         node.attrs.sourceDirty = true;
-        // Simulate user editing the title to contain quotes
         const props = (node.attrs.props ?? {}) as Record<string, unknown>;
         props.title = 'say "hello"';
         node.attrs.props = props;
@@ -82,9 +59,7 @@ describe('γ dirty-path serialization edge cases', () => {
     }
     setDirtyWithQuotedTitle(json);
     const output = mdManager.serialize(json);
-    // The expression form should preserve the quotes
     expect(output).toContain('title={"say \\"hello\\""}');
-    // Re-parse should not degrade to rawMdxFallback
     const reParsed = mdManager.parse(output);
     function findNode(
       n: import('@tiptap/core').JSONContent,
@@ -114,7 +89,6 @@ describe('γ dirty-path serialization edge cases', () => {
     }
     setDirtyWithFalse(json);
     const output = mdManager.serialize(json);
-    // disabled={false} — NOT disabled (boolean shorthand)
     expect(output).toContain('disabled={false}');
     expect(output).not.toMatch(/disabled(?!\s*=)/);
   });

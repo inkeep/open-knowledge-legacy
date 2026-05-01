@@ -10,53 +10,32 @@ import {
 } from './ok-blob-logic';
 
 interface OkBlobProps {
-  /** Rendered width/height in px (default 48) */
   size?: number;
   className?: string;
-  /** Track mouse position with eyes (default true, disabled under prefers-reduced-motion) */
   trackMouse?: boolean;
-  /**
-   * Visual state. `'sleeping'` swaps open eyes for closed-arc eyelids, disables
-   * mouse tracking + click interactions, and floats lazy "z"s above the body —
-   * used by the document error screen so the mascot signals "taking a nap"
-   * instead of greeting the user.
-   */
   variant?: 'default' | 'sleeping';
-  /** Increment to fire a level-3 burst imperatively; 0→0 mount is a no-op. */
   celebrateSignal?: number;
 }
 
-/** Maximum eye offset from resting position, in SVG viewBox units (viewBox 0 0 30 30). */
 const MAX_EYE_OFFSET = 1.8;
 
-/** Cursor distance (px) at which eye motion saturates. Smaller = eyes hit max sooner. */
 const EYE_DIST_SCALE = 90;
 
-/** Maximum head tilt (degrees) applied as rotateX/rotateY on the wrapper. */
 const MAX_HEAD_ROTATION = 16;
 
-/** Cursor distance (px) at which head rotation saturates. */
 const HEAD_DIST_SCALE = 380;
 
-/** Eye parallax in viewBox units per degree of head rotation — eyes drift
-    opposite to head tilt to sell the "looking at you" effect. */
 const EYE_PARALLAX_FACTOR = 0.025;
 
-/** Per-frame interpolation factors. Eyes lerp faster than the head so they
-    appear to lead and the head follows — same trick that makes the cursor-
-    tracking demo feel alive. */
 const HEAD_LERP = 0.1;
 const EYE_LERP = 0.18;
 
-/** CSS perspective applied to the wrapper for 3D depth on rotateX/rotateY. */
 const PERSPECTIVE_PX = 400;
 
-/** Resting eye positions in SVG viewBox coordinates. */
 const LEFT_EYE_CX = 9.2736;
 const RIGHT_EYE_CX = 18.1799;
 const EYE_CY = 14.5244;
 
-/** Happy-eye arc geometry per level — higher levels squint tighter. */
 const HAPPY_EYE_GEOMETRY: Record<ActiveClickLevel, { halfWidth: number; apexLift: number }> = {
   1: { halfWidth: 1.5, apexLift: 2.2 },
   2: { halfWidth: 1.4, apexLift: 2.6 },
@@ -68,9 +47,6 @@ function happyEyeArc(cx: number, level: ActiveClickLevel): string {
   return `M${cx - halfWidth} ${EYE_CY + 0.3} Q${cx} ${EYE_CY - apexLift}, ${cx + halfWidth} ${EYE_CY + 0.3}`;
 }
 
-/** Closed-eyelid arc — a deeper U so the eyes read as "shut" rather than
-    "smiling." Endpoints lift slightly above the baseline so the sides of the
-    U curl up. */
 function sleepingEyeArc(cx: number): string {
   const halfWidth = 1.5;
   const dip = 1.4;
@@ -78,9 +54,6 @@ function sleepingEyeArc(cx: number): string {
   return `M${cx - halfWidth} ${EYE_CY - endpointLift} Q${cx} ${EYE_CY + dip}, ${cx + halfWidth} ${EYE_CY - endpointLift}`;
 }
 
-/** Blob's geometric center in SVG viewBox units — each particle spawns on a ring
-    around this point so the burst emerges from the body's silhouette rather than
-    from a single point on the forehead. */
 const FIREWORK_CENTER_X = 15;
 const FIREWORK_CENTER_Y = 15;
 
@@ -94,22 +67,6 @@ function particleStyle(p: FireworkParticle): CSSProperties {
   };
 }
 
-/**
- * Animated blob mascot — the OK character with blinking eyes that follow the cursor.
- *
- * Uses the actual marketing SVG. Eyes blink via CSS keyframes (`ok-blob-blink`
- * in globals.css). A continuous rAF loop lerps both the eye offset (toward
- * the cursor) and a 3D head tilt on the wrapper (rotateX/rotateY), with the
- * eyes counter-shifting slightly opposite the tilt for a parallax "looking
- * at you" effect. Respects `prefers-reduced-motion`.
- *
- * Click reaction escalates with rapid clicks. Every click bounces the group
- * (body + eyes squish together). Only rage — 3+ rapid clicks within the rage
- * window — detonates the chaotic multi-color firework (16 particles, varied
- * sizes and durations, spread across five palette colors). Levels 1 and 2
- * stay quiet on purpose so the rage reward feels earned. Level decays back
- * to idle after ~1s with no clicks.
- */
 export function OkBlob({
   size = 48,
   className,
@@ -119,9 +76,6 @@ export function OkBlob({
 }: OkBlobProps) {
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  // Single offset transform shared by all eye variants (open ellipses, happy
-  // arcs, sleeping arcs) so swapping between them doesn't jump — every eye
-  // type sits at the same cursor-followed position.
   const eyesGroupRef = useRef<SVGGElement>(null);
   const eyeOffsetRef = useRef({ x: 0, y: 0 });
   const [clickLevel, setClickLevel] = useState<ClickLevel>(0);
@@ -132,8 +86,6 @@ export function OkBlob({
   const isSleeping = variant === 'sleeping';
 
   function handleClick() {
-    // Sleeping blob doesn't react — keep the mascot quietly asleep on the
-    // error screen rather than bouncing on click.
     if (isSleeping) return;
     const now =
       typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -155,9 +107,6 @@ export function OkBlob({
 
   useEffect(() => () => clearTimeout(decayTimerRef.current), []);
 
-  // Imperative celebration trigger. Initial 0 → 0 mount transition is a no-op.
-  // Sleeping blob stays asleep regardless — the parent shouldn't ask a napping
-  // mascot to throw a party.
   useEffect(() => {
     if (celebrateSignal === 0 || isSleeping) return;
     setClickLevel(3);
@@ -200,15 +149,12 @@ export function OkBlob({
 
       const rect = svg.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
-      // Eyes sit at roughly y=14.5 in a 30-unit viewBox, so ~48% down
       const centerY = rect.top + rect.height * 0.48;
 
       const dx = mouseX - centerX;
       const dy = mouseY - centerY;
       const dist = Math.hypot(dx, dy);
 
-      // Head rotation — rotateY follows horizontal cursor, rotateX follows
-      // vertical (negated so the face tilts up when the cursor is above).
       const normX = Math.max(-1, Math.min(1, dx / HEAD_DIST_SCALE));
       const normY = Math.max(-1, Math.min(1, dy / HEAD_DIST_SCALE));
       const targetRotY = normX * MAX_HEAD_ROTATION;
@@ -217,8 +163,6 @@ export function OkBlob({
       currentRotY += (targetRotY - currentRotY) * HEAD_LERP;
       wrapper.style.transform = `perspective(${PERSPECTIVE_PX}px) rotateX(${currentRotX.toFixed(3)}deg) rotateY(${currentRotY.toFixed(3)}deg)`;
 
-      // Eye offset toward cursor, then parallax counter-shift opposite to head
-      // so the eyes appear to look further than the head turns.
       let targetEyeX = 0;
       let targetEyeY = 0;
       if (dist >= 1) {
@@ -251,11 +195,6 @@ export function OkBlob({
     };
   }, [trackMouse, isSleeping]);
 
-  // Re-apply the last-known eye offset after every render — the body+eyes
-  // group remounts on each click (clickSeq key) so the bounce keyframes
-  // replay, and without this the freshly-mounted eyes group would paint at
-  // resting for one frame before the next rAF tick. Runs synchronously
-  // before paint so there's no visible flash.
   useLayoutEffect(() => {
     const g = eyesGroupRef.current;
     if (!g) return;

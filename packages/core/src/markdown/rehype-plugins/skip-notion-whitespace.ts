@@ -1,23 +1,3 @@
-/**
- * rehype plugin: handle Notion's whitespace-preserve HTML pattern.
- *
- * Notion inserts a `<!-- notionvc: ... -->` conditional comment in its
- * clipboard HTML and uses literal `\n` characters inside `<span>`s as
- * visible hard-break markers — Notion's renderer collapses them with
- * `white-space: pre-wrap`, but once rehype-remark collapses whitespace
- * those breaks are lost.
- *
- * This plugin runs in two modes:
- *   1. Detect the `notionvc:` comment → mark a tree flag so downstream
- *      consumers know Notion is the source (useful for telemetry).
- *   2. Replace literal `\n` inside text nodes with hast `br` elements,
- *      scoped to trees carrying the Notion marker. This preserves
- *      Notion's line-break semantics in the resulting mdast.
- *
- * Reference: BlockNote's `normalizeWhitespace.ts` transformer. Our
- * implementation is narrower — we only act on trees with the Notion
- * marker, so non-Notion pastes are unchanged.
- */
 
 import type { Comment, Element, Root, Text } from 'hast';
 import type { Plugin } from 'unified';
@@ -55,7 +35,6 @@ function convertLiteralNewlinesToBreaks(node: Root | Element): void {
     }
   }
 
-  // Replace any text node containing `\n` with a sequence of text + <br>.
   const next: (Element | Text | Comment)[] = [];
   for (const child of node.children) {
     if ((child as Text).type !== 'text') {

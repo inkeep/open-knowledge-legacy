@@ -1,15 +1,3 @@
-/**
- * Guard precision: protectFromMdx() does NOT modify valid MDX constructs.
- *
- * Dual coverage with I9 (guard completeness):
- *   I9:  guard catches ALL dangerous patterns (no false negatives)
- *   This: guard passes through ALL valid patterns (no false positives)
- *
- * A guard false positive = valid MDX incorrectly guarded → parsed as
- * plain text → broken round-trip. Found after the URL-in-attr regression:
- * `<Image src="https://url" />` was guarded because the stray-`/` check
- * matched `/` inside the quoted URL.
- */
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
@@ -18,32 +6,24 @@ import { protectFromMdx } from './autolink-void-html-guard.ts';
 const safeWord = fc.stringMatching(/^[a-zA-Z]{2,8}$/);
 const tagName = safeWord.map((w) => w.charAt(0).toUpperCase() + w.slice(1));
 
-/** Generate valid self-closing JSX with various attribute patterns. */
 const selfClosingJsx = fc.oneof(
-  // No attrs: <Tag />
   tagName.map((name) => `<${name} />`),
-  // String attr: <Tag attr="value" />
   fc.tuple(tagName, safeWord, safeWord).map(([name, attr, val]) => `<${name} ${attr}="${val}" />`),
-  // URL attr: <Tag src="https://example.com/path?a=1&b=2" />
   fc
     .tuple(tagName, fc.constantFrom('src', 'href', 'url', 'data'))
     .map(([name, attr]) => `<${name} ${attr}="https://example.com/path/to/resource?a=1&b=2" />`),
-  // Multiple attrs: <Tag a="1" b="2" />
   fc
     .tuple(tagName, safeWord, safeWord, safeWord, safeWord)
     .map(([name, a1, v1, a2, v2]) => `<${name} ${a1}="${v1}" ${a2}="${v2}" />`),
-  // Expression attr: <Tag data={expression} />
   fc
     .tuple(tagName, safeWord, safeWord)
     .map(([name, attr, expr]) => `<${name} ${attr}={${expr}} />`),
 );
 
-/** Generate valid paired JSX. */
 const pairedJsx = fc
   .tuple(tagName, safeWord)
   .map(([name, body]) => `<${name}>\n\n${body}\n\n</${name}>`);
 
-/** Generate valid multi-line self-closing JSX. */
 const multiLineSelfClosing = fc
   .tuple(tagName, safeWord, safeWord)
   .map(([name, attr, val]) => `<${name}\n  ${attr}="${val}"\n/>`);
@@ -58,7 +38,6 @@ describe('Guard precision: valid MDX survives protectFromMdx() unchanged', () =>
       fc.assert(
         fc.property(selfClosingJsx, (mdx) => {
           const protected_ = protectFromMdx(mdx);
-          // The opening < must NOT be replaced with PUA sentinel
           expect(protected_[0]).toBe('<');
         }),
         { numRuns: NUM_RUNS, seed: 42 },
@@ -108,11 +87,6 @@ describe('Guard precision: valid MDX survives protectFromMdx() unchanged', () =>
       '<Widget\n  title="hello"\n  data="https://api.com/v1"\n/>',
       '<Callout type="warning">\n\nContent here\n\n</Callout>',
       '<Accordion title="First">\n\nContent\n\n</Accordion>',
-      // Lowercase canonical JSX descriptors — exempted via
-      // LOWERCASE_JSX_CANONICAL_TAGS in autolink-void-html-guard.ts. The
-      // exemption gates on the self-closing `/>` suffix; bare HTML void
-      // form (`<img src="x">`, no slash) stays guarded and is covered by
-      // the sibling `autolink-void-html-guard.test.ts:44, 90` cases.
       '<img src="x.png" alt="test" />',
       '<video src="v.mp4" controls />',
       '<audio src="a.mp3" controls />',

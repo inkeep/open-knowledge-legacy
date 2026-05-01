@@ -193,10 +193,6 @@ export {
   reconcile,
   splitMarkdownBlocks,
 } from './reconciliation.ts';
-// Seed scaffolder (`ok seed`) — shared module for the CLI Commander wrapper
-// and the Electron IPC handler. Deterministic plan/apply split; writes the
-// Karpathy three-layer starter + optional log.md + config.yml folders: entries.
-// See specs/2026-04-23-ok-seed-scaffold/SPEC.md.
 export {
   type ApplyError,
   type ApplyResult,

@@ -1,7 +1,3 @@
-/**
- * Shared extension list used by the editor, persistence layer, and round-trip tests.
- * Single source of truth — drift between these causes silent data corruption.
- */
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
@@ -26,47 +22,25 @@ import { WikiLink } from './wiki-link.ts';
 import { WikiLinkEmbed } from './wiki-link-embed.ts';
 
 export const sharedExtensions = [
-  // JsxComponent MUST be before StarterKit so its schema is registered.
   JsxComponent,
-  // rawMdxFallback holds raw source for blocks that fail to parse (R5/R6).
   RawMdxFallback,
-  // jsxInline at T1 Layer 3 target shape (R3) — inline MDX like <Icon />.
   JsxInline,
-  // mathInline — live-rendered inline math (Phase 3 of math spec; lifts
-  // NG-M11). Atom inline node carrying the LaTeX `formula` attr; KaTeX
-  // renders inline-flow via the app-side NodeView. Sibling of jsxInline,
-  // not a descriptor — keeps the registry "all-block" invariant.
   MathInline,
-  // WikiLink also needs to register before StarterKit.
   WikiLink,
-  // WikiLinkEmbed sits next to WikiLink — same priority ordering concern.
   WikiLinkEmbed,
-  // Unified list extension (D15) — replaces BulletListFidelity, OrderedListFidelity,
-  // ListItemFidelity, TaskList, TaskItem with a single list+listItem NodeSpec.
   List,
   ListItem,
-  // Fidelity overrides: StarterKit built-ins are disabled (e.g. bold: false)
-  // so these extensions are the active definitions, not overrides.
-  // D16: bold→strong, italic→emphasis (mark names). StarterKit disable keys stay
-  // as 'bold'/'italic' because those are TipTap extension keys, not schema names.
   EmphasisFidelity,
   StrongFidelity,
-  // R24 (US-017): override @tiptap/extension-code's `excludes: '_'`
-  // so the Code mark can coexist with emphasis/strong on the same span.
-  // CommonMark allows it; the upstream exclusion broke round-trip for
-  // `*a \`*\`*` and `_a \`_\`_` inputs.
   CodeMarkFidelity,
   CodeBlockFidelity,
   HeadingFidelity,
-  // D17: horizontalRule→thematicBreak (node name)
   ThematicBreakFidelity,
   LinkFidelity,
   HtmlBlockFidelity,
   LinkRefDefFidelity,
   HardBreakFidelity,
-  // D20: escapeMark for structurally-ambiguous backslash escapes
   EscapeMark,
-  // Verbatim source text for unsupported inline markdown constructs.
   SourceLiteralMark,
   StarterKit.configure({
     undoRedo: false,

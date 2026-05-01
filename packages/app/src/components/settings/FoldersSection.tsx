@@ -1,24 +1,3 @@
-/**
- * Folders section — schema-driven editor for the `folders[]` array.
- *
- * Uses RHF's `useFieldArray` over the same `useConfigForm(binding)` harness
- * that owns scalar fields. Per-row commit fires `commitField('folders')`,
- * which writes the WHOLE `folders[]` array atomically — matches
- * `applyFolderRulesUpsert`'s all-or-nothing semantics (no per-row partial
- * success machinery).
- *
- * New rows with empty `match` fail Zod `FolderRuleSchema.match.min(1)`
- * client-side; the rejection mirrors into `form.setError('folders.${i}.match', ...)`
- * via the harness, and the row stays in error state until the user types a
- * valid value. No Y.Text mutation lands until match is non-empty.
- *
- * Reorder via `move(from, to)` commits — folder rule order is load-bearing
- * (later rules override earlier scalars). Removal via `remove(i)` commits.
- *
- * `'use no memo'` opts the render-prop bodies out of React Compiler
- * memoization for the same reason as scalar SettingsField — destructuring
- * `ctl` (which has `.ref`) is flagged as ref-access during render.
- */
 
 import type { Config, FolderRule } from '@inkeep/open-knowledge-core';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
@@ -52,15 +31,6 @@ interface FoldersSectionProps {
 const FOLDERS_PATH = 'folders' as FieldPath<Config>;
 
 export function FoldersSection({ form, commitField, scope, flashedPath }: FoldersSectionProps) {
-  // `Config` is inferred from `z.looseObject({...})`, which carries an index
-  // signature (`[k: string]: unknown`). RHF's `FieldArrayPath<Config>`
-  // collapses under that signature and can't narrow to the literal
-  // `'folders'`, so we cast the `name` parameter through `never`. The
-  // return value is then re-typed against a `{folders: FolderRule[]}`
-  // shape so `append()`/`fields[]`/`update()` are checked element-wise
-  // (e.g. `append({wrongField: 1})` becomes a compile error). The
-  // looseObject index signature only erases narrowing on the input side;
-  // we recover element type-safety on the output side.
   const { fields, append, remove, move } = useFieldArray({
     control: form.control,
     name: 'folders' as never,
@@ -74,24 +44,14 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
   const runCommit = (): boolean => commitField(FOLDERS_PATH);
 
   const handleAdd = () => {
-    // shouldFocus: true puts focus on the first registered field of the new
-    // row — match is rendered first, so the user lands on the empty match
-    // input ready to type. No commit yet — empty match fails Zod min(1);
-    // the first commit happens on the first valid blur.
     append({ match: '', frontmatter: {} }, { shouldFocus: true });
   };
 
   const handleRemove = (i: number) => {
-    // Capture target index BEFORE remove() shifts the array.
     const remaining = fields.length - 1;
     const nextRowIndex = Math.min(i, remaining - 1);
     remove(i);
     runCommit();
-    // The focused trash button vanishes with its <li>, dropping focus to
-    // <body>. Restore focus to the trash button of the row that took the
-    // removed row's position (or the new last row), so chained deletions
-    // feel uninterrupted. When the list empties, fall back to the Add
-    // button.
     queueMicrotask(() => {
       const root = document.querySelector('[data-testid="settings-folders-section"]');
       if (!root) return;
@@ -140,7 +100,6 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
           No folder rules yet. Add one to apply default frontmatter to a directory.
         </p>
       ) : (
-        // biome-ignore lint/a11y/noRedundantRoles: Tailwind v4 preflight resets `list-style: none`, which strips the implicit list role in Safari VoiceOver. Tailwind docs explicitly recommend `role="list"` to restore positional announcements ("item 2 of 5").
         <ol className="space-y-3" role="list">
           {fields.map((entry, i) => (
             <FolderRow
@@ -201,9 +160,6 @@ function FolderRow({
   const descriptionPath = `folders.${index}.frontmatter.description` as FieldPath<Config>;
   const tagsPath = `folders.${index}.frontmatter.tags` as FieldPath<Config>;
 
-  // Aria-label for Remove uses the current match value when available.
-  // Reading via `form.getValues` keeps this in sync with user typing
-  // without needing a Controller subscription on the row level.
   const currentMatch = form.getValues(matchPath);
   const removeLabel =
     typeof currentMatch === 'string' && currentMatch.trim()
@@ -389,12 +345,6 @@ interface TagsFieldProps {
   onCommit: () => boolean;
 }
 
-/**
- * TagPillInput wrapper that forwards FormControl Slot props onto the inner
- * input and commits via the harness on blur. Splitting from the inline
- * render-prop body lets us name the type-narrowing once and keep the
- * 'use no memo' opt-out scoped tight.
- */
 function TagsField({ ctl, onCommit, ...slotForwarded }: TagsFieldProps & SlotForwardedProps) {
   'use no memo';
   const value = Array.isArray(ctl.value) ? (ctl.value as string[]) : [];

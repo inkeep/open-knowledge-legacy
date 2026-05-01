@@ -1,9 +1,3 @@
-/**
- * Tests for R23 autolink + void-HTML regression fix.
- *
- * Verifies that `<https://example.com>` and `<br>` parse without crashing
- * (the 2 regressions surfaced by R1 probe).
- */
 import { describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
@@ -70,33 +64,22 @@ describe('R23: invalid JSX opener recovery', () => {
   });
 });
 
-/**
- * Exhaustive `<` context coverage — every position where `<` can appear in
- * real-world content. Guards against the class of bug where a new remark
- * plugin claims `<` in a context the R23 guard didn't anticipate.
- *
- * Added after PR #95: bare `<letter` without closing `>` crashed remark-mdx.
- */
 describe('R23 guard: exhaustive < context coverage', () => {
   const mustNotThrow: Array<[string, string]> = [
-    // Autolinks (existing coverage — included for completeness)
     ['<https://example.com>', 'autolink https'],
     ['<mailto:a@b.com>', 'autolink mailto'],
     ['<ftp://files.x/p>', 'autolink ftp'],
 
-    // Void HTML
     ['<br>', 'void br'],
     ['<hr>', 'void hr'],
     ['<img src="x">', 'void img with attr'],
     ['<br/>', 'self-closing br'],
     ['<br />', 'self-closing br with space'],
 
-    // Lowercase HTML (opening + closing)
     ['<div>content</div>', 'div block'],
     ['<span>inline</span>', 'span inline'],
     ['<p>paragraph</p>', 'p tag'],
 
-    // Uppercase JSX (must still parse as MDX)
     ['<Callout>body</Callout>', 'paired MDX'],
     ['<Note>text</Note>', 'paired MDX inline'],
     ['<Icon />', 'self-closing MDX'],
@@ -106,7 +89,6 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['<Chart data="https://api.example.com/v1" />', 'self-closing with URL path in attr'],
     ['<Link href="/path/to/page" />', 'self-closing with relative path in attr'],
 
-    // Bare < (the PR #95 regression class — must NOT crash)
     ['<', 'bare < at EOF'],
     ['< ', 'bare < + space'],
     ['<\n', 'bare < + newline'],
@@ -117,19 +99,16 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['<Foo', 'unclosed <Uppercase'],
     ['<foo>', 'lowercase tag (closed)'],
 
-    // HTML comments
     ['<!-- comment -->', 'HTML comment'],
     ['<!-- <nested> -->', 'HTML comment with angle brackets'],
     ['<!--\nmultiline\n-->', 'multiline HTML comment'],
 
-    // Mixed patterns
     ['<b>bold</b> and <foo unclosed', 'valid HTML + bare <'],
     ['if (x < y) return', 'code-like comparison'],
     ['a < b && c > d', 'double comparison'],
     ['<Callout>see <https://url></Callout>', 'MDX + autolink inside'],
     ['<Note>has <br> inside</Note>', 'MDX + void HTML inside'],
 
-    // Edge cases
     ['<<<', 'triple <'],
     ['<><>', 'empty angle pairs'],
     ['<{expr}>', 'JSX expression-like'],
@@ -139,30 +118,25 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['<_', 'bare underscore-start unclosed'],
     ['<$', 'bare dollar-start unclosed'],
 
-    // Realistic prose
     ['The value is <unknown at this time', 'prose with <word'],
     ['Use Ctrl+< to go back', 'keyboard shortcut'],
     ['Template: <placeholder>', 'template-like'],
     ['Compare: 3 <foo> 5', 'comparison with word in angles'],
 
-    // Incomplete close tags (guard protects these)
     ['</', 'bare </ at EOF'],
     ['</foo', 'incomplete close tag'],
     ['</Callout', 'incomplete uppercase close tag'],
 
-    // Bare { — unmatched (guard protects these)
     ['{', 'bare { at EOF'],
     ['{ ', 'bare { + space'],
     ['text {', 'text then bare {'],
     ['{ unclosed', 'unclosed {'],
     ['a{b', 'inline {letter'],
     ['{a', 'bare {letter at EOF'],
-    // Consecutive/nested unmatched braces
     ['{{', 'double {'],
     ['{{{', 'triple {'],
     ['{a{b', 'nested unmatched {'],
 
-    // Valid MDX expressions (must still work)
     ['{expression}', 'valid MDX expression'],
     ['{/* comment */}', 'MDX comment expression'],
     ['{}', 'empty MDX expression'],
@@ -170,7 +144,6 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['{true}', 'boolean MDX expression'],
     ['{{}}', 'nested matched braces'],
 
-    // Mixed < and {
     ['<foo and {bar', 'bare < and bare { together'],
     ['<Callout>{content}</Callout>', 'MDX with expression inside'],
     ['{expression} and <br>', 'expression + void HTML'],
@@ -183,21 +156,6 @@ describe('R23 guard: exhaustive < context coverage', () => {
   }
 });
 
-/**
- * US-009 / R6a — safeText escape idempotency for CommonMark §2.4 punctuation.
- *
- * Root cause (discovered during /implement): the R23 brace protector
- * PUA-substituted `{` unconditionally, including backslash-escaped braces.
- * remark-parse then couldn't consume the `\<PUA>` escape (PUA isn't in §2.4),
- * leaving text value `\{` on restore. mdast-util-to-markdown escaped BOTH
- * chars → `\\\{`, accumulating +2 backslashes per round-trip. The guard now
- * skips stack operations for `{`/`}` with odd preceding backslashes, letting
- * remark-parse handle the escape naturally; position-slice tags escapedChars;
- * the text handler re-emits `\{` on serialize. Idempotent.
- *
- * Closes HTML blocks CDATA idempotence (§8.3 CommonMark — blocks type 4
- * where `<![CDATA[` falls through to text and inline braces surface).
- */
 describe('R6a: safeText idempotency for §2.4 ambiguous chars', () => {
   const CHARS_AC = ['\\', '*', '_', '#', '<', '>', '{', '}'];
 
@@ -222,7 +180,6 @@ describe('R6a: safeText idempotency for §2.4 ambiguous chars', () => {
       s = roundTrip(s);
       outputs.push(s);
     }
-    // After the first round we must reach a fixed point.
     expect(new Set(outputs).size).toBe(1);
   });
 
@@ -242,34 +199,25 @@ describe('R6a: safeText idempotency for §2.4 ambiguous chars', () => {
     const r1 = roundTrip(cdata);
     const r2 = roundTrip(r1);
     expect(r2).toBe(r1);
-    // A braces' escape-count should not grow between rounds.
     const countBs = (s: string) => (s.match(/\\\\/g) ?? []).length;
     expect(countBs(r2)).toBe(countBs(r1));
   });
 
   test('escaped brace in MDX-adjacent context preserves escape', () => {
-    // `\{expression}` — the escape means remark-mdx must not see
-    // `{expression}` as an expression. After R23 skip-escaped-brace,
-    // the first `{` is escaped and `}` is unpaired → no expression formed.
     const md = 'prose \\{expression}\n';
     const r1 = roundTrip(md);
     const r2 = roundTrip(r1);
     expect(r2).toBe(r1);
-    // The escaped brace remains backslash-escaped (not PUA-leaked).
     expect(r1).toContain('\\{');
   });
 
   test('unmatched brace still protected (no crash) — fix does not regress R23', () => {
-    // Unescaped unmatched `{` must still crash-protect via PUA sentinel.
     expect(() => mdManager.parse('prose {unclosed\n')).not.toThrow();
     expect(() => mdManager.parse('unclosed}\nprose\n')).not.toThrow();
     expect(() => mdManager.parse('{nested {unclosed\n')).not.toThrow();
   });
 
   test('literal backslash before matched pair is still a literal', () => {
-    // `\\{a}` — the `\\` is the escape for backslash (producing literal `\`),
-    // then `{a}` is a balanced expression. Don't accidentally treat `\\{` as
-    // an escaped brace.
     expect(() => mdManager.parse('\\\\{a}\n')).not.toThrow();
   });
 });

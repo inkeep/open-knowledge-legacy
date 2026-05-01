@@ -8,9 +8,6 @@ import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@
 import { useEffect, useId, useRef } from 'react';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 
-/* ---------------------------------------------------------------------------
- * Menu items
- * --------------------------------------------------------------------------- */
 
 interface SlashCommandItem {
   name: string;
@@ -280,9 +277,6 @@ function filterItems(items: SlashCommandItem[], query: string): SlashCommandItem
   );
 }
 
-/* ---------------------------------------------------------------------------
- * SlashCommandMenu
- * --------------------------------------------------------------------------- */
 
 const CATEGORY_LABELS: Record<string, string> = {
   basic: 'Basic blocks',
@@ -376,7 +370,6 @@ function SlashMenuGroup({
   onSelect: (item: SlashCommandItem) => void;
 }) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox pattern requires role="group" — <fieldset> is non-standard inside role="listbox"
     <div role="group" aria-labelledby={`${listboxId}-group-${cat.key}`}>
       <div
         id={`${listboxId}-group-${cat.key}`}
@@ -414,9 +407,6 @@ function SlashMenuGroup({
   );
 }
 
-/* ---------------------------------------------------------------------------
- * DemoSlashCommand — TipTap extension using tippy.js for positioning
- * --------------------------------------------------------------------------- */
 
 const slashCommandKey = new PluginKey('demoSlashCommand');
 

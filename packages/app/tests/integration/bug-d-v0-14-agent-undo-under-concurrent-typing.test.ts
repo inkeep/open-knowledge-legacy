@@ -1,24 +1,3 @@
-/**
- * SKIP-GUARDED: UNSKIP when V0-14 wires per-agent UM + agent-undo handler.
- *
- * These tests assert that the post-undo rebuild preserves user's concurrent
- * XmlFragment content. Bug-D: the naive rebuild-from-Y.Text pattern
- * (syncTextToFragment) destroys concurrent user XmlFragment content on the
- * undo path — identical stomp shape to Bug-A on the forward-write path.
- *
- * This spec (2026-04-14-bridge-convergence-under-concurrent-writes) deleted
- * syncTextToFragment (FR-9) and documented the XmlFragment-authoritative fix
- * pattern (applyAgentMarkdownWrite, precedent #10). V0-14 implements the undo
- * handler using that pattern. See:
- *   - evidence/bug-d-mechanism.md for the fix template
- *   - SPEC.md §7e for the V0-14 handoff
- *   - applyAgentMarkdownWrite in agent-sessions.ts as the V0-14 pickup template
- *
- * Test 1 (D-iso-1): Pure mechanism — syncTextToFragment with stale Y.Text
- *   destroys XmlFragment content.
- * Test 2 (D-iso-2): V0-14 realistic flow — post-undo syncTextToFragment
- *   destroys new user XmlFragment keystroke.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -27,14 +6,6 @@ import * as Y from 'yjs';
 
 import { mdManager, schema } from './test-harness';
 
-// ─────────────────────────────────────────────────────────────
-// Local replica of syncTextToFragment (agent-sessions.ts:53-86)
-//
-// We replicate this rather than importing the real one because the
-// real function takes a Hocuspocus `Document` (extends Y.Doc with
-// .name, awareness, etc.). The core logic is identical — read Y.Text,
-// parse, updateYFragment, enforce canonical round-trip.
-// ─────────────────────────────────────────────────────────────
 
 function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFragment): void {
   const fullText = ytext.toString();
@@ -44,7 +15,6 @@ function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFr
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(doc, xmlFragment, pmNode, meta);
 
-  // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
   const canonicalBody = mdManager.serialize(
     yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
   );
@@ -55,12 +25,10 @@ function syncTextToFragmentLocal(doc: Y.Doc, ytext: Y.Text, xmlFragment: Y.XmlFr
   }
 }
 
-/** Serialize XmlFragment → markdown string. */
 function serializeFrag(fragment: Y.XmlFragment): string {
   return mdManager.serialize(yXmlFragmentToProseMirrorRootNode(fragment, schema).toJSON());
 }
 
-/** Apply markdown content to XmlFragment via updateYFragment. */
 function applyToFragment(
   doc: Y.Doc,
   xmlFragment: Y.XmlFragment,
@@ -75,13 +43,9 @@ function applyToFragment(
   }, origin);
 }
 
-// ═════════════════════════════════════════════════════════════
-// Test 1: PURE MECHANISM — syncTextToFragment with stale Y.Text
-// ═════════════════════════════════════════════════════════════
 
 describe('Bug-D mechanism isolation', () => {
   test('D-iso-1: syncTextToFragment with stale Y.Text destroys XmlFragment content', () => {
-    // ── Setup: fresh Y.Doc, seed both sides to a baseline ──
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
     const xmlFragment = doc.getXmlFragment('default');
@@ -93,7 +57,6 @@ describe('Bug-D mechanism isolation', () => {
     }, 'seed-text');
     applyToFragment(doc, xmlFragment, baseline, 'seed-frag');
 
-    // Verify both sides match at baseline.
     const ytextAfterSeed = ytext.toString();
     const fragAfterSeed = serializeFrag(xmlFragment);
     console.log('─── D-iso-1: STEP 1 — baseline seeded ───');
@@ -102,8 +65,6 @@ describe('Bug-D mechanism isolation', () => {
     expect(ytextAfterSeed).toContain('original paragraph');
     expect(fragAfterSeed).toContain('original paragraph');
 
-    // ── Diverge: mutate XmlFragment ONLY (simulates user typing in WYSIWYG) ──
-    // No Observer A, no Y.Text update. This is the pre-Observer-A-debounce window.
     const userMd = '# Baseline\n\noriginal paragraph\n\nuser typed this in WYSIWYG\n';
     applyToFragment(doc, xmlFragment, userMd, 'user-wysiwyg');
 
@@ -115,8 +76,6 @@ describe('Bug-D mechanism isolation', () => {
     expect(fragAfterUserEdit).toContain('user typed this in WYSIWYG');
     expect(ytextAfterUserEdit).not.toContain('user typed this in WYSIWYG');
 
-    // ── Call syncTextToFragment (the mechanism under test) ──
-    // This reads Y.Text (still at baseline), parses, and rebuilds XmlFragment.
     console.log('─── D-iso-1: STEP 3 — calling syncTextToFragment ───');
     syncTextToFragmentLocal(doc, ytext, xmlFragment);
 
@@ -126,7 +85,6 @@ describe('Bug-D mechanism isolation', () => {
     console.log('  Y.Text:', JSON.stringify(ytextFinal));
     console.log('  XmlFrag:', JSON.stringify(fragFinal));
 
-    // ── VERDICT ──
     const userContentSurvived = fragFinal.includes('user typed this in WYSIWYG');
     console.log(
       '─── D-iso-1: VERDICT — user content survived in XmlFragment:',
@@ -134,26 +92,16 @@ describe('Bug-D mechanism isolation', () => {
       '───',
     );
 
-    // If Bug-D mechanism is real: XmlFragment was rebuilt from Y.Text (baseline
-    // only), so "user typed this in WYSIWYG" is gone.
-    // The test PASSES if the user content is destroyed (confirming the bug).
     expect(fragFinal).not.toContain('user typed this in WYSIWYG');
     expect(fragFinal).toContain('original paragraph');
   });
 
-  // ═══════════════════════════════════════════════════════════
-  // Test 2: V0-14 REALISTIC FLOW — undo after agent write
-  //         destroys concurrent user's new XmlFragment keystroke
-  // ═══════════════════════════════════════════════════════════
 
   test('D-iso-2: V0-14 flow — post-undo syncTextToFragment destroys new user XmlFragment keystroke', () => {
     const doc = new Y.Doc();
     const ytext = doc.getText('source');
     const xmlFragment = doc.getXmlFragment('default');
 
-    // ── Step A: Seed both sides to user's pre-existing content ──
-    // This represents the state AFTER Observer A has synced — both sides
-    // have the user's content. No divergence yet.
     const userBeforeAgent = '# Document\n\nuser paragraph before agent\n';
 
     doc.transact(() => {
@@ -169,17 +117,11 @@ describe('Bug-D mechanism isolation', () => {
     expect(ytextA).toContain('user paragraph before agent');
     expect(fragA).toContain('user paragraph before agent');
 
-    // ── Step B: Create UndoManager BEFORE agent write ──
-    // Tracks 'agent-write' origin. This is what V0-14 will use.
     const um = new Y.UndoManager(ytext, {
       trackedOrigins: new Set(['agent-write']),
       captureTimeout: 0,
     });
 
-    // ── Step C: Agent writes to Y.Text + syncTextToFragment (production flow) ──
-    // In production, agent write + syncTextToFragment happen inside one transact():
-    //   dc.document.transact(() => { ytext.insert(...); syncTextToFragment(...); }, AGENT_WRITE_ORIGIN)
-    // We replicate this exactly.
     doc.transact(() => {
       const currentText = ytext.toString();
       const insertAt = currentText.length;
@@ -198,11 +140,6 @@ describe('Bug-D mechanism isolation', () => {
     expect(ytextC).toContain('user paragraph before agent');
     expect(fragC).toContain('user paragraph before agent');
 
-    // ── Step D: THE RACE — user types a NEW keystroke in XmlFragment only ──
-    // This simulates the window where the user is typing in WYSIWYG and
-    // Observer A's 50ms debounce hasn't fired yet.
-    // After this: XmlFragment has user-before + agent + new-user-chars,
-    //             Y.Text has user-before + agent (no new-user-chars).
     const fullWithNewKeystroke =
       '# Document\n\nuser paragraph before agent\n\nagent contribution\n\nnew user keystroke\n';
     applyToFragment(doc, xmlFragment, fullWithNewKeystroke, 'user-wysiwyg');
@@ -215,7 +152,6 @@ describe('Bug-D mechanism isolation', () => {
     expect(fragD).toContain('new user keystroke');
     expect(ytextD).not.toContain('new user keystroke');
 
-    // ── Step E: V0-14 invokes um.undo() — reverts agent's Y.Text items ──
     um.undo();
 
     const ytextE = ytext.toString();
@@ -223,15 +159,10 @@ describe('Bug-D mechanism isolation', () => {
     console.log('─── D-iso-2: STEP E — after um.undo() ───');
     console.log('  Y.Text:', JSON.stringify(ytextE));
     console.log('  XmlFrag:', JSON.stringify(fragE));
-    // Y.Text should be back to user-before-agent (agent content reverted).
     expect(ytextE).toContain('user paragraph before agent');
     expect(ytextE).not.toContain('agent contribution');
-    // XmlFragment should still have everything (undo only touched Y.Text).
     expect(fragE).toContain('new user keystroke');
 
-    // ── Step F: V0-14 calls syncTextToFragment after undo ──
-    // Per CLAUDE.md STOP rule: "Always call syncTextToFragment() after um.undo()."
-    // This is the Bug-D trigger.
     console.log('─── D-iso-2: STEP F — calling syncTextToFragment post-undo ───');
     syncTextToFragmentLocal(doc, ytext, xmlFragment);
 
@@ -241,7 +172,6 @@ describe('Bug-D mechanism isolation', () => {
     console.log('  Y.Text:', JSON.stringify(ytextF));
     console.log('  XmlFrag:', JSON.stringify(fragF));
 
-    // ── VERDICTS ──
     const agentContentGone = !fragF.includes('agent contribution');
     const newKeystrokeSurvived = fragF.includes('new user keystroke');
     const userBeforeSurvived = fragF.includes('user paragraph before agent');
@@ -251,19 +181,10 @@ describe('Bug-D mechanism isolation', () => {
     console.log('  New user keystroke survived:', newKeystrokeSurvived);
     console.log('  User-before-agent survived:', userBeforeSurvived);
 
-    // Agent content should be gone (that's the undo intent — CORRECT behavior).
     expect(fragF).not.toContain('agent contribution');
 
-    // User-before-agent should survive (it's in Y.Text).
     expect(fragF).toContain('user paragraph before agent');
 
-    // ── THE BUG-D QUESTION ──
-    // "new user keystroke" was typed in XmlFragment AFTER the agent write.
-    // It has nothing to do with the undo. But syncTextToFragment reads Y.Text
-    // (which doesn't have it) and rebuilds XmlFragment → new keystroke DESTROYED.
-    //
-    // If Bug-D is real: this assertion PASSES (content is destroyed).
-    // If Bug-D is not real: this assertion FAILS (content survives).
     expect(fragF).not.toContain('new user keystroke');
   });
 });

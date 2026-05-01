@@ -1,24 +1,3 @@
-/**
- * Initial walk that seeds the basename index from disk. SPEC §6 FR-3b.
- *
- * The file watcher's startup walk is markdown-only — its fileIndex is
- * keyed by docName and ignores asset extensions. To populate the
- * basename index without emitting a synthetic burst of asset-create
- * events at boot, we do a separate walk here using the same admission
- * rules (ContentFilter + ASSET_EXTENSIONS).
- *
- * Symlink-following is intentional but bounded: cycles are caught via
- * a `visited` inode set, escape outside contentDir is rejected via
- * realpath check.
- *
- * Per-entry errors are classified: ENOENT stays silent (concurrent
- * rename race is legit and common), all other errno codes surface via
- * the optional `onSkip` callback so the caller can push a partial-
- * degraded subsystem indicator. Without surface, EACCES on a vault
- * subtree silently truncates the walk and every embed under that
- * subtree breaks with no log signal — reviewer flagged this as a real
- * "degraded[] unreachable" failure mode.
- */
 
 import type { Dirent } from 'node:fs';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -27,7 +6,6 @@ import { ASSET_EXTENSIONS, type BasenameIndex } from '@inkeep/open-knowledge-cor
 import type { ContentFilter } from './content-filter.ts';
 import { isSupportedAssetFile } from './doc-extensions.ts';
 
-/** Classification of why a particular entry was skipped during the walk. */
 type SeedSkipReason =
   | 'read-failed'
   | 'lstat-failed'
@@ -39,12 +17,6 @@ interface SeedOptions {
   contentDir: string;
   contentFilter?: ContentFilter;
   basenameIndex: BasenameIndex;
-  /**
-   * Fires on each non-ENOENT per-entry failure. `code` is the Node errno
-   * string (e.g. `'EACCES'`, `'EMFILE'`, `'EPERM'`) or `undefined` if
-   * the error didn't carry one. Invoked synchronously from inside
-   * `seedBasenameIndex`; keep the body light (log + increment counter).
-   */
   onSkip?(reason: SeedSkipReason, code: string | undefined, path: string): void;
 }
 

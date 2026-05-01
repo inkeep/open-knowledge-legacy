@@ -85,7 +85,6 @@ describe('parseAgentBodyFields', () => {
   test('agentName sanitized; missing defaults to "Claude"', () => {
     expect(parseAgentBodyFields({}).displayName).toBe('Claude');
     expect(parseAgentBodyFields({ agentName: '  Bob  ' }).displayName).toBe('Bob');
-    // sanitizeGitIdentity strips angle brackets + CR/LF
     expect(parseAgentBodyFields({ agentName: 'Eve<script>' }).displayName).toBe('Evescript');
     expect(parseAgentBodyFields({ agentName: 'a\nb' }).displayName).toBe('ab');
   });
