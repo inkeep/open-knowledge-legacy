@@ -987,5 +987,6 @@ export function __resetCacheForTests(): void {
   for (const docName of [...tiptapCache.keys()]) evictTiptapEditor(docName);
   for (const docName of [...cmCache.keys()]) evictCmEditor(docName);
   activityMountList = new Set();
+  activeProviderPool = null;
   // parking node lives on — it's a plain detached div with no listeners.
 }

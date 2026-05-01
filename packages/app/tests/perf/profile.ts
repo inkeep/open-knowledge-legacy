@@ -3,14 +3,16 @@
  * `bun run tests/perf/profile.ts --scenario=<name>` — scenario driver.
  *
  * Loads `./scenarios/<name>.ts`, launches a dedicated Chromium (headless by
- * default — multi-cell sweeps that lose foreground focus mid-run hit
- * setTimeout/rAF throttling that turns into false-positive cold-load
- * timeouts. Single-scenario runs that need paint/GPU diagnosis can opt in
- * with `--headed` or `OK_PERF_HEADED=1`. Cross-ref `reports/perf-profiling-
- * landscape-2026/evidence/cdp-tracing.md` for paint-event coverage.),
- * attaches a CDP session + Tracing domain, calls `scenario.run(ctx)`, drains
- * the `globalThis.__ok_perf` collector, and writes
- * `results/<scenario>.<timestamp>.json`.
+ * default), attaches a CDP session + Tracing domain, calls
+ * `scenario.run(ctx)`, drains the `globalThis.__ok_perf` collector, and
+ * writes `results/<scenario>.<timestamp>.json`.
+ *
+ * Headless is the default because multi-cell sweeps that lose foreground
+ * focus mid-run hit Chromium setTimeout/rAF throttling that turns into
+ * false-positive cold-load timeouts. Single-scenario runs that need
+ * paint/GPU diagnosis can opt in with `--headed` or `OK_PERF_HEADED=1`;
+ * cross-ref `reports/perf-profiling-landscape-2026/evidence/cdp-tracing.md`
+ * for paint-event coverage.
  *
  * Standalone Bun entry point — NO `@playwright/test` runner (D2 LOCKED —
  * retries / fixtures fight perf-measurement stability). Mirrors the

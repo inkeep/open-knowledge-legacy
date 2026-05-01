@@ -3,9 +3,10 @@
  *
  * Each scenario is a standalone module that default-exports the result of
  * `defineScenario({ name, run })`. The `profile.ts` CLI loads the module,
- * launches a dedicated Playwright Chromium (headed — required for GPU/paint
- * events per cdp-tracing.md guidance), attaches a CDP session + tracing,
- * and calls `scenario.run(ctx)`.
+ * launches a dedicated Playwright Chromium (headless by default; opt into
+ * headed via `--headed` or `OK_PERF_HEADED=1` for paint/GPU diagnosis where
+ * the headless browser drops some events), attaches a CDP session +
+ * tracing, and calls `scenario.run(ctx)`.
  *
  * The scenario's `run` function drives the browser to reproduce its symptom
  * and returns any symptom-specific fields it wants merged into the canonical

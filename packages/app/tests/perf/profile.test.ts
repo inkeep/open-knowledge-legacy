@@ -1,14 +1,14 @@
 /**
  * Unit tests for the perf-scenario CLI driver — focused on the launch-mode
- * defaults that drive M3/M5-style multi-cell sweeps.
+ * defaults that drive multi-cell sweeps.
  *
  * Why these tests exist: a multi-minute headed sweep that loses foreground
  * focus mid-run hits Chromium's setTimeout/rAF throttle (>1 s per tick),
  * which stretches effect-driven editor mounts past the scenario timeout and
- * shows up as "cold-load failed" on cells that render in 166-1508 ms when
- * run headless. The default landing on headless eliminates that failure
- * mode for sweeps; explicit `--headed` (or `OK_PERF_HEADED=1`) opts back in
- * for paint/GPU diagnosis on a single-scenario run.
+ * shows up as "cold-load failed" on cells that render in well under 2 s
+ * when run headless. The default landing on headless eliminates that
+ * failure mode for sweeps; explicit `--headed` (or `OK_PERF_HEADED=1`)
+ * opts back in for paint/GPU diagnosis on a single-scenario run.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
