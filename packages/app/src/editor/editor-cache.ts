@@ -887,41 +887,71 @@ export function setActivityMountList(docNames: readonly string[]): void {
   activityMountList = next;
 }
 
-/** Lookup the provider for a docName via either cache (they share the ref). */
+/**
+ * Provider-pool reference, set on `subscribePoolEviction` and cleared on its
+ * unsubscribe. `findProvider` walks `entries` here (not just the V2 cache) so
+ * providers for pool-resident-but-not-V2-cached docs still get connect /
+ * disconnect transitions on `setActivityMountList` calls. Without this
+ * fallback, the demote path silently skipped when a doc was defer-mounted +
+ * V2-cache-rejected (e.g. `BYTES_CACHE_THRESHOLD` reject for multi-MB docs at
+ * small `ACTIVITY_MOUNT_LIMIT`), leaving the provider connected and draining
+ * peer bytes into the local Y.Doc indefinitely.
+ */
+let activeProviderPool: {
+  entries: ReadonlyMap<string, { provider: HocuspocusProvider }>;
+} | null = null;
+
+/** Lookup the provider for a docName: V2 cache first (shared ref), pool fallback. */
 function findProvider(docName: string): HocuspocusProvider | null {
   const tip = tiptapCache.get(docName);
   if (tip) return tip.provider;
   const cm = cmCache.get(docName);
   if (cm) return cm.provider;
+  if (activeProviderPool) {
+    const entry = activeProviderPool.entries.get(docName);
+    if (entry) return entry.provider;
+  }
   return null;
 }
 
 /**
  * Subscribe the editor cache to a pool's eviction events. Returns an
- * unsubscribe function (call on pool teardown to drop the listener).
+ * unsubscribe function (call on pool teardown to drop the listener and
+ * clear the cached pool reference).
  *
- * The subscription is the load-bearing mechanism that keeps cached
- * `Editor` / `EditorView` instances from outliving the Y.Doc they're
- * bound to. The pool fires an event on every eviction; the cache
- * subscribes once at construction time so the pool stays free of
- * editor-cache imports.
+ * Two responsibilities:
+ *  1. Eviction propagation — the pool fires `onEvict(docName)`; the cache
+ *     destroys any cached editor for that doc so `Editor` / `EditorView`
+ *     instances cannot outlive the Y.Doc they're bound to.
+ *  2. Pool fallback for `findProvider` — the pool's `entries` map is stashed
+ *     so `setActivityMountList` can disconnect providers for pool-resident-
+ *     but-not-V2-cached docs (FR3b correctness under defer-mount + small
+ *     `ACTIVITY_MOUNT_LIMIT`).
  *
  * The cache must be subscribed BEFORE the pool can fire any eviction
  * event. The intended call site is right after `new ProviderPool(...)`
  * in `DocumentContext.tsx`, on the `getPool(collabUrl)` path.
  *
- * Safe to call multiple times (idempotent on the underlying Set). The
- * unsubscribe closure captures the specific listener identity, so
- * calling unsubscribe doesn't tear down listeners registered by other
- * callers.
+ * Single-pool semantic: the most-recent subscription's pool is the one
+ * `findProvider` falls back to. In production there's exactly one
+ * `ProviderPool` per `collabUrl`, so this matches reality. Tests that need
+ * isolation must `unsubscribe()` between cases.
  */
 export function subscribePoolEviction(pool: {
   onEvict: (cb: (docName: string) => void) => () => void;
+  entries: ReadonlyMap<string, { provider: HocuspocusProvider }>;
 }): () => void {
-  return pool.onEvict((docName) => {
+  activeProviderPool = pool;
+  const unsubscribeEviction = pool.onEvict((docName) => {
     evictTiptapEditor(docName);
     evictCmEditor(docName);
   });
+  return () => {
+    unsubscribeEviction();
+    if (activeProviderPool === pool) {
+      activeProviderPool = null;
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -957,5 +987,6 @@ export function __resetCacheForTests(): void {
   for (const docName of [...tiptapCache.keys()]) evictTiptapEditor(docName);
   for (const docName of [...cmCache.keys()]) evictCmEditor(docName);
   activityMountList = new Set();
+  activeProviderPool = null;
   // parking node lives on — it's a plain detached div with no listeners.
 }
