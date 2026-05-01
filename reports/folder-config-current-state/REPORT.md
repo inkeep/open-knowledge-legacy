@@ -12,7 +12,6 @@ topics:
   - MCP tool surface
   - 1P codebase
 ---
-
 # How Folder Config Works in Open Knowledge Today
 
 **Baseline:** commit `30291689` (post-`.open-knowledge/`→`.ok/` rename, post-config-edit-paths).
@@ -45,7 +44,7 @@ folders:
 
 A rule is just `{ match: <glob>, frontmatter: { title?, description?, tags?: string[] } }`. The frontmatter shape is intentionally narrow — only those three keys are first-class today.
 
-The repo's own `.ok/config.yml` ships seven rules: `specs/**`, `reports/**`, `stories/**`, `projects/**`, `tech-probes/**`, plus two subtree overrides (e.g., `specs/*/evidence/**`).
+The repo's own `.ok/config.yml` ships eight rules: five top-level (`specs/**`, `reports/**`, `stories/**`, `projects/**`, `tech-probes/**`) plus three subtree overrides (e.g., `specs/*/evidence/**`).
 
 The `folders:` array is **agent-settable** — agents can write to it via MCP. `content.dir`, server settings, etc. are not.
 
@@ -149,13 +148,13 @@ That's it. There's no inheritance walking from folder to subfolder — picomatch
 
 Every read tool funnels through `enrichPath` in [`packages/cli/src/content/enrichment.ts`](../../packages/cli/src/content/enrichment.ts). The user-facing surfaces:
 
-| Surface                       | What it shows                                         |
-|-------------------------------|-------------------------------------------------------|
-| `read_document(<path>)`       | Single doc with merged title/description/tags + backlinks + history |
-| `list_documents` / `exec("ls <dir>")` | Per-child enriched listing                    |
-| `search`                      | Per-result metadata enrichment                        |
-| Editor sidebar                | Reads frontmatter via the same enrichment             |
-| HTTP `/api/docs/*`            | Same thing under the hood                             |
+| Surface                               | What it shows                                                       |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `read_document(<path>)`               | Single doc with merged title/description/tags + backlinks + history |
+| `list_documents` / `exec("ls <dir>")` | Per-child enriched listing                                          |
+| `search`                              | Per-result metadata enrichment                                      |
+| Editor sidebar                        | Reads frontmatter via the same enrichment                           |
+| HTTP `/api/docs/*`                    | Same thing under the hood                                           |
 
 You never see `folders[]` directly. Consumers see merged frontmatter, period. The folder rules are invisible plumbing — which is the design intent.
 
@@ -238,18 +237,18 @@ These are the gaps that motivated the SPEC at PR #407:
 
 ## 9. Files to read if you want to go deeper
 
-| Concern                              | File                                                                          |
-|--------------------------------------|-------------------------------------------------------------------------------|
-| Schema (`FolderRule`, `ConfigSchema`)| [`packages/core/src/config/schema.ts`](../../packages/core/src/config/schema.ts) |
-| MCP tool (`set_folder_rule`)         | [`packages/cli/src/mcp/tools/set-folder-rule.ts`](../../packages/cli/src/mcp/tools/set-folder-rule.ts) |
-| Upsert helper (`applyFolderRulesUpsert`) | [`packages/core/src/config/apply-folder-rules-upsert.ts`](../../packages/core/src/config/apply-folder-rules-upsert.ts) |
-| Atomic write (`writeConfigPatch`)    | `packages/core/src/config/write-config-patch.ts`                              |
-| Cascade resolver (`resolveFolderFrontmatter`) | [`packages/cli/src/content/folder-rules.ts`](../../packages/cli/src/content/folder-rules.ts) |
-| File↔folder merge                    | [`packages/cli/src/content/enrichment.ts:350`](../../packages/cli/src/content/enrichment.ts) |
-| Settings UX (no folder-specific UI)  | [`packages/app/src/components/settings/SettingsPane.tsx`](../../packages/app/src/components/settings/SettingsPane.tsx) |
-| Live config transport                | [`packages/server/src/config-persistence.ts`](../../packages/server/src/config-persistence.ts) |
-| File watcher                         | [`packages/server/src/config-file-watcher.ts`](../../packages/server/src/config-file-watcher.ts) |
-| Original spec                        | [`specs/2026-04-25-config-edit-paths/SPEC.md`](../../specs/2026-04-25-config-edit-paths/SPEC.md) |
+| Concern                                       | File                                                                                                                   |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Schema (`FolderRule`, `ConfigSchema`)         | [`packages/core/src/config/schema.ts`](../../packages/core/src/config/schema.ts)                                       |
+| MCP tool (`set_folder_rule`)                  | [`packages/cli/src/mcp/tools/set-folder-rule.ts`](../../packages/cli/src/mcp/tools/set-folder-rule.ts)                 |
+| Upsert helper (`applyFolderRulesUpsert`)      | [`packages/core/src/config/apply-folder-rules-upsert.ts`](../../packages/core/src/config/apply-folder-rules-upsert.ts) |
+| Atomic write (`writeConfigPatch`)             | `packages/core/src/config/write-config-patch.ts`                                                                       |
+| Cascade resolver (`resolveFolderFrontmatter`) | [`packages/cli/src/content/folder-rules.ts`](../../packages/cli/src/content/folder-rules.ts)                           |
+| File↔folder merge                             | [`packages/cli/src/content/enrichment.ts:350`](../../packages/cli/src/content/enrichment.ts)                           |
+| Settings UX (no folder-specific UI)           | [`packages/app/src/components/settings/SettingsPane.tsx`](../../packages/app/src/components/settings/SettingsPane.tsx) |
+| Live config transport                         | [`packages/server/src/config-persistence.ts`](../../packages/server/src/config-persistence.ts)                         |
+| File watcher                                  | [`packages/server/src/config-file-watcher.ts`](../../packages/server/src/config-file-watcher.ts)                       |
+| Original spec                                 | [`specs/2026-04-25-config-edit-paths/SPEC.md`](../../specs/2026-04-25-config-edit-paths/SPEC.md)                       |
 
 ---
 
@@ -263,4 +262,4 @@ These are the gaps that motivated the SPEC at PR #407:
 
 ## 11. One-paragraph summary for handoff
 
-Open Knowledge has a single source of truth — `folders:[]` in `.ok/config.yml` — for "default frontmatter for every file matching a glob." Three editors converge on it (an MCP tool, the editor's Settings pane, and direct YAML edit). Reads pass through one helper (`enrichPath`) that calls one matcher (`resolveFolderFrontmatter`) that walks rules in declaration order — last-wins for scalars, concat-and-dedupe for tags — and then layers the file's own frontmatter on top. There is no per-file sidecar, no nested folder-config files, and no concept of templates. The mechanism is small, well-tested, and load-bearing in ~50 dogfood docs today. Evolving it means either extending the schema (more keys per rule) or relocating the storage (out of one root YAML, into something else); either way, the read-time `enrichPath` indirection means consumers don't have to change.
+Open Knowledge has a single source of truth — `folders:[]` in `.ok/config.yml` — for "default frontmatter for every file matching a glob." Three editors converge on it (an MCP tool, the editor's Settings pane, and direct YAML edit). Reads pass through one helper (`enrichPath`) that calls one matcher (`resolveFolderFrontmatter`) that walks rules in declaration order — last-wins for scalars, concat-and-dedupe for tags — and then layers the file's own frontmatter on top. There is no per-file sidecar, no nested folder-config files, and no concept of templates. The mechanism is small, well-tested, and load-bearing in \~50 dogfood docs today. Evolving it means either extending the schema (more keys per rule) or relocating the storage (out of one root YAML, into something else); either way, the read-time `enrichPath` indirection means consumers don't have to change.
