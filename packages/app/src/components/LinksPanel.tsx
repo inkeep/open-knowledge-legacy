@@ -1,3 +1,11 @@
+import {
+  type BacklinkEntry,
+  BacklinksSuccessSchema,
+  type ForwardLinkDocEntry,
+  type ForwardLinkEntry,
+  ForwardLinksSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowUpRight,
@@ -24,62 +32,55 @@ import {
 } from '@/components/ui/panel';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { HttpResponseParseError } from '@/editor/http-client';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { cn } from '@/lib/utils';
 import { resolveTargetNavigationIntent } from './target-navigation-intent';
 
 const INITIAL_VISIBLE = 5;
 
-interface BacklinkItem {
-  source: string;
-  anchor: string | null;
-  title: string;
-  snippet: string | null;
-}
-
-interface BacklinksResponse {
-  ok: boolean;
-  backlinks?: BacklinkItem[];
-  error?: string;
-}
-
-interface DocumentForwardLinkItem {
-  kind: 'doc';
-  docName: string;
-  anchor: string | null;
-  title: string;
-  snippet: string | null;
-}
-
-interface ExternalForwardLinkItem {
-  kind: 'external';
-  url: string;
-  title: string;
-  snippet: string | null;
-}
-
-type ForwardLinkItem = DocumentForwardLinkItem | ExternalForwardLinkItem;
-
-interface ForwardLinksResponse {
-  ok: boolean;
-  forwardLinks?: ForwardLinkItem[];
-  error?: string;
-}
-
-async function fetchBacklinks(docName: string): Promise<BacklinkItem[]> {
+async function fetchBacklinks(docName: string): Promise<BacklinkEntry[]> {
   const res = await fetch(`/api/backlinks?docName=${encodeURIComponent(docName)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as BacklinksResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load backlinks');
-  return data.backlinks ?? [];
+  const body = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        `Failed to parse backlinks error response (HTTP ${res.status})`,
+        { status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
+  }
+  const success = BacklinksSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Backlinks response did not match expected shape.', {
+      status: res.status,
+    });
+  }
+  return success.data.backlinks;
 }
 
-async function fetchForwardLinks(docName: string): Promise<ForwardLinkItem[]> {
+async function fetchForwardLinks(docName: string): Promise<ForwardLinkEntry[]> {
   const res = await fetch(`/api/forward-links?docName=${encodeURIComponent(docName)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as ForwardLinksResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load outgoing links');
-  return data.forwardLinks ?? [];
+  const body = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        `Failed to parse forward-links error response (HTTP ${res.status})`,
+        { status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
+  }
+  const success = ForwardLinksSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Forward-links response did not match expected shape.', {
+      status: res.status,
+    });
+  }
+  return success.data.forwardLinks;
 }
 
 function compactDocPath(docName: string): string {
@@ -347,7 +348,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
     queryFn: () => fetchForwardLinks(docName),
     enabled: !pagesLoading && pages.has(docName),
   });
-  const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
+  const [createTarget, setCreateTarget] = useState<ForwardLinkDocEntry | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [prevDocName, setPrevDocName] = useState(docName);
   if (prevDocName !== docName) {
@@ -374,7 +375,7 @@ function ForwardLinksSection({ docName }: { docName: string }) {
           }
         : folderIndexCreateSeed(createDialogIntent);
 
-  function renderRow(link: ForwardLinkItem) {
+  function renderRow(link: ForwardLinkEntry) {
     if (link.kind === 'external') {
       const titleIsUrl = link.title === link.url;
       return (
