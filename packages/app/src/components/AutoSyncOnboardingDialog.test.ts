@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 const HERE = new URL('.', import.meta.url).pathname;
 const SRC = readFileSync(join(HERE, 'AutoSyncOnboardingDialog.tsx'), 'utf8');
+const SYNC_API_SRC = readFileSync(join(HERE, '..', 'lib', 'sync-api.ts'), 'utf8');
 
 describe('AutoSyncOnboardingDialog module', () => {
   test('exports AutoSyncOnboardingDialog component', async () => {
@@ -22,15 +23,19 @@ describe('AutoSyncOnboardingDialog module', () => {
 
 describe('AutoSyncOnboardingDialog source-level guards', () => {
   test('both choices persist through the sync enabled API', () => {
-    expect(SRC).toContain('/api/sync/set-enabled');
-    expect(SRC).toContain('setSyncEnabled(true)');
-    expect(SRC).toContain('setSyncEnabled(false)');
+    // The transport now lives in @/lib/sync-api so both call sites (this dialog
+    // + useEnableSyncWithConfirm) share one error/CSRF surface.
+    expect(SRC).toContain("from '@/lib/sync-api'");
+    expect(SYNC_API_SRC).toContain('/api/sync/set-enabled');
+    expect(SRC).toContain('postSyncEnabled(true)');
+    expect(SRC).toContain('postSyncEnabled(false)');
     expect(SRC).not.toContain('onboardingResolvedAt');
   });
 
   test('primary action POSTs /api/sync/set-enabled with enabled:true', () => {
-    expect(SRC).toContain('/api/sync/set-enabled');
-    expect(SRC).toContain('setSyncEnabled(true)');
+    expect(SYNC_API_SRC).toContain('/api/sync/set-enabled');
+    expect(SYNC_API_SRC).toContain("method: 'POST'");
+    expect(SRC).toContain('postSyncEnabled(true)');
   });
 
   test('renders both primary and secondary buttons with stable copy', () => {

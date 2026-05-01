@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 const HERE = new URL('.', import.meta.url).pathname;
 const SRC = readFileSync(join(HERE, 'use-enable-sync-with-confirm.ts'), 'utf8');
+const SYNC_API_SRC = readFileSync(join(HERE, '..', 'lib', 'sync-api.ts'), 'utf8');
 
 describe('useEnableSyncWithConfirm module', () => {
   test('exports the hook', async () => {
@@ -46,10 +47,33 @@ describe('useEnableSyncWithConfirm source-level guards', () => {
     expect(onConfirmStart).toBeGreaterThan(-1);
     const onConfirmBody = SRC.slice(onConfirmStart);
     expect(onConfirmBody).toMatch(/applyEnabled\(\s*true\s*\)/);
+
+    // Lock down exclusivity: a future helper that calls applyEnabled(true) from
+    // outside the confirm path would bypass the dialog without this assertion.
+    const matches = SRC.match(/applyEnabled\(\s*true\s*\)/g);
+    expect(matches).toHaveLength(1);
   });
 
-  test('write goes through POST /api/sync/set-enabled', () => {
-    expect(SRC).toContain("'/api/sync/set-enabled'");
-    expect(SRC).toContain("method: 'POST'");
+  test('onConfirm awaits the write BEFORE closing the dialog', () => {
+    // Closing first would unmount EnableSyncConfirmDialog synchronously and
+    // make its in-flight UI (spinner, disabled Cancel, dismiss-blocking guard)
+    // unreachable. The await must come first.
+    const onConfirmStart = SRC.indexOf('async function onConfirm');
+    expect(onConfirmStart).toBeGreaterThan(-1);
+    const onConfirmBody = SRC.slice(onConfirmStart);
+    const awaitIdx = onConfirmBody.search(/await\s+applyEnabled\(\s*true\s*\)/);
+    const closeIdx = onConfirmBody.search(/setConfirmOpen\(\s*false\s*\)/);
+    expect(awaitIdx).toBeGreaterThan(-1);
+    expect(closeIdx).toBeGreaterThan(-1);
+    expect(awaitIdx).toBeLessThan(closeIdx);
+  });
+
+  test('write goes through POST /api/sync/set-enabled (shared helper)', () => {
+    // The transport lives in lib/sync-api.ts so the on/off-path call sites
+    // (this hook + AutoSyncOnboardingDialog) share one error/CSRF/abstraction
+    // surface.
+    expect(SRC).toContain("from '@/lib/sync-api'");
+    expect(SYNC_API_SRC).toContain("'/api/sync/set-enabled'");
+    expect(SYNC_API_SRC).toContain("method: 'POST'");
   });
 });

@@ -10,17 +10,7 @@
  */
 import { useState } from 'react';
 import { toast } from 'sonner';
-
-async function postSyncEnabled(enabled: boolean): Promise<void> {
-  const res = await fetch('/api/sync/set-enabled', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    throw new Error(`set-enabled failed: HTTP ${res.status}`);
-  }
-}
+import { postSyncEnabled } from '@/lib/sync-api';
 
 interface UseEnableSyncWithConfirmResult {
   /** Whether a request is currently in flight. */
@@ -47,6 +37,8 @@ export function useEnableSyncWithConfirm(): UseEnableSyncWithConfirmResult {
       console.error('[sync] toggle failed', e);
       toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
     }
+    // No `finally`: catch doesn't rethrow, and React Compiler can't lower
+    // try/finally yet (BabelError: TryStatement with a finalizer clause).
     setToggling(false);
   }
 
@@ -61,8 +53,12 @@ export function useEnableSyncWithConfirm(): UseEnableSyncWithConfirmResult {
   }
 
   async function onConfirm() {
-    setConfirmOpen(false);
+    // Keep the dialog open while the POST is in flight so the spinner,
+    // disabled Cancel, and dismiss-blocking guard in EnableSyncConfirmDialog
+    // are observable. Closing before the await would unmount the dialog
+    // synchronously and make those affordances dead code.
     await applyEnabled(true);
+    setConfirmOpen(false);
   }
 
   return { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm };

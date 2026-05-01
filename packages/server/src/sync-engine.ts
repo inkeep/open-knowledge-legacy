@@ -858,6 +858,7 @@ export class SyncEngine {
               '[sync] push cycle: nothing to commit (tree unchanged, origin matches HEAD)',
             );
             this.lastPushedSha = headSha;
+            this.lastSyncUtc = new Date().toISOString();
             this.transitionTo('idle');
             return;
           }

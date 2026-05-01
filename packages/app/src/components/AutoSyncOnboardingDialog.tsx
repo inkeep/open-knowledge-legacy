@@ -22,21 +22,11 @@ import {
   DialogHeader,
   Dialog as DialogRoot,
 } from '@/components/ui/dialog';
+import { postSyncEnabled } from '@/lib/sync-api';
 
 interface AutoSyncOnboardingDialogProps {
   open: boolean;
   onResolved: () => void;
-}
-
-async function setSyncEnabled(enabled: boolean): Promise<void> {
-  const res = await fetch('/api/sync/set-enabled', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    throw new Error(`set-enabled failed: HTTP ${res.status}`);
-  }
 }
 
 export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardingDialogProps) {
@@ -45,7 +35,7 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
   async function handleEnable() {
     setBusy('enable');
     try {
-      await setSyncEnabled(true);
+      await postSyncEnabled(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(`Could not enable sync: ${message}`);
@@ -59,7 +49,7 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
   async function handleDismiss() {
     setBusy('dismiss');
     try {
-      await setSyncEnabled(false);
+      await postSyncEnabled(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(`Could not save sync preference: ${message}`);

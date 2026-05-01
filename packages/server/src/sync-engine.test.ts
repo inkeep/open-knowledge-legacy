@@ -604,6 +604,35 @@ describe('SyncEngine push cycle pushes existing commits when local is ahead of o
       await engine.destroy();
     }
   });
+
+  test('records lastSyncUtc when HEAD already matches origin and tree is clean', async () => {
+    const git = simpleGit(projectDir);
+    await git.init(['--initial-branch=main']);
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    await simpleGit(bareDir).init(true);
+    await git.addRemote('origin', bareDir);
+    await git.push(['--set-upstream', 'origin', 'main']);
+
+    const head = (await git.revparse(['HEAD'])).trim();
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      await engine.trigger('push');
+
+      const status = engine.getStatus();
+      expect(status.lastPushedSha).toBe(head);
+      expect(status.lastSyncUtc).not.toBeNull();
+    } finally {
+      await engine.destroy();
+    }
+  });
 });
 
 // ─── Status shape completeness ──────────────────────────────────────────────

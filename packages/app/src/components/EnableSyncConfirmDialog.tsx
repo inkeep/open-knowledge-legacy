@@ -57,7 +57,7 @@ export function EnableSyncConfirmDialog({
           <Button onClick={onConfirm} disabled={isSubmitting}>
             {isSubmitting ? (
               <>
-                <Loader2 className="size-4 animate-spin" /> Enabling...
+                <Loader2 aria-hidden="true" className="size-4 animate-spin" /> Enabling…
               </>
             ) : (
               'Enable auto-sync'
