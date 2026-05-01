@@ -344,26 +344,40 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
     fireListeners(true);
   }
 
-  function commitYTextRegion(nextFenced: string): void {
+  /**
+   * Run an FM-region edit operation entirely inside a single
+   * `doc.transact(..., FORM_WRITE_ORIGIN)` block. The op closure receives the
+   * current fenced region (recomputed inside the transact) and returns either
+   * an `FmEditResult` describing the next fenced bytes or `null` to indicate
+   * "no commit needed". Mirrors `reorderInner`'s D12 STOP_IF discipline so
+   * any reader of the source can verify the parse-edit-stringify ↔ Y.Text
+   * write sequence is atomic without tracking call-graph order across
+   * `withCurrentFenced` + `commitYTextRegion` boundaries.
+   */
+  function commitFmEdit(op: (currentFenced: string) => FmEditResult): FmEditResult {
+    let outcome: FmEditResult | undefined;
     ydoc.transact(() => {
       // STOP_IF rule (D12): recompute region byte range INSIDE the transact
-      // so a remote peer's body edit between the listener fire and the
-      // commit doesn't leave us pointing into the body.
+      // so a remote peer's body edit between the call entry and the commit
+      // doesn't leave us pointing into the body.
       const currentFull = ytext.toString();
       const { fenced: currentFenced } = detectFmRegion(currentFull);
-      if (currentFenced === nextFenced) return;
+      outcome = op(currentFenced);
+      if (!outcome.ok) return;
+      if (outcome.nextFenced === currentFenced) return;
       // Atomic byte-range replace. For a fresh insertion (currentFenced === '')
       // the slice is empty and we insert at byte 0.
       ytext.delete(0, currentFenced.length);
-      if (nextFenced !== '') {
-        ytext.insert(0, nextFenced);
+      if (outcome.nextFenced !== '') {
+        ytext.insert(0, outcome.nextFenced);
       }
     }, FORM_WRITE_ORIGIN);
-  }
-
-  function withCurrentFenced<T>(fn: (currentFenced: string) => T): T {
-    const { fenced } = detectFmRegion(ytext.toString());
-    return fn(fenced);
+    return (
+      outcome ?? {
+        ok: false,
+        error: { kind: 'parse_failed', reason: 'commit transact produced no result' },
+      }
+    );
   }
 
   function patchInner(patch: FrontmatterPatch): FrontmatterBindingPatchResult {
@@ -395,15 +409,11 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
     const validated = parsed.data;
     const appliedKeys = Object.keys(validated);
 
-    let result!: FmEditResult;
-    withCurrentFenced((currentFenced) => {
-      result = applyPatchToFm(currentFenced, validated);
-    });
+    const result = commitFmEdit((currentFenced) => applyPatchToFm(currentFenced, validated));
     if (!result.ok) {
       return err(fmEditErrorToValidation(result.error));
     }
 
-    commitYTextRegion(result.nextFenced);
     return okPatch({ appliedKeys });
   }
 
@@ -416,15 +426,13 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
       return err({ code: 'WRITE_ERROR', detail: 'FrontmatterBinding has been disposed' });
     }
 
-    let result!: FmEditResult;
-    withCurrentFenced((currentFenced) => {
-      result = applyRenameToFm(currentFenced, oldKey, newKey, options);
-    });
+    const result = commitFmEdit((currentFenced) =>
+      applyRenameToFm(currentFenced, oldKey, newKey, options),
+    );
     if (!result.ok) {
       return err(fmEditErrorToValidation(result.error));
     }
 
-    commitYTextRegion(result.nextFenced);
     return okRename({ oldKey, newKey });
   }
 
@@ -433,28 +441,9 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
       return err({ code: 'WRITE_ERROR', detail: 'FrontmatterBinding has been disposed' });
     }
 
-    // Recompute INSIDE the transact (D12 STOP_IF). Use a closure so the
-    // applyReorderToFm sees the post-shift fenced region. We can't put
-    // commitYTextRegion's transact AROUND the parse-then-replace because
-    // applyReorderToFm needs the input fenced and produces nextFenced
-    // synchronously — so we re-detect the region inside transact and bail
-    // out if a concurrent edit invalidated the orderedKeys list.
-    let result: FmEditResult | undefined;
-    ydoc.transact(() => {
-      const currentFull = ytext.toString();
-      const { fenced: currentFenced } = detectFmRegion(currentFull);
-      result = applyReorderToFm(currentFenced, orderedKeys);
-      if (!result.ok || result.nextFenced === currentFenced) return;
-      ytext.delete(0, currentFenced.length);
-      if (result.nextFenced !== '') ytext.insert(0, result.nextFenced);
-    }, FORM_WRITE_ORIGIN);
-
-    if (!result?.ok) {
-      return err(
-        result
-          ? fmEditErrorToValidation(result.error)
-          : { code: 'WRITE_ERROR', detail: 'reorder transact produced no result' },
-      );
+    const result = commitFmEdit((currentFenced) => applyReorderToFm(currentFenced, orderedKeys));
+    if (!result.ok) {
+      return err(fmEditErrorToValidation(result.error));
     }
     return okReorder({ orderedKeys: [...orderedKeys] });
   }
@@ -503,9 +492,12 @@ export function bindFrontmatterDoc(provider: FrontmatterDocProvider): Frontmatte
  * body edits (every op at position `>= fmLength`) bail out without a parse.
  *
  * Y.js delta op shape: `{ insert?: string | object, delete?: number, retain?: number }`.
- * We track a logical cursor that advances on `retain`, and treat any
- * `insert`/`delete` whose start cursor position is `< fmLength` OR any
- * `delete` that crosses the boundary as a region touch.
+ * We track a logical cursor that advances on `retain`, and treat any op whose
+ * start cursor position is `< fmLength` as a region touch — for `delete`
+ * specifically, this is sufficient because the post-state cursor reflects
+ * positions in the resulting doc, so a delete at `cursor >= fmLength` removes
+ * bytes that were entirely in the body (the FM region had already shifted
+ * before the delete's effective offset).
  */
 function touchesFmRegion(event: Y.YTextEvent, fmLength: number): boolean {
   // Defensive: when the binding's lastFenced is empty (no FM yet), any
@@ -532,8 +524,7 @@ function touchesFmRegion(event: Y.YTextEvent, fmLength: number): boolean {
       continue;
     }
     if (typeof op.delete === 'number') {
-      const end = cursor + op.delete;
-      if (cursor < fmLength || end > fmLength) return true;
+      if (cursor < fmLength) return true;
     }
   }
   return false;

@@ -275,41 +275,45 @@ export function applyPatchToFm(
     return { ok: false, error: { kind: 'parse_failed', reason: 'fm region unparseable' } };
   }
 
-  const contents = ensureContents(doc);
+  // yaml@2's mutation API (`doc.set` / `doc.delete`) and serialization
+  // (`Document.toString`) can throw on edge-case inputs (cyclic anchors,
+  // pathological scalar shapes). Wrap the AST-touching block so the binding
+  // surface stays a total function returning `FmEditResult` — callers rely
+  // on the Result-typed contract to update UI state without try/catch.
+  try {
+    ensureContents(doc);
 
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) {
-      doc.delete(key);
-      continue;
-    }
-    const parsed = FrontmatterValueSchema.safeParse(value);
-    if (!parsed.success) {
-      return {
-        ok: false,
-        error: {
-          kind: 'invalid_value',
-          key,
-          reason: parsed.error.issues[0]?.message ?? 'invalid value',
-        },
-      };
-    }
-    const existing = contents.items?.find(
-      (item): item is Pair => isPair(item) && pairKey(item) === key,
-    );
-    if (existing) {
-      // Set in place. yaml@2's `doc.set(key, value)` REPLACES the Pair at the
-      // same source position when the key already exists, preserving order
-      // (the position invariant FR2 hinges on).
-      doc.set(key, parsed.data);
-    } else {
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) {
+        doc.delete(key);
+        continue;
+      }
+      const parsed = FrontmatterValueSchema.safeParse(value);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          error: {
+            kind: 'invalid_value',
+            key,
+            reason: parsed.error.issues[0]?.message ?? 'invalid value',
+          },
+        };
+      }
+      // yaml@2's `doc.set(key, value)` REPLACES the existing Pair at its
+      // source position when the key is already present (preserving order —
+      // FR2 relies on this) and appends a new Pair at the bottom otherwise
+      // (D15). One call covers both shapes.
       doc.set(key, parsed.data);
     }
+
+    const next = stringify(doc);
+    const sizeErr = checkRegionSize(next);
+    if (sizeErr) return { ok: false, error: sizeErr };
+    return { ok: true, nextFenced: next };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: { kind: 'parse_failed', reason: `yaml@2 threw: ${reason}` } };
   }
-
-  const next = stringify(doc);
-  const sizeErr = checkRegionSize(next);
-  if (sizeErr) return { ok: false, error: sizeErr };
-  return { ok: true, nextFenced: next };
 }
 
 /**
@@ -359,12 +363,19 @@ export function applyRenameToFm(
     }
   }
 
-  setPairKey(sourcePair, newKey);
+  // yaml@2 AST mutation + serialization can throw on pathological scalar
+  // shapes — wrap so the public surface stays a total function.
+  try {
+    setPairKey(sourcePair, newKey);
 
-  const next = stringify(doc);
-  const sizeErr = checkRegionSize(next);
-  if (sizeErr) return { ok: false, error: sizeErr };
-  return { ok: true, nextFenced: next };
+    const next = stringify(doc);
+    const sizeErr = checkRegionSize(next);
+    if (sizeErr) return { ok: false, error: sizeErr };
+    return { ok: true, nextFenced: next };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: { kind: 'parse_failed', reason: `yaml@2 threw: ${reason}` } };
+  }
 }
 
 /**
@@ -398,33 +409,40 @@ export function applyReorderToFm(
     };
   }
 
-  // For dup-name documents, reorder maps each requested key to the FIRST
-  // matching Pair in source-order, then to the SECOND, etc. — preserves
-  // 1-to-1 correspondence so a permutation across N rows of the same name
-  // still moves N distinct Pairs.
-  const remaining: Pair[] = contents.items.filter(isPair);
-  const next: Pair[] = [];
-  for (const key of orderedKeys) {
-    const idx = remaining.findIndex((p) => pairKey(p) === key);
-    if (idx === -1) {
-      return {
-        ok: false,
-        error: {
-          kind: 'reorder_mismatch',
-          expected: currentKeys,
-          got: [...orderedKeys],
-        },
-      };
+  // yaml@2 AST mutation + serialization can throw on pathological scalar
+  // shapes — wrap so the public surface stays a total function.
+  try {
+    // For dup-name documents, reorder maps each requested key to the FIRST
+    // matching Pair in source-order, then to the SECOND, etc. — preserves
+    // 1-to-1 correspondence so a permutation across N rows of the same name
+    // still moves N distinct Pairs.
+    const remaining: Pair[] = contents.items.filter(isPair);
+    const next: Pair[] = [];
+    for (const key of orderedKeys) {
+      const idx = remaining.findIndex((p) => pairKey(p) === key);
+      if (idx === -1) {
+        return {
+          ok: false,
+          error: {
+            kind: 'reorder_mismatch',
+            expected: currentKeys,
+            got: [...orderedKeys],
+          },
+        };
+      }
+      const [picked] = remaining.splice(idx, 1);
+      if (picked) next.push(picked);
     }
-    const [picked] = remaining.splice(idx, 1);
-    if (picked) next.push(picked);
-  }
-  contents.items = next;
+    contents.items = next;
 
-  const nextFenced = stringify(doc);
-  const sizeErr = checkRegionSize(nextFenced);
-  if (sizeErr) return { ok: false, error: sizeErr };
-  return { ok: true, nextFenced };
+    const nextFenced = stringify(doc);
+    const sizeErr = checkRegionSize(nextFenced);
+    if (sizeErr) return { ok: false, error: sizeErr };
+    return { ok: true, nextFenced };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: { kind: 'parse_failed', reason: `yaml@2 threw: ${reason}` } };
+  }
 }
 
 function permutationOf(a: readonly string[], b: readonly string[]): boolean {

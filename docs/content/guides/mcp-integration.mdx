@@ -63,9 +63,8 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `get_config`                                  | Always    | Read the effective merged config (defaults → user → project)                              |
 | `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
-| `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
+| `write_document`                              | Connected | Write content to a document through the CRDT (full document, including frontmatter)          |
 | `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
-| `frontmatter_patch`                           | Connected | Set / create / delete frontmatter properties via JSON Merge Patch (RFC 7396)                 |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rename_folder`                               | Connected | Rename a folder and rewrite inbound links across every affected doc in one call              |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
@@ -80,27 +79,11 @@ All 22 docName-producing tools emit `previewUrl` in their result (single-doc too
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
 
-### `frontmatter_patch` — typed property edits
+### Frontmatter writes
 
-Frontmatter is stored per-property in the CRDT — concurrent edits to *different* keys (a human editing `title` in the property panel while an agent updates `tags`) merge cleanly at the field level, no last-write-wins overwrite. Use `frontmatter_patch` to set, create, or delete properties via JSON Merge Patch (RFC 7396):
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. Agents edit frontmatter through `write_document` (full-doc replace, including the `---\n…\n---` block). The browser-side property panel uses an in-process binding to manipulate the same region directly; agent and human edits land on the same Y.Text and merge through Y.js character-level CRDT.
 
-```json
-{
-  "docName": "specs/foo/SPEC",
-  "patch": {
-    "title": "New title",
-    "tags": ["alpha", "beta"],
-    "draft": null
-  },
-  "summary": "Marked as approved"
-}
-```
-
-A key with a value sets or creates; a key with `null` deletes; missing keys are unchanged. Atomicity is reject-or-commit — if any value fails schema validation the whole patch rejects with a per-key error report.
-
-Type inference picks the widget class from value shape (ISO 8601 string → date, boolean → boolean, number → number, `string[]` → list, else text). Pass an optional `types` map to override per key — useful when an ISO 8601 string should stay as plain text instead of becoming a date.
-
-`edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `frontmatter_patch`. Body edits stay on `edit_document`; frontmatter edits route through `frontmatter_patch`. Mixing the two in one batch — body edit via `edit_document`, FM edit via `frontmatter_patch` — is the supported pattern.
+`edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `write_document`. Body edits stay on `edit_document`; frontmatter edits route through `write_document`. Mixing the two in one batch — body edit via `edit_document`, FM rewrite via `write_document` — is the supported pattern.
 
 ### `summary` on write tools
 

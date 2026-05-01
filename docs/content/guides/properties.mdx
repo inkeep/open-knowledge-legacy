@@ -31,23 +31,25 @@ If a doc has no frontmatter yet, the panel doesn't render. Use the **Add Propert
 
 You can collapse the panel as a whole with the chevron next to **Properties**. Body-content scroll position doesn't move when you do.
 
-## Concurrent edits merge per-property
+## Concurrent edits merge through the YAML region
 
-Frontmatter is stored as one CRDT entry per property, so two writers editing different properties of the same document at the same time both land cleanly. A common case: you adjust `title` in the property panel while an agent updates `tags` through the MCP `frontmatter_patch` tool — both edits stick, no last-write-wins overwrite.
+The property panel reads and writes the YAML region of the same CRDT text the source-mode editor binds to (`Y.Text('source')`). Edits land character-by-character — type a property name in the panel and a peer watching the same doc sees it letter-by-letter. Two writers editing different properties at the same time both land cleanly because their byte ranges don't overlap.
 
-Two writers editing the *same* property at the same time resolve last-writer-wins on that one key. Other properties are unaffected.
+Two writers editing the *same* property's value concurrently collapse to last-writer-wins on the overlapping bytes. Other properties are unaffected.
 
 ## Source mode still works
 
-Source mode (the YAML-and-markdown view) still edits frontmatter as plain text. Edits there propagate back into the property panel via the same per-property CRDT path, so the two views stay in sync. Comments and blank lines you write in source mode round-trip through the form: editing one property in the panel doesn't reflow the rest of the YAML.
+Source mode (the YAML-and-markdown view) edits frontmatter as plain text on the same `Y.Text('source')` the panel binds to, so the two views stay in sync automatically. Comments and blank lines you write in source mode round-trip through the form: editing one property in the panel doesn't reflow the rest of the YAML.
 
 The supported widget types cover YAML's core scalar shapes (string, number, boolean, ISO date, flat string list). Frontmatter that uses constructs outside those shapes — nested maps, custom YAML tags, anchors — round-trips through source mode unchanged but is not editable from the panel.
 
+If the YAML region is malformed (unterminated quote, misplaced colon), the panel renders the last valid state plus an inline banner asking you to fix the YAML in source mode.
+
 ## Agents
 
-Agents edit frontmatter through the [`frontmatter_patch`](/guides/mcp-integration#frontmatter_patch--typed-property-edits) MCP tool, which targets the same per-property CRDT entries the panel writes to. `edit_document`'s find-and-replace is body-only — it rejects edits that would land in the frontmatter region with an HTTP 400 and a hint pointing at `frontmatter_patch`.
+Agents edit frontmatter through `write_document` (full-doc replace, including the `---\n…\n---` block). `edit_document`'s find-and-replace is body-only — it rejects edits that would land in the frontmatter region with an HTTP 400 and a hint pointing at `write_document`.
 
 ## See also
 
-- [[mcp-integration]] — `frontmatter_patch` reference and the agent-side surface.
+- [[mcp-integration]] — agent-side surface for frontmatter writes.
 - [[timeline]] — frontmatter changes are recorded in the Timeline alongside body edits, with the same per-contributor `summary` bullets when the writer attached one.

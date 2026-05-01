@@ -108,7 +108,6 @@ interface TiptapEditorProps {
 }
 
 export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
-  const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
@@ -647,25 +646,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
     window.addEventListener(OUTLINE_NAV_EVENT, onNav);
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
   }, [editor]);
-
-  // Read frontmatter from the YAML region of `Y.Text('source')` (D8 — Y.Map
-  // metadata is no longer an FM source). The observer fires on every Y.Text
-  // change including body keystrokes; `stripFrontmatter` is cheap (regex +
-  // slice) so we don't try to bail out on body-only edits here.
-  useEffect(() => {
-    const ytext = provider.document.getText('source');
-    const readFm = (): string => {
-      const md = ytext.toString();
-      const match = md.match(/^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/);
-      return match ? match[0] : '';
-    };
-    frontmatterRef.current = readFm();
-    const observer = () => {
-      frontmatterRef.current = readFm();
-    };
-    ytext.observe(observer);
-    return () => ytext.unobserve(observer);
-  }, [provider.document]);
 
   // Publish (or clear) this tab's awareness for the doc this editor binds to.
   //

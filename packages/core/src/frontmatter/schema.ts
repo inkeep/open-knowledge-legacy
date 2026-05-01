@@ -1,8 +1,9 @@
 /**
  * Frontmatter value schemas — single source of truth for value shapes accepted
- * across the MCP `frontmatter_patch` tool, the HTTP `/api/frontmatter-patch`
- * handler, Observer B (source-mode YAML reconciliation), and disk-side YAML
- * parsing on file-watcher / load events.
+ * across the browser-side `bindFrontmatterDoc` binding (used by the property
+ * panel for direct CRDT writes to the YAML region of `Y.Text('source')`),
+ * Observer B (source-mode YAML reconciliation), and disk-side YAML parsing on
+ * file-watcher / load events.
  *
  * Five widget types: text, number, boolean, date, list. Date and text both
  * serialize to a YAML string; the distinction is metadata in a `types` map
