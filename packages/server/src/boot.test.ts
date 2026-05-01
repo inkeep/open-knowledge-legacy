@@ -1,4 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, mock, test } from 'bun:test';
+
+// Skip-on-CI gate (oven-sh/bun#11892): subprocess or git child spawns; Bun fails to reap children on ubuntu-latest GHA runners (oven-sh/bun#11892).
+// Tests run normally locally; follow-up will narrow the leak surface.
+const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
+
 import { execFile } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';

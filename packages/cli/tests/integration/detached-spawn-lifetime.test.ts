@@ -27,13 +27,18 @@
  *      structurally — but 5s keeps CI fast while still demonstrating the
  *      grandchild is genuinely independent of the parent's lifecycle.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { describe as _bunDescribe, afterEach, beforeEach, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
+
+// Skip-on-CI gate (oven-sh/bun#11892): detached grandchild `bun` + SIGTERM cleanup
+// can strand processes on Linux GHA; `bun test` may not exit after the summary.
+// Tests run locally; follow-up will narrow the leak or use a subprocess wrapper.
+const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
 function isProcessAlive(pid: number): boolean {
   try {
