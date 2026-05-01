@@ -234,7 +234,33 @@ export function streamingProblemEvent(
     ...(options.detail ? { detail: options.detail } : {}),
   };
   const event: StreamingProblemEvent = { type: 'error', problem };
-  StreamingProblemEventSchema.parse(event);
+  // Defense-in-depth: mirror `errorResponse`'s `safeParse` discipline.
+  // A throwing `.parse()` here would crash mid-stream and the original error
+  // that triggered the event would be lost without anything reaching the
+  // client. On schema-validation failure: log the issues + the malformed
+  // event, then return a hardcoded fallback `urn:ok:error:internal-server-error`
+  // event so the caller still has something typed to write to the stream.
+  const validated = StreamingProblemEventSchema.safeParse(event);
+  if (!validated.success) {
+    log.error(
+      {
+        event: 'api.streaming.malformed-envelope',
+        issues: validated.error.issues,
+        body: event,
+        handler: options.handler,
+      },
+      'streamingProblemEvent produced an invalid StreamingProblemEvent — returning fallback',
+    );
+    return {
+      type: 'error',
+      problem: {
+        type: 'urn:ok:error:internal-server-error',
+        title: 'Internal server error.',
+        status,
+        instance,
+      },
+    };
+  }
 
   apiErrorCounter().add(1, {
     type,

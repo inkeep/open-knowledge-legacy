@@ -1668,10 +1668,10 @@ export type SyncConflictsSuccess = z.infer<typeof SyncConflictsSuccessSchema>;
 
 /**
  * Request body for `POST /api/sync/resolve-conflict`. `content` is required
- * iff `strategy === 'content'`; the schema accepts an optional `content` and
- * the handler asserts the conditional after schema parse (kept simple here
- * to avoid an over-narrowed Zod refinement; the handler-level check produces
- * a typed `urn:ok:error:invalid-request` if violated).
+ * iff `strategy === 'content'` — enforced via `.refine()` so `withValidation`
+ * emits a typed `urn:ok:error:invalid-request` 400 with the field path,
+ * rather than letting the runtime check in `conflict-storage.ts` throw a
+ * generic Error that the handler's catch maps to 500.
  */
 export const SyncResolveConflictRequestSchema = z
   .object({
@@ -1679,7 +1679,11 @@ export const SyncResolveConflictRequestSchema = z
     strategy: z.enum(['mine', 'theirs', 'content']),
     content: z.string().optional(),
   })
-  .loose() satisfies StandardSchemaV1;
+  .loose()
+  .refine((d) => d.strategy !== 'content' || d.content !== undefined, {
+    message: "content is required when strategy is 'content'",
+    path: ['content'],
+  }) satisfies StandardSchemaV1;
 export type SyncResolveConflictRequest = z.infer<typeof SyncResolveConflictRequestSchema>;
 
 /**

@@ -464,8 +464,8 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
  *     handles caching policy at a different layer.
  *
  * Beyond those three divergences, the wire shape, header set, schema
- * validation behavior, and URN closed-enum discipline are identical to
- * `errorResponse(...)`.
+ * validation behavior (`safeParse` + hardcoded fallback on schema-validation
+ * failure), and URN closed-enum discipline are identical to `errorResponse(...)`.
  */
 function emitProblem(
   res: ServerResponse,
@@ -474,14 +474,41 @@ function emitProblem(
   title: string,
   detail?: string,
 ): void {
+  const instance = randomUUID();
   const body: ProblemDetails = {
     type,
     title,
     status,
-    instance: randomUUID(),
+    instance,
     ...(detail !== undefined ? { detail } : {}),
   };
-  ProblemDetailsSchema.parse(body);
+  // Defense-in-depth: `safeParse` mirrors `errorResponse`'s pass-1 hardening.
+  // The bare `http.createServer` listener has no try/catch — a throwing
+  // `.parse()` (schema tightening, hardcoded title violating `min(1)`, etc.)
+  // would crash the `ok ui` process. On validation failure, log to stderr
+  // (CLI has no Pino) and emit a hardcoded fallback so the client still gets
+  // a typed problem+json response.
+  const validated = ProblemDetailsSchema.safeParse(body);
+  if (!validated.success) {
+    console.warn('[ok ui] emitProblem produced an invalid ProblemDetails body:', {
+      issues: validated.error.issues,
+      body,
+    });
+    res.writeHead(status, {
+      'Content-Type': 'application/problem+json',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    res.end(
+      JSON.stringify({
+        type: 'urn:ok:error:internal-server-error' satisfies ProblemType,
+        title: 'Internal server error.',
+        status,
+        instance,
+      }),
+    );
+    return;
+  }
   res.writeHead(status, {
     'Content-Type': 'application/problem+json',
     'X-Content-Type-Options': 'nosniff',
