@@ -149,7 +149,7 @@ tags:
 
 - **Folder structure intent** — the `folders:` block tells you which folders exist, what each one contains, and what tags its files should carry. Every `exec("ls <folder>")` / `read_document` / `search` call merges these defaults with per-file frontmatter automatically, but you should also read config.yml directly when orienting so you can *place new docs in the right folder* and *write them in the voice + shape the project expects*.
 - **Per-folder instructions** — each `folders:` entry's `description:` field is the canonical place for "what does this folder contain + how should agents work inside it." Treat the description as a binding instruction, not flavor text. If a folder's description says "preserve verbatim, no analysis" (e.g. `external-sources/`), don't synthesize into those files; takeaways belong elsewhere.
-- **Content scope** — `content.dir` / `content.include` / `content.exclude` define which files count as knowledge-base documents. Anything outside those globs is regular source code, not a knowledge-base doc.
+- **Content scope** — `content.dir` defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
 
 If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), each folder's description in `config.yml` encodes the layer's rules. Projects with custom layouts put their own discipline in their own descriptions. Either way: **follow what config.yml says.**
 
@@ -249,6 +249,6 @@ If `write_document` or `edit_document` returns a "Hocuspocus server is not runni
 
 ## Scope recap
 
-When MCP is connected, the server's `instructions` echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and `.ok/config.yml` as two views of the same rules. `.gitignore` still applies.
+When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — treat that and `.ok/config.yml` as two views of the same rules. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions.
 
-Default mental model (no jargon): unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
+Default mental model (no jargon): **every `.md` and `.mdx` under `content.dir`** not excluded by `.gitignore` or `.okignore` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. Read `.okignore` (and any nested `.okignore` files) once per turn to know what's excluded.

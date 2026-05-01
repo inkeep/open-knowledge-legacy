@@ -55,8 +55,8 @@ export function classifyFsPath(p: string): string {
   if (basename(p).endsWith('.lock') || basename(p) === 'lock') return 'lock';
   if (basename(p) === 'principal.json') return 'principal';
   if (p.includes(`${sep}.ok${sep}conflict`)) return 'conflict';
-  if (p.endsWith('.md') || p.endsWith('.mdx')) return 'content-md';
   if (p.includes(`${sep}.ok${sep}`)) return 'ok-internal';
+  if (p.endsWith('.md') || p.endsWith('.mdx')) return 'content-md';
   return 'other';
 }
 

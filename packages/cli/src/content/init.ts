@@ -48,14 +48,11 @@ export function buildConfigYmlContent(_version: string): string {
 # dir: where the CRDT editor reads/writes documents. Relative to the project
 # root (the directory containing ${OK_DIR}/), NOT to this file.
 #
-# include/exclude: glob patterns for tracked content files. Relative to the
-# content directory (content.dir).
+# Path exclusions live in .okignore (gitignore syntax) at the project root,
+# with nested .okignore files honored at any folder depth.
 #
 # content:
 #   dir: .
-#   include:
-#     - "**/*.md"
-#   exclude: []
 
 
 # --- Suggested lifecycle (optional pattern) --------------------------------

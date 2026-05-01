@@ -62,6 +62,15 @@ describe('classifyFsPath', () => {
     expect(classifyFsPath(`${root}${sep}.ok${sep}sync-state.json`)).toBe('ok-internal');
   });
 
+  test('.md/.mdx writes UNDER .ok/ bucket as "ok-internal" (not content-md)', () => {
+    // Internal-state markdown (e.g. a hypothetical .ok/AGENTS.md README) is
+    // bookkeeping, not user content — its writes belong in the ok-internal
+    // bucket. The .ok check must fire before the .md/.mdx check.
+    expect(classifyFsPath(`${root}${sep}.ok${sep}AGENTS.md`)).toBe('ok-internal');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}cache${sep}foo.md`)).toBe('ok-internal');
+    expect(classifyFsPath(`${root}${sep}.ok${sep}notes.mdx`)).toBe('ok-internal');
+  });
+
   test('content-md and content-mdx writes bucket as "content-md"', () => {
     expect(classifyFsPath(`${root}${sep}docs${sep}guide.md`)).toBe('content-md');
     expect(classifyFsPath(`${root}${sep}README.mdx`)).toBe('content-md');

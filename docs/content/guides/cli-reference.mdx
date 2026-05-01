@@ -266,6 +266,8 @@ Exit `0` on success with a one-line summary like `✓ Configuration valid (sourc
 
 Idempotent codemod that drops fields removed from the schema during upgrades. Currently removes the 10 fields retired in 0.2: `sync.*` (all 7 keys), `persistence.debounceMs`, `persistence.maxDebounceMs`, and `server.port`. Future codemods extend this command rather than spawning new ones.
 
+Note: `content.include` and `content.exclude` produce a hard error at config-load time directing you to `.okignore` — see [Content filtering](/guides/content-filtering) for the migration recipe.
+
 ```bash
 npx @inkeep/open-knowledge config migrate                       # project + user
 npx @inkeep/open-knowledge config migrate --dry-run             # preview only

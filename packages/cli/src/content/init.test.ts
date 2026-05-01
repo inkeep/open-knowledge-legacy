@@ -88,7 +88,6 @@ describe('initContent', () => {
     expect(configYml).toContain('Open Knowledge — project configuration');
     expect(configYml).toContain('# content:');
     expect(configYml).toContain('# appearance:');
-    expect(configYml).toContain('include:');
     // No uncommented top-level keys — every non-empty, non-comment line
     // would mean we accidentally shipped an active override.
     const activeLines = configYml

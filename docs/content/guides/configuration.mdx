@@ -53,7 +53,7 @@ The following directories are always excluded from traversal regardless of `.git
 | Package managers / runtimes | `node_modules`, `.venv`, `venv`, `env`, `__pycache__`, `vendor` |
 | Build output | `dist`, `build`, `out`, `output`, `.next`, `.nuxt`, `.svelte-kit`, `.astro` |
 | Tool caches | `.turbo`, `.cache`, `.parcel-cache`, `coverage` |
-| VCS | `.git` |
+| VCS / project state | `.git`, `.ok` |
 
 These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `.okignore` patterns.
 
