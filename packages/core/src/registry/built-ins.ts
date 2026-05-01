@@ -809,7 +809,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Math',
     description: 'Block math equation rendered with KaTeX from a LaTeX source string',
     searchTerms: ['math', 'latex', 'equation', 'formula', 'katex', 'tex'],
-    serialize: (node, ctx) => emitMdxJsx('Math', node, ctx),
+    serialize: (node, ctx) => emitMdxJsx('Math', node, ctx, mathProps),
   },
 
   // ── Compat descriptors ─────────────────────────────────────────────────────

@@ -198,6 +198,16 @@ export function MathInlineView({ node, selected, getPos, editor }: NodeViewProps
             // — don't steal focus to the popover container.
             e.preventDefault();
           }}
+          onCloseAutoFocus={(e) => {
+            // Mirror JsxComponentView's leaf-descriptor pattern: hand
+            // focus back to the editor view on dismiss so subsequent
+            // keystrokes don't disappear into the popover's restore
+            // target. `e.preventDefault()` blocks Radix's default focus
+            // restore (which would target the trigger span and leave PM
+            // unfocused on Escape / outside-click).
+            e.preventDefault();
+            editor.view.focus();
+          }}
         >
           <div className="text-xs font-medium text-muted-foreground px-3 pt-2">
             Inline Math Properties
