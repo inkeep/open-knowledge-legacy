@@ -252,9 +252,15 @@ describe('FR-16 sanitizer-proxy hermetic tests — walker output survives 5 dest
     // pins that no destination profile re-introduces or surfaces hints of
     // it. (The walker-side opt-out behavior is exercised end-to-end in
     // `paste-fidelity.e2e.ts:CB-CONTRACT-11` against a real DOM.)
+    // Post-walker shape: the walker's `replaceLucideIconsWithGlyphs` step
+    // (clipboard-walker.ts) substitutes a `<span aria-hidden="true">{glyph}</span>`
+    // for each mapped lucide-* SVG before serialization, because no major
+    // paste destination preserves inline `<svg>`. This fixture reflects that
+    // post-substitution shape so the destination-profile assertions below
+    // operate on what the walker actually emits today.
     const postWalkerOutput =
       '<aside class="callout callout-note" data-callout-type="note">' +
-      '<span class="callout-header"><svg class="callout-icon" aria-hidden="true"></svg>' +
+      '<span class="callout-header"><span aria-hidden="true">ℹ</span>' +
       '<span class="callout-title">Heads up</span></span>' +
       '<div class="callout-body"><p>Body text here.</p></div>' +
       '</aside>';

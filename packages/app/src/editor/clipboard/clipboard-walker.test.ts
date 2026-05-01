@@ -18,6 +18,8 @@ import {
   buildInlineStyleFrom,
   CLASS_BLOCKLIST,
   type ComputedStyleLike,
+  glyphForLucide,
+  LUCIDE_GLYPH_MAP,
   STYLE_ALLOWLIST,
   stripBlocklistedClasses,
 } from './clipboard-walker.ts';
@@ -189,5 +191,74 @@ describe('buildInlineStyleFrom — modern CSS color downgrade', () => {
     const out = buildInlineStyleFrom(styles);
     expect(out).toContain('color: rgb(20, 20, 20)');
     expect(out).toContain('background-color: #fef3c7');
+  });
+});
+
+describe('glyphForLucide — pure lookup for cross-app icon substitution', () => {
+  test('returns the glyph for a single-class lucide name', () => {
+    expect(glyphForLucide('lucide-info')).toBe('ℹ');
+    expect(glyphForLucide('lucide-chevron-right')).toBe('›');
+    expect(glyphForLucide('lucide-alert-triangle')).toBe('⚠');
+  });
+
+  test('handles multi-class strings with the lucide name as prefix', () => {
+    expect(glyphForLucide('lucide-info callout-icon')).toBe('ℹ');
+    expect(glyphForLucide('lucide-chevron-right accordion-chevron')).toBe('›');
+  });
+
+  test('handles multi-class strings with the lucide name as suffix', () => {
+    expect(glyphForLucide('callout-icon lucide-info')).toBe('ℹ');
+    expect(glyphForLucide('lucide lucide-info')).toBe('ℹ');
+  });
+
+  test('handles multi-class strings with the lucide name in the middle', () => {
+    expect(glyphForLucide('foo lucide-info bar')).toBe('ℹ');
+  });
+
+  test('does NOT substring-match — `lucide-info-darker` is not `lucide-info`', () => {
+    // Anchor regression: a hyphenated extension of a mapped name must not
+    // collide with the mapped glyph. The class regex requires the name to
+    // be terminated by whitespace or string-end.
+    expect(glyphForLucide('lucide-info-darker')).toBeNull();
+    expect(glyphForLucide('lucide-info-foo lucide-foo')).toBeNull();
+  });
+
+  test('returns null for empty / no-lucide-class inputs', () => {
+    expect(glyphForLucide('')).toBeNull();
+    expect(glyphForLucide('callout-icon')).toBeNull();
+    expect(glyphForLucide('foo bar baz')).toBeNull();
+  });
+
+  test('returns null for unmapped lucide-* classes (graceful degradation)', () => {
+    // Unmapped lucide icons fall through to the walker's existing
+    // sanitization — the SVG stays in place. Cross-app destinations
+    // strip it, but a wrong glyph would be worse than no glyph.
+    expect(glyphForLucide('lucide-nonexistent-icon')).toBeNull();
+    expect(glyphForLucide('lucide-volume-2')).toBeNull();
+    expect(glyphForLucide('lucide-trash2')).toBeNull();
+  });
+
+  test('LUCIDE_GLYPH_MAP entry count is anchored — adding/removing icons is intentional', () => {
+    // Pin the surface so a mistakenly-deleted entry surfaces here, and
+    // intentional additions force a test update. Six entries cover the
+    // current Callout (5 type icons) + collapsible chevron surface; adding
+    // a new descriptor with new icons requires bumping this count.
+    expect(Object.keys(LUCIDE_GLYPH_MAP)).toHaveLength(6);
+  });
+
+  test('every LUCIDE_GLYPH_MAP key matches the lucide-<kebab-name> shape', () => {
+    // The class regex uses `[a-z0-9-]+` after `lucide-`; if a key were
+    // added with a capital letter or underscore it would never match the
+    // class string emitted by lucide-react. Anchor the convention.
+    for (const key of Object.keys(LUCIDE_GLYPH_MAP)) {
+      expect(key).toMatch(/^lucide-[a-z0-9-]+$/);
+    }
+  });
+
+  test('every LUCIDE_GLYPH_MAP value is a non-empty string', () => {
+    for (const value of Object.values(LUCIDE_GLYPH_MAP)) {
+      expect(typeof value).toBe('string');
+      expect(value.length).toBeGreaterThan(0);
+    }
   });
 });

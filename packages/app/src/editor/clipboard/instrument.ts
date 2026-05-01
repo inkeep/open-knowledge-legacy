@@ -74,7 +74,15 @@ type ClipboardEventName =
   // `aria-label`/`title` that was substituted with `[blocked]`. Cardinality
   // bounded: `attr` is one of the URL_SCHEME_ATTRS / URL_BEARING_TEXT_ATTRS
   // members or the literal `style` / `on*`; `reason` is a fixed taxonomy.
-  | 'clipboard-walker-url-blocked';
+  | 'clipboard-walker-url-blocked'
+  // Emitted at most once per process per `lucide-*` class when the walker
+  // encounters a lucide SVG icon with no glyph mapping in
+  // `LUCIDE_GLYPH_MAP`. Surface so a new descriptor that ships an icon
+  // without a corresponding glyph entry doesn't silently regress cross-app
+  // paste fidelity (the SVG stays as inline `<svg>` which every major
+  // destination strips). Cardinality bounded by the lucide-icons set
+  // (~1500 names total) and dedup'd per process.
+  | 'clipboard-walker-unmapped-lucide-icon';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
@@ -280,6 +288,27 @@ export function logWalkerUrlBlocked(info: {
       view: info.view,
       attr: info.attr,
       reason: info.reason,
+    }),
+  );
+}
+
+/**
+ * Emit at most once per process per unmapped `lucide-*` class. Module-level
+ * Set provides the dedup; bounded above by the lucide icon set (~1500
+ * names). Triggered from `replaceLucideIconsWithGlyphs` in clipboard-walker.ts
+ * when a descriptor's React render contains a lucide SVG that has no glyph
+ * entry. Without this signal, a new icon shipped without a mapping would
+ * silently disappear at every major paste destination (Gmail, Notion,
+ * Slack, Outlook, Google Docs all strip inline SVG).
+ */
+const unmappedLucideSeen = new Set<string>();
+export function logUnmappedLucideIcon(lucideClass: string): void {
+  if (unmappedLucideSeen.has(lucideClass)) return;
+  unmappedLucideSeen.add(lucideClass);
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-unmapped-lucide-icon' satisfies ClipboardEventName,
+      lucideClass,
     }),
   );
 }

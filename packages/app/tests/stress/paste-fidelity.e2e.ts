@@ -1608,12 +1608,19 @@ test.describe('Clipboard component contract — drag-and-drop (US-009)', () => {
     expect(out.html).not.toContain('jsx-component-chrome');
     expect(out.html).not.toContain('jsx-chrome-btn');
 
-    // Legitimate content survives — the chevron + info icon are real DOM
-    // children (FR-13 chevron-as-real-DOM refactor + Callout info icon
-    // already a lucide svg child), and the chrome opt-out must NOT strip
-    // them. Without these positive assertions a too-aggressive opt-out
-    // could regress visible content.
-    expect(out.html).toContain('lucide-chevron-right');
-    expect(out.html).toContain('lucide-info');
+    // Legitimate content survives. The chevron + info icon are real DOM
+    // children, but no major paste destination (Gmail / Notion / Slack /
+    // Outlook / Google Docs) preserves inline `<svg>` — Gmail's image
+    // proxy refuses SVG, Outlook retired SVG support in Sept 2025, and
+    // the others have no `svg` block type. The walker substitutes a
+    // Unicode-glyph span at emit time so the icon survives with the
+    // parent's already-inlined `color: rgb(...)` for color resolution.
+    // Without these post-substitution assertions the walker could regress
+    // visible content.
+    expect(out.html).not.toContain('lucide-chevron-right');
+    expect(out.html).not.toContain('lucide-info');
+    expect(out.html).not.toMatch(/<svg[^>]*class="[^"]*lucide-/);
+    expect(out.html).toContain('›');
+    expect(out.html).toContain('ℹ');
   });
 });

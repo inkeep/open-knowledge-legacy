@@ -44,7 +44,7 @@ import {
   URL_SCHEME_ATTRS,
 } from './clipboard-sanitize.ts';
 import { paletteFor } from './clipboard-walker-fallback-palette.ts';
-import { logWalkerFallback, logWalkerUrlBlocked } from './instrument.ts';
+import { logUnmappedLucideIcon, logWalkerFallback, logWalkerUrlBlocked } from './instrument.ts';
 
 /**
  * CSS properties copied inline from the live element to the clone. Curated for
@@ -217,7 +217,89 @@ export function walkLiveDomToInlineStyledFragment(
 function cloneAndStyle(live: Element, env: WalkerEnv): Element {
   const clone = live.cloneNode(true) as Element;
   walkPair(live, clone, env);
+  // Post-walk replacement so the URL/event-handler/style filters above run
+  // unconditionally on every SVG before it can be discarded — defense-in-
+  // depth at the FR-20 escape boundary. A future non-lucide SVG that
+  // shares the `lucide-` prefix could otherwise bypass sanitization.
+  replaceLucideIconsWithGlyphs(clone);
   return clone;
+}
+
+/**
+ * Lucide icon class → Unicode glyph for cross-app paste fidelity.
+ *
+ * No mainstream paste destination preserves inline `<svg>`: Gmail's image
+ * proxy refuses SVG, Outlook retired SVG support in September 2025, and
+ * Notion / Slack / Google Docs strip on paste (their schemas have no
+ * `<svg>` block type). At the walker emit boundary we substitute a
+ * Unicode glyph that inherits the parent's already-inlined
+ * `color: rgb(...)` (set by `convertCssColors`) so the icon survives with
+ * the correct destination-renderable color.
+ *
+ * In-app render is unaffected — the React lucide-react components continue
+ * to render real `<svg>` elements inside the editor. Only the clipboard
+ * walker output is rewritten.
+ *
+ * Glyph choices favor BMP characters without U+FE0F variation selectors
+ * so legacy Outlook desktop (pre-2019) renders them correctly. The single
+ * supplementary-plane character (`💡` for `lightbulb`) renders monochrome
+ * on legacy clients without misrendering — no FE0F is attached.
+ *
+ * Adding a new icon: when a descriptor ships a new lucide icon, add the
+ * `lucide-<kebab-name>` class (matches the `lucide` class lucide-react
+ * renders) and a glyph. The dev-time `clipboard-walker-unmapped-lucide-
+ * icon` telemetry event surfaces icons that lack a mapping so they don't
+ * silently degrade in cross-app paste.
+ */
+export const LUCIDE_GLYPH_MAP: Record<string, string> = {
+  'lucide-chevron-right': '›', // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+  'lucide-info': 'ℹ', // INFORMATION SOURCE
+  'lucide-lightbulb': '\u{1F4A1}', // ELECTRIC LIGHT BULB (renders monochrome on legacy)
+  'lucide-message-square-warning': '❗', // HEAVY EXCLAMATION MARK SYMBOL
+  'lucide-alert-triangle': '⚠', // WARNING SIGN
+  'lucide-alert-octagon': '⛔', // NO ENTRY (octagonal stop semantics)
+};
+
+const LUCIDE_CLASS_RE = /(?:^|\s)(lucide-[a-z0-9-]+)(?:\s|$)/;
+
+/**
+ * Pure: extract a `lucide-<name>` token from a class string and return its
+ * mapped glyph, or `null` if no lucide class is present or the class has
+ * no glyph mapping. Anchors are tight on whitespace boundaries so
+ * `lucide-info-darker` does NOT match `lucide-info`.
+ */
+export function glyphForLucide(className: string): string | null {
+  const match = className.match(LUCIDE_CLASS_RE);
+  if (!match) return null;
+  return LUCIDE_GLYPH_MAP[match[1]] ?? null;
+}
+
+/**
+ * In-place: replace each mapped `<svg.lucide-*>` descendant of `root` with
+ * a `<span aria-hidden="true">{glyph}</span>`. Unmapped lucide-* SVGs stay
+ * in place (graceful degradation — destinations strip them, but a wrong
+ * glyph is worse than no glyph) and emit a dev-tier telemetry signal.
+ *
+ * Idempotent: replacing an SVG removes it from `root.querySelectorAll('svg')`'s
+ * snapshot, so repeated invocations are no-ops on already-substituted trees.
+ */
+function replaceLucideIconsWithGlyphs(root: Element): void {
+  const svgs = root.querySelectorAll('svg');
+  for (const svg of Array.from(svgs)) {
+    const className = svg.getAttribute('class') ?? '';
+    const lucideMatch = className.match(LUCIDE_CLASS_RE);
+    if (!lucideMatch) continue;
+    const lucideClass = lucideMatch[1];
+    const glyph = LUCIDE_GLYPH_MAP[lucideClass];
+    if (!glyph) {
+      logUnmappedLucideIcon(lucideClass);
+      continue;
+    }
+    const span = svg.ownerDocument.createElement('span');
+    span.setAttribute('aria-hidden', 'true');
+    span.textContent = glyph;
+    svg.replaceWith(span);
+  }
 }
 
 function walkPair(live: Element, clone: Element, env: WalkerEnv): void {
