@@ -9,10 +9,13 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  convertCssColors,
   isDangerousEventHandlerAttr,
   isSafeWalkerUrl,
   isSrcsetSafe,
+  MAX_COLOR_VALUE_LEN,
   MAX_STYLE_SCAN_LEN,
+  OPT_OUT_ATTR,
   sanitizeEmbeddedUrlValue,
   sanitizeStyleAttrValue,
   URL_BEARING_TEXT_ATTRS,
@@ -301,5 +304,116 @@ describe('sanitizeStyleAttrValue — inline-style url() / expression() filter', 
     // Anchor — both walker and sanitize-url use the same 10_000 ceiling.
     // A regression that changes one without the other surfaces here.
     expect(MAX_STYLE_SCAN_LEN).toBe(10_000);
+  });
+});
+
+describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fallback', () => {
+  // Helper: extract first rgb-channel triple from "rgb(R, G, B)".
+  function rgbTriple(value: string): [number, number, number] | null {
+    const m = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  }
+
+  test('converts oklch to rgb on the happy path', () => {
+    // `oklch(0.62 0.15 240)` is a mid-saturation blue; sanity-check the
+    // triple is in the blue family — exact integer values depend on
+    // floating-point precision so we range-bound rather than equality-pin.
+    const out = convertCssColors('oklch(0.62 0.15 240)');
+    expect(out).toMatch(/^rgb\(\d+,\s*\d+,\s*\d+\)$/);
+    const triple = rgbTriple(out);
+    expect(triple).not.toBeNull();
+    if (triple) {
+      const [r, g, b] = triple;
+      // Blue dominates green dominates red for this hue.
+      expect(b).toBeGreaterThan(g);
+      expect(g).toBeGreaterThan(r);
+    }
+  });
+
+  test('preserves alpha as rgba()', () => {
+    const out = convertCssColors('oklch(0.5 0.1 240 / 0.5)');
+    expect(out).toMatch(/^rgba\(\d+,\s*\d+,\s*\d+,\s*0\.5\)$/);
+  });
+
+  test('preserves the surrounding compound value (suffix + prefix)', () => {
+    const out = convertCssColors('1px solid oklch(0.62 0.15 240)');
+    expect(out).toMatch(/^1px solid rgb\(\d+,\s*\d+,\s*\d+\)$/);
+  });
+
+  test('converts every modern color in a multi-color value (gradients)', () => {
+    const out = convertCssColors('linear-gradient(oklch(0.5 0.1 0), oklch(0.5 0.1 240))');
+    expect(out).not.toContain('oklch(');
+    // Two rgb() values inside the gradient.
+    expect(out.match(/rgb\(/g)?.length).toBe(2);
+  });
+
+  test('handles oklab / lab / lch sister functions', () => {
+    expect(convertCssColors('oklab(0.5 0.1 0.05)')).toMatch(/^rgb\(/);
+    expect(convertCssColors('lab(50 10 -20)')).toMatch(/^rgb\(/);
+    expect(convertCssColors('lch(50 30 240)')).toMatch(/^rgb\(/);
+  });
+
+  test('passes legacy color forms through unchanged (no-op invariants)', () => {
+    expect(convertCssColors('rgb(255, 0, 0)')).toBe('rgb(255, 0, 0)');
+    expect(convertCssColors('rgba(255, 0, 0, 0.5)')).toBe('rgba(255, 0, 0, 0.5)');
+    expect(convertCssColors('#ff0000')).toBe('#ff0000');
+    expect(convertCssColors('hsl(0, 100%, 50%)')).toBe('hsl(0, 100%, 50%)');
+    expect(convertCssColors('red')).toBe('red');
+    expect(convertCssColors('transparent')).toBe('transparent');
+    expect(convertCssColors('currentColor')).toBe('currentColor');
+    expect(convertCssColors('inherit')).toBe('inherit');
+    expect(convertCssColors('initial')).toBe('initial');
+    expect(convertCssColors('')).toBe('');
+  });
+
+  test('clamps out-of-gamut colors to [0, 255] without NaN', () => {
+    // High-chroma red far outside sRGB.
+    const out = convertCssColors('oklch(0.9 0.4 30)');
+    const triple = rgbTriple(out);
+    expect(triple).not.toBeNull();
+    if (triple) {
+      for (const channel of triple) {
+        expect(channel).toBeGreaterThanOrEqual(0);
+        expect(channel).toBeLessThanOrEqual(255);
+        expect(Number.isFinite(channel)).toBe(true);
+      }
+    }
+  });
+
+  test('returns input unchanged on malformed function bodies (no throw)', () => {
+    // Garbage body — replacement leaves the original token in place.
+    expect(convertCssColors('oklch(garbage)')).toBe('oklch(garbage)');
+    expect(convertCssColors('1px solid oklch(only-two 240)')).toBe('1px solid oklch(only-two 240)');
+  });
+
+  test('passes payloads above MAX_COLOR_VALUE_LEN through unchanged (defense-in-depth ceiling)', () => {
+    const oversized = `${'a'.repeat(MAX_COLOR_VALUE_LEN)} oklch(0.5 0.1 240)`;
+    expect(oversized.length).toBeGreaterThan(MAX_COLOR_VALUE_LEN);
+    // No conversion happens — the entire value passes through (not blocked,
+    // unlike `sanitizeStyleAttrValue` which drops oversized payloads).
+    expect(convertCssColors(oversized)).toBe(oversized);
+  });
+
+  test('matches case-insensitively', () => {
+    expect(convertCssColors('OKLCH(0.62 0.15 240)')).toMatch(/^rgb\(/);
+    expect(convertCssColors('OkLcH(0.62 0.15 240)')).toMatch(/^rgb\(/);
+  });
+
+  test('MAX_COLOR_VALUE_LEN matches the sibling MAX_STYLE_SCAN_LEN ceiling', () => {
+    expect(MAX_COLOR_VALUE_LEN).toBe(10_000);
+    expect(MAX_COLOR_VALUE_LEN).toBe(MAX_STYLE_SCAN_LEN);
+  });
+});
+
+describe('OPT_OUT_ATTR — descriptor opt-out marker', () => {
+  test('value is exactly `data-clipboard-omit`', () => {
+    // Anchor — the literal value is the attribute name descriptors must
+    // set on chrome elements that should not reach clipboard. A typo
+    // (e.g., `data-clipboard-ommit`) would silently fail to opt out, so
+    // descriptors MUST import this constant rather than hardcode the
+    // string. Pin the literal here so a refactor that renames the
+    // attribute fails the consumer-side checks loudly.
+    expect(OPT_OUT_ATTR).toBe('data-clipboard-omit');
   });
 });

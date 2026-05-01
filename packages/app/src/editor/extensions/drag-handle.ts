@@ -38,6 +38,7 @@ import { type Editor, Extension } from '@tiptap/core';
 import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { TextSelection } from '@tiptap/pm/state';
+import { OPT_OUT_ATTR } from '../clipboard/clipboard-sanitize.ts';
 import { getDescriptor } from '../registry/index.ts';
 import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.tsx';
 
@@ -52,6 +53,11 @@ const BODY_LINE_HEIGHT = 28;
 function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLButtonElement } {
   const container = document.createElement('div');
   container.className = 'ok-block-controls';
+  // Defensive: if floating-ui ever positions the handle inside the editor
+  // doc tree (today it's mounted on `editor.view.dom.parentElement`, so the
+  // walker's slice iteration won't traverse it), the opt-out attribute
+  // closes the leak by construction.
+  container.setAttribute(OPT_OUT_ATTR, 'true');
   // Start hidden so the element isn't visible at position 0,0 before floating-ui
   // has a reference block to position against on initial mount.
   container.style.visibility = 'hidden';

@@ -164,3 +164,30 @@ describe('stripBlocklistedClasses — pure class filter', () => {
     expect(result).toBe('foo baz');
   });
 });
+
+describe('buildInlineStyleFrom — modern CSS color downgrade', () => {
+  test('converts oklch values to rgb so destination renderers can paint them', () => {
+    // Tailwind v4 themes resolve to oklch literals via `getComputedStyle`.
+    // The walker must convert these to rgb() before emitting inline style;
+    // otherwise destinations like Gmail / Notion render them as default
+    // (invisible chevrons, missing accent borders).
+    const styles = fakeStyles({
+      color: 'oklch(0.62 0.15 240)',
+      'background-color': 'oklch(0.95 0.02 240)',
+    });
+    const out = buildInlineStyleFrom(styles);
+    expect(out).not.toContain('oklch(');
+    expect(out).toMatch(/color: rgb\(/);
+    expect(out).toMatch(/background-color: rgb\(/);
+  });
+
+  test('preserves rgb / hex values unchanged when already legacy', () => {
+    const styles = fakeStyles({
+      color: 'rgb(20, 20, 20)',
+      'background-color': '#fef3c7',
+    });
+    const out = buildInlineStyleFrom(styles);
+    expect(out).toContain('color: rgb(20, 20, 20)');
+    expect(out).toContain('background-color: #fef3c7');
+  });
+});

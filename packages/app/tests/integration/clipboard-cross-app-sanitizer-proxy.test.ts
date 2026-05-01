@@ -244,4 +244,34 @@ describe('FR-16 sanitizer-proxy hermetic tests — walker output survives 5 dest
     expect(out).toContain('Note body');
     expect(out).not.toMatch(/class="random-other"/);
   });
+
+  test('post-walker shape: editor toolbar chrome subtree (data-clipboard-omit) is absent across all profiles', () => {
+    // The walker's `OPT_OUT_ATTR` mechanism removes any subtree marked with
+    // `data-clipboard-omit="true"` BEFORE serialization. This fixture
+    // represents the post-walker output shape — chrome already gone — and
+    // pins that no destination profile re-introduces or surfaces hints of
+    // it. (The walker-side opt-out behavior is exercised end-to-end in
+    // `paste-fidelity.e2e.ts:CB-CONTRACT-11` against a real DOM.)
+    const postWalkerOutput =
+      '<aside class="callout callout-note" data-callout-type="note">' +
+      '<span class="callout-header"><svg class="callout-icon" aria-hidden="true"></svg>' +
+      '<span class="callout-title">Heads up</span></span>' +
+      '<div class="callout-body"><p>Body text here.</p></div>' +
+      '</aside>';
+    for (const profile of PROFILES) {
+      const out = profile.apply(postWalkerOutput);
+      // Neither the chrome wrapper class nor the toolbar SVG classes appear
+      // in any destination's output — because the walker stripped them
+      // before this fixture was assembled.
+      expect(out, profile.name).not.toContain('jsx-component-chrome');
+      expect(out, profile.name).not.toContain('jsx-chrome-btn');
+      expect(out, profile.name).not.toContain('lucide-trash2');
+      expect(out, profile.name).not.toContain('lucide-settings2');
+      expect(out, profile.name).not.toContain('lucide-arrow-up');
+      expect(out, profile.name).not.toContain('lucide-arrow-down');
+      // Legitimate content survives (callout body, info icon).
+      expect(out, profile.name).toContain('Heads up');
+      expect(out, profile.name).toContain('Body text here.');
+    }
+  });
 });

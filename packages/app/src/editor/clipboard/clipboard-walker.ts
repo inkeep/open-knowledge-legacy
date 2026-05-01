@@ -33,9 +33,11 @@
 import type { Slice } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import {
+  convertCssColors,
   isDangerousEventHandlerAttr,
   isSafeWalkerUrl,
   isSrcsetSafe,
+  OPT_OUT_ATTR,
   sanitizeEmbeddedUrlValue,
   sanitizeStyleAttrValue,
   URL_BEARING_TEXT_ATTRS,
@@ -117,18 +119,9 @@ export const ATTR_BLOCKLIST: ReadonlySet<string> = new Set([
   'data-pm-slice',
 ]);
 
-/**
- * Marker the descriptor sets on a subtree to opt out of clipboard capture.
- * Set on a React render root or descendant element as `data-clipboard-omit="true"`
- * to make the walker skip the subtree at copy time.
- *
- * Module-internal: knip drops unused exports, so the constant is private until
- * the first descriptor wires `data-clipboard-omit` and imports it. At that
- * point promote to `export` and update consumers to reference the constant
- * rather than hardcoding the literal string — a typo
- * (`data-clipboard-ommit`) at a descriptor would silently fail to opt out.
- */
-const OPT_OUT_ATTR = 'data-clipboard-omit' as const;
+// `OPT_OUT_ATTR` lives in `./clipboard-sanitize.ts` — descriptor authors
+// import it directly from the leaf module to mark elements that must not
+// reach the clipboard payload.
 
 /**
  * Style-getter abstraction so the walker is testable without a real browser.
@@ -151,6 +144,13 @@ const DEFAULT_ENV: WalkerEnv = {
  * Build an inline `style="..."` value from a computed-style declaration,
  * including only the allowlisted properties. Skips empty / `initial` /
  * `normal` values so the inline output stays small.
+ *
+ * Each value passes through `convertCssColors` to downgrade CSS Color 4
+ * functions (`oklch`, `oklab`, `lab`, `lch`) to `rgb()` / `rgba()` —
+ * destination HTML renderers (Gmail, Notion, Slack-class) don't parse
+ * the modern color functions and would render the color as default
+ * (invisible chevrons, missing accent borders) without this conversion.
+ * Pass-through is a no-op for already-`rgb()` / hex / hsl / named values.
  */
 export function buildInlineStyleFrom(
   computed: ComputedStyleLike,
@@ -161,7 +161,7 @@ export function buildInlineStyleFrom(
     const value = computed.getPropertyValue(prop);
     if (!value) continue;
     if (value === 'initial' || value === 'normal') continue;
-    style += `${prop}: ${value}; `;
+    style += `${prop}: ${convertCssColors(value)}; `;
   }
   return style.trim();
 }

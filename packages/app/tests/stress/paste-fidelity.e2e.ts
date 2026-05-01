@@ -1564,4 +1564,56 @@ test.describe('Clipboard component contract — drag-and-drop (US-009)', () => {
       expect(content).not.toMatch(/!\[/);
     }).toPass({ timeout: 5_000 });
   });
+
+  test('CB-CONTRACT-11: cross-app render fidelity — emitted text/html uses rgb() and strips editor chrome', async ({
+    page,
+    baseURL,
+  }) => {
+    // Empirical bug — pasting a Callout into Gmail lost color and chevron
+    // because Tailwind v4 themes resolve to `oklch(...)` literals via
+    // `getComputedStyle()`, which Gmail/Notion-class HTML renderers don't
+    // parse. This test pins the post-fix invariants:
+    //   1. The walker's emitted style values are converted to `rgb()` /
+    //      `rgba()` so destinations without modern color-function support
+    //      can still render the colors.
+    //   2. Editor toolbar chrome (move/delete/settings buttons, drag
+    //      handle) is stripped via the `data-clipboard-omit="true"`
+    //      opt-out — the JsxComponentView wrapper marks itself with the
+    //      attribute so the walker drops the entire chrome subtree.
+    //   3. Real DOM children that ARE legitimate content (chevron svg,
+    //      info icon svg) survive — the chrome opt-out doesn't over-strip.
+    await fetch(`${baseURL}/api/agent-write-md`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docName,
+        markdown:
+          '<Callout type="note" title="Hi" collapsible defaultOpen>\n\nbody text\n\n</Callout>\n',
+        position: 'replace',
+      }),
+    });
+    await expect(async () => {
+      expect(await getYText(page)).toContain('<Callout');
+    }).toPass({ timeout: 5_000 });
+    const out = await simulateCopyAndRead(page, 'wysiwyg');
+
+    // Render fidelity: oklch resolved to rgb so Gmail/Notion can render.
+    expect(out.html).not.toContain('oklch(');
+    expect(out.html).not.toContain('oklab(');
+    expect(out.html).toMatch(/rgb\(\s*\d/);
+
+    // No editor chrome leaks.
+    expect(out.html).not.toContain('lucide-trash2');
+    expect(out.html).not.toContain('lucide-settings2');
+    expect(out.html).not.toContain('jsx-component-chrome');
+    expect(out.html).not.toContain('jsx-chrome-btn');
+
+    // Legitimate content survives — the chevron + info icon are real DOM
+    // children (FR-13 chevron-as-real-DOM refactor + Callout info icon
+    // already a lucide svg child), and the chrome opt-out must NOT strip
+    // them. Without these positive assertions a too-aggressive opt-out
+    // could regress visible content.
+    expect(out.html).toContain('lucide-chevron-right');
+    expect(out.html).toContain('lucide-info');
+  });
 });

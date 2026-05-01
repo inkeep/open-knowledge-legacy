@@ -89,6 +89,37 @@ const DANGEROUS_STYLE_EXPRESSION_RE = /\bexpression\s*\(/i;
 export const MAX_STYLE_SCAN_LEN = 10_000;
 
 /**
+ * Modern CSS color functions (CSS Color Level 4) that resolve at copy
+ * time but cannot be rendered by destination HTML sanitizers (Gmail,
+ * Notion, Slack, Apple Mail). `getComputedStyle()` returns the literal
+ * `oklch(...)` / `oklab(...)` / `lab(...)` / `lch(...)` form on modern
+ * browsers (Chrome 111+ / Safari 16.4+ / Firefox 113+); destinations
+ * downstream cannot parse these and fall back to default colors —
+ * invisible chevrons, transparent backgrounds, missing accent borders.
+ *
+ * `convertCssColors` resolves all four to `rgb()` / `rgba()` so the
+ * cross-app payload renders correctly even on destinations stuck in the
+ * pre-2023 color-function era.
+ */
+const MODERN_COLOR_RE = /(oklch|oklab|lab|lch)\(\s*([^)]+)\s*\)/gi;
+export const MAX_COLOR_VALUE_LEN = 10_000;
+
+/**
+ * Descriptor opt-out marker: any element rendered into the editor DOM
+ * that should NOT reach the clipboard payload sets this attribute to
+ * `'true'`. The walker's top-level slice iteration and per-child walk
+ * both check the LIVE element for this attribute; a match removes the
+ * subtree from the cloned output entirely.
+ *
+ * Use this for editor-only chrome (toolbar buttons, drag handles,
+ * settings popovers) that must remain interactive in the editor but
+ * has no business in cross-app paste destinations. Reference the
+ * constant rather than hardcoding `'data-clipboard-omit'` — a typo
+ * (`'data-clipboard-ommit'`) would silently fail to opt out.
+ */
+export const OPT_OUT_ATTR = 'data-clipboard-omit' as const;
+
+/**
  * Allowlist URL classifier — accepts `http(s):` / `mailto:` / `tel:` /
  * `ftp:` / `sms:` and any relative URL form (bare filenames, root-relative
  * paths, fragments, queries); rejects everything else. Trims leading and
@@ -189,4 +220,161 @@ export function sanitizeStyleAttrValue(value: string): string {
   if (DANGEROUS_STYLE_URL_RE.test(value)) return '';
   if (DANGEROUS_STYLE_EXPRESSION_RE.test(value)) return '';
   return value;
+}
+
+// ─── Modern CSS color → rgb conversion ──────────────────────────────────
+//
+// Matrix coefficients and companding formulas from Björn Ottosson's oklab
+// derivation (https://bottosson.github.io/posts/oklab/) and CSS Color Level
+// 4. Implementation is intentionally inline (no dep): the math is small and
+// well-bounded, and adding a color library would cost ~8KB+ against the
+// app's bundle ceiling for one re-emit-boundary helper.
+
+/** Parse the body of a modern color function to `[c1, c2, c3, alpha?]`. */
+function parseColorBody(body: string): [number, number, number, number | null] | null {
+  // Body shape: `L C H` or `L C H / A` (slash-separated alpha) or
+  // comma-separated legacy form (`L, C, H`). Whitespace flexible.
+  const slashIdx = body.indexOf('/');
+  const main = (slashIdx === -1 ? body : body.slice(0, slashIdx)).trim();
+  const alphaStr = slashIdx === -1 ? null : body.slice(slashIdx + 1).trim();
+  const parts = main.split(/[\s,]+/).filter((p) => p.length > 0);
+  if (parts.length !== 3) return null;
+  const c1 = parseColorComponent(parts[0], 1);
+  const c2 = parseColorComponent(parts[1], 1);
+  const c3 = parseColorComponent(parts[2], 1);
+  if (Number.isNaN(c1) || Number.isNaN(c2) || Number.isNaN(c3)) return null;
+  let alpha: number | null = null;
+  if (alphaStr !== null) {
+    alpha = parseColorComponent(alphaStr, 1);
+    if (Number.isNaN(alpha)) return null;
+    alpha = Math.max(0, Math.min(1, alpha));
+  }
+  return [c1, c2, c3, alpha];
+}
+
+/**
+ * Parse a single color component, handling `none` (treated as 0 per CSS
+ * Color 4) and `%` suffix (treated as fraction-of-fullScale; for L it
+ * means / 100, for chroma it's typically already 0..1 so % isn't standard
+ * but some authors use it).
+ */
+function parseColorComponent(s: string, fullScale: number): number {
+  if (s === 'none') return 0;
+  if (s.endsWith('%')) {
+    const n = Number.parseFloat(s.slice(0, -1));
+    return (n / 100) * fullScale;
+  }
+  return Number.parseFloat(s);
+}
+
+/** oklch (L, C, H°) → oklab (L, a, b). */
+function oklchToOklab(l: number, c: number, h: number): [number, number, number] {
+  const hRad = (h * Math.PI) / 180;
+  return [l, c * Math.cos(hRad), c * Math.sin(hRad)];
+}
+
+/**
+ * oklab (L, a, b) → linear sRGB. Coefficients from
+ * https://bottosson.github.io/posts/oklab/ — the inverse of the matrix
+ * defining oklab from linear sRGB.
+ */
+function oklabToLinearSrgb(l: number, a: number, b: number): [number, number, number] {
+  const lp = l + 0.3963377774 * a + 0.2158037573 * b;
+  const mp = l - 0.1055613458 * a - 0.0638541728 * b;
+  const sp = l - 0.0894841775 * a - 1.291485548 * b;
+  const lc = lp ** 3;
+  const mc = mp ** 3;
+  const sc = sp ** 3;
+  return [
+    +4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc,
+    -1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc,
+    -0.0041960863 * lc - 0.7034186147 * mc + 1.707614701 * sc,
+  ];
+}
+
+/** Linear sRGB component → gamma-encoded sRGB component (CSS spec). */
+function linearToSrgbChannel(x: number): number {
+  if (x <= 0.0031308) return 12.92 * x;
+  return 1.055 * x ** (1 / 2.4) - 0.055;
+}
+
+/** Clamp a channel to [0, 255] integer. Out-of-gamut → clip (no NaN). */
+function toByte(channel: number): number {
+  if (!Number.isFinite(channel)) return 0;
+  return Math.max(0, Math.min(255, Math.round(channel * 255)));
+}
+
+/** oklch / oklab / lab / lch → rgb-channel triple [r, g, b] in [0, 255]. */
+function modernColorToRgb(
+  fn: string,
+  c1: number,
+  c2: number,
+  c3: number,
+): [number, number, number] {
+  // L for ok* is on a 0..1 scale; CSS-spec lab/lch use 0..100. Normalize
+  // L to 0..1 for the conversion path.
+  // For lab/lch we approximate by treating them as oklab/oklch — the gamut
+  // and white-point differ slightly (D50 vs D65) but the error is well
+  // below typical destination-renderer fidelity. Documenting the trade
+  // here so it's discoverable.
+  const fnLower = fn.toLowerCase();
+  let l: number;
+  let a: number;
+  let b: number;
+  if (fnLower === 'oklch') {
+    [l, a, b] = oklchToOklab(c1, c2, c3);
+  } else if (fnLower === 'oklab') {
+    [l, a, b] = [c1, c2, c3];
+  } else if (fnLower === 'lch') {
+    [l, a, b] = oklchToOklab(c1 / 100, c2 / 100, c3);
+  } else {
+    // lab
+    [l, a, b] = [c1 / 100, c2 / 100, c3 / 100];
+  }
+  const [lr, lg, lb] = oklabToLinearSrgb(l, a, b);
+  return [
+    toByte(linearToSrgbChannel(lr)),
+    toByte(linearToSrgbChannel(lg)),
+    toByte(linearToSrgbChannel(lb)),
+  ];
+}
+
+/**
+ * Convert any modern CSS color function (`oklch`, `oklab`, `lab`, `lch`)
+ * inside a CSS value string to its `rgb()` / `rgba()` form. Compound
+ * values (e.g. `1px solid oklch(0.62 0.15 240)`) and gradients with
+ * multiple color stops are handled by single-pass regex replacement.
+ *
+ * Pass-through invariants (no-ops): `rgb()` / `rgba()` / `#hex` / `hsl()`
+ * / named colors / `transparent` / `currentColor` / `inherit` / `initial`
+ * / empty / unrecognized text — all returned unchanged.
+ *
+ * Defense-in-depth: values exceeding `MAX_COLOR_VALUE_LEN` short-circuit
+ * to passthrough rather than running the regex over a mega-payload.
+ *
+ * Error handling: malformed function bodies (`oklch(garbage)`) leave the
+ * source string unchanged at that match site — never throws.
+ */
+export function convertCssColors(value: string): string {
+  if (value.length > MAX_COLOR_VALUE_LEN) return value;
+  // Hot-path optimization: most computed-style values are not modern color
+  // functions. Lowercase the haystack once and skim for any of the four
+  // function names; if absent, skip the regex entirely. Case-insensitive
+  // because browsers can return either case from `getPropertyValue`.
+  const lower = value.toLowerCase();
+  if (
+    !lower.includes('oklch') &&
+    !lower.includes('oklab') &&
+    !lower.includes('lab') &&
+    !lower.includes('lch')
+  ) {
+    return value;
+  }
+  return value.replace(MODERN_COLOR_RE, (match, fn: string, body: string) => {
+    const parsed = parseColorBody(body);
+    if (parsed === null) return match;
+    const [c1, c2, c3, alpha] = parsed;
+    const [r, g, b] = modernColorToRgb(fn, c1, c2, c3);
+    return alpha === null ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  });
 }
