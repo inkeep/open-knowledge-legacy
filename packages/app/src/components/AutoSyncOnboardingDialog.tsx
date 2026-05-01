@@ -98,8 +98,8 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
         <DialogHeader>
           <DialogTitle>Enable git auto-sync?</DialogTitle>
           <DialogDescription>
-            This project has a git remote configured. Auto-sync periodically fetches, pulls, and
-            pushes commits to that remote so your edits stay in sync across machines.
+            Auto-sync periodically fetches, pulls, and pushes commits to your remote git repository
+            so your edits stay in sync across machines.
           </DialogDescription>
         </DialogHeader>
 
@@ -107,7 +107,6 @@ export function AutoSyncOnboardingDialog({ open, onResolved }: AutoSyncOnboardin
           <p className="mb-2 text-sm font-medium">Before you enable it:</p>
           <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
             <li>Pulls may overwrite uncommitted local file changes.</li>
-            <li>Requires GitHub authentication.</li>
             <li>
               If you do not want automatic commits in your git history, you should not enable
               auto-sync.
