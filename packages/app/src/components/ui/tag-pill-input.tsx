@@ -1,7 +1,7 @@
 'use client';
 
 import { XIcon } from 'lucide-react';
-import { useState } from 'react';
+import { type Ref, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +14,14 @@ interface TagPillInputProps {
   'aria-describedby'?: string;
   'aria-invalid'?: boolean | 'true' | 'false';
   disabled?: boolean;
+  /**
+   * Forwarded onto the inner `<input>` so RHF's `form.setFocus(name)`
+   * resolves through `Controller.field.ref`. Without this, `setFocus` on
+   * a TagPillInput-bound field silently no-ops, breaking the L3 rejection
+   * focus path for any future schema constraint on `frontmatter.tags`.
+   * Matches sibling `Input` / `Textarea` / `Switch` ref-forwarding.
+   */
+  ref?: Ref<HTMLInputElement>;
 }
 
 /**
@@ -31,7 +39,7 @@ interface TagPillInputProps {
  * propagates onto the wrapper so the destructive ring appears regardless of
  * which child has focus.
  */
-export function TagPillInput({
+function TagPillInput({
   value,
   onChange,
   onBlur,
@@ -40,6 +48,7 @@ export function TagPillInput({
   disabled,
   'aria-describedby': ariaDescribedBy,
   'aria-invalid': ariaInvalid,
+  ref,
 }: TagPillInputProps) {
   const [draft, setDraft] = useState('');
 
@@ -92,6 +101,7 @@ export function TagPillInput({
       ))}
       <input
         id={id}
+        ref={ref}
         type="text"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -132,3 +142,5 @@ export function TagPillInput({
     </div>
   );
 }
+
+export { TagPillInput };

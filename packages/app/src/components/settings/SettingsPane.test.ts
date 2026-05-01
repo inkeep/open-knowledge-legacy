@@ -101,7 +101,7 @@ describe('SettingsPane source-level guards', () => {
   });
 });
 
-describe('SettingsPane folders section integration (US-003 / FR-41)', () => {
+describe('SettingsPane folders section integration', () => {
   test('imports FoldersSection from the settings module', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/FoldersSection['"]/);
     expect(SRC).toContain('FoldersSection');

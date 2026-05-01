@@ -46,7 +46,7 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('per-row commit writes the WHOLE folders[] array atomically', () => {
-    // The atomic-full-array contract is the load-bearing FR-41 invariant.
+    // The atomic-full-array contract is load-bearing.
     // Per-row blur must funnel through commitField at the top-level
     // 'folders' path — never per-row paths like 'folders.0.match'.
     expect(SRC).toContain('FOLDERS_PATH');
@@ -118,9 +118,23 @@ describe('FoldersSection source-level guards', () => {
     // remove/move always mutate the array, so they bypass the dirty
     // guard and call runCommit / commitField directly.
     expect(SRC).toContain('runCommit()');
-    expect(SRC).toMatch(/handleRemove[\s\S]{0,200}runCommit\(\)/);
+    expect(SRC).toMatch(/handleRemove[\s\S]{0,400}runCommit\(\)/);
     expect(SRC).toMatch(/handleMoveUp[\s\S]{0,200}runCommit\(\)/);
     expect(SRC).toMatch(/handleMoveDown[\s\S]{0,200}runCommit\(\)/);
+  });
+
+  test('handleAdd does NOT commit (empty match would fail Zod min(1) immediately)', () => {
+    // Negative guard: a refactor that adds runCommit/commitField to
+    // handleAdd would make every Add click trigger an L1 rejection on
+    // the empty-match seed and confuse the user. The first commit must
+    // happen on the first valid match blur, not on Add.
+    const handleAddIdx = SRC.indexOf('const handleAdd');
+    expect(handleAddIdx).toBeGreaterThan(-1);
+    const after = SRC.slice(handleAddIdx);
+    const next = after.indexOf('const handleRemove');
+    const block = next > -1 ? after.slice(0, next) : after;
+    expect(block).not.toContain('runCommit(');
+    expect(block).not.toContain('commitField(');
   });
 
   test('uses shadcn FormField / FormControl / FormMessage', () => {
@@ -139,5 +153,24 @@ describe('FoldersSection source-level guards', () => {
     expect(SRC).not.toMatch(/\bmemo\s*\(/);
     expect(SRC).not.toContain('useMemo');
     expect(SRC).not.toContain('useCallback');
+  });
+});
+
+describe('FoldersSection accessibility guards', () => {
+  test('<ol> carries role="list" so Tailwind v4 list-style:none reset does not strip Safari VoiceOver semantics', () => {
+    expect(SRC).toMatch(/<ol\b[^>]*role="list"/);
+  });
+
+  test('row index span is aria-hidden (decorative duplicate of <li> position)', () => {
+    expect(SRC).toMatch(/<span[^>]*aria-hidden="true"[\s\S]{0,80}#\{index \+ 1\}/);
+  });
+
+  test('Remove button restores focus after row removal (no body-focus regression)', () => {
+    // After remove(i), the focused trash button vanishes with its <li>.
+    // Without a queueMicrotask focus restore, focus drops to <body> and
+    // the user must Tab through the page to return to the section.
+    expect(SRC).toContain('queueMicrotask');
+    expect(SRC).toContain('data-folder-action="remove"');
+    expect(SRC).toContain('data-folder-action="add"');
   });
 });

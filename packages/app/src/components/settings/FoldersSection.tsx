@@ -82,8 +82,28 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
   };
 
   const handleRemove = (i: number) => {
+    // Capture target index BEFORE remove() shifts the array.
+    const remaining = fields.length - 1;
+    const nextRowIndex = Math.min(i, remaining - 1);
     remove(i);
     runCommit();
+    // The focused trash button vanishes with its <li>, dropping focus to
+    // <body>. Restore focus to the trash button of the row that took the
+    // removed row's position (or the new last row), so chained deletions
+    // feel uninterrupted. When the list empties, fall back to the Add
+    // button.
+    queueMicrotask(() => {
+      const root = document.querySelector('[data-testid="settings-folders-section"]');
+      if (!root) return;
+      if (remaining > 0) {
+        const next = root.querySelector<HTMLElement>(
+          `[data-folder-row="${nextRowIndex}"] [data-folder-action="remove"]`,
+        );
+        next?.focus();
+      } else {
+        root.querySelector<HTMLElement>('[data-folder-action="add"]')?.focus();
+      }
+    });
   };
 
   const handleMoveUp = (i: number) => {
@@ -120,7 +140,8 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
           No folder rules yet. Add one to apply default frontmatter to a directory.
         </p>
       ) : (
-        <ol className="space-y-3">
+        // biome-ignore lint/a11y/noRedundantRoles: Tailwind v4 preflight resets `list-style: none`, which strips the implicit list role in Safari VoiceOver. Tailwind docs explicitly recommend `role="list"` to restore positional announcements ("item 2 of 5").
+        <ol className="space-y-3" role="list">
           {fields.map((entry, i) => (
             <FolderRow
               key={entry.id}
@@ -138,7 +159,13 @@ export function FoldersSection({ form, commitField, scope, flashedPath }: Folder
       )}
 
       <div>
-        <Button type="button" variant="outline" size="sm" onClick={handleAdd}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleAdd}
+          data-folder-action="add"
+        >
           <Plus className="size-3.5" aria-hidden="true" />
           Add folder rule
         </Button>
@@ -186,7 +213,10 @@ function FolderRow({
   return (
     <li data-folder-row={index} className="space-y-3 rounded-md border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-mono text-muted-foreground">#{index + 1}</span>
+        {/* Visual row number; the <ol>+<li> structure already announces position to AT. */}
+        <span className="text-xs font-mono text-muted-foreground" aria-hidden="true">
+          #{index + 1}
+        </span>
         <div className="flex items-center gap-1">
           <Button
             type="button"
@@ -217,6 +247,7 @@ function FolderRow({
             className="h-7 w-7 text-muted-foreground hover:text-destructive"
             onClick={() => onRemove(index)}
             aria-label={removeLabel}
+            data-folder-action="remove"
           >
             <Trash2 className="size-3.5" aria-hidden="true" />
           </Button>
@@ -367,6 +398,7 @@ function TagsField({ ctl, onCommit, ...slotForwarded }: TagsFieldProps & SlotFor
   return (
     <TagPillInput
       {...slotForwarded}
+      ref={ctl.ref}
       value={value}
       onChange={(next) => ctl.onChange(next)}
       onBlur={() => {

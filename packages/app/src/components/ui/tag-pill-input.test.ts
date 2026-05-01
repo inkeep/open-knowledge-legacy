@@ -61,7 +61,7 @@ describe('TagPillInput source-level guards', () => {
     expect(SRC).toMatch(/aria-label=\{`Remove \$\{tag\}`\}/);
   });
 
-  test('inner input forwards id + aria-describedby + aria-invalid', () => {
+  test('inner input forwards id + ref + aria-describedby + aria-invalid', () => {
     // Each must land on the JSX `<input>` — locate the element opening
     // (with a newline-attribute pattern so the `<input>` mention in the
     // docstring is skipped), then slice through to the closing `/>`.
@@ -70,6 +70,9 @@ describe('TagPillInput source-level guards', () => {
     const inputClose = SRC.indexOf('/>', inputOpen);
     const inputBody = SRC.slice(inputOpen, inputClose);
     expect(inputBody).toContain('id={id}');
+    // ref-forwarding is sibling-parity with Input/Switch/Textarea; without
+    // it RHF's `form.setFocus` on a TagPillInput-bound field silently no-ops.
+    expect(inputBody).toContain('ref={ref}');
     expect(inputBody).toContain('aria-describedby={ariaDescribedBy}');
     expect(inputBody).toContain('aria-invalid={ariaInvalid}');
   });

@@ -92,10 +92,13 @@ interface SectionDef {
   fields: FieldDef[];
   /**
    * Specialized renderer dispatch. When set, the SettingsForm render path
-   * skips the `fields` map and delegates to a custom component (e.g.
-   * `<FoldersSection>` for `'folders'`). The `fields` array stays present
-   * (typically empty) so the rest of the section pipeline — title +
-   * description rendering, scope filtering — still runs.
+   * delegates wholly to a custom component (e.g. `<FoldersSection>` for
+   * `'folders'`) and the rest of the per-section pipeline — `fields[]`
+   * iteration, `SettingsSection` heading wrapper, scope filtering — does
+   * NOT run. The custom component owns its own `<section>`, heading, and
+   * scope handling. `fields[]` and `title` / `description` on the entry
+   * are retained for shape uniformity but are unused by the dispatcher
+   * for custom sections.
    */
   custom?: 'folders';
 }
