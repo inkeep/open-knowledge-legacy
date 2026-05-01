@@ -1185,6 +1185,11 @@ Homepage: https://github.com/honojs/node-server
 
 Copyright (c) 2022 - present, Yusuke Wada and Hono contributors
 
+### `@hookform/resolvers@5.2.2`
+Homepage: https://react-hook-form.com
+
+Copyright (c) 2019-present Beier(Bill) Luo
+
 ### `@inquirer/ansi@2.0.5`
 Homepage: https://github.com/SBoudrias/Inquirer.js/blob/main/packages/ansi/README.md
 
@@ -1844,6 +1849,11 @@ _(No LICENSE file in package; SPDX identifier in `package.json` is the sole decl
 Homepage: https://github.com/sindresorhus/merge-streams
 
 Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+### `@standard-schema/utils@0.3.0`
+Homepage: https://github.com/standard-schema/standard-schema
+
+Copyright (c) 2024 Fabian Hiller
 
 ### `@tabby_ai/hijri-converter@1.0.5`
 
@@ -4201,6 +4211,11 @@ Copyright (c) 2020 Brian Vaughn
 Homepage: https://github.com/vasturiano/react-force-graph
 
 _(No LICENSE file in package; SPDX identifier in `package.json` is the sole declared grant.)_
+
+### `react-hook-form@7.74.0`
+Homepage: https://react-hook-form.com
+
+Copyright (c) 2019-present Beier(Bill) Luo
 
 ### `react-is@16.13.1`
 Homepage: https://reactjs.org/

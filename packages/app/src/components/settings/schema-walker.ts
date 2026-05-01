@@ -4,11 +4,9 @@
  * `_zod.def.innerType` descent pattern as `getFieldMeta` so wrappers
  * (`.default()`, `.optional()`, `.nullable()`) are transparent.
  *
- * Pure functions — no React, no I/O. Settings pane components consume the
- * outputs (`buildPatch`, `getFieldDefault`, `pathHasValue`).
- *
- * `resolveLeafSchema` lives in core (also used by MCP `set_config`) and
- * is re-exported here for the existing call sites' import-path stability.
+ * Pure functions — no React, no I/O. The Settings pane and its form
+ * harness consume `buildPatch`, `getFieldDefault`, `getLeafTypeTag`,
+ * `getEnumOptions`; `resolveLeafSchema` is re-exported from core.
  */
 
 import { resolveLeafSchema } from '@inkeep/open-knowledge-core';
@@ -37,33 +35,6 @@ export function buildPatch(
     return { [String(head)]: value };
   }
   return { [String(head)]: buildPatch(rest, value) };
-}
-
-/**
- * Read a value at `path` from a deeply-nested config object. Returns
- * `undefined` if any segment is missing or non-object along the way.
- */
-export function readPath(value: unknown, path: readonly (string | number)[]): unknown {
-  let cur: unknown = value;
-  for (const seg of path) {
-    if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[String(seg)];
-  }
-  return cur;
-}
-
-/**
- * True iff every segment of `path` exists in `value` (allows `null`/empty
- * arrays as "set"). Used by the modified-at-scope indicator.
- */
-export function pathHasValue(value: unknown, path: readonly (string | number)[]): boolean {
-  let cur: unknown = value;
-  for (const seg of path) {
-    if (cur === null || cur === undefined || typeof cur !== 'object') return false;
-    if (!(String(seg) in (cur as Record<string, unknown>))) return false;
-    cur = (cur as Record<string, unknown>)[String(seg)];
-  }
-  return cur !== undefined;
 }
 
 // resolveLeafSchema lives in `@inkeep/open-knowledge-core/config/schema-leaf`
