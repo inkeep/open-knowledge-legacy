@@ -91,37 +91,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-${{ matrix.task }}-
       - run: bun install --frozen-lockfile
-      # `timeout` bounds the step at 10 minutes (well inside the 15-min job
-      # budget) and `--kill-after=30` SIGKILLs any tree that survives SIGTERM
-      # after another 30s. Bun's `child_process.kill()` is documented
-      # unreliable on ubuntu-latest (oven-sh/bun#11892); when tests leak
-      # `bun`-labelled grandchildren the runner cgroup never drains, turbo
-      # never prints its task summary, and the step would otherwise hang the
-      # full 15-minute job budget (PR #377: jobs 73874363184, 73885833714,
-      # 73887506551, 73889431615, 73891437286, 73895883232).
-      #
-      # `timeout` exiting with 124 (or 137) after every package's test
-      # summary already showed `Ran N tests across M files. 0 fail` is a
-      # post-test cgroup-drain hang, not a real failure — promote it to
-      # success in that exact shape so CI doesn't conflate the two. Real
-      # failures show up as `(fail) ` (Bun's per-test failure marker) or
-      # `\bK fail\b` (K>0 in the summary line). Test code that exercises
-      # error-handling routinely prints lowercase `error:` lines, so that
-      # token is NOT a reliable signal here.
-      - shell: bash
-        run: |
-          set +e
-          set -o pipefail
-          timeout --kill-after=30 10m bunx turbo run ${{ matrix.task }} 2>&1 | tee /tmp/turbo-${{ matrix.task }}.log
-          EXIT="${PIPESTATUS[0]}"
-          if { [ "$EXIT" = "124" ] || [ "$EXIT" = "137" ]; } \
-              && ! grep -qE '\b[1-9][0-9]* fail\b|^\(fail\) ' /tmp/turbo-${{ matrix.task }}.log; then
-            echo "::warning::timeout after clean test summaries — promoting to success (cgroup drain hang)"
-            exit 0
-          fi
-          exit "$EXIT"
-      - if: always()
-        run: pkill -9 -x bun || true; pkill -9 -x bunx || true
+      - run: bunx turbo run ${{ matrix.task }}
 
   playwright:
     # Shared large runner (16+ vCPU / 64 GB RAM) — the 2-vCPU `ubuntu-latest`
