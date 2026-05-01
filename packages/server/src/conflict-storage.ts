@@ -1,7 +1,7 @@
 /**
  * ConflictStore — persistent storage and resolution logic for merge conflicts.
  *
- * Conflicts are stored at <contentDir>/.open-knowledge/conflicts.json (schema v1).
+ * Conflicts are stored at <contentDir>/.ok/conflicts.json (schema v1).
  * Each conflict entry records the file path and optional git object SHAs for
  * ours/theirs/base, enabling strategy-based resolution.
  *
@@ -47,7 +47,7 @@ export class ConflictStore {
   private conflicts: ConflictEntry[] = [];
 
   constructor(contentDir: string, projectDir: string, branch = 'main') {
-    this.storePath = join(contentDir, '.open-knowledge', 'conflicts.json');
+    this.storePath = join(contentDir, '.ok', 'conflicts.json');
     this.projectDir = projectDir;
     this.branch = branch;
     this.load();

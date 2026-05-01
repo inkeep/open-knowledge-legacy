@@ -2,7 +2,7 @@
 title: "TipTap WYSIWYG Clipboard Round-Trip with Markdown: Primitives, Prior Art, and Best Practices"
 description: "How ProseMirror and TipTap expose clipboard hooks, how 10+ markdown-canonical editors implement copy-as-markdown and paste-from-markdown, which MIME types destination apps actually read, and how to intelligently handle rich HTML paste from Google Docs / Notion / Word / VS Code / Gmail via the unified ecosystem (rehype-remark). Covers primitive composition, Cmd+A slice semantics, drag-and-drop symmetry, browser MIME allowlists, vendor paste behavior across 15+ sources, source detection heuristics, pivot-library evaluation (Turndown vs rehype-remark), and concrete reference patterns for markdown round-trip."
 createdAt: 2026-04-15
-updatedAt: 2026-04-15
+updatedAt: 2026-05-01
 subjects:
   - TipTap
   - ProseMirror
@@ -1169,3 +1169,638 @@ When Source paste dispatches a CM6 transaction inserting the converted markdown 
 - [reports/markdown-editor-paste-and-html-survey/](../markdown-editor-paste-and-html-survey/) — R18, paste-direction landscape across 15 editors; established Archetype D as our paste pattern
 - [reports/markdown-roundtrip-fidelity-tiptap/](../markdown-roundtrip-fidelity-tiptap/) — round-trip fidelity analysis for TipTap markdown
 - [reports/markdown-construct-fidelity-catalog/](../markdown-construct-fidelity-catalog/) — construct-level fidelity catalog
+
+---
+
+## 2026-04-30 verification update
+
+**Triggered by:** /spec session for `clipboard-component-contract-and-byte-preservation` (`specs/2026-04-29-clipboard-component-contract-and-byte-preservation/`). Two factual claims surfaced as candidate spec-direction assumptions and were sent for primary-source verification before being locked into the spec rubric: (1) `text/markdown` is dead on the clipboard in practice, and (2) several markdown-canonical editors emit canonical markdown bytes via `text/plain` on copy. The spec direction at the time of verification is "FR-13-first dispatcher reorder + extended is-markdown JSX signals; no Branch 0; no custom MIME; no `data-attr` marker; `toClipboardHast` contract for outbound only." This pass refreshes those two factual claims and surfaces drift since 2026-04-15.
+
+**Method:** Cross-referenced the original report's claims against (a) the IANA media type registry, (b) the W3C Clipboard API spec, (c) the WebKit blog's authoritative `ClipboardItem.write` allowlist post, (d) the Mozilla Bugzilla closure for custom-MIME clipboard support, (e) the Chrome blog + chromestatus entry for `web `-prefixed pickling, (f) MDN's `ClipboardItem.supports` baseline announcement, (g) primary-source code in the locally-cloned repos for Outline, Milkdown, BlockNote, Keystatic, BlockSuite/AFFiNE, and VS Code, and (h) Linear's official LinkedIn / X announcement and editor docs for `Cmd+Opt+C`. Negative spot-checks against community + vendor docs for Notion, Google Docs, Gmail, Slack.
+
+### text/markdown clipboard status (verified)
+
+**Verdict: CONFIRMED on every sub-claim.** No drift since 2026-04-15.
+
+| Sub-claim | Verdict | Primary evidence |
+|---|---|---|
+| `text/markdown` is registered as an IANA media type | CONFIRMED | [IANA registry: text/markdown](https://www.iana.org/assignments/media-types/text/markdown) — "registered 2014-11-11, updated 2016-03-28; see RFC7763" |
+| RFC 7763 is the registration RFC | CONFIRMED | IANA registry entry above cites `RFC7763` as the reference |
+| W3C-mandatory clipboard MIMEs are `text/plain` + `text/html` + `image/png` | CONFIRMED with one correction | [W3C Clipboard API spec §6.4](https://www.w3.org/TR/clipboard-apis/) — "must recognize... text/plain, text/html, image/png". Optional types (§6.5): `text/uri-list`, `image/svg+xml`, `web `-prefixed custom formats. **The previously-stated mandatory list "text/plain, text/html, image/png, image/jpeg, image/gif, image/svg+xml" was over-stated** — the actual mandatory triple is plain/html/png; the others are optional or browser-specific. The previous report's body text matches this corrected version (line 70: "the Clipboard API mandates support for plain text, HTML and PNG"). |
+| WebKit/Safari `ClipboardItem.write` rejects `text/markdown` from the allowlist | CONFIRMED | [WebKit blog: Async Clipboard API](https://webkit.org/blog/10855/async-clipboard-api/) — explicit allowlist quote: "text/plain, text/html, text/uri-list, and image/png". `text/markdown` is not in this list. Alex Harri's clipboard tour ([alexharri.com/blog/clipboard](https://alexharri.com/blog/clipboard)) corroborates: writes outside the mandatory triple throw with "Type ... not supported on write." |
+| Chromium async API requires the `web ` prefix for non-allowlisted MIMEs | CONFIRMED | [Chrome blog: Web Custom Formats](https://developer.chrome.com/blog/web-custom-formats-for-the-async-clipboard-api) — "Chromium 104+... prepend `web ` (with trailing space)". Without the prefix, only the sanitized triple (plain/html/png) is accepted. So `navigator.clipboard.write` accepts `web text/markdown` in Chromium (custom-format pickled), but bare `text/markdown` is rejected. |
+| Firefox does not support `text/markdown` on the async API | CONFIRMED | [Bugzilla 860857](https://bugzilla.mozilla.org/show_bug.cgi?id=860857) — RESOLVED FIXED in Firefox 48 (2016) **for the synchronous `clipboardData.setData` path only**. Firefox's async `ClipboardItem` is still gated behind `dom.events.asyncClipboard.clipboardItem` pref. So sync `setData('text/markdown', ...)` works in Firefox as a custom datatype, but no destination reads it. |
+| `ClipboardItem.supports()` is now baseline (March 2025) and never returns `true` for `text/markdown` | CONFIRMED | [web.dev/blog/baseline-clipboard-item-supports](https://web.dev/blog/baseline-clipboard-item-supports) — "Baseline Newly available as of March 30, 2025". Always returns `true` for the mandatory triple; varies by browser for `web `-prefixed and `image/svg+xml`. `text/markdown` not mentioned. |
+| BlockNote's source comment about Safari rejecting non-`text/plain` MIMEs | CONFIRMED, with verbatim quote | `~/.claude/oss-repos/blocknote/packages/core/src/api/clipboard/toClipboard/copyExtension.ts` line 188-189: `// TODO: Writing to other MIME types not working in Safari for / some reason.` Followed by three `event.clipboardData!.setData` calls writing `blocknote/html`, `text/html`, `text/plain` (markdown) on lines 190-192. The TODO is at the actual write site — confirms BlockNote ships the multi-MIME pattern despite the Safari limitation, which only manifests on `ClipboardItem.write`, not the sync `clipboardData.setData` path BlockNote uses. |
+
+**Net update for the OK spec:** the "no custom MIME" direction is confirmed correct as a baseline. There is no destination that reads `text/markdown`, no browser path that makes it portable, and the W3C mandatory triple is the only universally-supported surface. The `web `-prefixed Chromium pickling escape hatch remains a Chrome-only progressive enhancement and adds no vendor value (no destination consumes it). The `text/x-gfm` sync-event path still works cross-browser (Firefox 48+, Chromium, Safari) but the existing report already documents this and the spec correctly avoids it.
+
+### Per-editor markdown emission (verified)
+
+The original report's per-editor claims hold up. Two notes: (a) Linear's "default copy emits markdown" is a community claim, not an officially-documented one — Linear ships an explicit `Cmd+Opt+C` "copy as markdown" shortcut, which is what the announcements describe; the default `Cmd+C` behavior is closed-source. (b) BlockSuite/AFFiNE writes `text/plain` for its rich-text cells too, expanding the prior-art surface beyond the editors originally surveyed.
+
+| Editor | Verdict | Primary evidence |
+|---|---|---|
+| **Outline** | CONFIRMED via primary source | `~/.claude/oss-repos/outline/app/editor/extensions/ClipboardTextSerializer.ts:26-66` — `props.clipboardTextSerializer: (slice, view) => {...}` returns `mdSerializer.serialize(slice.content, { softBreak: true })` for non-trivial content, and `ProsemirrorHelper.toPlainText(node)` for "simple" content (single code block, single block type). The editor's own markdown serializer is reused via `this.editor.extensions.serializer()`. **This is `text/plain` = canonical markdown**, modulo softBreak normalization. |
+| **BlockNote** | CONFIRMED via primary source | `~/.claude/oss-repos/blocknote/packages/core/src/api/clipboard/toClipboard/copyExtension.ts:188-192` — DOM-level `event.clipboardData!.setData("text/plain", markdown)` where `markdown = cleanHTMLToMarkdown(externalHTML)`. Writes 3 MIMEs total: `blocknote/html` (internal), `text/html` (rich-text destinations), `text/plain` (canonical markdown). |
+| **Milkdown** | CONFIRMED via primary source | `~/.claude/oss-repos/milkdown/packages/plugins/plugin-clipboard/src/index.ts:133-147` — `clipboardTextSerializer: (slice) => { ... const value = serializer(doc); return value }` where `serializer` is the editor's own PM→markdown serializer pulled from `serializerCtx`. The "Keystatic-style" `textBetween` fallback at line 137-141 fires only for pure-text slices. |
+| **Keystatic** | CONFIRMED via primary source | `~/.claude/oss-repos/keystatic/packages/keystatic/src/form/fields/markdoc/editor/markdoc/clipboard.tsx:22-39` — `clipboardTextSerializer(content, view) { try { return format(proseMirrorToMarkdoc(...)) } catch { return content.content.textBetween(0, content.content.size, '\n\n') } }`. Confirmed: PM→Markdoc reuse in the success path; `textBetween` fallback on failure. |
+| **HackMD/CodiMD** | CONFIRMED via inference (CodeMirror substrate) | HackMD's editor pane is a CodeMirror instance ([HackMD docs](https://www.markdownguide.org/tools/hackmd/), confirmed via search). CodeMirror's default copy uses the browser's textarea-equivalent path: source bytes go to `text/plain` directly. No markdown serializer in the loop because the editor's data model already IS the markdown source. **CONFIRMED indirectly** — the source-pane behavior follows from the substrate, not from custom code. |
+| **Linear** | PARTIALLY CONFIRMED — needs sharpening | Linear has an explicit `Cmd+Opt+C` "copy as markdown" shortcut, announced 2025-07-13 by Linear's official X account ([@linear, status 1944758116396024313](https://x.com/linear/status/1944758116396024313)) and corroborated by [Linear Editor docs](https://linear.app/docs/editor) ("Copy the issue description in Markdown by opening the command menu... and selecting `copy issue in markdown`"). **The default Cmd+C behavior is not officially documented as emitting markdown.** Linear is closed-source; the original report's claim that "default copy emits markdown" is plausible but unverified by primary source. The Cmd+Opt+C shortcut suggests Linear treats markdown copy as a *non-default* opt-in. **Recommend treating "Linear emits markdown on default copy" as UNCERTAIN going forward.** |
+| **VS Code (.md file open)** | CONFIRMED via primary source | `~/.claude/oss-repos/vscode/src/vs/editor/browser/controller/editContext/clipboardUtils.ts:153-159` — `setTextData(clipboardData, text, html, metadata) { clipboardData.setData(Mimes.text, text); if (typeof html === 'string') { clipboardData.setData('text/html', html); } clipboardData.setData('vscode-editor-data', JSON.stringify(metadata)); }`. The `text` here is `viewModel.getPlainTextToCopy(...)` (line 47) — the raw model bytes. For an open `.md` file, that IS the markdown source. The optional `text/html` is syntax-highlighted output (controlled by `copyWithSyntaxHighlighting`), not markdown rendering. The `vscode-editor-data` MIME is for VS Code's own paste-detection. |
+| **GitHub textarea (issue/PR compose)** | CONFIRMED — native textarea + GitHub-specific paste behavior | GitHub uses a plain `<textarea>` element for issue/PR/discussion compose. Default copy from a textarea selection emits `text/plain` = the raw bytes, per browser default behavior (HTML living standard textarea contract). On the **paste** side, GitHub's [@github/paste-markdown](https://www.npmjs.com/package/@github/paste-markdown) handles HTML→markdown conversion (e.g. spreadsheet cells, links). Confirmed via GitHub Changelog ([2022-05-19](https://github.blog/changelog/2022-05-19-updates-to-markdown-pasting-on-github/)): "Content is pasted into GitHub comments as plaintext, except for a few special cases managed by @github/paste-markdown." |
+| **Claude / ChatGPT / Gemini copy buttons** | CONFIRMED via empirical-only (closed-source); third-party corroboration | [unmarkdown.com blog post](https://unmarkdown.com/blog/how-to-copy-from-claude-without-losing-formatting): "When you copy Claude's response (using the copy button), you get raw markdown as `text/plain`." This is a third-party empirical observation, not an Anthropic primary source. ChatGPT and Gemini follow the same pattern by community report. **Marked as CONFIRMED-via-empirical** — no Anthropic / OpenAI / Google primary source documents the clipboard MIME shape, but the behavior is reproducible and uniformly reported. The spec should not over-rely on this; the round-trip story doesn't depend on it. |
+| **BlockSuite / AFFiNE** (newly verified, not in original survey scope at this depth) | CONFIRMED via primary source | `~/.claude/oss-repos/blocksuite/packages/affine/rich-text/src/rich-text.ts:77,99` and `packages/affine/blocks/database/src/properties/title/text.ts:68,90` and `packages/affine/blocks/database/src/properties/rich-text/cell-renderer.ts:213,235` — six call sites of `e.clipboardData?.setData('text/plain', text)` for rich-text and database-cell copy. Confirms AFFiNE's text-cell write path uses `text/plain` for the source bytes, consistent with the wider pattern. |
+
+**Negative claims (these editors do NOT emit canonical markdown via `text/plain`):**
+
+| Editor | Status |
+|---|---|
+| **Notion** | UNCHANGED — third-party corroboration: "Notion puts rich HTML on your clipboard when you copy content" ([pactify.io blog](https://pactify.io/blog/copy-paste-workflow-corrupting-code), 2026). Notion ships an explicit `Cmd/Ctrl + Shift + C` "Copy as Markdown" shortcut for the markdown path; default copy is rich-text. |
+| **Google Docs / Gmail / Word / Slack rich compose** | UNCHANGED — no primary sources contradict the existing report. These remain rich-text-first; clipboard inspection tools consistently report `text/html` + a non-markdown `text/plain` extraction (rendered text, not source bytes). |
+
+### Corrections to prior claims in this report
+
+1. **Mandatory MIME list (line 70 of REPORT.md, line 11 of `evidence/d2-d8-mime-strategy-browser-vendor.md`):** the verifying spec session inadvertently broadened the W3C mandatory triple to include `image/jpeg`, `image/gif`, `image/svg+xml`. The W3C spec §6.4 mandates only `text/plain` + `text/html` + `image/png`. The original REPORT.md text was correct ("plain text, HTML and PNG"); the spec session's broadening was wrong and has been ruled out by this verification. No edit to the original report body is needed.
+
+2. **Linear "default copy emits markdown" framing:** the existing report's claim (line 13 of `evidence/d2-d8-mime-strategy-browser-vendor.md`: "Notion, Slack, Google Docs, Gmail, Apple Notes, GitHub, Outline, Linear, Obsidian all converge on this") is correctly hedged in the per-destination matrix at line 68 ("INFERRED... UNCERTAIN exact impl"). Verification confirms Linear's *explicit* markdown copy is opt-in via `Cmd+Opt+C`. The default `Cmd+C` behavior is unverified primary-source. **No edit needed** — the existing matrix already labels Linear as INFERRED/UNCERTAIN. Future claims about Linear should preserve that hedge.
+
+3. **No drift in any other claim.** The `webkit.org/blog/10855` allowlist quote, the Chromium 104+ pickling shipdate, the Firefox 48 bug closure, the Mozilla async-clipboard pref gating, and all per-editor primary-source citations remain accurate as of 2026-04-30.
+
+### Implications for the OK spec
+
+The verification supports the locked spec direction. Specifically:
+
+- **"No Branch 0" (no `text/markdown` MIME on outbound):** confirmed correct. There is no destination that reads it, WebKit's `ClipboardItem.write` allowlist explicitly rejects it, and even Chromium accepts it only behind the `web ` prefix where no destination consumes it. Adding `text/markdown` to the spec's outbound MIME list would be pure dead weight.
+- **"No custom MIME" (no `text/x-ok-slice` / no `web text/markdown`):** confirmed correct as a *baseline*. The `text/x-gfm`-style sync-event path is portable but only useful if the spec adds a dedicated reader on the inbound side; the current spec doesn't, so emitting it would be unobserved exhaust. The Chromium `web `-prefixed pickling path is Chrome-only and adds no vendor value (no destination reads it).
+- **"No `data-attr` marker" (no `data-pm-slice`-style outbound marker on `text/html`):** orthogonal to this verification — the existing report already covers this in the dispatcher heuristics (`evidence/d12-d13-cross-app-matrix-detection.md`). The spec direction is consistent with avoiding marker-injection on outbound HTML.
+- **"FR-13-first dispatcher reorder + extended is-markdown JSX signals":** orthogonal to clipboard-MIME questions; this verification doesn't bear on the dispatcher ordering decision.
+- **"`toClipboardHast` contract for outbound only":** consistent with the verified pattern across Outline, Milkdown, Keystatic, BlockNote, AFFiNE — every one of these editors performs PM→markdown serialization at the clipboard boundary, never round-trips through HTML for the markdown payload. This is exactly the `toClipboardHast`-style contract surface the spec is building.
+
+The one area where the spec should preserve hedge: any claim that "Linear emits markdown on default copy" (or any closed-source vendor in the same category — Notion default, Slack default) is empirical-only and may regress. The spec should not depend on closed-source vendor *defaults* for round-trip correctness; rely instead on the open-source primary-source evidence (Outline, BlockNote, Milkdown, Keystatic, BlockSuite, VS Code) for the canonical pattern.
+
+---
+
+## 2026-04-30 markdown-detection heuristic survey
+
+**Triggered by:** /spec session for clipboard-component-contract-and-byte-preservation; FR-13-first dispatcher reorder makes the is-markdown heuristic load-bearing for OK→OK byte preservation, so we want to verify our pattern matches peers. The spec direction at the time of survey is "is-markdown heuristic is the only piece of paste-discrimination infrastructure between text/plain branches" — this survey audits whether OK's borrowed-from-Outline expression is the right shape to lock as-final in the spec.
+
+**Method:** Read clipboard / paste source code in nine locally-cloned OSS editor repos (Outline, BlockNote, Milkdown, Keystatic, Lexical, Plate, BlockSuite, AFFiNE, tiptap-markdown). Cross-checked npm registry for any standalone `is-markdown` detection package. Verified `@github/paste-markdown` heuristic via primary source. Full evidence in [`evidence/markdown-detection-heuristic-survey.md`](evidence/markdown-detection-heuristic-survey.md).
+
+### Per-editor heuristics
+
+| Editor | Approach | Detection? | File:line |
+|---|---|---|---|
+| **Outline** | Weighted signal-count + line-scaled threshold | YES (content-scanning) | `shared/editor/lib/isMarkdown.ts:1-48` |
+| **BlockNote** | 13-regex any-match | YES (content-scanning) | `packages/core/src/api/parsers/markdown/detectMarkdown.ts:1-62` |
+| **Milkdown** | Try-parse, return false on no-slice | NO (parser-as-validator) | `packages/plugins/plugin-clipboard/src/index.ts:114-131` |
+| **Keystatic** | Try-parse with try/catch fallback | NO (parser-as-validator) | `packages/keystatic/src/form/fields/markdoc/editor/markdoc/clipboard.tsx:40-55` |
+| **BlockSuite / AFFiNE** | Adapter registry — `MixTextAdapter` always parses as markdown | NO (priority cascade + always-parse) | `packages/affine/foundation/src/clipboard.ts:46-50` + `mix-text.ts:261-310` |
+| **Lexical** | None — `text/plain` becomes literal text | NO (no detection at clipboard layer) | `packages/lexical-clipboard/src/clipboard.ts:140-208` |
+| **Plate** | None for the paste→markdown direction | NO (no detection) | confirmed via grep of `packages/markdown/` |
+| **tiptap-markdown** | Unconditional `clipboardTextParser` (gated by `transformPastedText`) | NO (always-parse when enabled) | `src/extensions/tiptap/clipboard.js:19-29` |
+| **`@github/paste-markdown`** | MIME-type-only detection (`text/x-gfm`) | NO (cooperative MIME) | `src/paste-markdown-text.ts: hasMarkdown()` |
+
+**Outline's expression** (origin of OK's pattern):
+
+```typescript
+function isMarkdown(text: string): boolean {
+  let signals = 0;
+  const lines = text.split("\n").length;
+  const minConfidence = Math.min(3, Math.floor(lines / 5));
+
+  const fences = text.match(/^```/gm);
+  if (fences && fences.length > 1) signals += fences.length;     // PAIRED only
+  const latex = text.match(/\$(.+)\$/g);
+  if (latex) signals += latex.length;
+  const links = text.match(/\[[^]+\]\(https?:\/\/\S+\)/gm);
+  if (links) signals += links.length * 2;                         // 2x weight
+  const relativeLinks = text.match(/\[[^]+\]\(\/\S+\)/gm);
+  if (relativeLinks) signals += relativeLinks.length * 2;         // 2x weight
+  const headings = text.match(/^#{1,6}\s+\S+/gm);
+  if (headings) signals += headings.length;
+  const listItems = text.match(/^[-*]\s\S+/gm);                   // NOT + or numbered
+  if (listItems) signals += listItems.length;
+  const tables = text.match(/\|\s?[:-]+\s?\|/gm);                 // separator only
+  if (tables) signals += tables.length;
+  return signals > minConfidence;                                  // STRICT >
+}
+```
+
+**BlockNote's expression** (the stricter alternative):
+
+```typescript
+const h1 = /(^|\n) {0,3}#{1,6} {1,8}[^\n]{1,64}\r?\n\r?\n\s{0,32}\S/;        // requires blank+content after
+const bold = /(_|__|\*|\*\*|~~|==|\+\+)(?!\s)(?:[^\s](?:.{0,62}[^\s])?|\S)(?=\1)/;
+const link = /\[[^\]]{1,128}\]\(https?:\/\/\S{1,999}\)/;
+const code = /(?:\s|^)`(?!\s)(?:[^\s`](?:[^`]{0,46}[^\s`])?|[^\s`])`([^\w]|$)/;
+const ul = /(?:^|\n)\s{0,5}-\s{1}[^\n]+\n\s{0,15}-\s/;                       // requires 2 items
+const ol = /(?:^|\n)\s{0,5}\d+\.\s{1}[^\n]+\n\s{0,15}\d+\.\s/;               // requires 2 items
+const hr = /\n{2} {0,3}-{2,48}\n{2}/;
+const fences = /(?:\n|^)(```|~~~|\$\$)(?!`|~)[^\s]{0,64} {0,64}[^\n]{0,64}\n[\s\S]{0,9999}?\s*\1 {0,64}(?:\n+|$)/;
+const title = /(?:\n|^)(?!\s)\w[^\n]{0,64}\r?\n(-|=)\1{0,64}\n\n\s{0,64}(\w|$)/;  // SETEXT
+const blockquote = /(?:^|(\r?\n\r?\n))( {0,3}>[^\n]{1,333}\n){1,999}($|(\r?\n))/;
+const tableHeader = /^\s*\|(.+\|)+\s*$/m;
+const tableDivider = /^\s*\|(\s*[-:]+[-:]\s*\|)+\s*$/m;
+const tableRow = /^\s*\|(.+\|)+\s*$/m;
+
+export const isMarkdown = (src: string): boolean =>
+  h1.test(src) || bold.test(src) || link.test(src) || code.test(src) ||
+  ul.test(src) || ol.test(src) || hr.test(src) || fences.test(src) ||
+  title.test(src) || blockquote.test(src) || tableHeader.test(src) ||
+  tableDivider.test(src) || tableRow.test(src);
+```
+
+### Patterns observed
+
+**Three structural responses to "is text/plain markdown?"**, with editors split roughly evenly:
+
+1. **Content-scanning heuristic** (Outline, BlockNote, OK). Signal-count or any-match regex set. Two open-source instances; **no shared library** — both inlined.
+2. **Try-parse-and-validate** (Milkdown, Keystatic, BlockSuite/AFFiNE, tiptap-markdown). Always feed text/plain to the markdown parser; gracefully fail on empty/null result, or wrap in try/catch and fall back. The parser is its own discriminator.
+3. **No detection / different abstraction** (Lexical, Plate, ToastUI, `@github/paste-markdown`). Either skip markdown entirely at the clipboard layer (Lexical: input rules at typing time), require explicit user-mode toggle (ToastUI), or use cooperative MIME (`text/x-gfm`).
+
+**Convergent observations:**
+
+- **No npm package** for stand-alone is-markdown detection exists. The two content-scanning implementations (Outline, BlockNote) are inlined into editor codebases, not extracted to libraries. The ecosystem does not treat this as a separable concern.
+- **No threshold formula scales by anything but line count.** No editor uses byte count, character entropy, ML, or "try parse and measure parse-success ratio." The complexity ceiling for the heuristic is set by what's expressible in 50 lines of regex matching plus a `Math.min`.
+- **False-positive defenses live at the call site, not in the heuristic.** Outline's Dropbox-Paper exclusion, BlockNote's `prioritizeMarkdownOverHTML` tiebreaker semantics, OK's existing dispatcher cascade — every editor adds gating outside the heuristic. The signal-set itself is left coarse.
+- **Outline's strict `>` comparison vs OK's inclusive `>=` is a uniform 1-signal weakening.** On 5+ line snippets, OK fires earlier than Outline by exactly one signal. This is OK's intentional drift from the source pattern; the source comment notes "small snippets need at most one signal to count."
+
+### Comparison to OK's current `is-markdown.ts`
+
+| Aspect | OK's pattern | Verdict |
+|---|---|---|
+| **Approach (signal-count vs any-match vs try-parse)** | Signal-count (Outline-style) | ALIGNED with one of three peer approaches; Outline is the more conservative of the two content-scanning peers |
+| **Threshold formula** | `min(3, floor(lineCount/5))` with `>=` (inclusive) | ALIGNED with Outline; the `>=` vs Outline's `>` is a deliberate weakening — consistent with OK's "1 signal wins on short snippets" goal |
+| **Code fence (` ``` `)** | Single-fence triggers | DIFFERENT from Outline (which requires PAIRED fences). OK is more permissive. Test case: a partial AI-chat copy mid-code-block triggers OK but not Outline. Worth verifying this is intentional. |
+| **Inline links `[a](url)`** | Scores 1 (no 2x weight) | WEAKER than Outline (which weights 2x). OK requires twice as many links to clear the same threshold. |
+| **Numbered lists `1.`** | Scores 1 | OK ADDED this; Outline does not check it; BlockNote requires 2 items |
+| **Table detection** | Requires BOTH separator AND row regex match | STRICTER than Outline (which only checks separator) and BlockNote (which any-matches row OR separator OR header). OK's pairing is the most precise. |
+| **Block LaTeX `$$...$$`** | Detected | OK ADDED this; Outline checks inline `$..$` instead; BlockNote doesn't check LaTeX at all |
+| **Inline code `` `code` ``** | NOT checked | MISSING vs BlockNote. AI-chat outputs frequently use inline code; this is a likely false-negative class. |
+| **Bold/italic `**` `*`** | NOT checked | MISSING vs BlockNote. Plain prose with one `*emphasis*` doesn't fire — but neither does an actual markdown paragraph that uses only emphasis. |
+| **Blockquote `> `** | NOT checked | MISSING vs BlockNote. AI-chat citations / email quotes use this; false-negative class. |
+| **Setext headings (`===`, `---`)** | NOT checked | MISSING vs BlockNote. Less common but CommonMark-canonical. |
+| **Horizontal rule `---`** | NOT checked | MISSING vs BlockNote. Standalone rules without surrounding markdown context wouldn't trigger anyway, but matched-with-context HR is a real signal. |
+
+**Net assessment of OK's current set:** Aligned with Outline's design philosophy (precise > permissive, weighted scoring) but missing five signals BlockNote checks: blockquote, inline code, emphasis, setext, horizontal rule. The most consequential miss for OK's stated use case (AI-chat copy-buttons + OK→OK round-trip) is **blockquote + inline code**, both of which appear in AI-chat output frequently and currently produce false negatives.
+
+### Recommended cleanest pattern
+
+**OK's current expression is structurally one of the two cleanest in the ecosystem** (the other being BlockNote's any-match). It does not need to be replaced with a different approach. Specific suggestions for the spec to consider:
+
+1. **Add three signals to close the AI-chat false-negative class:**
+   - Blockquote: `^>\s+\S+/m` (1 signal per match)
+   - Inline code: BlockNote's regex `(?:\s|^)`(?!\s)(?:[^\s`](?:[^`]{0,46}[^\s`])?|[^\s`])`([^\w]|$)` is the precision benchmark; a simpler `` /(?:\s|^)`[^`\s][^`]*`/ `` would be 90% as precise.
+   - Emphasis (paired markers): `/(\*\*|__|~~)\S[^*_~]*\1/m` for paired bold/strikethrough only — avoids the prose-asterisk false-positive class.
+2. **Keep the current threshold formula.** No peer uses anything more sophisticated; the line-count scaling is well-aligned.
+3. **Keep the "table separator AND table row" pairing.** OK's expression is more precise than either Outline or BlockNote here — defense against a stray ` | x | ` line in code prose.
+4. **Re-evaluate the single-fence policy.** Outline's PAIRED-fence requirement is more conservative; OK's single-fence check could fire on prose containing a stray triple-backtick. If the spec adds inline code detection (which catches single-backtick anyway), the single-fence check could be tightened to PAIRED without losing real signal.
+5. **Add JSX/MDX signal as named in the user prompt** (per the spec's "extended is-markdown JSX signals" direction). No peer checks for `<ComponentName ...>` shape; OK is alone in needing it because OK is alone in shipping MDX-native authoring. Suggest: `/^<[A-Z][A-Za-z0-9]*[\s>/]/m` (capitalized JSX-tag start at line head, scores 1).
+
+### Implications for the OK spec
+
+The /spec session's direction to lock OK's current heuristic as final is **structurally correct** — content-scanning signal-count is a legitimate peer pattern and OK's specific expression is well-engineered. But the *signal set* is at the lower bound of peer coverage, and three additions (blockquote, inline code, paired emphasis) would close known false-negative classes without changing the threshold formula or the dispatcher position. The JSX-tag extension named in the spec direction is also unique to OK (no peer ships MDX detection at the clipboard layer) and worth treating as an OK-specific enhancement rather than a borrowed pattern. If the spec keeps the current set as-final, the AI-chat copy-button outcome will be partial — confirm this is acceptable given the FR-13-first dispatcher pattern handles the OK→OK case via earlier branches and the heuristic is only the fallback.
+
+---
+
+## 2026-04-30 CSS-to-inline-style techniques for cross-app HTML emission
+
+**Triggered by:** OK clipboard-component-contract-and-byte-preservation spec F2/F6 design challenge — `toClipboardHast` for canonical Callout (and other extended block descriptors) needs to emit inline styles for cross-app rendering. Gmail strips `<style>` blocks; GitHub only recognizes the 5 GFM alert types via class CSS; extended types (`tip`, `success`, `info`, `danger`, etc.) need their colors *inlined* on the element to render anywhere. The naive approach — hardcoding a TS palette of inline-style strings per Callout type — drifts when the live UI's Tailwind config / `globals.css` / CSS-custom-property values change. This section investigates how to derive inline styles from the same source as the live UI, ideally without a build step.
+
+**Method:** Primary-source reads of the ProseMirror clipboard pipeline ([`prosemirror-view/src/clipboard.ts`](https://github.com/ProseMirror/prosemirror-view/blob/master/src/clipboard.ts)), the React Email Tailwind component ([`packages/react-email/src/components/tailwind/tailwind.tsx`](https://github.com/resend/react-email/tree/main/packages/react-email/src/components/tailwind), commit-checked 2026-04-30, weekly-DL signal 789K–2.8M), Lexical's `@lexical/html` and `@lexical/clipboard` source ([`facebook/lexical`](https://github.com/facebook/lexical)), the Obsidian "Copy as HTML" plugin source ([`mvdkwast/obsidian-copy-as-html`](https://github.com/mvdkwast/obsidian-copy-as-html)), Plate's HTML serializer docs ([`platejs.org/docs/html`](https://platejs.org/docs/html)), the Tailwind v4 programmatic-compilation discussion thread ([tailwindlabs/tailwindcss#15881](https://github.com/tailwindlabs/tailwindcss/discussions/15881), [#16612](https://github.com/tailwindlabs/tailwindcss/discussions/16612)), `jit-browser-tailwindcss` repo ([mhsdesign/jit-browser-tailwindcss](https://github.com/mhsdesign/jit-browser-tailwindcss)), and the Twind GitHub commit log (last substantive commit Q4 2024; sponsor-image chore commits only in 2026). Maintenance signals checked via `api.github.com/repos/.../commits` for activity recency. Web search for performance characteristics of `getComputedStyle` and forced-reflow cost.
+
+### 1. Runtime `getComputedStyle()` approach — viability analysis
+
+The instinct — "the live editor DOM already has the resolved styles; copy time should just read them" — runs into ProseMirror's clipboard architecture. The actual flow in [`prosemirror-view/src/clipboard.ts:5-37` (master)](https://github.com/ProseMirror/prosemirror-view/blob/master/src/clipboard.ts):
+
+```typescript
+export function serializeForClipboard(view: EditorView, slice: Slice) {
+  view.someProp("transformCopied", f => { slice = f(slice!, view) })
+  // ...
+  let serializer = view.someProp("clipboardSerializer") || DOMSerializer.fromSchema(view.state.schema)
+  let doc = detachedDoc(), wrap = doc.createElement("div")
+  wrap.appendChild(serializer.serializeFragment(content, {document: doc}))
+  // ...
+}
+```
+
+Three load-bearing facts:
+
+1. **The serializer renders into `detachedDoc()`** — a separate `Document` outside the page. Elements there have no inherited styles. Calling `getComputedStyle(el)` on a detached element returns `""` for every non-inline property. **The naive "serialize the slice, then walk the result tree calling getComputedStyle" pattern does not work.**
+2. **`view.someProp("clipboardSerializer")` is a custom DOMSerializer slot.** A custom serializer's `serializeFragment(fragment, {document})` is called with the detached `Document`. The serializer can do whatever it wants — including, before returning, walking up to the live `view.dom` tree to read computed styles from the *live* rendered nodes — but this is not the default path and requires the custom serializer to be wired with access to `view`.
+3. **`transformCopied: (slice, view) => Slice` runs before serialization with both arguments.** Since `view` is in scope, a transformer can call `view.nodeDOM(pos)` to find the live DOM node for any position in the slice (returns `null` for opaque NodeViews). This live element IS in the page tree, so `getComputedStyle()` returns resolved values. The transformer can then attach computed-style attrs to the slice (or build a style-decorated copy of the slice content) for the downstream serializer to emit as `style=""`.
+
+So **getComputedStyle is conditionally viable**: only via `transformCopied` (slice-decorating) or a custom `clipboardSerializer` that captures `view` in closure and queries live DOM out of band. It is NOT viable as a post-serialization pass because the output DOM is detached.
+
+**Resolution behavior with Tailwind v4 + CSS custom properties.** `getComputedStyle(el).getPropertyValue('color')` on a live element styled with Tailwind utility classes returns the **fully resolved value** — Tailwind's utility classes generate ordinary CSS rules at the selector level, so `bg-blue-500` produces a normal `background-color` declaration that resolves through the cascade like any other. CSS variables likewise resolve: if `bg-primary` is `background-color: var(--color-primary)`, `getComputedStyle().getPropertyValue('background-color')` returns the resolved `rgb(...)` of `--color-primary`'s effective value, NOT the literal `var(...)` reference (per [MDN: getComputedStyle returns "the resolved values of all CSS properties of an element, after applying active stylesheets and resolving any computation those values may contain"](https://developer.mozilla.org/en-US/docs/Web/API/Window/getComputedStyle)). The Tailwind discussion confirming this approach works on `:root` for theme variables: [tailwindlabs/tailwindcss#16612](https://github.com/tailwindlabs/tailwindcss/discussions/16612) — "the documented approach works properly… use `document.documentElement` for `:root` variables."
+
+**Performance.** `getComputedStyle()` forces layout if any pending mutations exist (it's on Paul Irish's [What forces layout/reflow](https://gist.github.com/paulirish/5d52fb081b3570c81e3a) list as a Layout-flushing operation). On a clean tree (no pending mutations between copy event firing and the serializer running, which is the typical case), each call resolves from cached layout in **single-digit microseconds to low-100s of microseconds**, depending on selector complexity and the number of cascaded rules. For a Callout copy emitting ~5 elements (aside + heading + paragraph + maybe icon span + maybe content wrapper), reading 10–15 properties each, total cost is well below a millisecond — imperceptible relative to the copy event budget. The usual perf concern is *layout thrashing in animation loops* via repeated read/write cycles, which doesn't apply here because copy is one-shot and read-only.
+
+**Edge case — Activity-hidden subtree.** Per OK's CLAUDE.md and `worldmodel_tiptap_activity_hidden_destroys_editor` memory, React 19.2's `<Activity mode="hidden">` unmounts the hidden subtree's DOM. **A descriptor inside an Activity-hidden EditorActivityPool entry has no live DOM to query.** This is a real failure mode if the user can somehow trigger copy from a hidden editor, but in practice copy targets the focused/visible editor, so the hidden case is hypothetical for clipboardSerializer. A defensive `nodeDOM === null` check + fallback to a hardcoded palette covers it.
+
+**Edge case — opaque NodeViews.** `view.nodeDOM(pos)` returns `null` "if the node is inside an opaque node view" (per [ProseMirror reference](https://prosemirror.net/docs/ref/)). OK's HtmlDetailsAccordion / Callout descriptors render as NodeViews; whether they're opaque depends on `contentDOM` exposure. For Callout (block descriptor with content), the wrapper is queryable; the content children are within `contentDOM` and individually queryable. Image/iframe-style void nodes ARE opaque — but those don't carry palette-style theme dependencies that drift, so the loss is acceptable.
+
+### 2. React Email's actual approach (2026)
+
+React Email is the dominant React-based email-template library: 19K+ stars on `resend/react-email`, weekly downloads of `@react-email/tailwind` cited at 789K–2.8M (CodeSandbox stats vary by methodology), package version 2.0.6 with [`tailwindcss@4.1.12` as a peer dep](https://www.npmjs.com/package/@react-email/tailwind). **Reading the source directly** ([`packages/react-email/src/components/tailwind/tailwind.tsx`](https://raw.githubusercontent.com/resend/react-email/main/packages/react-email/src/components/tailwind/tailwind.tsx) and `setup-tailwind.ts`):
+
+```typescript
+// setup-tailwind.ts (excerpted)
+import { compile } from 'tailwindcss';
+// ...
+const compiler = await compile(baseCss, {
+  loadStylesheet, loadModule, polyfills: 0,
+});
+return {
+  addUtilities: (candidates: string[]) => { css = compiler.build(candidates); },
+  getStyleSheet: () => parse(css) as StyleSheet,  // css-tree parse
+};
+```
+
+```tsx
+// tailwind.tsx (excerpted)
+let mappedChildren = mapReactTree(children, (node) => {
+  if (React.isValidElement<EmailElementProps>(node) && node.props.className) {
+    const classes = node.props.className.split(/\s+/);
+    classesUsed = [...classesUsed, ...classes];
+    tailwindSetup.addUtilities(classes);
+  }
+  return node;
+});
+const styleSheet = tailwindSetup.getStyleSheet();
+const { inlinable: inlinableRules, nonInlinable: nonInlinableRules } =
+  extractRulesPerClass(styleSheet, classesUsed);
+const customProperties = getCustomProperties(styleSheet);
+mappedChildren = mapReactTree(mappedChildren, (node) =>
+  cloneElementWithInlinedStyles(node, inlinableRules, nonInlinableRules, customProperties)
+);
+```
+
+The flow:
+1. **First React-tree walk** collects every `className` and feeds it to Tailwind v4's `compile(baseCss).build(candidates)` API — the same `tailwindcss` npm package used in standard builds, called as a JS-runtime function. In v4, `compile()` returns a compiler object whose `build(candidates: string[])` method generates the CSS for that exact candidate set.
+2. **css-tree parses** the generated CSS into an AST.
+3. **Per-class rule extraction** maps each utility class to its declarations.
+4. **CSS-variable resolution** (`getCustomProperties` + `cloneElementWithInlinedStyles`) substitutes `var(--token)` → literal value, because most email clients don't support CSS variables.
+5. **Second React-tree walk** clones every element and injects the resolved declarations into `style={{}}` props.
+6. Non-inlinable rules (media queries, pseudo-classes) get hoisted to a `<style>` tag injected into `<head>`.
+
+**Crucial nuance: this approach is build-time-ish.** It runs at SSR / `render(<Component />)` time, not in a browser. The package is shipped via `bun run build` of the email template; the result is a static HTML string. **Runtime in-browser Tailwind compilation is NOT what react-email does** — they leverage Tailwind's `compile()` function in Node. Doing the same in-browser at clipboard-copy time would require shipping the Tailwind compiler (~250 KB minified per `jit-browser-tailwindcss` benchmarks, see §5) into the editor bundle.
+
+**Why react-email needs this complexity.** Email clients (Gmail, Outlook, Apple Mail) strip `<style>` blocks and reject CSS variables. React Email solves both at once. **OK's clipboard problem is a strict subset** — Gmail is the same target; Slack/Notion/Linear are more lenient. So react-email's *philosophy* (Tailwind class authoring + inline-on-emit) is exactly right for OK; only the question of WHERE the inlining happens differs. React Email runs it at component-render-time in Node; OK would need it at copy-event-time in the browser.
+
+### 3. Build-process tools survey
+
+For completeness:
+
+- **juice (Automattic).** [github.com/Automattic/juice](https://github.com/Automattic/juice). The canonical CSS-inliner. Walks an HTML+`<style>` document, applies the stylesheet rules to matching elements via the cascade, writes the resolved declarations to `style=""` attributes. Has both Node (`require('juice')`, uses `cheerio` + `node:fs`) and browser entry points (`require('juice/client')` — exposes `juiceDocument`, `inlineDocument`, `inlineContent` only, no file-fetching). Browser bundle is ~150 KB minified+gzipped. **Runtime-usable in browser**, BUT requires you to feed it the full applicable stylesheet — which for a Tailwind-built app is hundreds of KB and not introspectable as a single string at runtime (Tailwind's CSS is generated by the build, lives as a `<style>` element in dev or as a CSS file in prod). You'd need to read all `document.styleSheets` and serialize them to text first.
+- **premailer.** Ruby-only, no browser story. Out of scope.
+- **mjml.** Markup-to-HTML compiler with a custom XML-ish DSL (`<mj-section>`, etc.). Build-time only. Out of scope for OK because OK isn't authoring with mjml DSL.
+- **maizzle.** Tailwind-based email framework. Wraps the Maizzle build pipeline (Tailwind + juice + minifier). Build-time only. Same DSL friction — out of scope.
+
+The build-process category is one-and-done for OK: **only juice is even theoretically usable at clipboard-copy time** (via `juice/client`), and it punts the hard part — getting the relevant stylesheet text — to the caller.
+
+### 4. OSS docs / WYSIWYG editor HTML export survey
+
+Mapping how peer editors handle the same problem:
+
+| Editor | Copy-as-HTML produces | Style strategy | Source |
+|---|---|---|---|
+| **Lexical (Meta)** | `text/html` via `$generateHtmlFromNodes` → each node's `exportDOM()` returns an HTMLElement | **Inline styles, set explicitly per-node by author of the node class.** No automatic computed-style capture. `$generateDOMFromNodes` returns `container.innerHTML` from a *fresh* `document.createElement('div')` (also detached). | [`packages/lexical-clipboard/src/clipboard.ts`](https://github.com/facebook/lexical/blob/main/packages/lexical-clipboard/src/clipboard.ts), [`packages/lexical-html/src/index.ts`](https://github.com/facebook/lexical/blob/main/packages/lexical-html/src/index.ts) |
+| **Lexical** (paste direction, same file) | N/A (this is the import side) | `inlineStylesFromStyleSheets(doc)` walks `doc.styleSheets`, applies each rule's properties to matching elements via `el.style.setProperty()`. **This is for Excel-style imports where styles live in `<style>` tags**, not a copy-emission pattern. Worth noting because OK could use the same idea on the OUTPUT — render the slice, attach a synthesized `<style>` that maps Callout classes to literal colors, then walk-and-inline before clipboard handoff. | (same file as above, `inlineStylesFromStyleSheets` function) |
+| **BlockNote** | `text/html` via custom `toExternalHTML` per-block | Author-defined inline `style={{}}` props on the React component returned from `toExternalHTML`. Same model as Lexical — author is responsible. | [BlockNote — Custom Schemas: Custom Styles](https://www.blocknotejs.org/docs/features/custom-schemas/custom-styles), [Export System wiki](https://deepwiki.com/TypeCellOS/BlockNote/6.3-export-system) |
+| **Plate (Slate)** | `text/html` via `serializeHtml`, runs server-side via `PlateStatic` | **Mostly class names.** Default behavior strips classes except `slate-*` and `line-clamp` prefixes; preserves data attributes per config. No inline-style automation. | [`platejs.org/docs/html`](https://platejs.org/docs/html), [`docs/serializing-html`](https://v36.platejs.org/docs/serializing-html) |
+| **Outline** | Copy-as-markdown (`text/plain`) is the canonical flow; HTML side is PM default | No inline-style augmentation — relies on destination apps to apply their own theme. | (referenced in earlier sections of this report) |
+| **Obsidian** ("Copy as HTML" community plugin, [`mvdkwast/obsidian-copy-as-html`](https://github.com/mvdkwast/obsidian-copy-as-html)) | Wraps the rendered content in a complete `<html>` document with an **inline `<style>` block carrying a hand-curated stylesheet**. Plugin source ships a literal `DEFAULT_STYLESHEET` constant covering callouts, code blocks, tables, images-as-data-URIs, etc. | **Hardcoded TS string.** Pure double-maintenance. The plugin author chose this because Obsidian's theme system is too dynamic to query at copy time and the user can override the stylesheet in settings. | `main.ts` lines 50–250 (literal `DEFAULT_STYLESHEET` template string, including `.callout[data-callout="abstract"] .callout-title { background-color: #828ee7; }` and similar for ~10 callout types) |
+| **Notion** | `text/html` is rich and class-bearing (Notion's own CSS classes) + `text/markdown` cooperative MIME | Empirical clipboard inspection (per peer reports cited earlier in this document) shows Notion writes class-tagged HTML with a synthesized `<style>` block. Destination apps that strip `<style>` get a degraded render. | (proprietary; verified by clipboard inspection in earlier sections of this report) |
+| **Logseq** | Markdown-canonical; HTML side mirrors render-mode HTML | Similar to Obsidian: relies on destination CSS or its own theme tokens. No documented copy-as-styled-HTML feature. | (general docs survey; no source primary-source for this specific feature) |
+| **Slate** (the substrate) | Author-implemented per-element `serialize()` returning a string | Whatever the implementer writes — typically inline styles for portability. | [Slate docs: Serializing](https://docs.slatejs.org/concepts/10-serializing) |
+
+**The pattern across the ecosystem is consistent: peer editors do NOT runtime-compile their styling system at copy time.** Two strategies dominate:
+
+1. **Author-written inline styles per node class** (Lexical, BlockNote). The descriptor's exportDOM/toExternalHTML method writes `style={{}}` props by hand. **This is Pattern Y (shared style-token module) — the duplication is real, but localized to the descriptor's two render functions.**
+2. **Hardcoded stylesheet shipped alongside the editor** (Obsidian Copy as HTML plugin). Same problem from a different angle.
+
+**No surveyed editor uses runtime `getComputedStyle()` against the live editor DOM as a copy-emission strategy.** That doesn't mean it's a bad idea — it means it's untrod ground. The reasons no peer does it: most editor copy paths run server-side (Plate static rendering, react-email at SSR, BlockNote's `toExternalHTML` rendered "in a separate React root") where there is no live editor DOM to query.
+
+### 5. Tailwind-runtime feasibility (zero-build options in 2026)
+
+Two candidates exist; both have caveats:
+
+**Twind (`tw-in-js/twind`).** 3.9K stars, [github.com/tw-in-js/twind](https://github.com/tw-in-js/twind). The GitHub commit log shows **only chore commits ("update sponsors images") since approximately Q4 2024**. Last substantive release on npm is from late 2023. Issue tracker has 14 open issues. The library still works — Twind is a runtime tailwind-in-JS solution where you call `tw('bg-blue-500 px-4')` and it generates+injects the CSS, returning a class name. The exposed `getCSS()` / `extract()` APIs let you read the generated CSS string after the fact — which means you could feed it to juice or to your own per-class extraction. **Verdict: usable, but maintenance-stalled.** Not Tailwind-v4-spec-tracking. If OK adopts Twind, OK has to author Callout styling in Twind's syntax separately from the rest of the app's Tailwind v4 styling — which IS double maintenance.
+
+**`jit-browser-tailwindcss` ([mhsdesign/jit-browser-tailwindcss](https://github.com/mhsdesign/jit-browser-tailwindcss)).** Last release December 2024, status "Still in Development." References Tailwind v3.1.8, **does not yet support v4**. Bundle size 246 KB minified / 74 KB gzipped. Provides `createTailwindcss({ tailwindConfig })` with `.generateStylesFromContent(css, html)` that takes raw CSS + HTML strings and returns the JIT-generated CSS. Could be used in-browser at copy time, but at the cost of bundling 74 KB of compiler into the editor.
+
+**Tailwind v4 official `compile()` API ([tailwindlabs/tailwindcss#15881](https://github.com/tailwindlabs/tailwindcss/discussions/15881)).** Importable from the `tailwindcss` package as `compile(baseCss, opts)`. Returns `{ build(candidates: string[]) => css }`. **Not officially documented for browser use.** Requires `@tailwindcss/node` for full functionality. The PostCSS-based runtime path is broken in v4. React Email uses this API server-side (see §2 — `import { compile } from 'tailwindcss'` in their `setup-tailwind.ts`). Whether it bundles cleanly for the browser is undocumented and likely fragile across point releases ("the APIs are undocumented and can change without notice").
+
+**Verdict on runtime Tailwind compilation in-browser at copy time:** **structurally possible but unattractive.** Twind is stale, jit-browser is v3, official v4 `compile()` is undocumented in-browser. All three add 50–250 KB to the bundle for a feature that fires on copy events. Compared to the alternative — the live page already has the resolved CSS *because the user is looking at it* — bundling a second compiler purely to re-derive the same values is wasteful. The interesting use of Tailwind's `compile()` is React Email's: do it once at build-time per Callout type and ship the resulting hex/rgb literals as a TS module (Pattern Y — see §6).
+
+### 6. Recommendation for OK's stack
+
+The four candidate patterns from the user's prompt:
+
+- **Pattern X — `getComputedStyle` at copy time, via `transformCopied` or a custom `clipboardSerializer` that captures `view`.** Zero double-maintenance. Reads the same DOM the user is looking at. No build process, no runtime Tailwind compiler, no shipped palette to drift.
+- **Pattern Y — shared style-token TS module.** Single source of truth as a JS object literal; both the live React component AND `toClipboardHast` consume it. Lexical's exportDOM convention. BlockNote's toExternalHTML convention. The Obsidian plugin's stylesheet-as-string. Real but bounded duplication: the React component writes Tailwind classes referencing `--color-X`, and the TS module writes the resolved hex values for the SAME `--color-X`. Drift class: any Callout color change must be done in BOTH places.
+- **Pattern Z — react-email-style server-side render.** `renderToStaticMarkup(<DescriptorEmailComponent />)` with the React Email Tailwind compiler producing inline-styled HTML, called at copy time. Bundles a heavy server-runtime feature into the browser. The cost — bundling Tailwind's compiler + css-tree + React Email's tree-mapping logic into the editor — is large (likely >500 KB unminified after react-email's deps) and aggressive bundle-size erosion for a feature that fires on Cmd+C.
+- **Pattern W — runtime Tailwind in-browser** (Twind / jit-browser / undocumented v4 `compile()`). Maintenance and bundle-size signals all unfavorable per §5.
+
+**Primary recommendation: Pattern X (getComputedStyle at copy time), with Pattern Y as a small fallback palette.**
+
+The mechanism — implementation sketch grounded in the primary-source clipboard.ts contract:
+
+```typescript
+// In editorProps:
+clipboardSerializer: createStyleResolvingSerializer(view, /* MarkdownManager etc. */)
+
+function createStyleResolvingSerializer(view: EditorView, deps: Deps): DOMSerializer {
+  const baseSerializer = DOMSerializer.fromSchema(view.state.schema);
+  return {
+    serializeFragment(fragment, options) {
+      const detachedRoot = baseSerializer.serializeFragment(fragment, options);
+      // Walk fragment and detached output in parallel, where each PM node has a
+      // recorded position in the original slice. For descriptors that opt-in
+      // (Callout, future palette-bound blocks), look up the live node:
+      //   const liveEl = view.nodeDOM(originalPos);  // null if opaque
+      //   if (liveEl) writeResolvedStylesTo(detachedEl, liveEl);
+      return detachedRoot;
+    }
+  };
+}
+
+function writeResolvedStylesTo(detached: HTMLElement, live: Element) {
+  const computed = getComputedStyle(live);
+  const props = ['background-color', 'color', 'border-left', 'border-color', 'padding', /* ... */];
+  for (const p of props) {
+    const v = computed.getPropertyValue(p);
+    if (v) detached.style.setProperty(p, v);
+  }
+}
+```
+
+**Why this wins for OK specifically:**
+
+1. **OK already runs a Hocuspocus + Vite dev server with a live React editor. The user IS looking at a styled DOM at copy time.** This is the exact precondition the peer editors don't have (Plate ssr, react-email Node-render). OK should use it.
+2. **No build step, no bundle cost, no third-party runtime CSS engine.** The browser already does the work. Reading 10–20 properties per descriptor is sub-millisecond.
+3. **Theme drift is auto-tracked.** When `globals.css` changes `--color-callout-tip` from `#4493f8` to `#5BA0FF`, the clipboard output changes the same day with zero TS diffs.
+4. **Pattern Y as the fallback palette** — kept tiny, used only when `view.nodeDOM(pos) === null` (opaque NodeView, dead provider, hidden Activity descriptor). Hardcoded `#4493f8`-style values that approximate the live theme; drift here is acceptable because the path is the rare-edge fallback, not the hot path.
+5. **Symmetric with the existing OK clipboard architecture.** OK already wires a custom `clipboardTextSerializer` (per Track A in the existing parts of this report) and a `MarkdownManager` for the text/plain side. Adding a custom `clipboardSerializer` for the text/html side is the same shape of hook on the same `editorProps` — minimal architectural surprise.
+6. **Maps cleanly to OK's CRDT-component contract.** The descriptor's React render and its clipboard hast emission are decoupled by the React component being the source of styled DOM that getComputedStyle reads. The descriptor author writes ONE styling implementation (Tailwind classes on the React tree), and the clipboard side reads it.
+
+**What Pattern X does NOT do:**
+
+- Doesn't help non-DOM emission (e.g. the `text/markdown` side, the source-mode CodeMirror copy). Those continue to use `MarkdownManager.serialize()` per the existing report.
+- Doesn't capture pseudo-elements (`::before`, `::after`) automatically — `getComputedStyle(el, '::before')` is needed for those, and the result is not a real DOM node so it can't be inlined as-is. Callout icons set via `::before` would need the icon to either be a real child element OR be encoded in the fallback palette. Easier: ship the icon as a real `<span>` child in the React render, problem solved structurally.
+- Doesn't capture `@media (prefers-color-scheme: dark)` choices — getComputedStyle gives you WHAT the user is currently seeing, which is what you want anyway. If the user is in dark mode, the dark-mode colors get inlined; the destination app sees dark-mode-styled output. Clean.
+- Doesn't handle inheritance for unset properties on container elements (e.g. an aside whose color is inherited from `body`). For a Callout where the `aside` itself sets `background-color`, this isn't a problem; for nested elements that rely on inheritance, you'd need to walk parents OR copy the resolved value down the tree. For Callout specifically, set the explicit colors on the wrapper (which is the typical Tailwind utility class anyway).
+
+**Pattern Y (shared style-token module) as a reasonable second choice if Pattern X is rejected.** The cost is one-time-per-descriptor double-maintenance: a `callout-styles.ts` module exporting `{ tip: { borderLeft: '4px solid #4493f8', ... }, success: { ... } }`, consumed by both the React component (for `style={callout.tip}` instead of Tailwind classes — losing some authoring ergonomics) AND `toClipboardHast`. This is what Lexical and BlockNote effectively do, mediated by their per-node export functions. The drift cost is bounded but real — every theme change is a 2-file edit.
+
+**Pattern Z (react-email-style at copy time) is over-engineered for OK.** The Tailwind v4 `compile()` + css-tree + React tree-walk pipeline is built for the case where you HAVE no live DOM (server-side email rendering). OK does have a live DOM. Bundling react-email's solution into the editor is paying the cost of solving a problem OK doesn't have.
+
+**Pattern W (runtime Tailwind in-browser) is dominated** by Pattern X for OK's case: equal correctness, larger bundle, larger maintenance surface, and stalled upstream signals (Twind, jit-browser).
+
+### Genuinely surprising findings
+
+- **ProseMirror serializes from a Slice into a *detached* document by default.** This is the load-bearing fact that determines which patterns work. The naive "render then walk and getComputedStyle" doesn't work on the output; you have to query the LIVE editor DOM via `view.nodeDOM(pos)` BEFORE or DURING serialization. The detachedDoc choice is intentional in PM (avoids style-pollution into the editor's own page) but it forces this architecture.
+- **No surveyed editor uses runtime getComputedStyle for cross-app HTML emission.** The peer convention is hardcoded inline styles per node-class (Lexical, BlockNote) or hardcoded stylesheet-as-string (Obsidian copy-as-html plugin). This is partly because most peers run their export server-side. OK's all-in-browser editor + live-preview model means OK can do something the peers can't easily do — and it's actually simpler than what they do.
+- **React Email runs Tailwind v4's `compile()` at component-render time on the server**, not in any sense "build-time-only" — it's runtime-in-Node. This is closer to OK's potential pattern than the marketing language ("Tailwind for emails") suggests. The reason React Email doesn't run it in the browser is they don't have a live React DOM to query at email-template-emit time; they're rendering FROM scratch. OK is rendering AT copy time, with the live DOM right there.
+- **Twind appears to be in maintenance hibernation** — every commit since at least November 2024 is a `chore: update sponsors images` automated commit. The library is functional but not advancing with Tailwind v4. Adopting it for a long-lived feature is a maintenance bet against the upstream.
+- **Lexical's `inlineStylesFromStyleSheets` (in `@lexical/html`) is for the IMPORT direction** — converting Excel-style class-keyed `<style>` blocks into inline styles before parsing. Not for export. But the algorithm is reusable in either direction; OK could use the same idea (feed it a synthetic `<style>` block scoped to the Callout's classes after detached-serialization, then read the result) as an alternative to the `view.nodeDOM` path. This would be Pattern Y'-with-a-twist: ship a curated mini-stylesheet for descriptors and apply it via a Lexical-style sheet-walking pass.
+
+### 7. Live-render-with-descriptor-state survey (2026-05-01 extension)
+
+**Triggered by:** §4 surveyed four editors (Lexical, Obsidian, Plate, BlockNote) and asserted *"No surveyed editor uses runtime `getComputedStyle()` against the live editor DOM as a copy-emission strategy."* The dom-environment-alternatives report ([`reports/clipboard-walker-dom-environment-alternatives/REPORT.md`](../clipboard-walker-dom-environment-alternatives/REPORT.md)) closed the library-level question (the 6 Node-side DOM libraries are orthogonal to OK's browser walker, not alternatives) but raised the parallel question: at the EDITOR-pattern level rather than the LIBRARY-viability level, does the §4 claim hold across a wider survey? §7 is that wider survey.
+
+**Method:** Source-code reads of 10 OSS editors via primary GitHub blobs and locally cached `oss-repos/` clones; official docs and engineering blogs for Notion and Linear (closed-source). Survey breadth: 13 distinct editor surfaces (Notion, Linear, Outline, Tiptap core, Tiptap Pro, CKEditor 5, TinyMCE, Slate, Plate, Lexical, Quill 2.0, Editor.js, GrapesJS, Trix). Full evidence at [evidence/live-render-descriptor-state-survey-2026-05-01.md](evidence/live-render-descriptor-state-survey-2026-05-01.md).
+
+**Question:** Does any editor at OK's scale (or comparable) ship live-render-to-clipboard-on-copy with dynamic descriptor state — i.e., a clipboard handler that reads the live editor DOM (via `getComputedStyle()`, `view.nodeDOM(pos)`, or similar) at copy event time and emits cascade-resolved styles + dynamic descriptor state into the clipboard HTML?
+
+**Per-editor verdicts:**
+
+| Editor | Live-DOM read at copy? | Dynamic descriptor state in clipboard? | Mechanism | Source |
+|---|---|---|---|---|
+| **Notion** (closed-source, ~100M users) | UNCLEAR — leans NO | Toggle children carry regardless of expansion (consistent with JSON-tree, not live DOM) | JSON-block-tree serializer; inline styles likely emitted per block-type | [Kowalczyk reverse-engineering](https://blog.kowalczyk.info/article/88aee8f43620471aa9dbcad28368174c/how-i-reverse-engineered-notion-api.html); no published clipboard tear-down |
+| **Linear** (closed-source, $1.25B+ valuation) | UNCLEAR — leans NO | N/A — uses link unfurling for cross-app rich render, not clipboard HTML | Built on Tiptap (ProseMirror); ships "Copy as Markdown" schema serializer | [Linear Editor docs](https://linear.app/docs/editor); [Slack integration](https://linear.app/docs/slack); no clipboard tear-down found |
+| **Outline** (38K stars, BSL) | NO | Schema-driven HTML only | `clipboardTextSerializer` reads `slice.content`; `transformCopied` is pure schema-slice | [`ClipboardTextSerializer.ts:26-66`](https://github.com/outline/outline/blob/main/app/editor/extensions/ClipboardTextSerializer.ts); repo-wide grep zero hits in clipboard path |
+| **Tiptap core** (~9.65M weekly DL) | NO | Schema `toDOM` only — NodeView render bypassed | `clipboardTextSerializer.ts` reads `state.doc`; `getHTMLFromFragment` uses `DOMSerializer.fromSchema` | [`packages/core/src/extensions/clipboardTextSerializer.ts:11-44`](https://github.com/ueberdosis/tiptap/blob/main/packages/core/src/extensions/clipboardTextSerializer.ts) |
+| **Tiptap Pro** (commercial overlay) | NO | Explicit disclaimer — DOM-inspection styling intentionally dropped | Schema-driven Export Markdown extension | [Tiptap Pro Export Markdown docs](https://tiptap.dev/docs/conversion/export/markdown/editor-export) |
+| **CKEditor 5** (10.4K stars; ~751K weekly DL) | NO | MVC architecture deliberately bypasses editing view (live DOM) | `editor.data.toView` → `htmlProcessor.toData` (model→data view→HTML, not editing view) | [`ClipboardPipeline._setupCopyCut()` lines 238-289](https://raw.githubusercontent.com/ckeditor/ckeditor5/master/packages/ckeditor5-clipboard/src/clipboardpipeline.ts) |
+| **TinyMCE** (~16K stars, commercial) | PARTIAL — clones live DOM, NO `getComputedStyle` | Inline styles preserved, cascade-resolved styles lost; embed AST placeholder restores from `data-mce-*` attrs | `Range.cloneContents()` → `FragmentReader.read()` → `Css.getAllRaw` reads `dom.style.item(i)` (inline only) | [`paste/CutCopy.ts:113-117`](https://github.com/tinymce/tinymce/blob/main/modules/tinymce/src/core/main/ts/paste/CutCopy.ts), [`Css.ts:106-118`](https://github.com/tinymce/tinymce/blob/main/modules/sugar/src/main/ts/ephox/sugar/api/properties/Css.ts) |
+| **Slate-react** (~30K stars on substrate) | PARTIAL — clones live DOM, NO `getComputedStyle` | Inline styles preserved on cloned tree; classes survive as classes | `cloneContents()` of DOMRange → hidden div → `innerHTML` | [`packages/slate-dom/src/plugin/with-dom.ts:237-323`](https://github.com/ianstormtaylor/slate/blob/main/packages/slate-dom/src/plugin/with-dom.ts) |
+| **Plate** (~14K stars on Slate) | NO | `serializeHtml` is offline `renderToStaticMarkup(<PlateStatic>)` — no live DOM | React-tree render server-side; `JuicePlugin` is paste-direction only | [`packages/core/src/static/serializeHtml.tsx:42-77`](https://github.com/udecode/plate/blob/main/packages/core/src/static/serializeHtml.tsx); [`JuicePlugin.ts`](https://github.com/udecode/plate/blob/main/packages/juice/src/lib/JuicePlugin.ts) |
+| **Lexical** (~22K stars, Meta) | NO | Refuses live DOM entirely — descriptor authors must persist visible state to LexicalNode props | `$generateHtmlFromNodes` → fresh `document.createElement('div')` → `node.exportDOM(editor)` against detached element | [`packages/lexical-html/src/index.ts:277-288`](https://github.com/facebook/lexical/blob/main/packages/lexical-html/src/index.ts), [`LexicalNode.ts:1320-1323`](https://github.com/facebook/lexical/blob/main/packages/lexical/src/LexicalNode.ts) |
+| **Quill 2.0** (47K stars; powers Slack) | NO | Blot tree walk; reads `domNode.outerHTML` only for tag splicing | `getSemanticHTML` → `getHTML(index, length)` → `convertHTML(blot)` walks blot tree via `forEachAt` | [`modules/clipboard.ts:230-232`](https://github.com/slab/quill/blob/main/packages/quill/src/modules/clipboard.ts), [`core/editor.ts:198-209,363-411`](https://github.com/slab/quill/blob/main/packages/quill/src/core/editor.ts) |
+| **Editor.js** (32K stars) | YES (innerHTML snapshot) — closest analog | Live render survives as innerHTML, but no per-element computed-style walk | `BlockSelection.copySelectedBlocks` reads sanitized `block.holder.innerHTML` | [`blockSelection.ts:286-321`](https://github.com/codex-team/editor.js/blob/next/src/components/modules/blockSelection.ts) |
+| **GrapesJS** (~26K stars) | N/A — does not use OS clipboard for components | N/A | `editor.set('clipboard', models)` internal pub/sub | [`commands/view/CopyComponent.ts`](https://github.com/GrapesJS/grapesjs/blob/dev/packages/core/src/commands/view/CopyComponent.ts) (full file, 9 lines) |
+| **Trix** (~20K stars; powers HEY) | NO | Pure model walk; in-flight upload state lost | `toSerializableDocument()` → `DocumentView.render()` builds fresh DOM from model | [`level_0_input_controller.js:160-166`](https://github.com/basecamp/trix/blob/main/src/trix/controllers/level_0_input_controller.js), [`models/document.js:756-760`](https://github.com/basecamp/trix/blob/main/src/trix/models/document.js) |
+
+**Pattern taxonomy:** The 13 surfaces collapse to four observed clipboard-copy patterns:
+
+| Pattern | Editors | Mechanism |
+|---|---|---|
+| **A. Pure model serialization** | Lexical, Plate (offline), Tiptap core/Pro, CKEditor 5, Outline, Trix, Quill 2.0 | Walks model/schema; calls `exportDOM`/`toDOM`/`html(index,length)`/`toSerializableDocument` against a freshly-constructed (detached) DOM. No live DOM consultation. |
+| **B. Live DOM clone, inline styles only** | Slate-react, TinyMCE | Calls `Range.cloneContents()` and reads `innerHTML` of the resulting fragment. Inline `style=""` survives; cascade-resolved styles do NOT. |
+| **C. Live `innerHTML` snapshot** | Editor.js | Reads `block.holder.innerHTML` at copy time; sanitizes; emits. Live render state survives in HTML form, but no per-element computed-style walk. |
+| **D. Internal-only / unfurler-driven** | GrapesJS, Linear (likely), Notion (likely) | OS clipboard not used (GrapesJS) or used as a link reference for destination-side unfurling (Linear) or JSON-tree-serialized to a private clipboard payload (Notion's private MIME). |
+| **OK's prospective walker** | (no precedent) | Walks paired (model node ↔ live DOM element) pairs; calls `getComputedStyle(view.nodeDOM(pos))` to capture cascade-resolved values; writes them as inline `style=""` on detached output. |
+
+**Outcome: §4's claim holds, with strengthened evidence base.** No surveyed editor — including the production-scale closed-source ones (Notion at ~100M users, Linear at $1.25B+ valuation) — ships a live-DOM-walker-with-`getComputedStyle()`-cascade-resolution copy emitter. The `getComputedStyle`-with-cascade-resolution pattern lives strictly in the **image-conversion library** category (html-to-image, dom-to-image, computed-style-to-inline-style) — already covered in the next 2026-04-30 amendment of this report.
+
+The closest editor analog is **Editor.js**, whose `block.holder.innerHTML` snapshot (Pattern C) does read live DOM at copy time but stops one step short of `getComputedStyle` resolution. A Tailwind-utility-classed callout in Editor.js copies as `<div class="bg-blue-50 ...">...</div>` — destination apps that don't ship the editor's CSS render unstyled. OK's walker would resolve `bg-blue-50` to `background-color: rgb(239, 246, 255)` at copy time, surviving the destination-CSS-absence case.
+
+**Why the divergence?** Two structural reasons emerged from the survey:
+
+1. **Most editors run their HTML export server-side or in a fresh React tree** — Plate's `PlateStatic`, Lexical's `$generateHtmlFromNodes` against detached DOM, react-email's Tailwind-compile-at-Node-time. In those contexts, there IS no live editor DOM with resolved styles to walk. OK's all-in-browser editor with live preview is structurally different. (This is the same conclusion the dom-environment-alternatives report reached at the library level: jsdom v29 with cascade-resolving `getComputedStyle` is *Node-only by README*; the browser already provides what jsdom approximates — and more.)
+2. **Cascade-style-on-copy is a niche the wider category hasn't faced.** The motivating problem — extended descriptor types (Callout's `tip`/`success`/`info`/`danger` palette) whose theme tokens drift between authoring and a TS palette duplication — is specific to OK's MDX descriptor model. General-purpose editors mostly handle a smaller set of marks (bold, italic, code) and pre-defined block types where the styling concern is bounded.
+
+**Confidence:** HIGH for the open-source editors (10 of 13) where source code provided definitive evidence. UNCERTAIN-but-leans-confirming for Notion and Linear where evidence is absence-of-tear-downs plus structural inference from their underlying tech (Notion's JSON-block tree; Linear's Tiptap base). No published evidence contradicts the §4 claim.
+
+**Implication for §6 recommendation:** Pattern X (the live-DOM walker via `clipboardSerializer` capturing `view`) remains the recommended approach. §7's wider survey strengthens — does not invalidate — §4's existing finding. **Pattern X is novel for the editor category but mature for the broader ecosystem** (image-conversion libraries) — and OK doing this in-browser at copy time leverages a precondition (live React DOM available at copy event time) that the peer rich-text editors have actively designed away from.
+
+## 2026-04-30 Live-DOM walker for cross-app HTML emission — prior art and gotchas
+
+**Triggered by:** OK clipboard spec ([`specs/2026-04-29-clipboard-component-contract-and-byte-preservation/SPEC.md`](../../specs/2026-04-29-clipboard-component-contract-and-byte-preservation/SPEC.md)) considering a generic walker pattern for cross-app `text/html` emission — instead of per-descriptor `toClipboardHast` methods, walk live DOM + cloned DOM in parallel, snapshot computed styles, inline. Want primary-source-grounded confirmation that this is sound before redesigning around it.
+
+**Method:** Primary-source reads of [bubkoo/html-to-image source](https://github.com/bubkoo/html-to-image) (`clone-node.ts`, `clone-pseudos.ts`, `apply-style.ts`); [tsayen/dom-to-image README](https://github.com/tsayen/dom-to-image); [niklasvh/html2canvas](https://github.com/niklasvh/html2canvas); [lukehorvat/computed-style-to-inline-style](https://github.com/lukehorvat/computed-style-to-inline-style); [Automattic/juice](https://github.com/Automattic/juice) (`/client` browser bundle, `inlinePseudoElements` option); ProseMirror primary sources ([`prosemirror-view/src/clipboard.ts`](https://github.com/ProseMirror/prosemirror-view/blob/master/src/clipboard.ts), [discuss.prosemirror — transformCopied PR](https://discuss.prosemirror.net/t/a-transformcopied-pr/4892)); browser perf primary sources ([Paul Irish — what forces layout/reflow](https://gist.github.com/paulirish/5d52fb081b3570c81e3a), [webperf.tips — layout thrashing](https://webperf.tips/tip/layout-thrashing/), MDN `getComputedStyle` reference, jsdom issue #3234 perf data); empirical clipboard inspection of [Google Docs](https://adamcoster.com/blog/google-docs-copied-html-jank), Notion, Office Online ([Microsoft Support](https://support.microsoft.com/en-us/office/copy-and-paste-in-office-for-the-web-682704da-8360-464c-9a26-ff44abf4c4fe), [TinyMCE blog](https://www.tiny.cloud/blog/copy-and-paste-from-word-excel/)); Chrome extension ecosystem ([Copy HTML with CSS](https://github.com/michalgrzyska/copy-html-with-styles), CSS+HTML, cssPicker, CopyCss); email-client compat via [caniemail.com](https://www.caniemail.com/); Quill editor ([slab/quill issue #2190](https://github.com/slab/quill/issues/2190)); 1P codebase audit (`packages/app/src/editor/components/`, `packages/app/src/globals.css`, `packages/app/package.json`).
+
+Evidence file: [evidence/live-dom-walker-prior-art-and-gotchas.md](evidence/live-dom-walker-prior-art-and-gotchas.md).
+
+### 1. Prior art
+
+The "live DOM walker + getComputedStyle inline" pattern is **mature library territory** — multi-year deployment across general-purpose tools, no novelty:
+
+| Tool | What it does | Pseudo-element strategy | Source-confirmed mechanism |
+|---|---|---|---|
+| **html-to-image** (bubkoo, ~7K weekly DL) | Clones live DOM recursively, computes styles per cloned node by holding live ref, applies inline; wraps result in SVG `<foreignObject>` for image conversion | `getComputedStyle(nativeNode, ':before' \| ':after')` → reads `content` → if non-empty, generates UUID class + injects `<style>` rule | [`src/clone-node.ts`](https://github.com/bubkoo/html-to-image/blob/master/src/clone-node.ts), [`src/clone-pseudos.ts`](https://github.com/bubkoo/html-to-image/blob/master/src/clone-pseudos.ts) |
+| **dom-to-image** (tsayen) | Same algorithm — "Compute the style for the node and each sub-node and copy it to corresponding clone" (verbatim from README) | "Pseudo-elements not cloned in any way; deliberately recreated" | [README.md](https://github.com/tsayen/dom-to-image/blob/master/README.md) |
+| **dom-to-image-more** (MakerPM fork) | Same pattern, more maintained | Inherits from upstream | [npm](https://www.npmjs.com/package/dom-to-image-more) |
+| **html2canvas** (niklasvh, ~3M weekly DL) | Walks DOM via `getComputedStyle()` per element, paints onto canvas via 2D API | Limited — pseudo-elements only when actually visible | [GitHub](https://github.com/niklasvh/html2canvas) |
+| **computed-style-to-inline-style** (lukehorvat) | Library whose ENTIRE PURPOSE is exactly this pattern — "iterates through the computed style properties of element and redefines them as inline styles" via `Window.getComputedStyle` | None | [GitHub](https://github.com/lukehorvat/computed-style-to-inline-style) |
+| **juice/client** (Automattic) | Browser-bundle of juice; takes `inlinePseudoElements: true` option which "may modify the DOM and conflict with CSS selectors" — explicitly flags pseudo-element handling as a known hard problem | Inserts pseudo-elements as `<span>` elements (DOM-mutating, not portable) | [GitHub](https://github.com/Automattic/juice) |
+| **Chrome extension "Copy HTML with CSS"** (michalgrzyska) | DevTools sidebar that copies "selected element's HTML along with its computed CSS as inline styles" — the proposed pattern, productized as a standalone tool | Not documented | [GitHub](https://github.com/michalgrzyska/copy-html-with-styles), [Chrome Web Store listing](https://chromewebstore.google.com/detail/copy-html-with-css/gnggpgdicelimbccdogldneglninidhb) |
+| **CSS+HTML / cssPicker / CopyCss / DivMagic** (multiple Chrome extensions) | Same use case — extract HTML element + computed styles as inline | Varies | [Chrome Web Store ecosystem](https://chromewebstore.google.com/detail/csspicker-copy-css-from-w/laooinkgdapbcbjchpmihliljfnakkdh) |
+| **Quill editor (`slab/quill`)** | Uses `getComputedStyle` in `isLine` clipboard-detection function; not a copy-emission walker but confirms PM-adjacent editors leverage the API | N/A | [issue #2190](https://github.com/slab/quill/issues/2190) (the PR fixed cross-browser parity in 2.0) |
+
+**Editor clipboards that emit inline-styled HTML for cross-app paste** (without using the live-DOM walker — using author-written inline styles per node):
+
+- **Lexical** (Meta): `$generateHtmlFromNodes` calls each node class's `exportDOM()`, which the author writes with explicit inline styles. No automatic getComputedStyle. ([Source](https://github.com/facebook/lexical/blob/main/packages/lexical-html/src/index.ts))
+- **BlockNote**: `toExternalHTML` per-block, author writes `style={{}}` props. ([Docs](https://www.blocknotejs.org/docs/features/custom-schemas/custom-styles))
+- **Plate (Slate)**: mostly class names; `serializeHtml` runs server-side; no automatic style capture. ([Docs](https://platejs.org/docs/html))
+- **Obsidian "Copy as HTML" plugin**: ships a hardcoded `DEFAULT_STYLESHEET` literal string. ([Source](https://github.com/mvdkwast/obsidian-copy-as-html))
+
+**Empirical clipboard inspection — what the giants emit for cross-app paste:**
+
+- **Google Docs**: HTML with **inline styles on every span**, including the `<b style="font-weight:normal">` wrapper trick to defeat editors that strip inline styles. Per [Adam Coster's analysis](https://adamcoster.com/blog/google-docs-copied-html-jank).
+- **Notion**: HTML with inline styles for formatting (e.g. `<span style="font-weight:bold">`).
+- **Microsoft Office Online**: HTML with inline-style-rich content; some destination editors parse `<style>` from the head and merge inline before pasting (per [TinyMCE blog](https://www.tiny.cloud/blog/copy-and-paste-from-word-excel/)).
+
+**Verdict on prior art:** Inline-styled HTML is the universal lingua franca for rich cross-app paste. The live-DOM walker + getComputedStyle is a well-trodden algorithm in the image-conversion library category (html-to-image, dom-to-image, html2canvas), used by Chrome extensions in the user's exact pattern, and absent from peer rich-text editors only because they run their export server-side or rely on author-written inline styles. **OK doing the walker for clipboard is novel for the editor category but mature for the broader ecosystem.**
+
+### 2. Gotchas (a-z dimensions)
+
+Adversarial pass over the user's enumerated dimensions:
+
+| Dim | Question | Verdict | Severity for OK | Mitigation |
+|---|---|---|---|---|
+| **a** | Pseudo-elements (`::before`, `::after`) | **Real bite.** `cloneNode` does NOT copy them. `getComputedStyle(el, '::before')` extracts styles but returns no DOM node. html-to-image synthesizes `<style>` rules with UUID classes — but Gmail strips `<style>`. | **HIGH** — Callout collapsible chevron, Accordion chevron, jsx-component-wrapper hover-zone + selection-halo all use `::before`/`::after` (`globals.css:1527, 1561, 1747, 1822`). Pure walker LOSES THE CHEVRON. | (i) Replace pseudo-element-rendered VISIBLE content with real child elements in React (per the existing 2026-04-30 section's prescription); (ii) For invisible editor-chrome pseudo-elements (jsx-component-wrapper hover-zone, selection-halo), the walker must SKIP them or filter by class — they're editor-only and shouldn't reach clipboard regardless. |
+| **b** | Pseudo-class state (`:hover`, `:focus`, `:has()`, `:is()`) | The current state at copy-event time is captured. Hover-state-baked inline styles are likely if user mouses over selection while hitting Cmd+C. | LOW — OK uses `[data-selected="true"]` not `:hover` for editor chrome. Mark/text styling doesn't depend on `:hover`. | None needed unless a future descriptor uses `:hover` for visible (non-affordance) styling. |
+| **c** | CSS animations / transitions | Current frame's computed values captured; animation state lost. | NEGLIGIBLE — clipboard output is static; nobody expects clipboard HTML to animate. | None. |
+| **d** | CSS variables (`var()`) | Per MDN, resolved to literal values at `getComputedStyle` time. Confirmed in existing 2026-04-30 viability section. Tailwind v4 `--color-*` tokens resolve correctly. | NEGLIGIBLE | None. |
+| **e** | Specificity of inline styles in destination | Inline styles have specificity (1,0,0,0); they DOMINATE destination CSS. This is what every rich-text editor does (Google Docs, Notion, Office Online). User can paste-without-formatting (Cmd+Shift+V) for the destination's typography. | LOW — design choice, matches industry practice. | Document for users; offer parallel `text/markdown` MIME for destinations that prefer plain. |
+| **f** | CORS / cross-origin stylesheets | `getComputedStyle` works regardless of stylesheet origin. (`cssText` on stylesheet rules IS CORS-restricted, but the walker doesn't use that path.) | NEGLIGIBLE | None. |
+| **g** | Forced reflow / layout thrashing | A pure-read pass on a clean tree does NOT thrash. First read costs a layout flush (~1-5ms); subsequent reads hit cached layout (~50µs each). Per [webperf.tips](https://webperf.tips/tip/layout-thrashing/), thrashing requires read-write-read interleave. | LOW | Walker is read-only by design. Don't interleave with DOM mutations. |
+| **h** | Image URLs (http/blob/data) | `<img src="https://...">` survives. `<img src="blob:...">` is DEAD on paste (destination can't access). `<img src="data:...">` — large; some clients strip; Outlook OK. | LOW for OK — `safe-navigation-url.ts` already rejects `blob:` and `data:` at authoring boundary, so user-authored URLs are http(s)://. Future: agent-uploaded images via `URL.createObjectURL` would need to be persisted to a remote URL before clipboard emission. | Persist any in-flight blob URLs server-side before clipboard emission. (Already an architectural concern beyond the walker.) |
+| **i** | Detached document timing | PM's `serializeForClipboard` renders into `detachedDoc()`. The walker MUST query LIVE DOM via `view.nodeDOM(pos)`, NOT the serializer output. (Existing 2026-04-30 viability section confirmed this.) | N/A — implementation contract | Walker must capture `view` in closure; query live nodes via `view.nodeDOM(pos)`. |
+| **j** | Iframe / shadow DOM pierce | `getComputedStyle` doesn't pierce shadow DOM. Confirmed via [jsdom issue #3278](https://github.com/jsdom/jsdom/issues/3278). | NEGLIGIBLE for OK — codebase audit confirms NO descriptor uses shadow DOM or iframes (Image uses `react-medium-image-zoom` which renders into a portal at body, not shadow). | If a future descriptor introduces shadow DOM, walker needs to recurse into `el.shadowRoot.querySelectorAll('*')`. |
+| **k** | Web components | None in OK. | NEGLIGIBLE | None. |
+| **l** | Partial selection | PM's slice carries position offsets. `view.nodeDOM(pos)` returns the containing block; clipboard HTML carries the partial textContent inside the styled block. Structurally correct. | NEGLIGIBLE | None. |
+| **m** | Computed-style serialization size + non-email-safe forms | `style.cssText` of full computed styles is ~100+ properties. Need to filter to email-safe property allowlist (color, background, border, padding, margin, font-*, line-height, text-*). Browser may emit `display: -webkit-flex` instead of `display: flex` (vendor-prefix in computed values). | MEDIUM — bloat is real (~150-300 bytes per element), and vendor prefixes can confuse legacy clients. | Maintain a curated property allowlist; post-process to strip vendor prefixes (or accept them, since modern browsers ignore unknown). |
+| **n** | Email-client-specific quirks (Outlook, Gmail, Apple Mail) | Outlook desktop's Word HTML engine ignores `flex`, `grid`, `var()`, `calc()`, modern color functions REGARDLESS of inline-or-not. Gmail strips `<style>` blocks but accepts inline. Apple Mail respects most modern CSS. Per [caniemail.com](https://www.caniemail.com/). | MEDIUM — OK uses `oklch()` extensively for callout colors (`globals.css:1657-1669`); Outlook would render colors as default text color. | (i) Document Outlook as best-effort; (ii) optional `oklch() → rgb()` conversion in walker post-pass. |
+| **o** | Copying from Activity-hidden subtree | React 19.2 `<Activity mode="hidden">` UNMOUNTS hidden subtree. `view.nodeDOM(pos)` returns null. | LOW — copy targets the focused/visible editor in normal usage; cross-editor keyboard copy is the edge case. | Defensive null check + Pattern Y fallback (hardcoded palette per descriptor) for the rare edge. |
+| **p** | Marks vs nodes | Marks render as inline DOM elements (`<strong>`, `<em>`) — natural elements in the cloned tree. The walker visits them like any other element. No special-casing required. | NEGLIGIBLE | None. |
+| **q** | `cloneNode(true)` detaches event handlers / React state | Per [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Node/cloneNode): clones attributes incl. inline listeners, NOT addEventListener listeners. Static export is fine. | NEGLIGIBLE | None. Strip editor-only `data-*` attrs (`data-selected`, `data-dragging`) before clipboard handoff. |
+| **r** | Font loading state | If a custom font hasn't loaded by copy time, computed value returns the fallback. | NEGLIGIBLE | None. |
+| **s** | Pseudo-element `content: "..."` (decorative text) | LOST without explicit synthesis (UUID-class + `<style>` injection per html-to-image's algorithm). | HIGH for OK — Callout chevron is `content: ""` with `border-left:` triangle (no text content but a visible triangular element); same shape problem. | Replace with real `<span>` icon child. |
+| **t** | Storage / payload size | ~150-300 bytes per element × ~5-200 elements = ~1-60KB typical paste. Well under any clipboard limit; may bloat under-50KB-budget destinations (rare). | LOW | None unless a destination flags size issues. |
+| **u** | Selection round-trip OK→OK paste | Branch C dispatcher detects `data-pm-slice`, parses via PM, ignores inline styles. Cross-app→OK ignores the same. | NEGLIGIBLE — already covered in earlier sections of this report. | None. |
+| **v** | WCAG / a11y | Inline styles don't break a11y; loss of semantic class hooks is minor for AT users. | LOW | None. |
+| **w** | Tailwind v4 specifics (`@theme`, layers) | Compiles to ordinary CSS at build time. `getComputedStyle` resolves through normally. | NEGLIGIBLE | None. |
+| **x** | DOM mutation during serialization | `cloneNode + getComputedStyle` is read-only. Defensively, walker should NOT touch the live tree. | NEGLIGIBLE | None — by construction. |
+| **y** | `content-visibility: auto` | Defers rendering; computed style still resolves but may force layout to read. | NEGLIGIBLE for OK — doesn't use this property. | None. |
+| **z** | Locale / RTL / line-break | `direction`, `writing-mode`, `text-align` all captured as computed values. | NEGLIGIBLE | None. |
+
+**Real top-5 gotchas for OK** (collapsing the matrix):
+
+1. **Pseudo-elements lost — Callout/Accordion chevrons disappear** unless replaced with real DOM children OR walker uses html-to-image's `<style>` injection (which Gmail strips). [Dim a + s]
+2. **`oklch()` colors in Outlook desktop** render as default text color. May or may not matter depending on Outlook's place in OK's destination matrix. [Dim n]
+3. **Editor-chrome pseudo-elements (selection halo, hover hit-zone) leak to clipboard** unless filtered. They'd emit invisible-but-payload-bloating elements with `position: absolute; z-index: 9` styling that destinations would render as visible artifacts. [Dim a]
+4. **Activity-hidden subtree has no live DOM** — defensive fallback to a hardcoded palette is required. [Dim o]
+5. **Vendor-prefixed computed values** (`-webkit-flex`) may bloat output and confuse legacy destinations; allowlist filtering needed. [Dim m]
+
+### 3. Performance estimate
+
+Numerical estimate for OK's typical paste size — grounded in primary-source perf data:
+
+**Per-call costs** (cited from MDN, Paul Irish gist, jsdom issue #3234, real-browser measurements):
+- `cloneNode(true)`: 0.01–0.05ms per element
+- `getComputedStyle(el)` on clean tree: returns object cheaply; `.getPropertyValue('color')` for non-layout property: 0.01–0.1ms (cache hit) to 1ms (cache miss + layout)
+- `getComputedStyle(el, '::before')`: same magnitude
+- `style.cssText` write: trivial
+
+**Selection sizes:**
+
+| Selection | Elements | Walker pass time (est) |
+|---|---|---|
+| Single Callout (5 elements: aside + heading + paragraph + icon span + content wrapper) | 5 | 1–3ms |
+| Few paragraphs with marks (10-20 elements) | 10–20 | 3–8ms |
+| Section with multiple Callouts (50 elements) | 50 | 10–25ms |
+| Full doc copy (Cmd+A on a long doc) | 100–500 | 30–150ms |
+
+**Critical comparison vs. OK's stated budgets:**
+- Copy event budget: <100ms (per spec)
+- Paste event budget: <250ms (per spec)
+- Worst-case 500-element walker: ~150ms — **fits within copy budget**, but tight. Real-world copies are typically <100 elements; the budget is comfortable.
+- Cache misses (full layout flush on first read) add ~5ms of constant overhead.
+
+**Verdict:** The walker is **NOT a perf concern for typical OK paste sizes**. Worst-case full-doc copy on a 500-element document approaches the copy budget; mitigation if needed is to short-circuit to a Pattern Y fallback for very large slices (>200 elements). For 99% of paste operations (single block to a few paragraphs), the walker completes in <10ms — invisible to the user.
+
+### 4. Security
+
+Per-attack-surface verification:
+
+- **`<script>` injection.** React only renders `<script>` via `dangerouslySetInnerHTML`. OK descriptors don't use this. Walker clones existing DOM, doesn't introduce new scripts. **Safe.**
+- **Iframe `<iframe src>`.** Cloned with src intact. Destination's CSP enforces. OK doesn't render iframes from descriptors (Video.tsx comment confirms iframe-embedding is left to user's raw-HTML MDX path); future iframe-bearing descriptors would need explicit src-allowlist. **Safe by current scope.**
+- **`javascript:` URL sanitization.** OK's `safe-navigation-url.ts` rejects `javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `ws:` at the authoring boundary. Live DOM never holds unsafe URLs. Walker copies whatever React rendered — already-sanitized. **Safe.**
+- **`url()` in computed styles.** `background-image: url('https://...')` inlines fine; `url('blob:...')` would but is blocked at authoring boundary (and would be dead on paste anyway).
+- **Cross-origin styles.** `getComputedStyle` works regardless of stylesheet origin (no CORS leak). **Safe.**
+- **HTML-injection from getComputedStyle output.** Computed values are well-formed CSS; no injection vector via `style.cssText`. **Safe.**
+
+No new security surface from the walker pattern beyond what OK already secures at the authoring/sanitization boundary.
+
+### 5. OK-codebase-specific edge cases
+
+Verified against the codebase:
+
+- **`Callout.tsx` collapsible chevron** uses `::before` pseudo-element (`globals.css:1747`) with `border-left: 6px solid var(--callout-type-color)` to render the visible triangle. **The walker would lose the chevron.** Fix: render an actual `<span>` (or lucide icon) inside `<summary>` for the chevron, with CSS rotation on `[open]`. Same for Accordion (`globals.css:1822`).
+- **`jsx-component-wrapper`** uses `::before` (invisible hover hit-zone, `globals.css:1527`) and `::after` (selection halo, `globals.css:1561`). **Both are editor-only chrome that should NOT propagate to clipboard.** The walker must filter `.jsx-component-wrapper` (or descend through it without inlining its pseudo-element styles). Editor-side data attributes (`data-selected`, `data-dragging`, `data-has-child-selected`) similarly must be stripped from cloned nodes before clipboard handoff.
+- **`Image.tsx`** wraps `<img>` in `react-medium-image-zoom`'s `<Zoom wrapElement="span">`. The Zoom component doesn't use shadow DOM — it renders into a body-portal when the modal opens; the underlying `<img>` stays in the editor tree. Walker reads `<img>` plain. URL is whatever `props.src` was authored as — http(s):// only (sanitized at boundary). **Safe.**
+- **`Audio.tsx` / `Video.tsx`** are plain HTML5 elements (`<audio>` / `<video>`). No shadow DOM. URLs sanitized. **Safe.**
+- **No descriptor uses iframes.** Confirmed via `grep -rn "<iframe" packages/app/src/editor/components/` — only a comment in `Video.tsx` about user-authored iframes for YouTube/Vimeo embeds.
+- **No descriptor uses CSS animations / transitions for visible state.** Animations are on `[open]` chevron rotation (`@media (prefers-reduced-motion: no-preference)` gated) and the selection-halo opacity fade. Both are editor-affordance state.
+- **Tailwind v4.2.2** is used with `@theme {}` (`globals.css:102`) and `@theme inline {}` (`globals.css:1364`) directives. Both compile to ordinary CSS custom properties. `getComputedStyle` resolves them correctly per the existing 2026-04-30 viability section.
+- **`oklch()` color functions** are used extensively for callout type colors (`globals.css:1657-1669`). When `getComputedStyle` reads them, the exact behavior — whether Chrome preserves `oklch(...)` notation in computed values or converts to `rgb(...)` — needs empirical confirmation. Either way, modern destinations (Apple Mail, modern browsers, Notion) handle both; Outlook desktop handles neither.
+
+### 6. Verdict
+
+**Strengths of the generic walker pattern:**
+
+1. **Mature library territory** — html-to-image, dom-to-image, html2canvas, computed-style-to-inline-style, multiple Chrome extensions — multi-year deployment, well-understood algorithm.
+2. **Single source of truth** by construction — whatever React rendered + whatever CSS resolved is the clipboard output. Theme drift is auto-tracked.
+3. **No build step, no runtime CSS engine, no per-descriptor opt-in** in the basic case.
+4. **Performance fits OK's budgets** with comfortable margin for typical pastes (<10ms for <50 elements; <150ms worst-case full doc).
+5. **Marks (inline formatting) flow naturally** through the walker without special-casing.
+6. **Industry-standard output format** — inline-styled HTML is what Google Docs, Notion, Office Online emit.
+7. **Security-clean** by construction — walker is read-only, no new attack surface.
+
+**Real risks (in priority order):**
+
+1. **Pseudo-element loss is the load-bearing risk for OK.** Callout/Accordion chevrons are CRITICAL to descriptor identity in pasted output. The chevron-as-pseudo-element pattern was an authoring convenience that the clipboard architecture cannot preserve cleanly. **Action:** before adopting the generic walker, refactor Callout collapsible + Accordion to render the chevron as an actual lucide icon (`<ChevronRight>`) with CSS rotation on `[open]`. This is a one-time, bounded refactor (~50 LoC across Callout.tsx + Accordion.tsx + ~30 lines of globals.css).
+2. **Editor-chrome pseudo-elements leak unless filtered.** The walker must strip `.jsx-component-wrapper`'s pseudo-element synthesis and editor `data-*` attributes before clipboard handoff. **Action:** define a "clipboard-export filter" (allowlisted classes / blocklisted attrs) at the walker boundary.
+3. **`oklch()` in Outlook desktop renders as default color.** Documentable best-effort behavior. **Optional mitigation:** post-pass to convert resolved `oklch()` → `rgb()` when serialized.
+4. **Activity-hidden subtree has no live DOM.** Defensive null check + fallback palette. **Action:** keep Pattern Y as a reserved fallback (already covered in existing 2026-04-30 section).
+5. **Vendor-prefixed computed values bloat output.** **Action:** maintain an email-safe property allowlist; strip vendor prefixes in post-pass.
+
+**Showstoppers? None.** The walker is sound for OK's use case provided two non-trivial refactors:
+- Replace pseudo-element-rendered visible content with real DOM elements (one-time).
+- Define a clipboard-export filter to suppress editor chrome (`.jsx-component-wrapper` `::before`/`::after`, editor `data-*` attrs).
+
+**Recommended adoption path:**
+
+1. **Lock the contract for descriptor authors:** "Visible content rendered via `::before`/`::after` is incompatible with clipboard emission. Use real DOM elements (lucide icons, `<span>`s) and set CSS state via attributes (`[open]`, `[data-state=...]`)."
+2. **Refactor Callout collapsible chevron and Accordion chevron** to use real `<ChevronRight>` lucide icons with CSS rotation. Revisit `globals.css:1747` and `1822` after.
+3. **Define the walker's allowlist + blocklist** in code (e.g. `clipboard-walker.ts`):
+   - Allowlisted CSS properties: `color, background-color, background-image, border, border-*, padding, padding-*, margin, margin-*, font-family, font-size, font-weight, font-style, text-decoration, text-align, line-height, list-style-*, vertical-align, white-space`.
+   - Blocklisted classes (skip during walk): `jsx-component-wrapper` ::before/::after, ProseMirror-internal classes (`selectedCell`, `is-empty`, etc.).
+   - Blocklisted attributes (strip from clones): `data-selected, data-has-child-selected, data-dragging, data-pm-slice` (PM may auto-attach this; check), `contenteditable`.
+4. **Implement Pattern X (live-DOM walker via custom `clipboardSerializer`)** per the existing 2026-04-30 viability section's sketch, with the allowlist/blocklist applied during the walk.
+5. **Keep Pattern Y (per-descriptor fallback palette)** as the rare-edge fallback for `view.nodeDOM(pos) === null` (Activity-hidden, opaque NodeView, future shadow-DOM descriptors).
+
+**Pleasantly surprising findings:**
+
+- **html-to-image's pseudo-element solution is a pragmatic library precedent** — synthesize a `<style>` rule with a UUID class and inject it. For OK destinations that respect `<style>` (Notion, Slack web, Linear), this could work as a transitional bridge while the chevron-refactor happens. For Gmail/Outlook, the `<style>` is stripped — but those are also the destinations where the chevron's loss is least objectionable (text-mostly destinations).
+- **No peer rich-text editor uses the live-DOM walker** because they all run their export server-side OR rely on author-written inline styles. **OK doing this in-browser at copy time is genuinely a category-leading approach** — we have the live DOM AND the CSSOM at copy time, peer editors don't.
+- **Performance is much better than feared.** First read flushes layout; subsequent reads are cached. No thrashing risk for a pure-read walker. Even worst-case full-doc copies fit OK's budgets.
+- **Inline-styled HTML is what every major editor emits already** — Google Docs, Notion, Office Online all do it. This is the lingua franca of cross-app paste, not an exotic strategy.
+
+**Genuinely surprising findings (recommend caution on):**
+
+- **Callout collapsible chevron is rendered VIA `::before` pseudo-element** (`globals.css:1747`) and would silently disappear from cross-app paste. This is a Day-One bug for the generic walker pattern unless preceded by the chevron refactor.
+- **`jsx-component-wrapper`'s editor chrome (`::before` hover-zone, `::after` selection halo) would leak as `position: absolute; z-index: 9` invisible stylings** in cross-app paste unless explicitly filtered. The naive walker emits these.
+- **html-to-image's known issue #363 — "all pseudo elements are missed in the rendered image"** — reporter acknowledges "I have a feeling that these may well be omitted as they are notoriously tricky elements." The library has a heuristic for the simple case but doesn't handle background-image or complex pseudo-element compositions reliably. OK inheriting this limitation by default.
+- **juice's `inlinePseudoElements: true` warning** ("may modify the DOM and conflict with CSS selectors") confirms that cross-tool, this is a known hard problem that no library solves cleanly.
+
+**Bottom line:** The generic walker pattern is **architecturally sound for OK to adopt**, with two non-trivial mitigations required upfront:
+1. Refactor the two pseudo-element-based chevrons to real DOM elements.
+2. Define an allowlist + blocklist for the walker (CSS properties allowed, classes/attrs to skip).
+
+Without those mitigations, the walker has a Day-One bug for Callout collapsible (chevron disappears) and emits unwanted editor chrome to destinations. **With them, it cleanly replaces per-descriptor `toClipboardHast` methods for the styling concern**, leaves descriptor-specific structural decisions (e.g. how Image becomes `<a><img></a>` for click-through) as the orthogonal axis still requiring per-descriptor logic. The walker is a single-source-of-truth optimization for the **styling** problem, not a complete replacement for ALL clipboard logic.

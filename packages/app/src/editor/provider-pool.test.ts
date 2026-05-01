@@ -1016,7 +1016,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-      await wait(50);
+      await pool.awaitMismatchSettled();
 
       const replaced = pool.getActive();
       if (!replaced) throw new Error('expected replaced entry');
@@ -1088,7 +1088,7 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    await wait(50);
+    await pool.awaitMismatchSettled();
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later
@@ -1840,6 +1840,148 @@ describe('ProviderPool client-persistence attachment (US-003)', () => {
 
     expect(spy1).toHaveBeenCalledTimes(1);
     expect(spy2).toHaveBeenCalledTimes(1);
+  });
+
+  test('closeAndClearPersistence calls clearData on a pooled entry, then closes it', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setExpectedServerInstanceId(TEST_SERVER_INSTANCE_ID);
+    const docName = uniqueDocName('pp-rename-clear');
+    const entry = pool.open(docName);
+    if (!entry?.persistence) throw new Error('expected persistence');
+
+    const clearSpy = mock(async () => {});
+    entry.persistence.clearData = clearSpy;
+
+    await pool.closeAndClearPersistence(docName);
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(pool.has(docName)).toBe(false);
+  });
+
+  test('closeAndClearPersistence deletes the IDB directly when the doc is not in the pool', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    pool.setExpectedServerInstanceId('server-rename-orphan');
+    const docName = uniqueDocName('pp-rename-orphan');
+    const dbName = `ok-ydoc:main:server-rename-orphan:${docName}`;
+
+    // Seed an IDB at the canonical name so we have something to delete.
+    // Mirrors the "doc occupied this name in a previous session" state.
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open(dbName);
+      req.onsuccess = () => {
+        req.result.close();
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    let dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbName)).toBeDefined();
+
+    expect(pool.has(docName)).toBe(false);
+    await pool.closeAndClearPersistence(docName);
+
+    dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbName)).toBeUndefined();
+  });
+
+  test('closeAndClearPersistence is a no-op when serverInstanceId is unknown and doc not in pool', async () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    // No setExpectedServerInstanceId — cachedServerInstanceId stays null.
+    const docName = uniqueDocName('pp-rename-noepoch');
+
+    // Seed an IDB at a name that DOES match the canonical pattern for some
+    // other epoch. Without an epoch known, the pool can't compute the
+    // current name and skips the delete — that's correct, because no
+    // current-epoch IDB could possibly exist (no provider attached yet).
+    const dbName = `ok-ydoc:main:server-prior:${docName}`;
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open(dbName);
+      req.onsuccess = () => {
+        req.result.close();
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    await pool.closeAndClearPersistence(docName);
+
+    const dbs = await indexedDB.databases();
+    // Other-epoch IDB is left alone (out of scope for this pool's current
+    // epoch); no current-epoch IDB exists either.
+    expect(dbs.find((d) => d.name === dbName)).toBeDefined();
+
+    // Cleanup so afterEach doesn't see leftover state.
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase(dbName);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+    });
+  });
+
+  test('rename round-trip (A→B→A) clears IDB so reopen at A starts fresh', async () => {
+    // The user-reported duplication scenario, scoped to the pool's IDB
+    // contract: a doc lives at name A, gets moved to B, then later moved
+    // back to A. Without `closeAndClearPersistence`, the IDB at A retains
+    // rows from the first session (foreign clientID); the second open at
+    // A would hydrate the new Y.Doc from those rows, then union-merge
+    // with the server's freshly-loaded body — appending duplicate
+    // content because the two histories share no ancestor. With the
+    // clear, the IDB at A is gone before the reopen, so the new provider
+    // syncs the server's content cleanly.
+    pool = new ProviderPool(3, DUMMY_WS);
+    pool.setObservedBranch('main');
+    pool.setExpectedServerInstanceId('server-roundtrip');
+    const nameA = uniqueDocName('pp-roundtrip-A');
+    const nameB = uniqueDocName('pp-roundtrip-B');
+    const dbA = `ok-ydoc:main:server-roundtrip:${nameA}`;
+    const dbB = `ok-ydoc:main:server-roundtrip:${nameB}`;
+
+    // Step 1: open A, let its persistence write to IDB, close it.
+    const entryA1 = pool.open(nameA);
+    if (!entryA1?.persistence) throw new Error('expected persistence');
+    await entryA1.persistence.whenSynced;
+    let dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbA)).toBeDefined();
+
+    // Step 2: rename A → B. The fix calls closeAndClearPersistence on
+    // both fromDocName (A) AND toDocName (B). A's IDB must go away;
+    // B's IDB doesn't exist yet, so the second call is a no-op.
+    await pool.closeAndClearPersistence(nameA);
+    await pool.closeAndClearPersistence(nameB);
+    dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbA)).toBeUndefined();
+    expect(dbs.find((d) => d.name === dbB)).toBeUndefined();
+
+    // Step 3: open B (the new location), let it persist, close it.
+    const entryB = pool.open(nameB);
+    if (!entryB?.persistence) throw new Error('expected persistence');
+    await entryB.persistence.whenSynced;
+    dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbB)).toBeDefined();
+
+    // Step 4: rename B → A (the move-back). This is the critical step:
+    // both ends get cleared, so neither A's residual nor B's residual
+    // can leak into a future open.
+    await pool.closeAndClearPersistence(nameB);
+    await pool.closeAndClearPersistence(nameA);
+    dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbA)).toBeUndefined();
+    expect(dbs.find((d) => d.name === dbB)).toBeUndefined();
+
+    // Step 5: open A again. With the IDB cleared in step 4, the new
+    // persistence creates a fresh DB — no leftover rows from step 1 to
+    // hydrate the Y.Doc with stale content. The IDB-deletion contract
+    // verified across steps 2 and 4 is the precise lever the fix pulls;
+    // CRDT-level non-merge requires a real Hocuspocus + content and is
+    // covered by an integration test against the full collab stack.
+    const entryA2 = pool.open(nameA);
+    if (!entryA2?.persistence) throw new Error('expected persistence');
+    await entryA2.persistence.whenSynced;
+    dbs = await indexedDB.databases();
+    expect(dbs.find((d) => d.name === dbA)).toBeDefined();
   });
 
   test('server-instance-mismatch calls clearData on every entry before destroying', async () => {

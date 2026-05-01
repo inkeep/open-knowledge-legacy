@@ -25,7 +25,7 @@ npx @inkeep/open-knowledge clone https://github.com/company/docs
 npx @inkeep/open-knowledge clone company/docs ./local-path
 ```
 
-The `clone` command clones the repository, scaffolds `.open-knowledge/` via `init`, and starts the editor. Pass `--json` for machine-readable JSONL progress output (used by the editor's subprocess relay).
+The `clone` command clones the repository, scaffolds `.ok/` via `init`, and starts the editor. Pass `--json` for machine-readable JSONL progress output (used by the editor's subprocess relay).
 
 <Callout type="info">
 The target directory must be empty or non-existent. The CLI rejects non-empty directories to prevent accidental overwrites.
@@ -64,7 +64,7 @@ For read-only access, create a fine-grained PAT with the `Contents: Read` permis
 
 ### Token storage
 
-Tokens are stored in your OS keychain via `@napi-rs/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If the keychain is unavailable, tokens fall back to `~/.open-knowledge/auth.yml` with `0600` permissions.
+Tokens are stored in your OS keychain via `@napi-rs/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If the keychain is unavailable, tokens fall back to `~/.ok/auth.yml` with `0600` permissions.
 
 ### Managing authentication
 
@@ -138,24 +138,13 @@ Raw merge conflict markers (`<<<<<<<`) never appear in the editor. The conflict 
 
 ## Configuration
 
-Sync behavior is controlled via `.open-knowledge/config.yml`. See the [Configuration](/guides/configuration) guide for the full schema.
+Sync uses opinionated defaults that are not YAML-tunable. The previous `sync.*` schema fields (`pullIntervalSeconds`, `pushIntervalSeconds`, `autoCommit`, `autoPush`, `autoPull`, `commitMessage`) were dropped to keep the engine's lifecycle in one place — pull every 30 s, push every 60 s, auto-commit + auto-push + auto-pull on, default commit message. Loose-mode YAML preserves any leftover `sync.*` keys on disk, but the engine ignores them; run [`ok config migrate`](/guides/cli-reference#config-migrate) to clean them up.
 
-```yaml title=".open-knowledge/config.yml"
-sync:
-  enabled: true              # auto-detected from remote; set false to disable
-  pullIntervalSeconds: 30    # seconds between fetch/pull cycles
-  pushIntervalSeconds: 60    # seconds between push cycles
-  autoCommit: true           # commit local changes automatically
-  autoPush: true             # push after each commit
-  autoPull: true             # pull remote changes each cycle
-  commitMessage: "auto"      # "auto" or a custom template string
-```
+See the [Configuration guide §Sync configuration](/guides/configuration) for the full rationale.
 
 ### Disabling sync
 
-Set `sync.enabled: false` in your workspace config to disable sync for a specific project. The server still detects the remote but does not start the sync engine.
-
-Sync also disables automatically when a push is rejected due to branch protection. A toast explains the reason and `sync.enabled` is written to `false` in the workspace config.
+Sync auto-enables when a remote is detected. There is no user-facing on/off switch; the engine starts when a remote exists and stays out of the way otherwise. Sync also disables automatically when a push is rejected due to branch protection — a toast explains the reason.
 
 ## Git identity
 

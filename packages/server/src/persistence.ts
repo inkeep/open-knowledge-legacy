@@ -25,7 +25,7 @@ import {
   type OkActorEntry,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import type { JSONContent } from '@tiptap/core';
-import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
@@ -179,8 +179,8 @@ export interface PersistenceOptions {
    * any updates received after capture but before the rename completes
    * are excluded by construction, matching the actual durable state.
    *
-   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in standalone
-   * boot. Omitted in plugin mode where no CC1Broadcaster is available
+   * Wired to `cc1Broadcaster.emitDiskAck(docName, sv)` in boot.
+   * Omitted in plugin mode where no CC1Broadcaster is available
    * — the closure shape is identical to `onAgentCommit`.
    */
   onDiskFlush?: (docName: string, sv: Uint8Array) => void;
@@ -193,7 +193,7 @@ export interface PersistenceOptions {
   configHomedirOverride?: string;
   /**
    * Fired after the L3 persistence-hook reverts an invalid Y.Text
-   * mutation on a config doc. Wired in standalone boot to
+   * mutation on a config doc. Wired in boot to
    * `cc1Broadcaster.emitConfigValidationRejected(docName, error)`
    * so any open Settings pane sees the rejection toast. Omitted in
    * plugin mode where no CC1Broadcaster is available.
@@ -310,7 +310,7 @@ export interface PersistenceHandle {
   waitForPendingCommits: () => Promise<void>;
   /**
    * Config-doc persistence context (US-007). Exposed so the file-watcher
-   * orchestration in `standalone.ts` can call `applyExternalConfigChange`
+   * orchestration in `server-factory.ts` can call `applyExternalConfigChange`
    * with the same LKG cache + `onConfigRejected` callback the L3 hook uses.
    * Treat as read-only — direct mutation breaks the L3 invariant that the
    * cache only updates after a successful persist.
@@ -349,16 +349,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     onConfigRejected: options?.onConfigRejected,
   };
 
-  // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
-  // Lives inside the closure so multiple server instances don't share mutable state.
-  const frontmatterCache = new Map<string, string>();
+  // Frontmatter lives in the YAML region of `Y.Text('source')` (D8/D26):
+  // `onStoreDocument` reads FM via `stripFrontmatter(ytext.toString())` and
+  // writes Y.Text verbatim — no recompose step, no per-key cache, no L3 hook
+  // (D31 LOCKED).
   const tripwireResetFailedDocs = new Set<string>();
   const applyDiskContent = options?.applyDiskContentToDoc ?? applyDiskContentToDoc;
   let pendingDeferredStoreFlushMode: 'within-branch' | 'discard-stale' | null = null;
 
   // reconciledBase and batchInProgress use the module-level systems
   // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
-  // so that standalone.ts and persistence stay in sync.
+  // so that server-factory.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
@@ -703,6 +704,32 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       'persistence.onStoreDocument',
       { attributes: { 'doc.name': documentName } },
       async () => {
+        // Lifecycle guard: when the file watcher saw an external delete or
+        // rename, the disk-event handler in standalone.ts sets the doc's
+        // lifecycle status to mark the Y.Doc as no-longer-tracking-disk.
+        // But `unloadDocument` does NOT cancel debounced stores already
+        // queued from prior transactions — and any in-flight rewrite that
+        // mutated the Y.Doc just before the rm/mv leaves a pending store.
+        // Without this short-circuit, that store fires, serializes the
+        // in-memory state, and writes it via `tracedWriteFileSync` —
+        // recreating the file at the OLD path. The CRDT-ghost behavior
+        // the agent sees ("rm couldn't kill them, the CRDT kept
+        // resurrecting them on disk") is exactly this race.
+        //
+        // Statuses guarded:
+        //   - 'deleted-upstream': file removed externally; Y.Doc must
+        //     not write to the now-empty path.
+        //   - 'renamed': file moved externally; the old docName must
+        //     not get rewritten — the new docName has its own Y.Doc.
+        const lifecycleStatus = document.getMap('lifecycle').get('status');
+        if (lifecycleStatus === 'deleted-upstream' || lifecycleStatus === 'renamed') {
+          log.info(
+            { documentName, lifecycleStatus },
+            `[persistence] Skipped store for ${documentName}: lifecycle=${lifecycleStatus}`,
+          );
+          return;
+        }
+
         // Atomic pre-write snapshot — `sv` and `json` MUST be captured
         // at the same synchronous instant. See
         // `captureDocSnapshotForPersistence` for the timing contract;
@@ -710,11 +737,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         // boundary would silently break the disk-ack watermark.
         const { sv: stateVectorAtRead, json } = captureDocSnapshotForPersistence(document);
 
+        // D26: Y.Text IS the FM source of truth. Read FM from the YAML
+        // region of `Y.Text('source')` directly; no recompose step, no
+        // metaMap mirror, no per-instance cache.
         const body = mdManager.serialize(json);
-        const metaMap = document.getMap('metadata');
-        const fmFromDoc = metaMap.get('frontmatter');
-        const frontmatter =
-          typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
+        const ytextSnapshot = document.getText('source').toString();
+        const { frontmatter } = stripFrontmatter(ytextSnapshot);
         const markdown = prependFrontmatter(frontmatter, body);
 
         // Skip the write when the serialized output matches the load-time
@@ -1044,13 +1072,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           }
 
           const raw = readFileSync(filePath, 'utf-8');
-          const { frontmatter, body } = stripFrontmatter(raw);
-
-          if (frontmatter) {
-            frontmatterCache.set(documentName, frontmatter);
-            const metaMap = document.getMap('metadata');
-            metaMap.set('frontmatter', frontmatter);
-          }
+          const { frontmatter } = stripFrontmatter(raw);
 
           const xmlFragment = document.getXmlFragment('default');
           log.info(
@@ -1058,31 +1080,27 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
           );
 
-          // Markdown is the sole source of truth (precedent #1). CRDT restart
-          // recovery is now a client-side concern: y-indexeddb hydrates the
-          // tab's Y.Doc from IndexedDB, and the server-instance-ID defense
-          // plus buffer-and-replay reconcile divergence on reconnect. See
-          // packages/app/src/editor/client-persistence.ts + provider-pool.ts.
-          //
-          // parseWithFallback — never throws (R6).
-          // On parse failure with position info, degrades to block-level
-          // rawMdxFallback preserving surrounding structure. On position-less
-          // error, splits at blank-line boundaries per-block. Only falls
-          // through to whole-doc raw text when every block fails — strictly
-          // better than parse() throwing on broken MDX. The optional
-          // `resolveEmbed` threads the basename-index resolver so post-load
-          // PM image/link nodes carry resolved src/href for `![[file.ext]]`.
-          const parseOpts = options?.resolveEmbed
-            ? { resolveEmbed: options.resolveEmbed, sourcePath: documentName }
-            : undefined;
-          const json = mdManager.parseWithFallback(body, parseOpts);
-
           if (xmlFragment.length === 0) {
-            const pmNode = schema.nodeFromJSON(json);
-            updateYFragment(document, xmlFragment, pmNode, {
-              mapping: new Map(),
-              isOMark: new Map(),
-            });
+            // D8/D26: load XmlFragment + Y.Text atomically under FILE_WATCHER_ORIGIN
+            // (paired-write). Y.Text receives the FULL file content verbatim
+            // (FM + body) so the YAML region of Y.Text — the FM source of
+            // truth — preserves whatever scalar style + indentation was on
+            // disk. A separate non-paired transact would let observers fire
+            // mid-load and re-canonicalize Y.Text via yaml@2's serializer,
+            // re-flowing list items (e.g. `  - characters` → `- characters`).
+            // The paired-write origin's structural short-circuit in Observer
+            // A/B refreshes the baseline without dispatching a sync.
+            //
+            // Threads the optional `resolveEmbed` so post-load PM image/link
+            // nodes carry resolved src/href for `![[file.ext]]` (US-013).
+            //
+            // Calls the imported `applyDiskContentToDoc` directly (not the
+            // `applyDiskContent` option-aware variable). The option override
+            // exists for the tripwire reset path so tests can inject a
+            // throwing stub that exercises the breaker — onLoadDocument is
+            // a different concern and shouldn't be intercepted by that
+            // testability seam.
+            applyDiskContentToDoc(document, raw, options?.resolveEmbed, documentName);
             log.info(
               { filePath, children: xmlFragment.length },
               `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
@@ -1100,6 +1118,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
               `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
             );
           }
+
           // Use normalized serialization as the base so onStoreDocument doesn't
           // false-positive on the first store after load. Raw file content may
           // differ from TipTap's output (blank lines, trailing newlines, list

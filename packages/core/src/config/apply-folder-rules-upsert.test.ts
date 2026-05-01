@@ -9,7 +9,7 @@ let testDir: string;
 
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), 'ok-folder-upsert-'));
-  mkdirSync(join(testDir, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(testDir, '.ok'), { recursive: true });
 });
 
 afterEach(() => {
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function configPath(): string {
-  return join(testDir, '.open-knowledge', 'config.yml');
+  return join(testDir, '.ok', 'config.yml');
 }
 
 function readConfig(): string {
@@ -198,7 +198,7 @@ describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
 });
 
 describe('applyFolderRulesUpsert — scope', () => {
-  test('user scope writes to homedirOverride/.open-knowledge/config.yml', async () => {
+  test('user scope writes to homedirOverride/.ok/config.yml', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-folder-upsert-home-'));
     try {
       const result = await applyFolderRulesUpsert({
@@ -211,8 +211,8 @@ describe('applyFolderRulesUpsert — scope', () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected success');
-      expect(result.path).toBe(join(home, '.open-knowledge', 'config.yml'));
-      // workspace config not written
+      expect(result.path).toBe(join(home, '.ok', 'config.yml'));
+      // project config not written
       expect(existsSync(configPath())).toBe(false);
     } finally {
       if (existsSync(home)) rmSync(home, { recursive: true, force: true });

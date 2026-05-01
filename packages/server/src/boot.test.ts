@@ -221,7 +221,7 @@ describe('bootServer — parent-death watch', () => {
     // shutdown — `destroy` was fire-and-forget from inside the watch so
     // we can't await it directly without re-entering bootServer's promise.
     parentAlive = false;
-    const lockPath = resolve(contentDir, '.open-knowledge', 'server.lock');
+    const lockPath = resolve(contentDir, '.ok', 'server.lock');
     const deadline = Date.now() + 5_000;
     while (existsSync(lockPath) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 25));

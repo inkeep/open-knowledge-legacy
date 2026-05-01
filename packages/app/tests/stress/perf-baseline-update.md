@@ -102,7 +102,7 @@ packages/app/scripts/perf-prod.sh --scenario=cold-pool-warm --runs=5 \
 What it does:
 1. Runs `bun run build` (turbo cache-friendly — no-op when clean).
 2. Starts `open-knowledge start --port 0` in the background; reads the
-   real port from `<repo>/.open-knowledge/server.lock`.
+   real port from `<repo>/.ok/server.lock`.
 3. Runs `bun run perf:profile --scenario=<name> --target=http://localhost:<port> --headless` N times.
 4. Sends SIGTERM to the server; waits for clean shutdown + lock release.
 5. Emits a per-run summary with the scenario's primary metric + computed

@@ -25,6 +25,11 @@ export default {
     // the typed IPC wrappers. Knip doesn't follow the full discriminated
     // union back to the string literals on each channel.
     'packages/desktop/src/shared/ipc-events.ts': ['files'],
+    // Clone-from-GitHub dialog. Currently unmounted — NavigatorApp is the
+    // only intended consumer (desktop clone flow, not yet wired). Kept
+    // in-tree as the canonical clone surface so future wiring is a
+    // one-line import rather than a re-implementation.
+    'packages/app/src/components/CloneDialog.tsx': ['files'],
     // MDX docs pages — rendered by the Fumadocs site's file-system route
     // discovery. They're referenced from `docs/content/overview.mdx`
     // (card grid) and `docs/content/guides/meta.json` (sidebar order), but
@@ -35,6 +40,8 @@ export default {
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
+    'docs/content/guides/properties.mdx': ['files'],
+    'docs/content/guides/component-blocks.mdx': ['files'],
     'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
@@ -62,6 +69,7 @@ export default {
       ignoreDependencies: [
         '@tailwindcss/postcss',
         '@tiptap/extension-collaboration-cursor', // transitive dependency for `y-prosemirror@1.3.7` patch
+        '@hookform/resolvers', // intentionally installed but uninstantiated (resolver-less); kept for parity with agents-private and future schema-bound dialogs
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
@@ -85,6 +93,9 @@ export default {
       ],
       ignoreFiles: [
         'src/mcp/tools.ts', // historical reference stub; live registry is src/mcp/tools/index.ts
+        // Parked tool — registration commented out in src/mcp/tools/index.ts
+        // until a server-side CRDT path replaces /api/frontmatter-patch.
+        'src/mcp/tools/frontmatter-patch.ts',
       ],
     },
     'packages/desktop': {

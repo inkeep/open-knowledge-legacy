@@ -61,7 +61,7 @@ export const CC1_CHANNEL_DISK_ACK = 'disk-ack' as const;
  * `CONFIG_VALIDATION_REVERT_ORIGIN` and then emits this broadcast so any
  * open Settings pane shows a toast + briefly flashes the affected field.
  *
- * Per-document: `docName` carries the target config doc (`__config__/workspace`
+ * Per-document: `docName` carries the target config doc (`__config__/project`
  * or `__user__/config.yml`) because `__system__` is the stateless carrier.
  *
  * The original `'config'` derived-view channel (D6 — pre-pivot draft) is

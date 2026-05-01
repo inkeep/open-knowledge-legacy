@@ -115,6 +115,64 @@ export interface OkMcpWiringShowPayload {
 /** Result shape for `mcpWiring.confirm` / `skip`. */
 type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Pre-project local-op event shapes — auth + clone flows surfaced to the
+ * Navigator window via IPC because it has no backing API server. Editor
+ * windows continue to use the HTTP path (`/api/local-op/...`) which the
+ * `installDesktopFetchRewrite` helper rewrites against the utility's
+ * apiOrigin. See `packages/desktop/src/shared/ipc-events.ts` for the
+ * canonical wire shapes.
+ */
+export type OkLocalOpAuthEvent =
+  | {
+      type: 'verification';
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+    }
+  | {
+      type: 'complete';
+      host: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+    }
+  | { type: 'error'; message: string };
+
+export type OkLocalOpCloneEvent =
+  | { type: 'progress'; phase: string; pct: number }
+  | { type: 'complete'; dir: string }
+  | { type: 'error'; message: string };
+
+/** Returned by `localOp.{auth,clone}.start` — handle for streaming events + cancel. */
+export interface OkLocalOpStream<E> {
+  /** Async iterable of events. Terminates on `complete` / `error` or `cancel()`. */
+  readonly events: AsyncIterable<E>;
+  /** SIGTERM the underlying subprocess. Idempotent. */
+  cancel(): void;
+}
+
+/** One-shot result for `localOp.auth.status()`. Also imported by
+ *  `./ipc-channels.ts` as the IPC channel result type so the wire shape
+ *  and the bridge method signature can't drift. */
+export type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+/** Bounded repo entry returned by `localOp.auth.repos()`. */
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+/** One-shot result for `localOp.auth.repos()`. Also imported by
+ *  `./ipc-channels.ts` — see `OkLocalOpAuthStatusResponse`. */
+export type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
 /** Renderer-facing Electron bridge. Populated on `window.okDesktop` by the desktop preload script. */
 export interface OkDesktopBridge {
   readonly config: OkDesktopConfig;
@@ -170,7 +228,7 @@ export interface OkDesktopBridge {
       | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
     >;
     /**
-     * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`
+     * Append a local-only telemetry line to `~/.ok/stats.jsonl`
      * (SPEC 2026-04-21 §5.1 / E5b). Zero phone-home (XQ3 LOCKED). Resolves
      * even if HOME is unwritable — telemetry failure must never bubble up
      * and affect the dispatch path. The literal-union shape mirrors
@@ -322,6 +380,38 @@ export interface OkDesktopBridge {
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     /** User clicked Skip (or pressed ESC). */
     skip(): Promise<OkMcpWiringResult>;
+  };
+
+  /**
+   * Pre-project local-op flows. Required by the Project Navigator window,
+   * which has no backing API server (apiOrigin is empty). Editor windows
+   * use the HTTP path; this surface is unused there.
+   */
+  localOp: {
+    auth: {
+      /**
+       * Start a GitHub device-flow login subprocess. Returns a stream of
+       * events; iteration ends after a terminal `complete` / `error`. Call
+       * `cancel()` to abort early.
+       */
+      start(): OkLocalOpStream<OkLocalOpAuthEvent>;
+    };
+    clone: {
+      /**
+       * Spawn `ok clone` for the given URL + target dir. Returns a stream
+       * of events; iteration ends after a terminal `complete` / `error`.
+       * The `complete` event carries `dir` (no `port`) — Electron main
+       * spawns a new editor window directly at that path.
+       */
+      start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
+    };
+    /**
+     * One-shot auth queries. Bounded responses (status: one line; repos:
+     * bounded list) so no streaming surface needed. Used by Navigator in
+     * place of the HTTP `/api/local-op/auth/{status,repos}` endpoints.
+     */
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
   };
 
   readonly platform: 'darwin' | 'win32' | 'linux';

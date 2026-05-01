@@ -16,6 +16,10 @@ import type { EventChannels } from './ipc-events.ts';
 /** Minimal shape of `electron.WebContents` we use for push events. */
 export interface SendableWebContents {
   send(channel: string, ...args: unknown[]): void;
+  /** Optional — real `WebContents` always has it, but test fakes can omit.
+   *  Streaming senders use it to skip `send()` after window close (which
+   *  throws and crashes main). Mirrors the pattern in `window-manager.ts`. */
+  isDestroyed?(): boolean;
 }
 
 /**

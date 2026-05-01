@@ -478,7 +478,7 @@ describe('server-discovery', () => {
 
     beforeEach(async () => {
       tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-ensure-'));
-      lockDir = resolve(tmpDir, '.open-knowledge');
+      lockDir = resolve(tmpDir, '.ok');
     });
 
     afterEach(async () => {
@@ -825,11 +825,11 @@ describe('server-discovery', () => {
       expect(calls).toEqual([
         {
           contentDir: '/workspace/a/content',
-          lockDir: '/workspace/a/content/.open-knowledge',
+          lockDir: '/workspace/a/content/.ok',
         },
         {
           contentDir: '/workspace/b/knowledge-b',
-          lockDir: '/workspace/b/knowledge-b/.open-knowledge',
+          lockDir: '/workspace/b/knowledge-b/.ok',
         },
       ]);
     });

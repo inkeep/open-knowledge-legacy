@@ -189,6 +189,52 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
     expect(out).not.toContain('<pre class="mdx-component">');
   });
 
+  test('img flow element strips on* event handler attributes (FR-20 defense-in-depth)', () => {
+    // Downstream `rehypeSanitizeUrls` only filters URL-scheme attributes.
+    // `tryNativeHtmlPrimitive` mirrors the walker's `isDangerousEventHandlerAttr`
+    // guard so adversarial MDX with `<img onerror="alert(1)" src="x.png" />`
+    // never lands an `onerror` attribute in clipboard HTML, regardless of
+    // whether the destination strips event handlers itself.
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'onerror', value: 'alert(1)' },
+        { type: 'mdxJsxAttribute', name: 'onload', value: 'fetch("//evil")' },
+        { type: 'mdxJsxAttribute', name: 'onclick', value: 'doom()' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img onerror="alert(1)" onload="fetch(...)" src="x.png" />' },
+    };
+    const out = html(wrap(node));
+    expect(out).toMatch(/<img\b[^>]*src="https:\/\/x\.example\/img\.png"[^>]*>/);
+    // Event-handler attributes must NOT appear in the output.
+    expect(out).not.toContain('onerror');
+    expect(out).not.toContain('onload');
+    expect(out).not.toContain('onclick');
+    expect(out).not.toContain('alert(1)');
+  });
+
+  test('img flow element preserves `on*`-prefixed safe attributes when length < 3 or non-handler', () => {
+    // Length discriminator avoids matching the bare `on` attribute name —
+    // event handlers like `onfoo` are at least 3 chars. No standard HTML
+    // attribute has the bare name `on`, so this is a theoretical guard.
+    const node: MdxJsxFlowElement = {
+      type: 'mdxJsxFlowElement',
+      name: 'img',
+      attributes: [
+        { type: 'mdxJsxAttribute', name: 'src', value: 'https://x.example/img.png' },
+        { type: 'mdxJsxAttribute', name: 'on', value: 'unusual' },
+      ],
+      children: [],
+      data: { sourceRaw: '<img src="x.png" on="unusual" />' },
+    };
+    const out = html(wrap(node));
+    // The bare `on` attribute is preserved (length-3 boundary excludes it).
+    expect(out).toMatch(/\bon="unusual"/);
+  });
+
   test('inline <img> via mdxJsxTextElement also emits native <img> (not <span class="mdx-inline">)', () => {
     const node: MdxJsxTextElement = {
       type: 'mdxJsxTextElement',
@@ -287,7 +333,7 @@ describe('lowercase HTML-primitive shortcut (img / video / audio)', () => {
 });
 
 describe('mdxJsxTextElement mdast→hast', () => {
-  test('renders as <span class="mdx-inline">escaped</span>', () => {
+  test('renders as <span> carrying both the mdx-inline class and the data-jsx-inline marker', () => {
     const node: MdxJsxTextElement = {
       type: 'mdxJsxTextElement',
       name: null,
@@ -296,14 +342,17 @@ describe('mdxJsxTextElement mdast→hast', () => {
       data: { sourceRaw: '<Tag/>' },
     };
     const out = html(wrap(node));
-    expect(out).toContain('<span class="mdx-inline">');
+    // Outbound carries both class (cross-app readability) AND data-* (PM
+    // parseHTML round-trip via Branch C).
+    expect(out).toContain('class="mdx-inline"');
+    expect(out).toContain('data-jsx-inline=""');
     expect(out).toContain('&#x3C;Tag/>');
     expect(out).not.toContain('<Tag/>');
   });
 });
 
 describe('rawMdxFallback mdast→hast', () => {
-  test('renders leading comment + pre/code', () => {
+  test('renders leading comment + pre/code with both class and data-raw-mdx-fallback markers', () => {
     const node: RawMdxFallbackMdast = {
       type: 'rawMdxFallback',
       value: '<A>\n</B>',
@@ -311,7 +360,10 @@ describe('rawMdxFallback mdast→hast', () => {
     };
     const out = html(wrap(node));
     expect(out).toContain('<!-- Parse error: mismatched tag -->');
-    expect(out).toContain('<pre class="mdx-fallback">');
+    // Outbound carries both class and data-* markers.
+    expect(out).toContain('class="mdx-fallback"');
+    expect(out).toContain('data-raw-mdx-fallback=""');
+    expect(out).toContain('data-reason="mismatched tag"');
     expect(out).toContain('<code>');
     expect(out).toContain('&#x3C;A>');
     expect(out).toContain('&#x3C;/B>');

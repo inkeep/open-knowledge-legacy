@@ -1,5 +1,5 @@
 import type { Document, Extension } from '@hocuspocus/server';
-import { prependFrontmatter } from '@inkeep/open-knowledge-core';
+import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
@@ -28,9 +28,9 @@ function isLocalOriginLike(origin: unknown): origin is LocalOriginLike {
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
   const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const metaMap = document.getMap('metadata');
-  const frontmatter = metaMap.get('frontmatter');
-  return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);
+  // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
+  const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+  return prependFrontmatter(fm, body);
 }
 
 export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions): Extension {

@@ -12,7 +12,7 @@
  * D30: getSession uses an in-flight promise dedup map so concurrent first-calls
  * share one pending openDirectConnection call and produce exactly one session.
  *
- * US-008: each session creates a Y.UndoManager tracking [Y.Text, metaMap, flashMap]
+ * US-008: each session creates a Y.UndoManager tracking [Y.Text, flashMap]
  * via session.origin. session.undoOrigin is the placeholder origin for the future
  * V0-14 applyAgentUndo path; captureTransaction excludes it from the UM stack
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
@@ -25,6 +25,7 @@ export { colorFromSeed } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
@@ -129,19 +130,21 @@ function applyAgentMarkdownWriteInner(
   try {
     const xmlFragment = document.getXmlFragment('default');
     const ytext = document.getText('source');
-    const metaMap = document.getMap('metadata');
 
-    // 1. Read current authoritative state from XmlFragment + metaMap.
+    // 1. Read current authoritative state. XmlFragment is authoritative for
+    //    body (precedent #12); FM lives in the YAML region of `Y.Text('source')`
+    //    (D8) — read via stripFrontmatter on the current ytext snapshot.
     const currentJson = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const currentBody = mdManager.serialize(currentJson);
-    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    const { frontmatter: existingFm } = stripFrontmatter(ytext.toString());
 
     // 2. Split the agent's payload into frontmatter + body. The agent may
     //    send a full document (FM + body) or body-only; we handle both.
-    //    On 'replace', an FM in the payload updates metaMap. On 'prepend'/
-    //    'append', the payload is treated as body-only — any leading FM is
-    //    stripped defensively to avoid producing a document with two FM
-    //    blocks (double-FM is a CommonMark invalid state).
+    //    On 'replace', an FM in the payload supersedes the existing FM
+    //    region of `Y.Text('source')`. On 'prepend'/'append', the payload
+    //    is treated as body-only — any leading FM is stripped defensively
+    //    to avoid producing a document with two FM blocks (double-FM is
+    //    a CommonMark invalid state).
     const { frontmatter: payloadFm, body: payloadBody } = stripFrontmatter(markdown);
 
     // 3. Determine the final frontmatter and compose the final body.
@@ -172,15 +175,15 @@ function applyAgentMarkdownWriteInner(
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // 5. Commit the final frontmatter to metaMap if it changed. This is the
-    //    canonical storage surface read by persistence.onStoreDocument and
-    //    by the Y.Text mirror in step 6.
     if (finalFm !== existingFm) {
-      metaMap.set('frontmatter', finalFm);
+      recordFrontmatterEditSurface('mcp-write');
     }
 
-    // 6. Mirror Y.Text with minimal mutation. Only the changed region is
+    // 5. Mirror Y.Text with minimal mutation. Only the changed region is
     //    touched, so user-content Items in Y.Text retain their origin.
+    //    The composed `canonicalFull` includes the final FM, so the
+    //    YAML region of Y.Text reflects the post-write FM directly (no
+    //    separate metaMap slot needed).
     const canonicalBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
     );
@@ -280,7 +283,6 @@ function applyAgentUndoInner(
   const document = dc.document;
   const xmlFragment = document.getXmlFragment('default');
   const ytext = document.getText('source');
-  const metaMap = document.getMap('metadata');
 
   let undone = false;
   // F1 (D4): wrap undo + composition in one outer transact under undoOrigin.
@@ -299,20 +301,15 @@ function applyAgentUndoInner(
     }
 
     // Post-undo: Y.Text has the desired content. Apply XmlFragment-authoritative
-    // composition so XmlFragment matches (precedent #10, #12).
+    // composition so XmlFragment matches (precedent #10, #12). Y.Text's YAML
+    // region IS the FM source of truth (D8) — extract via stripFrontmatter.
     const fullMd = ytext.toString();
-    const { body, frontmatter: newFm } = stripFrontmatter(fullMd);
+    const { body, frontmatter: finalFm } = stripFrontmatter(fullMd);
 
     const parsedJson = mdManager.parseWithFallback(body, embedResolver);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-
-    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
-    const finalFm = newFm || existingFm;
-    if (newFm && newFm !== existingFm) {
-      metaMap.set('frontmatter', finalFm);
-    }
 
     const canonicalBody = mdManager.serialize(
       yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
@@ -338,7 +335,7 @@ export interface AgentSessionIdentity {
  * (D32 STOP rule). Never call `session.dc.transact(fn)` or pass the shared
  * `AGENT_WRITE_ORIGIN` constant to per-session writes.
  *
- * `um` tracks [Y.Text, metaMap, flashMap] under `session.origin`; writes under
+ * `um` tracks [Y.Text, flashMap] under `session.origin`; writes under
  * `session.undoOrigin` (V0-14 undo path) are excluded via captureTransaction.
  */
 interface SessionRecord {
@@ -347,7 +344,7 @@ interface SessionRecord {
   origin: PairedWriteOrigin;
   /** Per-session undo write origin — V0-14 (US-009, D4). Paired so Observer A/B short-circuit. */
   undoOrigin: PairedWriteOrigin;
-  /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
+  /** Per-session UndoManager scoped to [Y.Text, flashMap] (US-008, D25). */
   um: Y.UndoManager;
   agentId: string;
   docName: string;
@@ -553,7 +550,7 @@ export class AgentSessionManager {
     // same Document. Presence is published on the `__system__` Y.Doc via
     // `AgentPresenceBroadcaster` (map-valued, keyed by agentId) instead.
 
-    // US-008 (D25, D24, D21): per-session UndoManager across Y.Text + metaMap + flashMap.
+    // Per-session UndoManager scoped to [Y.Text, agent-flash].
     // trackedOrigins uses object identity — only transactions under session.origin are stacked.
     // captureTransaction excludes undoOrigin writes to prevent undo-of-undo cycles.
     // ignoreRemoteMapChanges: true — remote agent map updates do not trigger undo eligibility.
@@ -565,12 +562,12 @@ export class AgentSessionManager {
     // keep the flash side-channel in lock-step with source text, not to track
     // cross-session flash updates (those fire under remote origins and are
     // filtered by trackedOrigins + ignoreRemoteMapChanges).
+    // FM lives in the YAML region of Y.Text (D8) — `Y.Map('metadata')` is no
+    // longer a CRDT root for FM data. The UndoManager tracks Y.Text (covers
+    // body + FM region) and `agent-flash` (so undo of an agent write also
+    // reverts the flash entry).
     const um = new Y.UndoManager(
-      [
-        dc.document.getText('source'),
-        dc.document.getMap('metadata'),
-        dc.document.getMap('agent-flash'),
-      ],
+      [dc.document.getText('source'), dc.document.getMap('agent-flash')],
       {
         trackedOrigins: new Set([origin]),
         captureTimeout: 500,

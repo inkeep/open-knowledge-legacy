@@ -108,7 +108,6 @@ interface TiptapEditorProps {
 }
 
 export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isSourceMode }) => {
-  const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
@@ -229,6 +228,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
               editorCtorStartTimes.set(editor, ctorStart);
             },
             onCreate: ({ editor }) => {
+              // Attach the live editor view to the clipboard HTML serializer
+              // so the live-DOM walker can call view.nodeDOM(pos) +
+              // getComputedStyle. Pre-attach calls fall through to the
+              // markdown→HTML pipeline; the walker is a no-op without a view.
+              clipboard.html.setView(editor.view);
               const start = editorCtorStartTimes.get(editor);
               editorCtorStartTimes.delete(editor);
               if (start == null) return;
@@ -244,7 +248,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
             },
             editorProps: {
               attributes: {
-                class: 'pt-10 pb-16 h-full',
+                class: 'pt-4 pb-4 h-full',
               },
               clipboardTextParser: (text, _context, _plain, view) => {
                 const json = clipboard.mdManager.parse(text);
@@ -253,7 +257,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
                 return node.content as any;
               },
               clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
-              clipboardSerializer: clipboard.html,
+              clipboardSerializer: clipboard.html.serializer,
               handlePaste: (view, event) => clipboard.paste(view, event),
             },
             extensions: [
@@ -647,23 +651,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder, isS
     window.addEventListener(OUTLINE_NAV_EVENT, onNav);
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
   }, [editor]);
-
-  // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
-  useEffect(() => {
-    const metaMap = provider.document.getMap('metadata');
-    const fm = metaMap.get('frontmatter');
-    if (typeof fm === 'string' && fm) {
-      frontmatterRef.current = fm;
-    }
-    const observer = () => {
-      const updated = metaMap.get('frontmatter');
-      if (typeof updated === 'string') {
-        frontmatterRef.current = updated;
-      }
-    };
-    metaMap.observe(observer);
-    return () => metaMap.unobserve(observer);
-  }, [provider.document]);
 
   // Publish (or clear) this tab's awareness for the doc this editor binds to.
   //

@@ -371,12 +371,12 @@ describe('parseCC1ConfigValidationRejected', () => {
       v: CC1_CONTRACT_VERSION,
       ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
       seq: 5,
-      docName: '__config__/workspace',
+      docName: '__config__/project',
       error: { code: 'YAML_PARSE', detail: 'unexpected token at line 12' },
     };
     expect(parseCC1ConfigValidationRejected(JSON.stringify(payload))).toMatchObject({
       ch: 'config-validation-rejected',
-      docName: '__config__/workspace',
+      docName: '__config__/project',
       error: { code: 'YAML_PARSE' },
     });
   });
@@ -413,7 +413,7 @@ describe('parseCC1ConfigValidationRejected', () => {
         v: CC1_CONTRACT_VERSION,
         ch: CC1_CHANNEL_CONFIG_VALIDATION_REJECTED,
         seq: 1,
-        docName: '__config__/workspace',
+        docName: '__config__/project',
         error: { code: 'YAML_PARSE', detail: 'broken' },
       }),
       { onConfigValidationRejected: handler },

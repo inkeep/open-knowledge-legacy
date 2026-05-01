@@ -113,6 +113,30 @@ export {
   type LiveDerivedIndexOptions,
 } from './live-derived-index.ts';
 export {
+  type AuthEvent,
+  type AuthReposResponse,
+  type AuthStatusResponse,
+  type CloneCompleteEvent,
+  type CloneErrorEvent,
+  type CloneEvent,
+  type CloneProgressEvent,
+  type DeviceCompleteEvent,
+  type DeviceErrorEvent,
+  type DeviceVerificationEvent,
+  type RawCloneEvent,
+  type RepoEntry,
+  type RunAuthQueryOptions,
+  type RunCloneController,
+  type RunCloneOptions,
+  type RunDeviceFlowController,
+  type RunDeviceFlowOptions,
+  runAuthReposSubprocess,
+  runAuthStatusSubprocess,
+  runCloneSubprocess,
+  runDeviceFlowSubprocess,
+  validateCloneInputs,
+} from './local-ops/index.ts';
+export {
   createTestLogger,
   getLogger,
   installTestLoggers,
@@ -193,6 +217,7 @@ export {
   type StarterFolder,
   starterFolderRule,
 } from './seed/index.ts';
+export { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 export {
   acquireServerLock,
   readServerLock,
@@ -237,13 +262,16 @@ export {
   type WriterIdentity,
 } from './shadow-repo.ts';
 export {
+  type BuildAndOpenSkillOptions,
+  type BuildAndOpenSkillResult,
+  type BuildAndOpenSkillStatus,
+  buildAndOpenSkill,
   type InstallUserSkillOptions,
   type InstallUserSkillResult,
   installUserSkill,
   type SkillInstallLogger,
   type SpawnLike,
 } from './skill-install.ts';
-export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
 export {
   assertCompatibleStateManifest,
   detectProjectShape,

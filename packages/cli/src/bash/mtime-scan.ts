@@ -11,7 +11,7 @@
  * subprocess isolation. Typical overhead for dirs ≤500 files is <10ms.
  *
  * Bounded at `SCAN_CAP` entries; traversal skips hidden OK directories
- * (`.git/`, `.open-knowledge/`, `node_modules/`).
+ * (`.git/`, `.ok/`, `node_modules/`).
  *
  * Spec: SPEC.md FR21 + D23.
  */

@@ -139,4 +139,32 @@ describe('AgentFocusBroadcaster', () => {
     // The map is the canonical location for per-agent state — no flat/nested collisions.
     expect(Object.keys(map).length).toBe(2);
   });
+
+  test('principal-prefixed agentId is filtered at the broadcaster boundary', () => {
+    // Form-write handlers attribute writes to `principal-<UUID>` (precedent
+    // #25). The frontmatter-patch handler routes its post-write
+    // `setFocus(agentId, …)` call through the broadcaster unconditionally so
+    // the agent-write call shape stays uniform; the broadcaster filters
+    // principal ids internally so the user editing their own properties
+    // doesn't surface as a focus push.
+    broadcaster.setFocus('principal-deadbeef', {
+      agentName: 'Local User',
+      currentDoc: 'a.md',
+      writeKind: 'edit',
+      ts: 100,
+    });
+    expect(broadcaster.getFocusMap()).toEqual({});
+
+    broadcaster.clearFocus('principal-deadbeef');
+    expect(broadcaster.getFocusMap()).toEqual({});
+
+    // Real agents under the same broadcaster remain unaffected.
+    broadcaster.setFocus('agent-real', {
+      agentName: 'Claude',
+      currentDoc: 'b.md',
+      writeKind: 'write',
+      ts: 200,
+    });
+    expect(Object.keys(broadcaster.getFocusMap())).toEqual(['agent-real']);
+  });
 });

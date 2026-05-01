@@ -11,8 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'SettingsPane.tsx'), 'utf8');
+const SRC = readFileSync(join(__dirname, 'SettingsPane.tsx'), 'utf8');
 
 describe('SettingsPane module', () => {
   test('exports SettingsPane component', async () => {
@@ -28,12 +27,18 @@ describe('SettingsPane source-level guards', () => {
   });
 
   test('admits both well-known config doc names', () => {
-    expect(SRC).toContain('CONFIG_DOC_NAME_WORKSPACE');
+    expect(SRC).toContain('CONFIG_DOC_NAME_PROJECT');
     expect(SRC).toContain('CONFIG_DOC_NAME_USER');
   });
 
   test('subscribes to CC1 config-validation-rejected', () => {
     expect(SRC).toContain('subscribeToConfigValidationRejected');
+  });
+
+  test('L3 rejection wires form.setError + form.setFocus on the rejected field', () => {
+    expect(SRC).toContain('form.setError(');
+    expect(SRC).toContain('form.setFocus(');
+    expect(SRC).toContain("type: 'config-validation-rejected'");
   });
 
   test('renders as a pane, NOT a Dialog overlay', () => {
@@ -65,8 +70,12 @@ describe('SettingsPane source-level guards', () => {
 
   test('per-field reset writes default OR null-as-clear', () => {
     expect(SRC).toContain('Reset to default');
-    // null-as-clear when the field has no schema default (e.g. appearance.*)
-    expect(SRC).toContain('commit(null)');
+    // Post-RHF refactor: reset writes via form.setValue (defaultValue OR null
+    // for fields without a schema default — null-as-clear preserves RFC 7396
+    // semantics) followed by the harness's commitField.
+    expect(SRC).toMatch(/form\.setValue\(/);
+    expect(SRC).toContain('shouldDirty: false');
+    expect(SRC).toMatch(/defaultValue\s*===\s*undefined\s*\?\s*null/);
   });
 
   test('flash animation uses the settings-flash CSS keyframe', () => {
@@ -76,5 +85,57 @@ describe('SettingsPane source-level guards', () => {
   test('does not instantiate client-side IndexeddbPersistence', () => {
     expect(SRC).not.toContain('IndexeddbPersistence');
     expect(SRC).not.toContain('createClientPersistence');
+  });
+
+  test('uses the shadcn Form primitive (FormField / FormControl / FormMessage)', () => {
+    expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/form['"]/);
+    // Ensure the imported names land on the JSX (FormField is the harness
+    // entry point; FormMessage owns the data-field-error attribute).
+    expect(SRC).toMatch(/<FormField\b/);
+    expect(SRC).toMatch(/<FormMessage\b/);
+  });
+
+  test('consumes the useConfigForm harness hook', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/use-config-form['"]/);
+    expect(SRC).toContain('useConfigForm(');
+  });
+});
+
+describe('SettingsPane folders section integration', () => {
+  test('imports FoldersSection from the settings module', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/FoldersSection['"]/);
+    expect(SRC).toContain('FoldersSection');
+  });
+
+  test('SectionDef is a discriminated union (scalar vs custom-folders) so illegal compositions are unrepresentable', () => {
+    // The scalar variant carries `custom?: never`; the custom-folders
+    // variant carries `custom: 'folders'` with `fields: []`. A refactor
+    // that collapses this back to a single interface would re-permit
+    // `{ custom: 'folders', fields: [{...}] }` — a composition where the
+    // field would silently never render under the dispatcher early-return.
+    expect(SRC).toMatch(/custom\?:\s*never/);
+    expect(SRC).toMatch(/custom:\s*'folders'/);
+    expect(SRC).toMatch(/fields:\s*\[\]/);
+  });
+
+  test("SECTIONS includes a folders entry with custom: 'folders' and empty fields[]", () => {
+    // Locate the 'folders' SECTIONS entry by id and verify the custom tag
+    // + empty fields array. A regression that flips this to the scalar
+    // path would silently lose the FoldersSection render.
+    const idMatch = SRC.match(/\{[\s\S]{0,400}id:\s*'folders'[\s\S]{0,400}custom:\s*'folders'/);
+    expect(idMatch).toBeTruthy();
+    expect(SRC).toMatch(/id:\s*'folders'[\s\S]{0,400}fields:\s*\[\]/);
+  });
+
+  test("SettingsForm dispatches on section.custom === 'folders'", () => {
+    expect(SRC).toContain("section.custom === 'folders'");
+    expect(SRC).toMatch(/<FoldersSection\b/);
+  });
+
+  test('SettingsForm passes form into FoldersSection (atomic-array commit needs it)', () => {
+    // FoldersSection consumes form for useFieldArray + setFocus; without
+    // this prop the section can't drive the array.
+    expect(SRC).toMatch(/SettingsFormProps[\s\S]{0,400}form:\s*UseFormReturn<Config>/);
+    expect(SRC).toMatch(/<SettingsForm[\s\S]{0,200}form=\{form\}/);
   });
 });

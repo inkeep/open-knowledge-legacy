@@ -1,7 +1,7 @@
 /**
  * T17 — branch-switched cross-branch reseed-ordering regression gate.
  *
- * The cross-branch path in `standalone.ts`'s `onBatchEnd` callback runs:
+ * The cross-branch path in `server-factory.ts`'s `onBatchEnd` callback runs:
  *   1. Discard buffered file-watcher events.
  *   2. Reset every open Y.Doc from the new branch's disk via `applyToDoc` →
  *      `applyExternalChange` → mdast→PM with `resolveEmbed`.
@@ -28,7 +28,7 @@
  *
  * Hermetic: per-test tmpdir + per-test git repo + per-test docName.
  *
- * @see packages/server/src/standalone.ts onBatchEnd cross-branch path
+ * @see packages/server/src/server-factory.ts onBatchEnd cross-branch path
  * @see packages/app/tests/integration/branch-switch-live-client.test.ts (T5)
  * @see packages/app/tests/integration/restart-with-embed-doc.test.ts (T15)
  */
@@ -102,7 +102,7 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     //   main    → photo.png  → '/photo.png'
     //   feature → photo.png  → '/assets/photo.png'
     //
-    // The cross-branch reseed at standalone.ts:1645 IS the only mechanism by
+    // The cross-branch reseed at server-factory.ts:1645 IS the only mechanism by
     // which the post-switch basenameIndex reflects 'assets/photo.png'
     // (line 1553 discards the file-watcher's buffered events). Before the
     // fix, the doc-reset at line 1559 runs with the stale main-branch
@@ -175,13 +175,16 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
     // Execute the branch switch externally (simulates user `git checkout`).
     git(contentDir, 'checkout feature');
 
-    // Wait for the cross-branch path to settle: the head-watcher fires
-    // BatchBegin/BatchEnd, the doc-reset loop applies feature-branch disk
-    // content, and basenameIndex eventually reflects assets/photo.png. The
-    // server-side Y.XmlFragment's PM image src is the one the user-facing
-    // preview renders — the assertion target. Polling guards against
-    // arbitrary head-watcher debounce; the timeout is generous to absorb CI
-    // contention.
+    // Wait for the cross-branch path to settle. The post-switch invariant we
+    // care about is that PM image `src` reflects the NEW branch's resolved
+    // path; poll directly on that (rather than `embeds.length === 1`, which
+    // is true both pre- and post-switch and would let the assertion fire
+    // before the doc-reset loop has run). 15s timeout absorbs CI contention.
+    //
+    // RED case behavior: if the cross-branch path never runs (head-watcher
+    // missed the HEAD event), props.src stays at '/photo.png' indefinitely
+    // and pollUntil times out — the assertion below then fails with the
+    // pre-switch value, naming the actual failure mode.
     await pollUntil(
       () => {
         const state = getServerState(server, 'test-doc');
@@ -193,26 +196,17 @@ describe('T17: branch switch with `![[photo.png]]` doc — reseed-before-reset',
         const embeds = collectNodes(json, 'jsxComponent').filter(
           (n) => n.attrs?.componentName === 'WikiEmbedImage',
         );
-        // First settlement gate: doc-reset has run (the wiki-embed component
-        // is present post-switch). Whether the src is correct is the actual
-        // assertion below; polling on src-correctness would loop until
-        // timeout in the RED case, masking the bug.
-        return embeds.length === 1;
+        if (embeds.length !== 1) return false;
+        const props = embeds[0]?.attrs?.props as Record<string, unknown> | undefined;
+        return props?.src === '/assets/photo.png';
       },
       15_000,
       100,
     );
 
-    // Belt-and-suspenders settlement window — give post-batch file-watcher
-    // events time to land. If they update basenameIndex via the regular
-    // add/remove path, the bug is masked when later assertions read state.
-    // 800ms is well past the head-watcher's QUIET_WINDOW_MS (100ms) and
-    // parcel-watcher's typical event-delivery window.
-    await wait(800);
-
     // Post-switch assertion (the regression gate): the wiki-embed
     // component's props.src reflects the FEATURE branch's resolved path.
-    // Under the bug, the doc-reset at standalone.ts:1559 runs BEFORE the
+    // Under the bug, the doc-reset at server-factory.ts:1559 runs BEFORE the
     // basenameIndex reseed at line 1645, so resolveEmbed returns
     // 'photo.png' (stale main-branch path) and props.src is '/photo.png'
     // instead of '/assets/photo.png'.

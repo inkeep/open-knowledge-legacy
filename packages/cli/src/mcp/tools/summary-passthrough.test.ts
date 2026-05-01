@@ -4,8 +4,8 @@
  * wiring (D15) that lets the server-side D22 guard actually fire for
  * MCP-driven calls.
  *
- * Covers all four write-like tools: write_document, edit_document,
- * rename_document, rollback_to_version.
+ * Covers all five write-like tools: write_document, edit_document,
+ * rename_document, rename_folder, rollback_to_version.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -16,6 +16,7 @@ import type { Config } from '../../config/schema.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { register as registerEditDocument } from './edit-document.ts';
 import { register as registerRenameDocument } from './rename-document.ts';
+import { register as registerRenameFolder } from './rename-folder.ts';
 import { register as registerRollbackToVersion } from './rollback-to-version.ts';
 import type { ServerInstance } from './shared.ts';
 import { register as registerWriteDocument } from './write-document.ts';
@@ -270,7 +271,7 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
         docName: 'old',
         newDocName: 'new',
       });
-      expect(recordedRequest?.url).toBe('/api/rename');
+      expect(recordedRequest?.url).toBe('/api/rename-path');
       expect(recordedRequest?.body.agentId).toBe('claude-1');
       expect(recordedRequest?.body.agentName).toBe('Claude');
       expect(recordedRequest?.body.colorSeed).toBe('test-seed');
@@ -306,6 +307,60 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
       const desc = cap.getTool('rename_document').description;
       expect(desc).toContain('If omitted');
       expect(desc).toContain('Renamed X → Y');
+    });
+  });
+
+  describe('rename_folder — summary + identity passthrough', () => {
+    test('identityRef when present puts agentId in the /api/rename-path body', async () => {
+      const cap = createCaptureServer();
+      registerRenameFolder(cap.server, {
+        ...baseDeps(),
+        identityRef: { current: TEST_IDENTITY },
+      });
+      await cap.getTool('rename_folder').handler({
+        fromFolder: 'old-folder',
+        toFolder: 'new-folder',
+      });
+      expect(recordedRequest?.url).toBe('/api/rename-path');
+      expect(recordedRequest?.body.kind).toBe('folder');
+      expect(recordedRequest?.body.fromPath).toBe('old-folder');
+      expect(recordedRequest?.body.toPath).toBe('new-folder');
+      expect(recordedRequest?.body.agentId).toBe('claude-1');
+      expect(recordedRequest?.body.agentName).toBe('Claude');
+    });
+
+    test('no identityRef → body omits agentId (UI-style anonymous call)', async () => {
+      const cap = createCaptureServer();
+      registerRenameFolder(cap.server, baseDeps());
+      await cap.getTool('rename_folder').handler({
+        fromFolder: 'old-folder',
+        toFolder: 'new-folder',
+      });
+      expect(recordedRequest?.body).not.toHaveProperty('agentId');
+    });
+
+    test('summary is forwarded when provided', async () => {
+      const cap = createCaptureServer();
+      registerRenameFolder(cap.server, {
+        ...baseDeps(),
+        identityRef: { current: TEST_IDENTITY },
+      });
+      await cap.getTool('rename_folder').handler({
+        fromFolder: 'old-folder',
+        toFolder: 'new-folder',
+        summary: 'Reorganized module layout',
+      });
+      expect(recordedRequest?.body.summary).toBe('Reorganized module layout');
+    });
+
+    test('summary omitted from body when arg is undefined', async () => {
+      const cap = createCaptureServer();
+      registerRenameFolder(cap.server, baseDeps());
+      await cap.getTool('rename_folder').handler({
+        fromFolder: 'old-folder',
+        toFolder: 'new-folder',
+      });
+      expect(recordedRequest?.body).not.toHaveProperty('summary');
     });
   });
 
@@ -357,7 +412,7 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
     });
   });
 
-  describe('No-PII reminder in all four tool descriptions (FR15)', () => {
+  describe('No-PII reminder in all five tool descriptions (FR15)', () => {
     test('write_document description mentions no secrets/PII', () => {
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());
@@ -372,6 +427,11 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
       const cap = createCaptureServer();
       registerRenameDocument(cap.server, baseDeps());
       expect(cap.getTool('rename_document').description).toContain('secrets or PII');
+    });
+    test('rename_folder description mentions no secrets/PII', () => {
+      const cap = createCaptureServer();
+      registerRenameFolder(cap.server, baseDeps());
+      expect(cap.getTool('rename_folder').description).toContain('secrets or PII');
     });
     test('rollback_to_version description mentions no secrets/PII', () => {
       const cap = createCaptureServer();

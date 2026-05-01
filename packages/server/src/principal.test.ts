@@ -16,9 +16,9 @@ afterEach(async () => {
 });
 
 describe('loadPrincipal — first run', () => {
-  test('creates principal.json under .open-knowledge/', async () => {
+  test('creates principal.json under .ok/', async () => {
     const principal = await loadPrincipal(tmpDir);
-    const path = resolve(tmpDir, '.open-knowledge', 'principal.json');
+    const path = resolve(tmpDir, '.ok', 'principal.json');
     expect(existsSync(path)).toBe(true);
     const raw = JSON.parse(readFileSync(path, 'utf-8'));
     expect(raw.id).toBe(principal.id);
@@ -53,7 +53,7 @@ describe('loadPrincipal — idempotence', () => {
   test('second call preserves id even if on-disk file is partially corrupted', async () => {
     const first = await loadPrincipal(tmpDir);
     // Partially corrupt by removing display fields
-    const path = resolve(tmpDir, '.open-knowledge', 'principal.json');
+    const path = resolve(tmpDir, '.ok', 'principal.json');
     const minimal = { id: first.id, created_at: first.created_at };
     writeFileSync(path, JSON.stringify(minimal), 'utf-8');
 
@@ -66,8 +66,8 @@ describe('loadPrincipal — idempotence', () => {
   });
 
   test('corrupt JSON is recovered — new principal synthesized', async () => {
-    mkdirSync(resolve(tmpDir, '.open-knowledge'), { recursive: true });
-    writeFileSync(resolve(tmpDir, '.open-knowledge', 'principal.json'), '{invalid json', 'utf-8');
+    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
+    writeFileSync(resolve(tmpDir, '.ok', 'principal.json'), '{invalid json', 'utf-8');
     const principal = await loadPrincipal(tmpDir);
     expect(principal.id.startsWith('principal-')).toBe(true);
   });

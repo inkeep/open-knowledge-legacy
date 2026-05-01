@@ -16,7 +16,7 @@
  *    any time; useful for dedup size-prefilter.
  *
  *  - tmpUploadDir / mintTempUploadPath: name a unique tempfile under
- *    <contentDir>/.open-knowledge/tmp/. Same-filesystem guarantee for the
+ *    <contentDir>/.ok/tmp/. Same-filesystem guarantee for the
  *    eventual link → atomic rename equivalence on POSIX (no EXDEV).
  *
  *  - linkTempToFinalWithCollisionRetry: atomic create-if-not-exists via
@@ -27,7 +27,7 @@
  *
  *  - cleanupOrphanUploadTempfiles: boot-time sweep for orphaned tempfiles
  *    older than the threshold. Mirrors the shape of
- *    recoverPendingManagedRename in standalone.ts — runs once at startup,
+ *    recoverPendingManagedRename in server-factory.ts — runs once at startup,
  *    logs and continues on per-entry errors.
  */
 import { createHash, randomUUID } from 'node:crypto';
@@ -79,12 +79,12 @@ export class HashingPassThrough extends Transform {
 }
 
 /**
- * <contentDir>/.open-knowledge/tmp — parks upload tempfiles beside the
+ * <contentDir>/.ok/tmp — parks upload tempfiles beside the
  * server lock + shadow repo, same-filesystem as the final destination so
  * linkSync is always atomic (no EXDEV risk across mount boundaries).
  */
 export function tmpUploadDir(contentDir: string): string {
-  return resolve(contentDir, '.open-knowledge', 'tmp');
+  return resolve(contentDir, '.ok', 'tmp');
 }
 
 /**
@@ -169,7 +169,7 @@ export function linkTempToFinalWithCollisionRetry(
 /**
  * Boot-time sweep for orphaned upload tempfiles. Runs once at server
  * startup — mirrors the shape of recoverPendingManagedRename in
- * standalone.ts. Non-throwing: individual unlink failures are logged and
+ * server-factory.ts. Non-throwing: individual unlink failures are logged and
  * counted, never propagate.
  *
  * Default age threshold: 24h. Matches the grace window OK uses elsewhere
@@ -201,7 +201,7 @@ export function cleanupOrphanUploadTempfiles(
 
   for (const name of entries) {
     // Only sweep our own upload-* tempfiles — don't touch unrelated
-    // artifacts a future subsystem might park under .open-knowledge/tmp/.
+    // artifacts a future subsystem might park under .ok/tmp/.
     if (!name.startsWith('upload-')) continue;
     result.scanned++;
 

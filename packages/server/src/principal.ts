@@ -23,7 +23,7 @@ async function readGitConfig(
 }
 
 /**
- * Load (or create) the principal record at `<contentDir>/.open-knowledge/principal.json`.
+ * Load (or create) the principal record at `<contentDir>/.ok/principal.json`.
  *
  * First call: synthesizes a stable UUID, reads git config for display fields,
  * persists, and returns. Subsequent calls: keeps id + created_at immutable;

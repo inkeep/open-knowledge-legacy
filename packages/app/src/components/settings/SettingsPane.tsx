@@ -3,7 +3,7 @@
  *
  * Replaces the document view in the main editor area when invoked via Cmd-,,
  * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
- * workspace ("This project") and user-global ("User") scopes;
+ * project ("This project") and user-global ("User") scopes;
  * each tab acquires its own `HocuspocusProvider` and binds via
  * `bindConfigDoc`.
  *
@@ -12,6 +12,13 @@
  * reset writes the schema default. Modified-at-scope indicator shows a
  * colored bar on `'either'` fields whose value differs from the schema
  * default.
+ *
+ * Form harness: a single `useForm<Config>` instance owned by
+ * `useConfigForm(binding)` (resolver-less); external Y.Text updates merge
+ * in via `binding.subscribe → form.reset({keepDirtyValues: true,
+ * keepDirty: true, keepTouched: true})`. Each `SettingsField` wraps its
+ * body in a shadcn `FormField` whose render-prop dispatches on the
+ * schema-walker's type tag.
  *
  * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
  * sonner toast + brief field flash.
@@ -24,8 +31,8 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
   type CC1ConfigValidationRejectedPayload,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   type Config,
   type ConfigBinding,
   ConfigSchema,
@@ -36,10 +43,25 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import {
+  type ControllerRenderProps,
+  type FieldPath,
+  type UseFormReturn,
+  useFormContext,
+} from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
 import { Button } from '@/components/ui/button';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -48,14 +70,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
+import { FoldersSection } from './FoldersSection';
 import {
-  buildPatch,
   getEnumOptions,
   getFieldDefault,
   getLeafTypeTag,
-  readPath,
   resolveLeafSchema,
 } from './schema-walker';
+import type { SlotForwardedProps } from './slot-forwarded-props';
+import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 interface SettingsPaneProps {
   scope: SettingsScope;
@@ -63,12 +86,34 @@ interface SettingsPaneProps {
   onScopeChange: (scope: SettingsScope) => void;
 }
 
-interface SectionDef {
-  id: string;
-  title: string;
-  description: string;
-  fields: FieldDef[];
-}
+/**
+ * Discriminated union: a section is either the scalar variant (`fields[]`
+ * iterated by SettingsForm + SettingsSection) OR the custom variant
+ * (delegates wholly to a custom component like `<FoldersSection>`). The
+ * `custom?: never` branch makes `{ custom: 'folders', fields: [{...}] }`
+ * unrepresentable — a stray `fields[]` entry on a custom section would
+ * silently never render under the dispatcher's early-return.
+ *
+ * Custom sections still carry `title` / `description` for shape
+ * uniformity (the SECTIONS array is iterated as a single list), but the
+ * custom component owns its own `<section>` + heading + scope handling
+ * and the dispatcher never reads those fields.
+ */
+type SectionDef =
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: FieldDef[];
+      custom?: never;
+    }
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: [];
+      custom: 'folders';
+    };
 
 interface FieldDef {
   path: string[];
@@ -79,28 +124,6 @@ interface FieldDef {
 }
 
 const SECTIONS: SectionDef[] = [
-  {
-    id: 'content',
-    title: 'Content',
-    description: 'Where Open Knowledge looks for documents.',
-    fields: [
-      {
-        path: ['content', 'dir'],
-        label: 'Content directory',
-        description: 'Project-relative path containing your markdown files.',
-      },
-      {
-        path: ['content', 'include'],
-        label: 'Include patterns',
-        description: 'Glob patterns selecting which files are content. One per line.',
-      },
-      {
-        path: ['content', 'exclude'],
-        label: 'Exclude patterns',
-        description: 'Glob patterns to skip. One per line.',
-      },
-    ],
-  },
   {
     id: 'server',
     title: 'Server',
@@ -139,9 +162,17 @@ const SECTIONS: SectionDef[] = [
       {
         path: ['preview', 'baseUrl'],
         label: 'Preview base URL',
-        description: 'URL of your team’s deployed wiki (workspace-only).',
+        description: 'URL of your team’s deployed wiki (project-only).',
       },
     ],
+  },
+  {
+    id: 'folders',
+    title: 'Folders',
+    description:
+      'Default frontmatter applied to documents matching glob patterns. Order matters: later rules override earlier ones.',
+    fields: [],
+    custom: 'folders',
   },
   {
     id: 'mcp',
@@ -194,7 +225,6 @@ const SECTIONS: SectionDef[] = [
 interface ConfigDocConnection {
   provider: HocuspocusProvider;
   binding: ConfigBinding;
-  config: Config;
   synced: boolean;
 }
 
@@ -206,7 +236,7 @@ function useConfigDocConnection(
 
   useEffect(() => {
     if (collabUrl === null) return;
-    const docName = scope === 'workspace' ? CONFIG_DOC_NAME_WORKSPACE : CONFIG_DOC_NAME_USER;
+    const docName = scope === 'project' ? CONFIG_DOC_NAME_PROJECT : CONFIG_DOC_NAME_USER;
     const ydoc = new Y.Doc();
     const provider = new HocuspocusProvider({
       url: collabUrl,
@@ -220,23 +250,15 @@ function useConfigDocConnection(
       if (!mounted) return;
       setState((prev) => {
         if (prev?.provider !== provider) return prev;
-        return { ...prev, synced: true, config: binding.current() };
+        return { ...prev, synced: true };
       });
     };
     provider.on('synced', handleSynced);
-    const unsubscribe = binding.subscribe((next) => {
-      if (!mounted) return;
-      setState((prev) => {
-        if (prev?.provider !== provider) return prev;
-        return prev ? { ...prev, config: next } : prev;
-      });
-    });
 
-    setState({ provider, binding, config: binding.current(), synced: false });
+    setState({ provider, binding, synced: false });
 
     return () => {
       mounted = false;
-      unsubscribe();
       provider.off('synced', handleSynced);
       binding.dispose();
       provider.destroy();
@@ -257,34 +279,6 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   // controls and external file edits propagate to next-themes whether
   // Settings is open or not.
 
-  // Field-flash registry — Settings pane subscribes to L3 rejection broadcasts
-  // and triggers a brief red flash on the affected field.
-  const [flashedPath, setFlashedPath] = useState<string | null>(null);
-  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const unsubscribe = subscribeToConfigValidationRejected(
-      (event: CC1ConfigValidationRejectedPayload) => {
-        const isMatchingScope =
-          (scope === 'workspace' && event.docName === CONFIG_DOC_NAME_WORKSPACE) ||
-          (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
-        if (!isMatchingScope) return;
-
-        toast.error(humanFormat(event.error), { duration: 8000 });
-        const path = firstIssuePath(event.error);
-        if (path) {
-          setFlashedPath(path);
-          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-          flashTimerRef.current = setTimeout(() => setFlashedPath(null), 600);
-        }
-      },
-    );
-    return () => {
-      unsubscribe();
-      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-    };
-  }, [scope]);
-
   return (
     <div
       className="flex h-full min-h-0 flex-col overflow-hidden"
@@ -298,7 +292,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
             type="single"
             value={scope}
             onValueChange={(v) => {
-              if (v === 'workspace' || v === 'user') onScopeChange(v);
+              if (v === 'project' || v === 'user') onScopeChange(v);
             }}
             aria-label="Settings scope"
             variant="segmented"
@@ -306,7 +300,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
             spacing={1}
             className="bg-muted dark:bg-background p-0.5 rounded-lg"
           >
-            <ToggleGroupItem value="workspace" className="text-xs">
+            <ToggleGroupItem value="project" className="text-xs">
               This project
             </ToggleGroupItem>
             <ToggleGroupItem value="user" className="text-xs">
@@ -333,12 +327,7 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
         {connection === null || !connection.synced ? (
           <SettingsSkeleton />
         ) : (
-          <SettingsForm
-            scope={scope}
-            binding={connection.binding}
-            config={connection.config}
-            flashedPath={flashedPath}
-          />
+          <BoundSettingsForm scope={scope} binding={connection.binding} />
         )}
       </div>
     </div>
@@ -370,17 +359,109 @@ function SettingsSkeleton() {
   );
 }
 
-interface SettingsFormProps {
+interface BoundSettingsFormProps {
   scope: SettingsScope;
   binding: ConfigBinding;
-  config: Config;
+}
+
+/**
+ * Mounts the harness (`useConfigForm`) once per binding identity and
+ * wraps the form in shadcn's `<Form>` (which is RHF's `FormProvider`).
+ * Splitting from `SettingsPane` keeps the hook out of the loading branch
+ * (`connection === null || !synced`) so we don't `useForm` on a binding
+ * that hasn't synced yet.
+ *
+ * Owns the CC1 `'config-validation-rejected'` subscription and the
+ * per-field flash state, since both need access to the `form` instance —
+ * `form.setError` populates the inline FormMessage, `form.setFocus` puts
+ * focus on the offending field, and the flash triggers the
+ * `animate-settings-flash` CSS animation on the FormItem wrapper.
+ */
+function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
+  const { form, commitField } = useConfigForm(binding);
+  const [flashedPath, setFlashedPath] = useState<string | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToConfigValidationRejected(
+      (event: CC1ConfigValidationRejectedPayload) => {
+        const isMatchingScope =
+          (scope === 'project' && event.docName === CONFIG_DOC_NAME_PROJECT) ||
+          (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
+        if (!isMatchingScope) return;
+
+        // Toast carries the full multi-line summary (humanFormat); the
+        // inline FormMessage shows only the path-matched issue so the
+        // field doesn't render a multi-line block with file paths and
+        // caret markers.
+        toast.error(humanFormat(event.error), { duration: 8000 });
+
+        const path = firstIssuePath(event.error);
+        if (path) {
+          form.setError(path as FieldPath<Config>, {
+            type: 'config-validation-rejected',
+            message: pickFirstIssueForPath(event.error, path),
+          });
+          form.setFocus(path as FieldPath<Config>);
+          setFlashedPath(path);
+          if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+          flashTimerRef.current = setTimeout(() => {
+            setFlashedPath(null);
+            // Clear the inline error alongside the flash. The toast (8s)
+            // remains the persistent feedback channel; if the external
+            // writer corrected the value via Y.Text, `applyExternalUpdate`
+            // already updated the field — we don't want a stale red
+            // FormMessage lingering on a now-valid value. If the user
+            // hasn't corrected it, their next commit will re-reject and
+            // re-fire setError. (Without this, `runCommitIfDirty` would
+            // skip a click-and-blur on the untouched field, leaving the
+            // error stuck.)
+            form.clearErrors(path as FieldPath<Config>);
+          }, 600);
+        }
+      },
+    );
+    return () => {
+      unsubscribe();
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, [scope, form]);
+
+  return (
+    <Form {...form}>
+      <SettingsForm scope={scope} form={form} commitField={commitField} flashedPath={flashedPath} />
+    </Form>
+  );
+}
+
+interface SettingsFormProps {
+  scope: SettingsScope;
+  form: UseFormReturn<Config>;
+  commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, binding, config, flashedPath }: SettingsFormProps) {
+function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
+        if (section.custom === 'folders') {
+          // Custom-rendered section. The schema's `folders` field is
+          // `scope: 'either'` so the section renders on both sub-tabs;
+          // FoldersSection edits the active tab's array. FoldersSection
+          // owns its own `<section>` + heading (no SettingsSection wrap)
+          // because its add/remove/reorder UX needs full control over
+          // the heading-row layout.
+          return (
+            <FoldersSection
+              key={section.id}
+              form={form}
+              commitField={commitField}
+              scope={scope}
+              flashedPath={flashedPath}
+            />
+          );
+        }
         const visibleFields = section.fields.filter((field) =>
           isFieldVisibleAtScope(field.path, scope),
         );
@@ -392,8 +473,7 @@ function SettingsForm({ scope, binding, config, flashedPath }: SettingsFormProps
                 key={field.path.join('.')}
                 field={field}
                 scope={scope}
-                binding={binding}
-                config={config}
+                commitField={commitField}
                 isFlashed={flashedPath === field.path.join('.')}
               />
             ))}
@@ -410,7 +490,7 @@ function isFieldVisibleAtScope(path: readonly string[], scope: SettingsScope): b
   if (!leafSchema) return true;
   const meta = getFieldMeta(leafSchema);
   if (!meta) return true;
-  if (meta.scope === 'workspace' && scope !== 'workspace') return false;
+  if (meta.scope === 'project' && scope !== 'project') return false;
   if (meta.scope === 'user' && scope !== 'user') return false;
   return true;
 }
@@ -438,450 +518,427 @@ function SettingsSection({
 interface SettingsFieldProps {
   field: FieldDef;
   scope: SettingsScope;
-  binding: ConfigBinding;
-  config: Config;
+  commitField: (name: FieldPath<Config>) => boolean;
   isFlashed: boolean;
 }
 
-function SettingsField({ field, scope, binding, config, isFlashed }: SettingsFieldProps) {
+function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldProps) {
+  // 'use no memo' — the FormField inline render-prop below destructures
+  // `ctl` (a ControllerRenderProps with a `ref` field), which the React
+  // Compiler heuristic flags as ref-access during render. Same rationale
+  // as FieldControlBody / control bodies.
+  'use no memo';
+  const form = useFormContext<Config>();
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
   const typeTag = leafSchema ? getLeafTypeTag(leafSchema) : undefined;
   const defaultValue = leafSchema ? getFieldDefault(leafSchema) : undefined;
-  const currentValue = readPath(config, field.path);
   const meta = leafSchema ? getFieldMeta(leafSchema) : undefined;
   const enumOptions = leafSchema ? getEnumOptions(leafSchema) : undefined;
 
-  // Modified indicator: field's resolved value differs from default. This
-  // is an approximation of "set at this scope" semantics — full per-scope
-  // detection would require a separate raw-YAML inspection.
-  const isModified =
-    defaultValue === undefined
-      ? currentValue !== undefined && currentValue !== null
-      : !valuesEqual(currentValue, defaultValue);
+  const dottedName = field.path.join('.') as FieldPath<Config>;
 
-  const fieldId = field.path.join('-');
-  const errorId = `${fieldId}-error`;
+  const [savedTick, setSavedTick] = useState(false);
+  // Tracks the SavedIndicator timeout so an unmount mid-flash doesn't fire
+  // `setSavedTick(false)` on a torn-down component (React warning).
+  const savedTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (savedTickTimerRef.current) clearTimeout(savedTickTimerRef.current);
+    },
+    [],
+  );
 
-  const [error, setError] = useState<string | null>(null);
-
-  const commit = (value: unknown): boolean => {
-    const patch = buildPatch(field.path, value);
-    const result = binding.patch(patch);
-    if (!result.ok) {
-      setError(humanFormatFirstIssue(result.error));
-      return false;
-    }
-    setError(null);
-    return true;
+  const flashSavedTick = () => {
+    setSavedTick(true);
+    if (savedTickTimerRef.current) clearTimeout(savedTickTimerRef.current);
+    savedTickTimerRef.current = setTimeout(() => setSavedTick(false), 1200);
   };
 
+  /**
+   * Run `commitField` (the harness-owned binding.patch + form.setError /
+   * form.clearErrors path) and flash the SavedIndicator on success. The
+   * value committed is whatever currently lives in the form at `name` —
+   * call sites are responsible for writing the desired value via
+   * `ctl.onChange` (per-control commits) or `form.setValue` (reset path)
+   * BEFORE invoking `runCommit`.
+   */
+  const runCommit = (): boolean => {
+    const ok = commitField(dottedName);
+    if (ok) flashSavedTick();
+    return ok;
+  };
+
+  /**
+   * Per-interaction commit (blur/change/Enter). Skips no-op commits where
+   * the field is not dirty against its current `defaultValue` baseline —
+   * after a successful commit, `useConfigForm` re-baselines via
+   * `form.resetField(name, { defaultValue: value })`, so subsequent
+   * blurs on an unchanged field correctly report `isDirty: false` and
+   * the unconditional `binding.patch → Y.Text delete+insert` cycle is
+   * avoided. Returns true on no-op (no error to surface).
+   *
+   * The reset path bypasses this guard by calling `runCommit` directly:
+   * `form.setValue(name, target, { shouldDirty: false })` leaves the
+   * field non-dirty, but the commit is still intentional (the user
+   * clicked Reset).
+   */
+  const runCommitIfDirty = (): boolean => {
+    if (!form.getFieldState(dottedName).isDirty) return true;
+    return runCommit();
+  };
+
+  /**
+   * Reset writes the schema default (or `null` for fields with no
+   * default — null-as-clear preserves RFC 7396 semantics) into form
+   * state, then commits via the harness. `shouldDirty: false` so the
+   * field doesn't end up flagged as dirty after reset.
+   */
   const reset = () => {
-    if (defaultValue === undefined) {
-      // No schema default → clear the field via null-as-clear (RFC 7396 spirit).
-      commit(null);
-    } else {
-      commit(defaultValue);
-    }
+    const target = defaultValue === undefined ? null : defaultValue;
+    form.setValue(dottedName, target as never, { shouldDirty: false });
+    runCommit();
   };
 
-  const indicator = isModified ? (
-    <span
-      data-modified="true"
-      aria-hidden="true"
-      className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
-    />
-  ) : null;
+  const readonlyReason: string | null =
+    meta?.scope === 'project' && scope !== 'project'
+      ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
+      : meta?.scope === 'user' && scope !== 'user'
+        ? "This field can only be set globally. Switch to the 'User' tab to edit it."
+        : null;
 
   const wrapperClass = `relative space-y-1 ${isFlashed ? 'animate-settings-flash' : ''}`;
 
   return (
-    <div className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
-      {indicator}
-      <div className="flex items-baseline justify-between gap-2">
-        <label htmlFor={fieldId} className="text-sm font-medium">
-          {field.label}
-        </label>
-        {defaultValue !== undefined || currentValue !== undefined ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
-                onClick={reset}
-                aria-label={`Reset ${field.label} to default`}
-              >
-                <RotateCcw className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Reset to default</TooltipContent>
-          </Tooltip>
-        ) : null}
-      </div>
-      {field.description ? (
-        <p className="text-xs text-muted-foreground">{field.description}</p>
-      ) : null}
-      <FieldControl
-        field={field}
-        fieldId={fieldId}
-        errorId={error ? errorId : undefined}
-        typeTag={typeTag}
-        currentValue={currentValue}
-        enumOptions={enumOptions}
-        onCommit={commit}
-        readonlyReason={
-          meta?.scope === 'workspace' && scope !== 'workspace'
-            ? "This field can only be set per-project. Switch to the 'This project' tab to edit it."
-            : meta?.scope === 'user' && scope !== 'user'
-              ? "This field can only be set globally. Switch to the 'User' tab to edit it."
-              : null
-        }
-      />
-      {error ? (
-        <p
-          id={errorId}
-          role="alert"
-          className="text-xs text-destructive"
-          data-field-error={field.path.join('.')}
-        >
-          {error}
-        </p>
-      ) : null}
-    </div>
+    <FormField
+      control={form.control}
+      name={dottedName}
+      render={({ field: ctl }) => {
+        // Modified indicator + reset-button visibility derive from the
+        // form's reactive value (`ctl.value`) so they update in lockstep
+        // with user edits, external Y.Text updates, and resets.
+        const isModified =
+          defaultValue === undefined
+            ? ctl.value !== undefined && ctl.value !== null
+            : !valuesEqual(ctl.value, defaultValue);
+        const showResetButton =
+          !readonlyReason && (defaultValue !== undefined || ctl.value !== undefined);
+        const indicator = isModified ? (
+          <span
+            data-modified="true"
+            className="absolute -left-3 top-1 h-5 w-0.5 rounded-full bg-primary"
+          >
+            <span className="sr-only">Modified from default</span>
+          </span>
+        ) : null;
+
+        return (
+          <FormItem className={wrapperClass} data-field={field.path.join('.')} data-scope={scope}>
+            {indicator}
+            <div className="flex items-baseline justify-between gap-2">
+              <FormLabel className="text-sm font-medium">{field.label}</FormLabel>
+              {showResetButton ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground opacity-60 hover:opacity-100"
+                      onClick={reset}
+                      aria-label={`Reset ${field.label} to default`}
+                    >
+                      <RotateCcw className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Reset to default</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </div>
+            {field.description ? (
+              <FormDescription className="text-xs text-muted-foreground">
+                {field.description}
+              </FormDescription>
+            ) : null}
+            {readonlyReason ? (
+              // Wrap in <FormControl> so the slot's `id={formItemId}` lands
+              // on the note div — the FormLabel's `htmlFor` resolves to it
+              // instead of dangling. `role="note"` makes screen readers
+              // announce this as explanatory text.
+              <FormControl>
+                <div
+                  role="note"
+                  className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
+                >
+                  {readonlyReason}
+                </div>
+              </FormControl>
+            ) : (
+              <div className="flex items-center gap-2">
+                <FormControl>
+                  <FieldControlBody
+                    field={field}
+                    ctl={ctl}
+                    typeTag={typeTag}
+                    enumOptions={enumOptions}
+                    onCommit={runCommitIfDirty}
+                  />
+                </FormControl>
+                <SavedIndicator visible={savedTick} />
+              </div>
+            )}
+            <FormMessage data-field-error={field.path.join('.')} />
+          </FormItem>
+        );
+      }}
+    />
   );
 }
 
-interface FieldControlProps {
+interface FieldControlBodyProps {
   field: FieldDef;
-  fieldId: string;
-  errorId?: string;
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   typeTag: string | undefined;
-  currentValue: unknown;
   enumOptions: readonly string[] | undefined;
-  onCommit: (value: unknown) => boolean;
-  readonlyReason: string | null;
+  /**
+   * Commits the field's CURRENT form value via the harness's
+   * `commitField`. Call sites must write the desired value through
+   * `ctl.onChange` BEFORE invoking — the commit reads from form state.
+   */
+  onCommit: () => boolean;
 }
 
-function FieldControl({
+/**
+ * Type-tag-driven dispatch for the inner control element. Returns a
+ * single React element so the wrapping `<FormControl>` (Radix Slot)
+ * can forward `id`, `aria-describedby`, and `aria-invalid` to the
+ * underlying DOM input. The Slot clones this component with those props;
+ * destructure + forward as `...slotForwarded` into each leaf — without
+ * this hop the a11y attributes hit FieldControlBody and stop, breaking
+ * screen-reader notification of L1 rejection (ARIA §4.10).
+ *
+ * `'use no memo'` opts out of React Compiler memoization because RHF's
+ * `ControllerRenderProps` exposes a `ref` field; the compiler heuristic
+ * flags every property access on objects with `ref` as ref-access during
+ * render. The control bodies below use the same opt-out for the same
+ * reason.
+ */
+function FieldControlBody({
   field,
-  fieldId,
-  errorId,
+  ctl,
   typeTag,
-  currentValue,
   enumOptions,
   onCommit,
-  readonlyReason,
-}: FieldControlProps) {
-  if (readonlyReason) {
-    // `id={fieldId}` so the parent `<label htmlFor={fieldId}>` resolves to
-    // something; `role="note"` so screen readers announce this as
-    // explanatory text rather than treating the dangling label as broken.
-    return (
-      <div
-        id={fieldId}
-        role="note"
-        className="rounded border border-dashed border-muted px-3 py-2 text-xs text-muted-foreground"
-      >
-        {readonlyReason}
-      </div>
-    );
-  }
-
+  ...slotForwarded
+}: FieldControlBodyProps & SlotForwardedProps) {
+  'use no memo';
   if (typeTag === 'boolean') {
     return (
-      <BooleanControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={Boolean(currentValue)}
-        onCommit={onCommit}
+      <Switch
+        {...slotForwarded}
+        checked={Boolean(ctl.value)}
+        ref={ctl.ref}
+        onCheckedChange={(next) => {
+          ctl.onChange(next);
+          onCommit();
+        }}
+        onBlur={ctl.onBlur}
       />
     );
   }
   if (typeTag === 'enum' && enumOptions && enumOptions.length > 0) {
     if (field.control === 'enum-toggle' || enumOptions.length <= 4) {
+      // Slot.Root forwards `id` onto its child; ToggleGroup root renders a
+      // <div>, which is not a labelable element — `<label htmlFor>` on a
+      // div doesn't focus its descendants on click. Pluck the id and put
+      // it on the first ToggleGroupItem (a <button>) so label-click moves
+      // focus into the group. aria-describedby/aria-invalid stay on the
+      // wrapper since they describe the group as a whole.
+      const { id: forwardedId, ...wrapperSlotProps } = slotForwarded;
       return (
-        <EnumToggleControl
-          fieldId={fieldId}
-          errorId={errorId}
-          ariaLabel={field.label}
-          options={enumOptions}
-          value={typeof currentValue === 'string' ? currentValue : ''}
-          onCommit={onCommit}
-        />
+        <ToggleGroup
+          {...wrapperSlotProps}
+          type="single"
+          value={typeof ctl.value === 'string' ? ctl.value : ''}
+          ref={ctl.ref}
+          onValueChange={(next) => {
+            if (!next) return;
+            ctl.onChange(next);
+            onCommit();
+          }}
+          onBlur={ctl.onBlur}
+          variant="segmented"
+          size="sm"
+          spacing={1}
+          className="bg-muted dark:bg-background p-0.5 rounded-lg"
+          aria-label={field.label}
+        >
+          {enumOptions.map((opt, idx) => (
+            <ToggleGroupItem
+              key={opt}
+              value={opt}
+              id={idx === 0 ? forwardedId : undefined}
+              className="text-xs capitalize"
+            >
+              {opt}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       );
     }
   }
   if (typeTag === 'number' || typeTag === 'int') {
-    return (
-      <NumberControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={typeof currentValue === 'number' ? currentValue : 0}
-        onCommit={onCommit}
-      />
-    );
+    return <NumberControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
   }
   if (typeTag === 'array') {
-    return (
-      <StringArrayControl
-        fieldId={fieldId}
-        errorId={errorId}
-        value={Array.isArray(currentValue) ? (currentValue as string[]) : []}
-        onCommit={onCommit}
-      />
-    );
+    return <StringArrayControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
   }
-  // Default: string-like (text, url, regex-validated string).
+  return <StringControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
+}
+
+/**
+ * String-typed text input. Form value IS the displayed text — no local
+ * presentation buffer needed. Commits on blur or Enter.
+ */
+function StringControlBody({
+  ctl,
+  onCommit,
+  ...slotForwarded
+}: {
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
+  onCommit: () => boolean;
+} & SlotForwardedProps) {
+  'use no memo';
   return (
-    <StringControl
-      fieldId={fieldId}
-      errorId={errorId}
-      value={typeof currentValue === 'string' ? currentValue : ''}
-      onCommit={onCommit}
+    <Input
+      {...slotForwarded}
+      value={typeof ctl.value === 'string' ? ctl.value : ''}
+      ref={ctl.ref}
+      onChange={(e) => ctl.onChange(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        onCommit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit();
+        }
+      }}
+      className="h-8 text-sm"
     />
   );
 }
 
-function StringControl({
-  fieldId,
-  errorId,
-  value,
+/**
+ * Number-typed input. Form value is a `number`; the textbox needs a
+ * string presentation buffer so the user can type intermediate text
+ * (`'1.'`, `'-'`) without it parsing prematurely. The local `pendingText`
+ * resyncs with `ctl.value` whenever the user isn't actively editing.
+ */
+function NumberControlBody({
+  ctl,
   onCommit,
+  ...slotForwarded
 }: {
-  fieldId: string;
-  errorId?: string;
-  value: string;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [pending, setPending] = useState(value);
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(value);
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
+  onCommit: () => boolean;
+} & SlotForwardedProps) {
+  'use no memo';
+  const [pendingText, setPendingText] = useState(ctl.value === undefined ? '' : String(ctl.value));
+  const lastSyncedValueRef = useRef(ctl.value);
 
   useEffect(() => {
-    // External update reflects in the input only if the user isn't editing
-    // (pending matches the previously-committed value).
-    if (pending === lastCommittedRef.current) {
-      setPending(value);
-      lastCommittedRef.current = value;
-    }
-  }, [value, pending]);
+    // Skip if ctl.value hasn't changed since the last sync (dedup —
+    // avoids resetting pendingText on unrelated re-renders). When
+    // ctl.value DOES change, refresh pendingText to track it.
+    if (lastSyncedValueRef.current === ctl.value) return;
+    setPendingText(ctl.value === undefined ? '' : String(ctl.value));
+    lastSyncedValueRef.current = ctl.value;
+  }, [ctl.value]);
 
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    if (onCommit(pending)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        id={fieldId}
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="h-8 text-sm"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function NumberControl({
-  fieldId,
-  errorId,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  value: number;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [pending, setPending] = useState<string>(String(value));
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(String(value));
-
-  useEffect(() => {
-    if (pending === lastCommittedRef.current) {
-      setPending(String(value));
-      lastCommittedRef.current = String(value);
-    }
-  }, [value, pending]);
-
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    const parsed = Number(pending);
+  const commitText = () => {
+    const parsed = Number(pendingText);
     if (!Number.isFinite(parsed)) {
-      // Let L1 reject + show a typed error rather than silently swallow.
-      onCommit(pending);
+      // Let L1 reject + show a typed FormMessage error rather than silently swallow.
+      ctl.onChange(pendingText as unknown as number);
+      onCommit();
       return;
     }
-    if (onCommit(parsed)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
+    ctl.onChange(parsed);
+    onCommit();
+    lastSyncedValueRef.current = parsed as unknown as Config[keyof Config];
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        id={fieldId}
-        type="number"
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit();
-          }
-        }}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="h-8 w-28 text-sm"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
+    <Input
+      {...slotForwarded}
+      type="number"
+      value={pendingText}
+      ref={ctl.ref}
+      onChange={(e) => setPendingText(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        commitText();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitText();
+        }
+      }}
+      className="h-8 w-28 text-sm tabular-nums"
+    />
   );
 }
 
-function BooleanControl({
-  fieldId,
-  errorId,
-  value,
+/**
+ * String-array textarea. Form value is `string[]`; the textarea displays
+ * a newline-joined string. Local `pendingText` resyncs with `ctl.value`
+ * whenever the user isn't actively editing. Commit splits on newlines,
+ * trims each entry, and filters empty lines.
+ */
+function StringArrayControlBody({
+  ctl,
   onCommit,
+  ...slotForwarded
 }: {
-  fieldId: string;
-  errorId?: string;
-  value: boolean;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [savedTick, setSavedTick] = useState(false);
-  return (
-    <div className="flex items-center gap-2">
-      <Switch
-        id={fieldId}
-        checked={value}
-        aria-describedby={errorId}
-        onCheckedChange={(next) => {
-          if (onCommit(next)) flashSaved(setSavedTick);
-        }}
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function EnumToggleControl({
-  fieldId,
-  errorId,
-  ariaLabel,
-  options,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  ariaLabel: string;
-  options: readonly string[];
-  value: string;
-  onCommit: (value: unknown) => boolean;
-}) {
-  const [savedTick, setSavedTick] = useState(false);
-  return (
-    <div className="flex items-center gap-2" aria-describedby={errorId}>
-      <ToggleGroup
-        type="single"
-        value={value}
-        variant="segmented"
-        size="sm"
-        spacing={1}
-        className="bg-muted dark:bg-background p-0.5 rounded-lg"
-        aria-label={ariaLabel}
-        onValueChange={(v) => {
-          if (!v) return;
-          if (onCommit(v)) flashSaved(setSavedTick);
-        }}
-      >
-        {options.map((opt, idx) => (
-          // Put `id={fieldId}` on the first toggle button so the wrapping
-          // `<label htmlFor={fieldId}>` actually focuses something on click.
-          // (A label whose `htmlFor` points at a `<div>` is silently broken.)
-          <ToggleGroupItem
-            key={opt}
-            value={opt}
-            id={idx === 0 ? fieldId : undefined}
-            className="text-xs capitalize"
-          >
-            {opt}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      <SavedIndicator visible={savedTick} />
-    </div>
-  );
-}
-
-function StringArrayControl({
-  fieldId,
-  errorId,
-  value,
-  onCommit,
-}: {
-  fieldId: string;
-  errorId?: string;
-  value: readonly string[];
-  onCommit: (value: unknown) => boolean;
-}) {
-  const initial = value.join('\n');
-  const [pending, setPending] = useState(initial);
-  const [savedTick, setSavedTick] = useState(false);
-  const lastCommittedRef = useRef(initial);
+  ctl: ControllerRenderProps<Config, FieldPath<Config>>;
+  onCommit: () => boolean;
+} & SlotForwardedProps) {
+  'use no memo';
+  const initial = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
+  const [pendingText, setPendingText] = useState(initial);
+  const lastSyncedRef = useRef(initial);
 
   useEffect(() => {
-    const incoming = value.join('\n');
-    if (pending === lastCommittedRef.current) {
-      setPending(incoming);
-      lastCommittedRef.current = incoming;
-    }
-  }, [value, pending]);
+    const incoming = Array.isArray(ctl.value) ? (ctl.value as string[]).join('\n') : '';
+    if (incoming === lastSyncedRef.current) return;
+    setPendingText(incoming);
+    lastSyncedRef.current = incoming;
+  }, [ctl.value]);
 
-  const commit = () => {
-    if (pending === lastCommittedRef.current) return;
-    const parsed = pending
+  const commitText = () => {
+    const parsed = pendingText
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    if (onCommit(parsed)) {
-      lastCommittedRef.current = pending;
-      flashSaved(setSavedTick);
-    }
+    ctl.onChange(parsed);
+    onCommit();
+    lastSyncedRef.current = parsed.join('\n');
   };
 
   return (
-    <div className="flex items-start gap-2">
-      <textarea
-        id={fieldId}
-        value={pending}
-        onChange={(e) => setPending(e.target.value)}
-        onBlur={commit}
-        rows={Math.max(2, Math.min(6, pending.split('\n').length))}
-        aria-describedby={errorId}
-        aria-invalid={errorId ? true : undefined}
-        className="min-h-16 w-full rounded-md border bg-background px-3 py-1.5 font-mono text-xs"
-      />
-      <SavedIndicator visible={savedTick} />
-    </div>
+    <textarea
+      {...slotForwarded}
+      value={pendingText}
+      ref={ctl.ref}
+      onChange={(e) => setPendingText(e.target.value)}
+      onBlur={() => {
+        ctl.onBlur();
+        commitText();
+      }}
+      rows={Math.max(2, Math.min(6, pendingText.split('\n').length))}
+      className="min-h-16 w-full rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40"
+    />
   );
 }
 
@@ -901,11 +958,6 @@ function SavedIndicator({ visible }: { visible: boolean }) {
       ) : null}
     </span>
   );
-}
-
-function flashSaved(setter: (next: boolean) => void): void {
-  setter(true);
-  setTimeout(() => setter(false), 1200);
 }
 
 function valuesEqual(a: unknown, b: unknown): boolean {
@@ -929,14 +981,6 @@ function valuesEqual(a: unknown, b: unknown): boolean {
     return true;
   }
   return false;
-}
-
-function humanFormatFirstIssue(error: ConfigValidationError): string {
-  if (isKnownConfigError(error) && error.code === 'SCHEMA_INVALID') {
-    const first = error.issues[0];
-    if (first) return first.message;
-  }
-  return humanFormat(error);
 }
 
 function IntegrationsSection() {

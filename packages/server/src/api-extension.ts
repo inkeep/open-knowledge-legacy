@@ -2,7 +2,8 @@
  * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
- * the standalone Server and the Vite dev plugin.
+ * the production Server (assembled by `createServer()` in `server-factory.ts`)
+ * and the Vite dev plugin.
  */
 
 import { spawn } from 'node:child_process';
@@ -18,7 +19,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -43,6 +43,7 @@ import {
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  readFmMap,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -80,6 +81,7 @@ import {
   parseFrontmatterMetadata,
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
+import { buildAndOpenSkill } from './skill-install.ts';
 import { readUiLock } from './ui-lock.ts';
 import {
   HashingPassThrough,
@@ -99,7 +101,15 @@ import {
   ATTR_USER_AGENT_ORIGINAL,
 } from '@opentelemetry/semantic-conventions';
 import simpleGit from 'simple-git';
-import { AGENT_ID_RE, toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { parseAgentBodyFields, resolveAgentType, validateAgentId } from './agent-id.ts';
+import {
+  applyRenameMap,
+  buildRenameMap,
+  ManagedRenameCollisionError,
+  ManagedRenameDestinationExistsError,
+  ManagedRenameSourceNotFoundError,
+  ManagedRenameSourceTypeMismatchError,
+} from './apply-managed-rename.ts';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -107,13 +117,24 @@ import {
 } from './backlink-index.ts';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import type { ResolveStrategy } from './conflict-storage.ts';
-import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
+import type { ContentFilter } from './content-filter.ts';
+import {
+  type DocExtension,
+  forgetDocExtension,
+  getDocExtension,
+  isSupportedDocFile,
+  registerDocExtension,
+  SUPPORTED_DOC_EXTENSIONS,
+  stripDocExtension,
+} from './doc-extensions.ts';
+import { extractActorIdentity } from './extract-actor-identity.ts';
 import {
   contentHash,
   type FileIndexEntry,
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-traced.ts';
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
@@ -124,6 +145,7 @@ import {
   isAllowedGitUrl,
   isSafeLocalPath,
 } from './local-op-security.ts';
+import { type AuthEvent, runCloneSubprocess, runDeviceFlowSubprocess } from './local-ops/index.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -131,10 +153,6 @@ import {
   type ManagedRenameSnapshot,
   withManagedRenameRecovery,
 } from './managed-rename-journal.ts';
-import {
-  rewriteMarkdownLinksForDocumentRename,
-  rewriteWikiLinksForDocumentRename,
-} from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
 import {
   getMetrics,
@@ -169,7 +187,7 @@ import {
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import type { SyncEngine } from './sync-engine.ts';
-import { getMeter, getTracer } from './telemetry.ts';
+import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 // Cache the HTTP duration histogram at module scope — lazy-init at first use
@@ -200,6 +218,75 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
   return _hintEmittedCounter;
 }
 
+// Counter for `agent-patch` FM-intersecting calls. Bounded label set:
+// `result ∈ {'rejected','pre_deprecation_passthrough'}`. Today the handler
+// always rejects with 400 — the second label is reserved for a possible
+// passthrough mode during the deprecation window.
+let _agentPatchFmTouchCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_agentPatchFmTouchCounter) {
+    _agentPatchFmTouchCounter = getMeter().createCounter(
+      'ok.frontmatter.agent_patch_fm_touch_total',
+      {
+        description:
+          'Count of agent-patch calls whose find string targets the frontmatter region. Measures incidence during the soft-deprecation window before agent-patch FM-intersecting calls are enforced as 400. Bounded label: result ∈ {rejected, pre_deprecation_passthrough}.',
+      },
+    );
+  }
+  return _agentPatchFmTouchCounter;
+}
+
+/**
+ * Heuristic FM-intersection check for `agent-patch` find strings. Pure
+ * function on the find string — runs before any doc state is read.
+ *
+ * Rejection signal:
+ *   - find contains `---` (FM/body separator — opening or closing fence)
+ *   - find matches `/^\s*[\w-]+:/` (yaml-style key-value at start)
+ *
+ * Catches the common case: agents that copy a YAML line verbatim into
+ * `find` to splice an FM property. The position-based check inside the
+ * transact block catches the rarer case where a non-yaml-shape find
+ * happens to land in the FM region (e.g., `find: 'draft'` matching
+ * `status: draft`). Together they cover both "find looks like FM" and
+ * "find lands in FM."
+ */
+function findLooksLikeFrontmatter(find: string): boolean {
+  // Line-anchored `---` (YAML document fence). Mid-string `---` (e.g. body
+  // text containing em-dash sequences or markdown thematic breaks embedded
+  // in larger find strings) flows to the position-based check below.
+  if (/(^|\n)---(\s|\n|$)/.test(find)) return true;
+  // YAML key-value shape — require an actual value (`\s+\S` after the
+  // colon) so prose like `Note:` / `IMPORTANT:` / `Warning:` (no value)
+  // is left to the position-based check, which rejects only when the find
+  // actually lands inside the FM region. Empty-value YAML keys like
+  // `draft:` similarly fall through to position-based rejection.
+  if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
+  return false;
+}
+
+let _renameAttributionCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_renameAttributionCounter) {
+    _renameAttributionCounter = getMeter().createCounter('ok.rename.attribution_kind', {
+      description:
+        'Count of rename and rollback handler dispatches by attribution kind (agent | principal | anonymous)',
+    });
+  }
+  return _renameAttributionCounter;
+}
+
+/**
+ * Test-only: clear the lazy-initialized rename counter so a test that
+ * registers a fresh meter provider via `metrics.setGlobalMeterProvider`
+ * can capture subsequent counter increments. Production code never calls this.
+ */
+export function __resetRenameTelemetryForTesting(): void {
+  _renameAttributionCounter = null;
+}
+
 /**
  * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
  *
@@ -213,7 +300,7 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
  * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -230,7 +317,7 @@ export const ROLLBACK_ORIGIN = {
  * block. `satisfies PairedWriteOrigin` is the compile-time gate.
  */
 export const MANAGED_RENAME_ORIGIN = {
-  source: 'local',
+  source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename', paired: true },
 } as const satisfies PairedWriteOrigin;
@@ -747,27 +834,6 @@ function remapDocNameForRename(
   return `${toPath}${docName.slice(fromPath.length)}`;
 }
 
-function rewriteSupportedLinksForDocumentRename(
-  markdown: string,
-  sourceDocName: string,
-  oldDocName: string,
-  newDocName: string,
-): ManagedRenameRewriteSummary {
-  const { frontmatter, body } = stripFrontmatter(markdown);
-  const wikiRewrite = rewriteWikiLinksForDocumentRename(body, oldDocName, newDocName);
-  const markdownRewrite = rewriteMarkdownLinksForDocumentRename(
-    wikiRewrite.markdown,
-    sourceDocName,
-    oldDocName,
-    newDocName,
-  );
-
-  return {
-    markdown: prependFrontmatter(frontmatter, markdownRewrite.markdown),
-    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites,
-  };
-}
-
 /**
  * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
  * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
@@ -815,10 +881,10 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
 
   const resolvedContentDir = resolve(contentDir);
   // When kind is 'file': if the caller passed an explicit supported extension,
-  // use the path verbatim — this is how the rename handler signals an
-  // extension change (newDocName: "foo.mdx" renames foo.md → foo.mdx).
-  // Extension-less paths fall through to getDocExtension() + the registered
-  // extension map so legacy callers keep the source's existing extension.
+  // use the path verbatim — this is how rename callers signal an extension
+  // change (toPath: "foo.mdx" renames foo.md → foo.mdx). Extension-less paths
+  // fall through to getDocExtension() + the registered extension map so legacy
+  // callers keep the source's existing extension.
   const relativePath =
     kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
@@ -830,6 +896,32 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   assertNoSymlinkEscape(fullPath, resolvedContentDir);
 
   return fullPath;
+}
+
+/**
+ * Probe disk for the actual on-disk extension of a file's docName, registering
+ * it in the doc-extensions map if found. Closes a boot/watcher race where the
+ * rename handler runs before the file watcher has observed the source — without
+ * this, `getDocExtension()` returns the `.md` default, which silently defeats
+ * `.mdx`-specific exclusion patterns and routes existence checks to the wrong
+ * path. Iterating in `SUPPORTED_DOC_EXTENSIONS` precedence order ensures the
+ * `.mdx` precedence rule is preserved when both files exist on disk.
+ * Idempotent — `registerDocExtension` is a no-op when the higher-precedence
+ * extension is already registered.
+ */
+function probeAndRegisterSourceFileExtension(contentDir: string, fromPath: string): void {
+  if (!isValidRelativeContentPath(fromPath)) return;
+  const resolvedContentDir = resolve(contentDir);
+  for (const ext of SUPPORTED_DOC_EXTENSIONS) {
+    const candidate = resolve(resolvedContentDir, `${fromPath}${ext}`);
+    if (candidate !== resolvedContentDir && !candidate.startsWith(`${resolvedContentDir}${sep}`)) {
+      continue;
+    }
+    if (existsSync(candidate)) {
+      registerDocExtension(fromPath, ext);
+      return;
+    }
+  }
 }
 
 function toGitRelativePath(projectDir: string, absolutePath: string): string | null {
@@ -861,7 +953,7 @@ async function renameTrackedPathInGit(
     // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
     // so the caller falls back to `fs.renameSync`. Any other git failure
     // (permission denied, corrupted index) also falls through to fs rename
-    // rather than 500ing the /api/rename handler.
+    // rather than 500ing the /api/rename-path handler.
     let tracked = '';
     try {
       tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
@@ -885,21 +977,6 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
-  /**
-   * Shared content filter. Threaded so `/api/create-page` can synchronously
-   * call `incrementMdDir(dirname(path))` after the file write, eliminating
-   * the window where a freshly-created doc's sibling assets get excluded by
-   * the filter's `ASSET_EXTENSIONS` + `dirCount.get(normalizedDir) > 0`
-   * rule because the file watcher hasn't processed the create event yet.
-   * Without this, a dropped sibling asset (PNG/PDF) requested via sirv
-   * falls through to the Vite SPA fallback and is served as `text/html`.
-   * Optional — when absent, the watcher's async `incrementMdDir` call
-   * remains the only path (pre-fix behavior).
-   */
-  contentFilter?: {
-    incrementMdDir: (dir: string) => void;
-    decrementMdDir: (dir: string) => void;
-  };
   /**
    * Per-process UUID advertised via `GET /api/server-info` and the
    * `__system__` CC1 `server-info` broadcast. Clients cache this value
@@ -928,7 +1005,7 @@ export interface ApiExtensionOptions {
   getCurrentBranch?: () => string | null;
   /**
    * Accessor for the latest disk-ack state vectors per document. Wired
-   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in standalone boot.
+   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in boot.
    * Returned as part of `GET /api/server-info` so clients can recover
    * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
    * without relying on stateless CC1 broadcasts (which have no replay).
@@ -997,6 +1074,13 @@ export interface ApiExtensionOptions {
    * yet been loaded or loading failed.
    */
   getPrincipal?: () => Principal | null;
+  /**
+   * Active ContentFilter (the same instance threaded into the file watcher).
+   * When present, `POST /api/rename-path` rejects destinations excluded by
+   * `.gitignore` / `.okignore` rules so renames cannot land outside the
+   * watched scope. Omit in tests where admission checks aren't relevant.
+   */
+  contentFilter?: ContentFilter;
   /**
    * OS-scheme install probe used by `GET /api/installed-agents` (web-host
    * parity for the Electron `ok:shell:detect-protocol` IPC — see
@@ -1125,8 +1209,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     localOpCliArgs = ['open-knowledge'],
     projectDir,
     getPrincipal,
-    installedAgentsProbe,
     contentFilter,
+    installedAgentsProbe,
     forceUnloadDocument,
   } = options;
 
@@ -1170,9 +1254,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const doc = hocuspocus.documents.get(docName);
       if (doc) {
-        const metaMap = doc.getMap('metadata');
-        const fm = metaMap.get('frontmatter');
-        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+        const map = readFmMap(doc.getText('source').toString());
+        if (Object.keys(map).length > 0) {
+          const cluster = typeof map.cluster === 'string' ? map.cluster : undefined;
+          const category = typeof map.category === 'string' ? map.category : undefined;
+          let tags: string[] | undefined;
+          if (Array.isArray(map.tags)) {
+            tags = map.tags.length > 0 ? map.tags : undefined;
+          } else if (typeof map.tags === 'string' && map.tags) {
+            tags = [map.tags];
+          }
+          return { cluster, category, tags };
+        }
       }
     } catch {
       /* fall through to disk */
@@ -1326,20 +1419,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): string {
+  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
     if (!(error instanceof Error)) {
-      return 'Failed to rename document';
+      return { status: 500, error: 'Failed to rename document' };
     }
-
-    if (
-      error.message === 'Managed rename requires backlink index support' ||
-      error.message.startsWith('Cannot rename missing document:') ||
-      error.message.startsWith('symlink-escape:')
-    ) {
-      return error.message;
+    if (error instanceof ManagedRenameSourceNotFoundError) {
+      return { status: 404, error: error.message };
     }
-
-    return 'Failed to rename document';
+    if (error instanceof ManagedRenameDestinationExistsError) {
+      return { status: 409, error: error.message };
+    }
+    if (error instanceof ManagedRenameSourceTypeMismatchError) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message.startsWith('Cannot rename missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('Cannot snapshot missing document:')) {
+      return { status: 404, error: error.message };
+    }
+    if (error.message.startsWith('symlink-escape:')) {
+      return { status: 400, error: error.message };
+    }
+    if (error.message === 'Managed rename requires backlink index support') {
+      return { status: 503, error: error.message };
+    }
+    return { status: 500, error: 'Failed to rename document' };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -1377,7 +1482,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const filePath = safeContentPath(toDocName, contentDir);
       const liveContent = liveContents.get(fromDocName);
       if (typeof liveContent === 'string') {
-        writeFileSync(filePath, liveContent, 'utf-8');
+        tracedWriteFileSync(filePath, liveContent, 'utf-8');
       }
 
       const finalContent =
@@ -1430,8 +1535,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function writeManagedRenameDocumentToDisk(docName: string, markdown: string): void {
     const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, markdown, 'utf-8');
+    tracedMkdirSync(dirname(filePath), { recursive: true });
+    tracedWriteFileSync(filePath, markdown, 'utf-8');
     registerWrite(filePath, contentHash(markdown));
     setReconciledBase(docName, markdown);
 
@@ -1444,10 +1549,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  function applyManagedRenameToLoadedDocument(
+  function applyManagedRenameMapToLoadedDocument(
     docName: string,
-    oldDocName: string,
-    newDocName: string,
+    renameMap: ReadonlyMap<string, string>,
   ): ManagedRenameRewriteSummary {
     const document = hocuspocus.documents.get(docName);
     if (!document) {
@@ -1459,7 +1563,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
-      result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
+      result = applyRenameMap(currentText, docName, renameMap);
       if (result.rewrites === 0) {
         return;
       }
@@ -1483,144 +1587,271 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return result;
   }
 
-  async function _performManagedRename(
-    sourceDocName: string,
-    destinationDocName: string,
+  async function _performManagedRenameForDocs(
+    fromPath: string,
+    toPath: string,
+    kind: ContentEntryKind,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
-    return runSerialized(async () => {
-      if (!backlinkIndex) {
-        throw new Error('Managed rename requires backlink index support');
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', sourceDocName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', destinationDocName);
-      const renamed: RenamedDocMapping[] = [
-        { fromDocName: sourceDocName, toDocName: destinationDocName },
-      ];
-
-      const backlinkSources = [
-        ...new Set(backlinkIndex.getBacklinks(sourceDocName).map((entry) => entry.source)),
-      ].sort((a, b) => a.localeCompare(b));
-      const snapshotContents = new Map<string, string>();
-      const rewriteDocNames: string[] = [];
-      const missingBacklinkSources: string[] = [];
-
-      for (const docName of [sourceDocName, ...backlinkSources]) {
-        if (snapshotContents.has(docName)) continue;
-        const content = readCurrentDocumentContent(docName);
-        if (typeof content === 'string') {
-          snapshotContents.set(docName, content);
-          if (docName !== sourceDocName) {
-            rewriteDocNames.push(docName);
-          }
-        } else if (docName !== sourceDocName) {
-          missingBacklinkSources.push(docName);
-        }
-      }
-
-      const sourceSnapshot = snapshotContents.get(sourceDocName);
-      if (typeof sourceSnapshot !== 'string') {
-        throw new Error(`Cannot rename missing document: ${sourceDocName}`);
-      }
-
-      const recoveryJournal = createManagedRenameRecoveryJournal({
-        sourceDocName,
-        destinationDocName,
-        snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
-      });
-
-      const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
-
-      await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
-        for (const docName of missingBacklinkSources) {
-          backlinkIndex.deleteDocument(docName);
-        }
-
-        for (const docName of rewriteDocNames) {
-          const document = hocuspocus.documents.get(docName);
-          const rewritten = document
-            ? applyManagedRenameToLoadedDocument(docName, sourceDocName, destinationDocName)
-            : rewriteSupportedLinksForDocumentRename(
-                snapshotContents.get(docName) ?? '',
-                docName,
-                sourceDocName,
-                destinationDocName,
-              );
-
-          if (rewritten.rewrites > 0) {
-            writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
-            rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+    return runSerialized(async () =>
+      withSpan(
+        'rename.executeRewrites',
+        {
+          attributes: {
+            'rename.kind': kind,
+          },
+        },
+        async (span) => {
+          if (!backlinkIndex) {
+            throw new Error('Managed rename requires backlink index support');
           }
 
-          backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
-        }
+          // Existence + stat + affected-doc enumeration all live inside the
+          // serialized critical section so a concurrent file watcher event
+          // (external mv add) or in-flight write to the source folder cannot
+          // land between enumeration and the disk move and produce a "ghost"
+          // file that the recovery journal doesn't know about. POSIX
+          // rename(2) does not fail-loud on overwrite, so the lock is the
+          // only backstop against silent data loss.
+          const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
+          const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
+          // Handles the case where the client sends an explicit extension that
+          // matches the source's existing one (e.g. `toPath: "foo.md"` when
+          // the file is already `foo.md`) — `fromPath !== toPath` textually
+          // but the on-disk paths resolve to the same file. Treat as no-op,
+          // mirroring the extension-less `fromPath === toPath` short-circuit
+          // in the handler. Returning empty arrays here propagates as
+          // `{ ok: true, renamed: [], rewrittenDocs: [] }` to the caller.
+          if (sourcePathRoot === destinationPathRoot) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
+          if (!existsSync(sourcePathRoot)) {
+            throw new ManagedRenameSourceNotFoundError(kind);
+          }
+          if (existsSync(destinationPathRoot)) {
+            throw new ManagedRenameDestinationExistsError();
+          }
+          const sourceStat = statSync(sourcePathRoot);
+          if (
+            (kind === 'file' && !sourceStat.isFile()) ||
+            (kind === 'folder' && !sourceStat.isDirectory())
+          ) {
+            throw new ManagedRenameSourceTypeMismatchError(kind);
+          }
 
-        const sourceLiveContents = await captureAndCloseDocuments([sourceDocName]);
-        const sourceCurrentContent =
-          sourceLiveContents.get(sourceDocName) ??
-          snapshotContents.get(sourceDocName) ??
-          readFileSync(sourcePath, 'utf-8');
-        const renamedSource = rewriteSupportedLinksForDocumentRename(
-          sourceCurrentContent,
-          sourceDocName,
-          sourceDocName,
-          destinationDocName,
-        );
-
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
-        setReconciledBase(destinationDocName, renamedSource.markdown);
-
-        const fileIndex = getFileIndex();
-        if (fileIndex instanceof Map) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: sourcePath,
-              newPath: destinationPath,
-              oldDocName: sourceDocName,
-              newDocName: destinationDocName,
-              content: renamedSource.markdown,
-            },
-            fileIndex as Map<string, FileIndexEntry>,
+          // Downstream code (safeContentPath, setReconciledBase,
+          // backlinkIndex, file index, applyRenameMap) keys on extension-less
+          // docNames; folder rename naturally produces them via the file
+          // index, but file rename receives `fromPath`/`toPath` with the
+          // user-supplied extension. Strip here so the rename map matches
+          // currentDocName in applyRenameMap (otherwise pass 1's image-ref
+          // recompute is silently skipped) and syncRenamedDocsToDisk doesn't
+          // double-extension via getDocExtension fallback.
+          const affectedDocNames =
+            kind === 'file'
+              ? [stripDocExtension(fromPath)]
+              : listAffectedDocNames(getFileIndex(), kind, fromPath);
+          const affectedDocs: Array<{ from: string; to: string }> = affectedDocNames.map(
+            (docName) => ({
+              from: docName,
+              to:
+                kind === 'file'
+                  ? stripDocExtension(toPath)
+                  : remapDocNameForRename(docName, kind, fromPath, toPath),
+            }),
           );
-        }
+          span.setAttribute('rename.affected_docs', affectedDocs.length);
 
-        backlinkIndex.renameDocument(sourceDocName, destinationDocName, renamedSource.markdown);
-        if (renamedSource.rewrites > 0) {
-          rewrittenDocs.push({ docName: destinationDocName, rewrites: renamedSource.rewrites });
-        }
-      });
+          if (affectedDocs.length === 0) {
+            return { renamed: [], rewrittenDocs: [] };
+          }
 
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn(
-          `[backlinks] Failed to persist managed rename cache for ${sourceDocName} -> ${destinationDocName}:`,
-          err,
-        );
-      });
-      signalChannel?.('files');
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
+          const renameMap = buildRenameMap(affectedDocs);
+          const renamed: RenamedDocMapping[] = affectedDocs.map(({ from, to }) => ({
+            fromDocName: from,
+            toDocName: to,
+          }));
 
-      rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
-      return { renamed, rewrittenDocs };
-    });
+          const backlinkSourceSet = new Set<string>();
+          for (const { from } of affectedDocs) {
+            for (const entry of backlinkIndex.getBacklinks(from)) {
+              if (!renameMap.has(entry.source)) {
+                backlinkSourceSet.add(entry.source);
+              }
+            }
+          }
+          const backlinkSources = [...backlinkSourceSet].sort((a, b) => a.localeCompare(b));
+
+          const snapshotContents = new Map<string, string>();
+          const rewriteDocNames: string[] = [];
+          const missingBacklinkSources: string[] = [];
+
+          for (const docName of [...renameMap.keys(), ...backlinkSources]) {
+            if (snapshotContents.has(docName)) continue;
+
+            // For backlink sources (non-renamed docs that link to a rename
+            // target): require a real on-disk file. A Y.Doc may be in
+            // memory for a docName that has no disk file (e.g.,
+            // `openDirectConnection` was triggered by a hover or pre-warm
+            // on a redlink). Treating in-memory-only Y.Docs as legitimate
+            // backlink sources here would funnel them into the
+            // `rewriteDocNames` loop and `writeManagedRenameDocumentToDisk`
+            // would materialize a phantom file — `tracedMkdirSync` +
+            // `tracedWriteFileSync` create whatever path it's handed.
+            // Treat as missing and let the index purge the stale entry.
+            if (!renameMap.has(docName)) {
+              const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+              if (!existsSync(filePath)) {
+                missingBacklinkSources.push(docName);
+                continue;
+              }
+            }
+
+            const content = readCurrentDocumentContent(docName);
+            if (typeof content === 'string') {
+              snapshotContents.set(docName, content);
+              if (!renameMap.has(docName)) {
+                rewriteDocNames.push(docName);
+              }
+            } else if (!renameMap.has(docName)) {
+              missingBacklinkSources.push(docName);
+            }
+          }
+
+          for (const { from } of affectedDocs) {
+            if (typeof snapshotContents.get(from) !== 'string') {
+              throw new Error(`Cannot rename missing document: ${from}`);
+            }
+          }
+
+          const recoveryJournal = createManagedRenameRecoveryJournal({
+            fromPath,
+            toPath,
+            affectedDocs: [...affectedDocs],
+            snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
+          });
+
+          const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
+
+          await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
+            for (const docName of missingBacklinkSources) {
+              backlinkIndex.deleteDocument(docName);
+            }
+
+            for (const docName of rewriteDocNames) {
+              const document = hocuspocus.documents.get(docName);
+              const rewritten = document
+                ? applyManagedRenameMapToLoadedDocument(docName, renameMap)
+                : applyRenameMap(snapshotContents.get(docName) ?? '', docName, renameMap);
+
+              if (rewritten.rewrites > 0) {
+                writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
+                rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+              }
+
+              backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
+            }
+
+            const liveContents = await captureAndCloseDocuments([...renameMap.keys()]);
+
+            const rootSourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
+            const rootDestinationPath = resolveContentEntryPath(contentDir, kind, toPath);
+            const renamedWithGit = await renameTrackedPathInGit(
+              projectDir,
+              rootSourcePath,
+              rootDestinationPath,
+            );
+            if (!renamedWithGit) {
+              tracedMkdirSync(dirname(rootDestinationPath), { recursive: true });
+              tracedRenameSync(rootSourcePath, rootDestinationPath);
+            }
+
+            // Pre-register destination extensions so loop 2's
+            // `resolveContentEntryPath` and `safeContentPath` produce the
+            // correct on-disk paths. For an extension-change rename
+            // (`foo.md` → `foo.mdx`), inheriting from the source's recorded
+            // extension would point at the no-longer-extant `.md` path; for
+            // a same-extension cross-folder rename, the destination docName
+            // has no recorded extension yet and would default to `.md`,
+            // miscomputing `.mdx` source paths. Forget the source mapping
+            // so a renamed-then-recreated source doesn't inherit a stale
+            // extension. The file watcher would converge to the same state
+            // asynchronously — this just makes loop 2 see it synchronously.
+            const explicitDestExt: DocExtension | null =
+              kind === 'file' && isSupportedDocFile(toPath)
+                ? (extname(toPath).toLowerCase() as DocExtension)
+                : null;
+            for (const { from, to } of affectedDocs) {
+              const sourceExt = getDocExtension(from);
+              forgetDocExtension(from);
+              registerDocExtension(to, explicitDestExt ?? sourceExt);
+            }
+
+            const sortedAffected = [...affectedDocs].sort((a, b) => a.from.localeCompare(b.from));
+
+            for (const { from: fromDocName, to: toDocName } of sortedAffected) {
+              const sourcePath = resolveContentEntryPath(contentDir, 'file', fromDocName);
+              const destinationPath = resolveContentEntryPath(contentDir, 'file', toDocName);
+              const sourceCurrentContent =
+                liveContents.get(fromDocName) ??
+                snapshotContents.get(fromDocName) ??
+                readFileSync(destinationPath, 'utf-8');
+              const renamedSource = applyRenameMap(sourceCurrentContent, fromDocName, renameMap);
+
+              syncRenamedDocsToDisk(
+                [{ fromDocName, toDocName }],
+                new Map([[fromDocName, renamedSource.markdown]]),
+              );
+              setReconciledBase(toDocName, renamedSource.markdown);
+
+              const fileIndex = getFileIndex();
+              if (fileIndex instanceof Map) {
+                updateFileIndex(
+                  {
+                    kind: 'rename',
+                    oldPath: sourcePath,
+                    newPath: destinationPath,
+                    oldDocName: fromDocName,
+                    newDocName: toDocName,
+                    content: renamedSource.markdown,
+                  },
+                  fileIndex as Map<string, FileIndexEntry>,
+                );
+              }
+
+              backlinkIndex.renameDocument(fromDocName, toDocName, renamedSource.markdown);
+              if (renamedSource.rewrites > 0) {
+                rewrittenDocs.push({ docName: toDocName, rewrites: renamedSource.rewrites });
+              }
+            }
+          });
+
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist managed rename cache for ${fromPath} -> ${toPath}:`,
+              err,
+            );
+          });
+          signalChannel?.('files');
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+
+          rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
+          span.setAttribute('rename.rewrite_count', rewrittenDocs.length);
+          return { renamed, rewrittenDocs };
+        },
+      ),
+    );
   }
-
-  const AGENT_NAME_MAX_LEN = 128;
 
   /**
    * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
    * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
    * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
+   *
+   * Body parsing + sanitization is shared with `extractActorIdentity` via
+   * `parseAgentBodyFields` in `agent-id.ts`. This wrapper adds the write-handler
+   * default — absent agentId becomes `'claude-1'` so attribution always lands on
+   * a stable broadcaster key (matches `getSession()` for presence bar color).
    */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
@@ -1631,47 +1862,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     clientVersion: string | undefined;
     label: string | undefined;
   } {
-    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
-    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
-      rawAgentId = undefined;
-    }
-    const agentId = rawAgentId ? toBroadcasterKey(rawAgentId) : 'claude-1';
-    const agentName =
-      typeof body.agentName === 'string' ? sanitizeGitIdentity(body.agentName) : 'Claude';
-    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    if (clientName !== undefined) {
-      clientName = sanitizeGitIdentity(clientName);
-    }
-    let clientVersion = typeof body.clientVersion === 'string' ? body.clientVersion : undefined;
-    if (clientVersion !== undefined) {
-      clientVersion = sanitizeGitIdentity(clientVersion);
-    }
-    let label = typeof body.label === 'string' ? body.label : undefined;
-    if (label !== undefined) {
-      label = sanitizeGitIdentity(label);
-    }
-    // colorSeed must match what getSession() uses for presence bar color consistency.
-    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
-    const colorSeed =
-      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
-        : (rawAgentId ?? agentId);
-    return { rawAgentId, agentId, agentName, colorSeed, clientName, clientVersion, label };
-  }
-
-  /**
-   * Derive `agent_type` from `clientInfo.name` (FR-8). Mirrors the registry used by
-   * `iconFromClientName` on the client side. Unknown clients map to `'bot'`.
-   */
-  function resolveAgentType(clientName: string | undefined): string {
-    if (!clientName) return 'bot';
-    const lower = clientName.toLowerCase();
-    if (lower.includes('claude')) return 'claude';
-    if (lower.includes('cursor')) return 'cursor';
-    if (lower.includes('codex')) return 'codex';
-    if (lower.includes('cline')) return 'cline';
-    if (lower.includes('windsurf')) return 'windsurf';
-    return 'bot';
+    const fields = parseAgentBodyFields(body);
+    const agentId = fields.writerId ?? 'claude-1';
+    return {
+      rawAgentId: fields.rawAgentId,
+      agentId,
+      agentName: fields.displayName,
+      colorSeed: fields.colorSeed ?? fields.rawAgentId ?? agentId,
+      clientName: fields.clientName,
+      clientVersion: fields.clientVersion,
+      label: fields.label,
+    };
   }
 
   /**
@@ -2068,6 +2269,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
+
+      // Existing in-memory Y.Doc → read it directly; no need to round-trip
+      // through openDirectConnection (which would still resolve to the same
+      // doc but adds a connect/disconnect cycle).
+      const existing = hocuspocus.documents.get(docName);
+      if (existing) {
+        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
+        return;
+      }
+
+      // No in-memory doc → require an on-disk file before opening a
+      // connection. `openDirectConnection` on a missing path materializes
+      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
+      // suppressed for (PR #362's design). The persistence layer's
+      // phantom-doc guard blocks the eventual 0-byte file write, but any
+      // later code path that populates the lingering Y.Doc with content
+      // (a mis-routed agent write, the rename spine pulling it in via a
+      // stale backlink edge) would then land a phantom file because
+      // `reconciledBase` was never set. 404 here closes that whole class.
+      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+      if (!existsSync(filePath)) {
+        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
+        return;
+      }
+
       // Read via a transient DirectConnection rather than sessionManager.getSession —
       // this endpoint has no agent identity, and creating a cached session would
       // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
@@ -2125,10 +2351,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // getDocExtension() returns the registered on-disk extension for the
-        // docName (or `.md` by default when nothing is yet recorded). Surfacing
-        // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
-        // faithfully instead of hard-coding `.md`.
+        // Surfacing the registered on-disk extension lets the sidebar render
+        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
         const docExt = getDocExtension(docName);
 
         documents.push({
@@ -2483,6 +2707,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
+      if (findLooksLikeFrontmatter(find)) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
+        return;
+      }
       const hasOffset = Object.hasOwn(body, 'offset');
       let offset: number | undefined;
       if (hasOffset) {
@@ -2519,6 +2752,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
+      let fmIntersect = false;
       // setPresence lives INSIDE the try so the pairing with touchMode('idle')
       // in `finally` is atomic — any throw between setPresence and transact
       // (even future code added here) flips the badge back to idle rather
@@ -2542,12 +2776,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // (frontmatter + body) so agents can patch frontmatter fields
           // (e.g. `title:`, `cluster:`) the same way they patch body text.
           // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in Y.Map('metadata') and must be composed
-          // in for the search surface to reflect the document as the
-          // agent sees it on disk.
+          // frontmatter lives in the YAML region of `Y.Text('source')`
+          // (D8) and must be composed in for the search surface to
+          // reflect the document as the agent sees it on disk.
           const xmlFragment = session.dc.document.getXmlFragment('default');
-          const metaMap = session.dc.document.getMap('metadata');
-          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+          const ytext = session.dc.document.getText('source');
+          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
           const currentBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
           );
@@ -2568,17 +2802,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             return;
           }
 
-          // Splice at the character level. The result is the authoritative
-          // post-patch full document — if the patch deletes the FM region,
-          // metaMap must be cleared accordingly. Route through explicit
-          // split-then-write so empty-FM is distinguishable from
-          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          // Position-based FM-intersection check. The string-shape
+          // heuristic above handles yaml-style find strings; this catches
+          // the residual class where a non-yaml find (e.g. a single word
+          // like `draft`) happens to first-match in the FM region.
+          // `pos < currentFm.length` is the necessary-and-sufficient
+          // signal — FM is contiguous at doc start, so any match starting
+          // before the FM-end byte overlaps the FM region.
+          if (pos < currentFm.length) {
+            fmIntersect = true;
+            return;
+          }
+
+          // Splice at the character level. Only body-region patches
+          // reach here, so this branch never modifies the FM.
+          // `applyAgentMarkdownWrite` reads the current FM from the
+          // YAML region of Y.Text and writes the canonical full
+          // document back, so a body-only payload here keeps the
+          // existing FM intact.
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
-          if (newFm !== currentFm) {
-            metaMap.set('frontmatter', newFm);
-          }
+          // FM lives in the YAML region of Y.Text directly (D8); body-only
+          // payloads to applyAgentMarkdownWrite preserve the existing FM
+          // because the helper reads `existingFm` from Y.Text.
+          const { body: newBody } = stripFrontmatter(newFull);
           applyAgentMarkdownWrite(
             session.dc.document,
             newBody,
@@ -2596,10 +2843,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget) {
+        if (!notFound && !staleTarget && !fmIntersect) {
           // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 so adoption rate reflects successful
-          // writes, not total attempts.
+          // denominator excludes 404/409 + FM-intersect 400 so adoption
+          // rate reflects successful writes, not total attempts.
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
@@ -2626,6 +2873,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (notFound) {
         json(res, 404, { ok: false, error: 'Text not found in document' });
+        return;
+      }
+      if (fmIntersect) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
         return;
       }
 
@@ -3456,20 +3712,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const {
-      agentId: rollbackAgentId,
-      agentName: rollbackAgentName,
-      colorSeed: rollbackColorSeed,
-      clientName: rollbackClientName,
-      clientVersion: rollbackClientVersion,
-      label: rollbackLabel,
-    } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+    const bodyObj = body as Record<string, unknown>;
+    const actor = extractActorIdentity(bodyObj, getPrincipal);
+    if (actor.kind === 'invalid-summary') {
+      json(res, 400, { ok: false, error: 'summary must be a string' });
+      return;
+    }
 
-    const {
-      docName: rawDocName,
-      commitSha: rawSha,
-      versionTag: rawVersionTag,
-    } = body as Record<string, unknown>;
+    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
     const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
@@ -3480,25 +3730,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
       json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    // D22 LOCKED 1-way door: UI-driven rollback (EditorPane.tsx:155 Restore
-    // button) posts no `agentId`. Without this guard, `extractAgentIdentity`
-    // defaults would attribute every human Restore to Claude. Only when the
-    // caller explicitly sends `agentId` do we attribute + record a summary.
-    //
-    // Validation runs unconditionally (independent of `hasAgentId`) so a
-    // malformed `summary: 42` returns 400 even when identity is absent — this
-    // surfaces MCP-client identity-passthrough regressions loudly instead of
-    // silently dropping the summary on the floor. The attribution semantics
-    // (D22) are unchanged: `recordContributor` still only fires when
-    // `hasAgentId` is true.
-    const bodyObj = body as Record<string, unknown>;
-    const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-    const normalizedSummary = normalizeSummary(bodyObj.summary);
-    if (normalizedSummary.kind === 'invalid') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
       return;
     }
 
@@ -3540,7 +3771,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
+      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
+      // body parse only needs the body half — `frontmatter` is no longer
+      // mirrored into a separate metaMap slot.
+      const { body: mdBody } = stripFrontmatter(markdown);
       const rollbackParseOpts = options.resolveEmbed
         ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
         : undefined;
@@ -3552,17 +3786,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(document, xmlFragment, pmNode, meta);
 
+        // Y.Text receives the full markdown (FM + body) verbatim — the
+        // YAML region IS the FM source of truth (D8/D26). No separate
+        // metadata-map mirror.
         const ytext = document.getText('source');
         const currentText = ytext.toString();
         if (currentText !== markdown) {
           ytext.delete(0, currentText.length);
           ytext.insert(0, markdown);
         }
-
-        // Update metadata map with restored frontmatter so persistence
-        // serializes the correct frontmatter on next L1 flush.
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
       // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
@@ -3575,48 +3807,71 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Letting `onStoreDocument` fire naturally writes disk AND updates the
       // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // D22 LOCKED: attribute + record summary ONLY when caller supplied
-      // agentId. UI-driven Restore (no agentId) stays anonymous — no bullet,
-      // no focus push, no actor tuple. Default summary `"Restored to <sha-short>"`
-      // applies when agent-supplied summary was absent; the default goes through
-      // `normalizeSummary` too so the 80-char cap covers the default path (FR10).
-      //
-      // When the default is used and it happens to truncate (rare for rollback
-      // since "Restored to <8-char-sha>" is ~22 chars, but we keep the code
-      // path symmetric with `handleRename` where defaults frequently overflow
-      // for deeply-nested doc paths), we strip `truncatedFrom` + `hint` from
-      // the response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" message would misattribute
-      // blame to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior.
+      // Default summary `"Restored to <sha-short>"` applies for the agent path
+      // when no agent-supplied summary was given; the default goes through
+      // `normalizeSummary` so the 80-char cap covers it. When the default
+      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
+      // chars, but symmetric with `handleRenamePath` where defaults frequently
+      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
+      // `hint` from the response so the truncation message doesn't misattribute
+      // blame to the caller. The principal path records the contributor with
+      // the rollback subject but does NOT generate a default summary bullet —
+      // the rollback subject already drives the timeline display.
       let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const shaShort = commitSha.slice(0, 8);
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Restored to ${shaShort}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          docName,
-          rollbackAgentId,
-          rollbackAgentName,
-          rollbackColorSeed,
-          formatRollbackSubject(docName, commitSha),
-          buildAgentActor({
-            clientName: rollbackClientName,
-            clientVersion: rollbackClientVersion,
-            label: rollbackLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+      switch (actor.kind) {
+        case 'agent': {
+          const shaShort = commitSha.slice(0, 8);
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Restored to ${shaShort}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          break;
+        }
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            formatRollbackSubject(docName, commitSha),
+            actor.actor,
+            fields.stored,
+          );
+          countNormalizedSummary(actor.summary, false);
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { docName, commitSha: commitSha.slice(0, 8) },
+            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
+      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
       // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
       // restored version + attribution appear in the timeline within ~100ms
@@ -3647,12 +3902,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      // D22: only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (no agentId) must not
-      // trigger a cross-client push-nav as if Claude-1 did the rollback.
-      if (hasAgentId) {
-        agentFocusBroadcaster?.setFocus(rollbackAgentId, {
-          agentName: rollbackAgentName,
+      // Only broadcast agent-focus push-nav when the caller explicitly
+      // identified as an agent. UI-driven Restore (principal or anonymous)
+      // must not trigger a cross-client push-nav as if an agent did the
+      // rollback.
+      if (actor.kind === 'agent') {
+        agentFocusBroadcaster?.setFocus(actor.writerId, {
+          agentName: actor.displayName,
           currentDoc: docName,
           writeKind: 'rollback-apply',
           ts: Date.now(),
@@ -3667,7 +3923,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : 'Failed to roll back document';
       json(res, 500, { ok: false, error: message });
     }
   }
@@ -3728,7 +3984,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * enumerates the same docName set as `/api/documents` plus per-
    * client Lamport op counts (random clientID, no wall-clock).
    * Single-user-loopback deployment model is documented in
-   * `standalone.ts` near the principalAuthExtension; hosted/multi-
+   * `server-factory.ts` near the principalAuthExtension; hosted/multi-
    * tenant deployments must wrap this entire `/api/*` class with
    * authentication and per-caller scoping.
    */
@@ -4092,14 +4348,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const {
-        agentId: createPageAgentId,
-        agentName: createPageAgentName,
-        colorSeed: createPageColorSeed,
-        clientName: createPageClientName,
-        clientVersion: createPageClientVersion,
-        label: createPageLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
+      // Identity boundary (D22 LOCKED): only attribute when the caller
+      // explicitly supplies agentId. UI-driven creates fall through to the
+      // loaded principal (if any) or anonymous — never to a synthetic
+      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
+      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
       const { path: filePath } = body as Record<string, unknown>;
       if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
         json(res, 400, { ok: false, error: 'path is required' });
@@ -4151,18 +4408,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         contentFilter.incrementMdDir(dirname(docName));
       }
       registerWrite(fullPath, contentHash(initialContent));
-      recordContributor(
-        docName,
-        createPageAgentId,
-        createPageAgentName,
-        createPageColorSeed,
-        undefined,
-        buildAgentActor({
-          clientName: createPageClientName,
-          clientVersion: createPageClientVersion,
-          label: createPageLabel,
-        }),
-      );
+      switch (actor.kind) {
+        case 'agent':
+        case 'principal':
+          recordContributor(
+            docName,
+            actor.writerId,
+            actor.displayName,
+            actor.colorSeed,
+            undefined,
+            actor.actor,
+          );
+          break;
+        case 'anonymous':
+          // UI-driven create with no loaded principal — no contributor recorded.
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
+      }
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -4220,172 +4487,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleRename(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const {
-        agentId: renameAgentId,
-        agentName: renameAgentName,
-        colorSeed: renameColorSeed,
-        clientName: renameClientName,
-        clientVersion: renameClientVersion,
-        label: renameLabel,
-      } = extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { docName, newDocName } = body as Record<string, unknown>;
-      if (typeof docName !== 'string' || typeof newDocName !== 'string') {
-        json(res, 400, { ok: false, error: 'docName and newDocName are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(docName) || !isValidRelativeContentPath(newDocName)) {
-        json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
-        return;
-      }
-      if (
-        isSystemDoc(docName) ||
-        isSystemDoc(newDocName) ||
-        isConfigDoc(docName) ||
-        isConfigDoc(newDocName)
-      ) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      if (docName === newDocName) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index unavailable' });
-        return;
-      }
-
-      // D22 LOCKED 1-way door: only attribute when the caller explicitly
-      // supplies agentId. Any future UI-driven rename (no agentId) stays
-      // anonymous as today — even though the rename handler has no existing
-      // UI call site, adding the guard up front keeps the pattern uniform
-      // with `handleRollback` and prevents `extractAgentIdentity` defaults
-      // from silently attributing future UI paths to Claude.
-      //
-      // Validation runs unconditionally (independent of `hasAgentId`) so a
-      // malformed `summary: 42` returns 400 even when identity is absent —
-      // this surfaces MCP-client identity-passthrough regressions loudly
-      // instead of silently dropping the summary on the floor. The
-      // attribution semantics (D22) are unchanged.
-      const bodyObj = body as Record<string, unknown>;
-      const hasAgentId = typeof bodyObj.agentId === 'string' && bodyObj.agentId.length > 0;
-      const normalizedSummary = normalizeSummary(bodyObj.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
-      const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
-      // Handles the case where the client sends an explicit extension that
-      // matches the source's existing one (e.g. `newDocName: "foo.md"` when
-      // the file is already `foo.md`) — `docName !== newDocName` textually
-      // but the on-disk paths resolve to the same file. Treat as no-op,
-      // mirroring the extension-less `docName === newDocName` short-circuit
-      // above.
-      if (sourcePath === destinationPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: 'Document does not exist' });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const result = await _performManagedRename(docName, newDocName);
-
-      // D22 LOCKED: only attribute when the caller explicitly sent agentId.
-      // UI-driven rename stays anonymous on the timeline (no bullet, no focus
-      // push, no actor tuple). Attribute on the NEW docName per D15/FR9 — the
-      // backlink-rewritten side-effect docs stay anonymous (defaultWriter) to
-      // avoid "Claude renamed X → Y" noise on every inbound doc.
-      //
-      // When the default "Renamed X → Y" template overflows the 80-char cap
-      // (common for deeply-nested doc paths, e.g. `specs/2026-04-19-ci-signal-quality/SPEC`
-      // pairs blow past 80 easily), we strip `truncatedFrom` + `hint` from the
-      // response: the agent never submitted the long string, so the
-      // "Summary truncated from N chars to 80" hint would misattribute blame
-      // to the caller. `summariesTruncated` is also suppressed for
-      // server-generated defaults so the M2 metric reflects agent behavior,
-      // not server-template width.
-      let summaryResponse: SummaryResponse | undefined;
-      if (hasAgentId) {
-        const agentProvidedSummary = normalizedSummary.kind === 'value';
-        const effectiveNormalized = agentProvidedSummary
-          ? normalizedSummary
-          : normalizeSummary(`Renamed ${docName} → ${newDocName}`);
-        const fields = summaryResponseFields(effectiveNormalized);
-        summaryResponse =
-          agentProvidedSummary || !fields.response
-            ? fields.response
-            : stripDefaultPathTruncation(fields.response);
-        recordContributor(
-          newDocName as string,
-          renameAgentId,
-          renameAgentName,
-          renameColorSeed,
-          formatRenameSubject(docName as string, newDocName as string),
-          buildAgentActor({
-            clientName: renameClientName,
-            clientVersion: renameClientVersion,
-            label: renameLabel,
-          }),
-          fields.stored,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-        // BUG-1 (agent-write-summaries QA Phase 7): drain the just-recorded
-        // pendingContributors entry into its own L2 shadow commit. Parallels
-        // the `flushDocToGit(...)` call in `handleRollback` above; uses
-        // `flushDocToGit(newDocName, ...)` because the source doc may no
-        // longer be open after `_performManagedRename` closed it.
-        flushDocToGit(newDocName as string, 'rename');
-      }
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename]', e);
-      json(res, 500, { ok: false, error: toManagedRenamePublicError(e) });
-    }
-  }
-
   async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -4414,8 +4515,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { kind, fromPath, toPath } = body as Record<string, unknown>;
+      const bodyObj = body as Record<string, unknown>;
+      const actor = extractActorIdentity(bodyObj, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        json(res, 400, { ok: false, error: 'summary must be a string' });
+        return;
+      }
+      const { kind, fromPath, toPath } = bodyObj;
       if (kind !== 'file' && kind !== 'folder') {
         json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
         return;
@@ -4428,115 +4534,163 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
         return;
       }
-      if (fromPath === toPath) {
-        json(res, 200, { ok: true, renamed: [] });
-        return;
-      }
-
-      const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
-      const destinationPath = resolveContentEntryPath(contentDir, kind, toPath);
-
-      if (!existsSync(sourcePath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-      if (existsSync(destinationPath)) {
-        json(res, 409, { ok: false, error: 'Destination already exists' });
-        return;
-      }
-
-      const sourceStat = statSync(sourcePath);
       if (
-        (kind === 'file' && !sourceStat.isFile()) ||
-        (kind === 'folder' && !sourceStat.isDirectory())
+        kind === 'file' &&
+        (isSystemDoc(fromPath) ||
+          isSystemDoc(toPath) ||
+          isConfigDoc(fromPath) ||
+          isConfigDoc(toPath))
       ) {
-        json(res, 400, { ok: false, error: `Source path is not a ${kind}` });
+        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
+        return;
+      }
+      // Reject paths whose first segment is `.ok` — that directory
+      // holds per-machine OK runtime state (server.lock, principal.json, cache,
+      // etc.) and is symmetric with the `__system__` carve-out above. The
+      // `AGENTS.md` file inside `.ok/` is a tracked content file
+      // by design, but a rename TO or FROM this directory would clobber OK
+      // bookkeeping.
+      if (
+        fromPath === '.ok' ||
+        fromPath.startsWith('.ok/') ||
+        toPath === '.ok' ||
+        toPath.startsWith('.ok/')
+      ) {
+        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
+        return;
+      }
+      if (fromPath === toPath) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
+      // a case-only move would no-op or behave unpredictably; reject explicitly.
+      if (fromPath.toLowerCase() === toPath.toLowerCase()) {
+        json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;
       }
 
-      const affectedDocNames = listAffectedDocNames(getFileIndex(), kind, fromPath);
-      const renamed: RenamedDocMapping[] =
-        kind === 'file'
-          ? [{ fromDocName: fromPath, toDocName: toPath }]
-          : affectedDocNames.map((docName) => ({
-              fromDocName: docName,
-              toDocName: remapDocNameForRename(docName, kind, fromPath, toPath),
-            }));
-
-      const liveContents = await captureAndCloseDocuments(
-        renamed.map(({ fromDocName }) => fromDocName),
-      );
-
-      const applyRename = async (): Promise<void> => {
-        const renamedWithGit = await renameTrackedPathInGit(
-          projectDir,
-          sourcePath,
-          destinationPath,
-        );
-        if (!renamedWithGit) {
-          mkdirSync(dirname(destinationPath), { recursive: true });
-          renameSync(sourcePath, destinationPath);
-        }
-        syncRenamedDocsToDisk(renamed, liveContents);
-      };
-
+      // Register the source's actual on-disk extension before downstream
+      // checks so admission and existsSync probes both see the right value
+      // when the file watcher hasn't yet observed the source (boot race).
       if (kind === 'file') {
-        const recoveryJournal = createManagedRenameRecoveryJournal({
-          sourceDocName: fromPath,
-          destinationDocName: toPath,
-          snapshots: buildManagedRenameSnapshots(
-            renamed.map(({ fromDocName }) => fromDocName),
-            liveContents,
-          ),
-        });
-        await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
-      } else {
-        await applyRename();
+        probeAndRegisterSourceFileExtension(contentDir, fromPath);
+      }
 
-        const fileIndex = getFileIndex();
-        for (const { fromDocName, toDocName } of renamed) {
-          updateFileIndex(
-            {
-              kind: 'rename',
-              oldPath: resolveContentEntryPath(contentDir, 'file', fromDocName),
-              newPath: resolveContentEntryPath(contentDir, 'file', toDocName),
-              oldDocName: fromDocName,
-              newDocName: toDocName,
-              content:
-                liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
-            },
-            fileIndex as Map<string, FileIndexEntry>,
-          );
+      if (contentFilter) {
+        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
+        // a destination like `bar.mdx` is checked verbatim instead of as
+        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
+        const excluded =
+          kind === 'file'
+            ? contentFilter.isExcluded(
+                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+              )
+            : contentFilter.isDirExcluded(toPath);
+        if (excluded) {
+          json(res, 400, {
+            ok: false,
+            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+          });
+          return;
         }
+      }
 
-        if (backlinkIndex) {
-          for (const { fromDocName, toDocName } of renamed) {
-            backlinkIndex.renameDocument(
-              fromDocName,
+      let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
+      try {
+        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+      } catch (err) {
+        if (err instanceof ManagedRenameCollisionError) {
+          json(res, 409, {
+            ok: false,
+            error: err.message,
+            colliding: err.colliding,
+          });
+          return;
+        }
+        throw err;
+      }
+
+      if (result.renamed.length === 0) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+
+      let summaryResponse: SummaryResponse | undefined;
+      switch (actor.kind) {
+        case 'agent': {
+          const agentProvidedSummary = actor.summary.kind === 'value';
+          const effectiveNormalized = agentProvidedSummary
+            ? actor.summary
+            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+          const fields = summaryResponseFields(effectiveNormalized);
+          summaryResponse =
+            agentProvidedSummary || !fields.response
+              ? fields.response
+              : stripDefaultPathTruncation(fields.response);
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
               toDocName,
-              liveContents.get(fromDocName) ??
-                readFileSync(resolveContentEntryPath(contentDir, 'file', toDocName), 'utf-8'),
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
             );
           }
-
-          void backlinkIndex.saveToDisk().catch((err) => {
-            console.warn(
-              `[backlinks] Failed to persist folder rename cache for ${fromPath} -> ${toPath}:`,
-              err,
-            );
-          });
-          signalChannel?.('backlinks');
-          signalChannel?.('graph');
+          incrementAgentWriteCalls();
+          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
         }
-
-        signalChannel?.('files');
+        case 'principal': {
+          const fields = summaryResponseFields(actor.summary);
+          summaryResponse = fields.response;
+          for (const { fromDocName, toDocName } of result.renamed) {
+            recordContributor(
+              toDocName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRenameSubject(fromDocName, toDocName),
+              actor.actor,
+              fields.stored,
+            );
+          }
+          countNormalizedSummary(actor.summary, false);
+          for (const { toDocName } of result.renamed) {
+            flushDocToGit(toDocName, 'rename-path');
+          }
+          break;
+        }
+        case 'anonymous':
+          log.debug(
+            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+          );
+          break;
+        default: {
+          const _exhaustive: never = actor;
+          throw new Error(
+            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+          );
+        }
       }
+      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
 
-      json(res, 200, { ok: true, renamed });
+      json(res, 200, {
+        ok: true,
+        renamed: result.renamed,
+        rewrittenDocs: result.rewrittenDocs,
+        ...(summaryResponse ? { summary: summaryResponse } : {}),
+      });
     } catch (e) {
       console.error('[rename-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to rename path' });
+      const { status, error } = toManagedRenamePublicError(e);
+      json(res, status, { ok: false, error });
     }
   }
 
@@ -5057,111 +5211,63 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
-    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
-    const targetDir = expandTilde(dir);
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
-
-    let timedOut = false;
-    let settled = false;
     // The CLI emits `{type:'complete', dir}` on success, but the browser
     // client expects `{type:'complete', port}`. We intercept the CLI's
     // complete event, boot a server at the cloned dir, then emit a rewritten
     // complete with the port. Non-terminal events (progress / error) flow
     // through unchanged.
     let cloneCompleteDir: string | null = null;
-    let stdoutBuffer = '';
 
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    const killTimer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let parsed: { type?: unknown; dir?: unknown } | null = null;
-        try {
-          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
-        } catch {
-          /* non-JSON — ignore */
+    const flow = runCloneSubprocess({
+      cliArgs: localOpCliArgs,
+      url,
+      dir,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event) => {
+        if (event.type === 'complete') {
+          cloneCompleteDir = event.dir;
+          return;
         }
-        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
-          // Swallow this line; we'll emit our own complete after starting the server.
-          cloneCompleteDir = parsed.dir;
-          continue;
+        if (event.type === 'error') {
+          if (event.message) {
+            log.warn({ stderr: event.message, url, dir }, '[local-op/clone] clone failed');
+          }
         }
-        if (!res.writableEnded) res.write(`${line}\n`);
-      }
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
 
-    // Buffer stderr so we can surface it when the clone fails; also log.
-    const stderrChunks: Buffer[] = [];
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
-      if (settled) {
-        localOpGuard.release(LOCAL_OP_CLONE_KEY);
-        return;
-      }
-      settled = true;
-
-      void (async () => {
-        try {
-          if (timedOut && !res.writableEnded) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
-            );
-          } else if (code !== 0 && !res.writableEnded) {
-            if (stderrOutput) {
-              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
-            }
-            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
-            );
-          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
-            // Chain into server-start so the client can redirect.
-            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
-            if (!res.writableEnded) {
-              if ('port' in result) {
-                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
-              } else {
-                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
-              }
+    void (async () => {
+      try {
+        await flow.done;
+        if (cloneCompleteDir && !res.writableEnded) {
+          // Chain into server-start so the client can redirect.
+          const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+          if (!res.writableEnded) {
+            if ('port' in result) {
+              // `dir` is the absolute, tilde-expanded path to the cloned
+              // repo. Web clients ignore it and redirect via `port`; the
+              // Electron Navigator uses it to spawn a new editor window
+              // instead of navigating the launcher to a dev-server URL.
+              res.write(
+                `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
+              );
+            } else {
+              res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
             }
           }
-        } finally {
-          if (!res.writableEnded) res.end();
-          localOpGuard.release(LOCAL_OP_CLONE_KEY);
         }
-      })();
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
+      } finally {
+        if (!res.writableEnded) res.end();
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
       }
-      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    })();
+
+    // Cancel the subprocess if the client disconnects.
+    res.on('close', () => {
+      flow.cancel();
     });
   }
 
@@ -5194,7 +5300,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.open-knowledge');
+    const lockDir = resolve(absDir, '.ok');
 
     // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
@@ -5263,7 +5369,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { dir: string }
    * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -5362,86 +5468,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
-
-    let settled = false;
-    let sawTerminalEvent = false;
-    let stdoutBuffer = '';
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+    const flow = runDeviceFlowSubprocess({
+      cliArgs: localOpCliArgs,
+      host,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event: AuthEvent) => {
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
-
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
 
     // Kill the child if the client disconnects so `auth login` doesn't keep
     // polling in the background and write a token to the keychain that the
     // user never saw confirmation for.
     const onClientClose = () => {
-      if (!child.killed) child.kill('SIGTERM');
+      flow.cancel();
     };
     res.on('close', onClientClose);
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
-      // Parse line-by-line to detect whether the CLI emitted a terminal event
-      // (`complete` | `error`). If it didn't but the process exits 0, we
-      // synthesize one below so the client never hangs on a silent exit.
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as { type?: unknown };
-          if (parsed.type === 'complete' || parsed.type === 'error') {
-            sawTerminalEvent = true;
-          }
-        } catch {
-          /* non-JSON line (e.g. keychain-backend log) — ignore */
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
+    void flow.done.finally(() => {
       res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          if (code === 0 && !sawTerminalEvent) {
-            // CLI exited cleanly without emitting a terminal event — synthesize
-            // one so the client's stream reader can resolve. Login name will be
-            // filled in by the next /api/local-op/auth/status poll.
-            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
-          } else if (code !== 0) {
-            res.write(
-              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
-            );
-          }
-        }
-        res.end();
-      }
-      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
-          res.end();
-        }
-      }
+      if (!res.writableEnded) res.end();
       localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
     });
   }
@@ -6151,6 +6199,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * `POST /api/install-skill` — build `openknowledge.skill` and open it via
+   * the OS file association so Claude Desktop's native install dialog takes
+   * over. Web-host counterpart of the Electron `okDesktop.skill.buildAndOpen`
+   * bridge — both delegate to `buildAndOpenSkill` in `skill-install.ts`.
+   *
+   * Loopback-only via `checkLocalOpSecurity` — the handler spawns child
+   * processes (`open` / `start` / `xdg-open`) and writes to the user's
+   * `~/Downloads`, which is squarely state-mutating.
+   *
+   * Request body (optional JSON): `{ noOpen?: boolean, out?: string }`.
+   * Response: the `BuildAndOpenSkillResult` shape verbatim.
+   */
+  async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const opts: { noOpen?: boolean; out?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
+        if (typeof parsed.out === 'string') {
+          // `out` flows into `path.resolve()` + `mkdir({recursive: true})` +
+          // `spawn('cmd', ['/c', 'start', '""', skillPath])` on Windows.
+          // Confine to $HOME consistent with sibling local-op handlers
+          // (`handleLocalOpClone`, `handleLocalOpOpen`).
+          if (!isSafeLocalPath(parsed.out)) {
+            json(res, 400, {
+              ok: false,
+              error: 'Output path must be within home directory',
+            });
+            return;
+          }
+          opts.out = parsed.out;
+        }
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await buildAndOpenSkill(opts);
+      json(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -6201,7 +6304,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
-    '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload': handleUploadImage,
@@ -6239,6 +6341,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/install-skill': handleInstallSkill,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
   };
@@ -6257,7 +6360,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const MUTATING_ROUTES: ReadonlySet<string> = new Set([
     '/api/upload',
     '/api/create-page',
-    '/api/rename',
     '/api/rename-path',
     '/api/delete-path',
     '/api/agent-write',
@@ -6271,6 +6373,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/abort-merge',
     '/api/test-reset',
     '/api/test-rescan-backlinks',
+    '/api/install-skill',
   ]);
   // Every `/api/local-op/*` endpoint mutates local filesystem state or
   // issues network requests on behalf of the user — clone/open/auth

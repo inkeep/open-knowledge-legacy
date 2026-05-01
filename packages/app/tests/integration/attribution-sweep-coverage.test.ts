@@ -1,9 +1,13 @@
 /**
- * Attribution sweep meta-test (FR-5, D42) — static analysis gate.
+ * Attribution sweep meta-test — static analysis gate.
  *
- * Asserts that every mutating POST handler in api-extension.ts calls
- * `extractAgentIdentity` and that no new POST handler can be added to the
- * route registry without being explicitly tracked here.
+ * Asserts: (1) every mutating POST handler in api-extension.ts threads
+ * identity at entry (via either `extractAgentIdentity` for agent-write
+ * handlers or `extractActorIdentity` for rename + rollback); (2) no new
+ * POST handler can be added to the route registry without being explicitly
+ * tracked here; (3) `extract-actor-identity.ts` never reads body-supplied
+ * `principalId` — server's `getPrincipal()` is the sole source (HTTP body
+ * is unauthenticated; structurally enforcing the trust boundary).
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -11,8 +15,21 @@ import { join } from 'node:path';
 
 const API_EXT_PATH = join(import.meta.dirname, '../../../server/src/api-extension.ts');
 const source = readFileSync(API_EXT_PATH, 'utf8');
+const ACTOR_HELPER_PATH = join(
+  import.meta.dirname,
+  '../../../server/src/extract-actor-identity.ts',
+);
+const actorHelperSource = readFileSync(ACTOR_HELPER_PATH, 'utf8');
 
-/** Mutating POST handlers that must call extractAgentIdentity. */
+/** Mutating POST handlers that must call extractAgentIdentity.
+ *
+ * Frontmatter writes from the property panel intentionally do NOT appear
+ * here — they bypass HTTP entirely and reach `Y.Map('metadata')` through
+ * `bindFrontmatterDoc.patch()` under `FORM_WRITE_ORIGIN`. Attribution
+ * comes from the WebSocket connection's `ctx.principalId`, resolved by
+ * `resolveWriterFromOrigin` in `persistence.ts`. The HTTP-handler scan
+ * here doesn't see those writers — that's expected.
+ */
 const REQUIRED_HANDLERS = [
   'handleAgentWrite',
   'handleAgentWriteMd',
@@ -21,7 +38,6 @@ const REQUIRED_HANDLERS = [
   'handleSaveVersion',
   'handleRollback',
   'handleCreatePage',
-  'handleRename',
   'handleRenamePath',
   'handleDeletePath',
   // Single unified upload handler — `/api/upload` (accept-all by extension).
@@ -90,6 +106,12 @@ const EXEMPT_HANDLERS = new Set([
   'handleSeedApply',
   'handleAgentActivity',
   'handleAgentBurstDiff',
+  // `/api/install-skill` — local-op style endpoint guarded by
+  // `checkLocalOpSecurity`. Builds `openknowledge.skill` and hands off to
+  // the OS file association (Claude Desktop). Operates on the user's
+  // ~/Downloads folder on behalf of the local user, not agent content —
+  // same rationale as sync/local-op/seed handlers.
+  'handleInstallSkill',
 ]);
 
 function extractHandlerBody(handlerName: string): string | null {
@@ -111,7 +133,10 @@ function extractStaticRouteHandlerNames(): string[] {
 }
 
 describe('attribution sweep coverage (FR-5, D42)', () => {
-  test('all required POST handlers call extractAgentIdentity', () => {
+  test('all required POST handlers call an identity-threading helper', () => {
+    // Identity threading is satisfied by either `extractAgentIdentity` (used
+    // by agent-write handlers) OR `extractActorIdentity` (used by rename +
+    // rollback handlers; routes agent identity OR principal-fallback).
     const failures: string[] = [];
     for (const handler of REQUIRED_HANDLERS) {
       const body = extractHandlerBody(handler);
@@ -119,8 +144,8 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
         failures.push(`${handler}: function not found in source`);
         continue;
       }
-      if (!body.includes('extractAgentIdentity(')) {
-        failures.push(`${handler}: missing extractAgentIdentity call`);
+      if (!body.includes('extractAgentIdentity(') && !body.includes('extractActorIdentity(')) {
+        failures.push(`${handler}: missing extractAgentIdentity or extractActorIdentity call`);
       }
     }
     expect(failures).toEqual([]);
@@ -131,5 +156,11 @@ describe('attribution sweep coverage (FR-5, D42)', () => {
     const required = new Set(REQUIRED_HANDLERS);
     const untracked = names.filter((h) => !required.has(h) && !EXEMPT_HANDLERS.has(h));
     expect(untracked).toEqual([]);
+  });
+
+  test('extract-actor-identity.ts never reads body-supplied principalId (D-A11 trust boundary)', () => {
+    // Strip comments + JSDoc so the structural check only inspects executable code.
+    const code = actorHelperSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(/body\s*[.[][^a-zA-Z0-9_]*['"]?principalId/.test(code)).toBe(false);
   });
 });

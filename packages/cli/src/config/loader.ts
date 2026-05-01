@@ -2,20 +2,20 @@
  * Hierarchical YAML config loader.
  *
  * Priority (lowest → highest):
- *   Zod defaults → ~/.open-knowledge/config.yml → ./.open-knowledge/config.yml
+ *   Zod defaults → ~/.ok/config.yml → ./.ok/config.yml
  *
  * ENV and CLI flag overrides are applied in cli.ts after loading.
  *
- * Deep merge: workspace leaf values override user leaf values.
+ * Deep merge: project leaf values override user leaf values.
  * Arrays are replaced, not concatenated.
  *
  * Errors are emitted with source positions via yaml@2's `parseDocument`
  * (FR-27 / D36) — `file:line:col` plus a code-snippet with caret marker.
  *
- * The user-global file (`~/.open-knowledge/config.yml`) is read via
+ * The user-global file (`~/.ok/config.yml`) is read via
  * `readConfigSafely` (FR-35 / D57) — invalid files are sidelined to
  * `<path>.invalid-<ISO-timestamp>` and replaced with schema defaults so
- * OK can still boot. The workspace file errors loud (throws) — workspace
+ * OK can still boot. The project file errors loud (throws) — project
  * errors are user-fixable in-place and failing fast helps the user notice.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -23,6 +23,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   type ConfigIssue,
+  type ConfigIssueSource,
   type ConfigValidationError,
   humanFormat,
   locateIssue,
@@ -84,7 +85,7 @@ interface LoadedYamlFile {
  * locate Zod issues back to file:line:col.
  *
  * On YAML syntax errors, logs a warning and returns `value: null` (existing
- * graceful-degradation semantic — broken workspace YAML doesn't block boot;
+ * graceful-degradation semantic — broken project YAML doesn't block boot;
  * the user fixes the file and reloads).
  */
 function loadYamlFile(filePath: string): LoadedYamlFile {
@@ -115,8 +116,74 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
   return { value: null, path: filePath, source: raw, doc };
 }
 
+/** Removed `content.*` keys; their patterns now live in `.okignore`. */
+const REMOVED_CONTENT_KEYS = ['include', 'exclude'] as const;
+
 /**
- * Map Zod issues to source-located `ConfigIssue`s using the workspace
+ * Per-key redirect message. `content.exclude` patterns migrate 1:1 to
+ * `.okignore` (both are exclude-only). `content.include` was a positive
+ * whitelist — copying patterns straight into exclude-only `.okignore` would
+ * invert intent. Surface `content.dir` as the simpler subdirectory-scoping
+ * alternative for the common include case.
+ */
+function redirectForKey(key: 'include' | 'exclude'): string {
+  const stripHint =
+    'Run `ok config migrate` to strip the obsolete key from config.yml automatically, or remove it by hand.';
+  if (key === 'exclude') {
+    return [
+      'Move these patterns to .okignore at the project root (gitignore syntax, 1:1 migration).',
+      stripHint,
+    ].join(' ');
+  }
+  return [
+    'content.include has been removed.',
+    'For subdirectory scoping, set content.dir in .ok/config.yml instead.',
+    'For pattern-based filtering, use .okignore (gitignore syntax — exclude-only; do not copy include patterns directly).',
+    stripHint,
+  ].join(' ');
+}
+
+/**
+ * Detect `content.include` / `content.exclude` in a parsed YAML file. These
+ * keys were removed from `ConfigSchema`; path rules now live in `.okignore`
+ * files at the project root. Returns ALL removed-key errors found (a config
+ * with both keys gets both errors in one pass — no two-trip fix cycle).
+ *
+ * The schema's `content` block is a `looseObject`, so unknown nested keys
+ * pass through validation silently — explicit detection is required to
+ * surface the migration directive.
+ */
+function detectRemovedContentKeys(file: LoadedYamlFile): ConfigValidationError[] {
+  const value = file.value;
+  if (!isObject(value)) return [];
+  const content = value.content;
+  if (!isObject(content)) return [];
+  const errors: ConfigValidationError[] = [];
+  for (const key of REMOVED_CONTENT_KEYS) {
+    if (key in content) {
+      const path = ['content', key];
+      let source: ConfigIssueSource | undefined;
+      if (file.doc !== null && file.source !== null) {
+        source = locateIssue({
+          file: file.path,
+          source: file.source,
+          doc: file.doc,
+          path,
+        });
+      }
+      errors.push({
+        code: 'REMOVED_KEY',
+        path,
+        redirect: redirectForKey(key),
+        ...(source !== undefined ? { source } : {}),
+      });
+    }
+  }
+  return errors;
+}
+
+/**
+ * Map Zod issues to source-located `ConfigIssue`s using the project
  * Document AST when the path resolves there. User-global paths don't get
  * source-located here (the user-global file went through readConfigSafely
  * upstream and any user-global issues already triggered sideline + defaults
@@ -124,7 +191,7 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
  */
 function annotateIssuesWithSource(
   zodIssues: ReadonlyArray<{ path: PropertyKey[]; message: string; code: string }>,
-  workspaceFile: LoadedYamlFile,
+  projectFile: LoadedYamlFile,
 ): ConfigIssue[] {
   return zodIssues.map((issue) => {
     const path = issue.path.map((seg) =>
@@ -135,11 +202,11 @@ function annotateIssuesWithSource(
       message: issue.message,
       issueCode: issue.code,
     };
-    if (workspaceFile.doc !== null && workspaceFile.source !== null) {
+    if (projectFile.doc !== null && projectFile.source !== null) {
       const located = locateIssue({
-        file: workspaceFile.path,
-        source: workspaceFile.source,
-        doc: workspaceFile.doc,
+        file: projectFile.path,
+        source: projectFile.source,
+        doc: projectFile.doc,
         path,
       });
       if (located !== undefined) {
@@ -168,12 +235,16 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     // contributed nothing" and proceed with defaults at this layer.
   }
 
-  // Layer 2: workspace config — fail loud on schema-fail so the user notices.
-  const workspaceConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
-  const workspaceFile = loadYamlFile(workspaceConfigPath);
-  if (workspaceFile.value !== null) {
-    merged = deepMerge(merged, workspaceFile.value);
-    sources.push(workspaceConfigPath);
+  // Layer 2: project config — fail loud on schema-fail so the user notices.
+  const projectConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
+  const projectFile = loadYamlFile(projectConfigPath);
+  if (projectFile.value !== null) {
+    const removedKeyErrors = detectRemovedContentKeys(projectFile);
+    if (removedKeyErrors.length > 0) {
+      throw new Error(removedKeyErrors.map(humanFormat).join('\n\n'));
+    }
+    merged = deepMerge(merged, projectFile.value);
+    sources.push(projectConfigPath);
   }
 
   // Deprecation WARN — `upload.maxBytes` was removed when uploads switched
@@ -191,7 +262,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   // Validate the merged result with Zod.
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {
-    const issues = annotateIssuesWithSource(result.error.issues, workspaceFile);
+    const issues = annotateIssuesWithSource(result.error.issues, projectFile);
     const error: ConfigValidationError = { code: 'SCHEMA_INVALID', issues };
     throw new Error(humanFormat(error));
   }
@@ -235,7 +306,7 @@ interface CreateProjectConfigResolverOptions {
 
 /**
  * Create a lazy per-cwd config resolver for long-lived MCP sessions. Each cwd
- * re-loads its own `.open-knowledge/config.yml` (plus user config) and applies
+ * re-loads its own `.ok/config.yml` (plus user config) and applies
  * the same process-level env overrides as the CLI bootstrap path.
  */
 export function createProjectConfigResolver(

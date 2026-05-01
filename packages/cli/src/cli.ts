@@ -18,7 +18,7 @@ if (process.argv.includes('--no-color')) {
  * CLI entry point for @inkeep/open-knowledge.
  *
  * Commander.js v14 with `start` as the default command.
- * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
+ * Config loaded via preAction hook: CLI > ENV > project > user > Zod defaults.
  */
 import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
@@ -114,7 +114,7 @@ program.addCommand(stopCommand(() => resolvedConfig));
 program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
 
-// config command group — inspect + migrate `.open-knowledge/config.yml`
+// config command group — inspect + migrate `.ok/config.yml`
 // (config-edit-paths spec FR-16, FR-26 / D37). Stateless — no resolved config
 // dependency; both subcommands re-load fresh from disk via core helpers.
 program.addCommand(configCommand());

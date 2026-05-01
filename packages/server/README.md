@@ -15,7 +15,7 @@ import { acquireProcessLock } from '@inkeep/open-knowledge-server';
 
 const handle = acquireProcessLock({
   lockName: 'server',                 // or 'ui'
-  lockDir: '<contentDir>/.open-knowledge',
+  lockDir: '<contentDir>/.ok',
   metadata: { worktreeRoot },         // merged into the JSON payload
 });
 
@@ -73,6 +73,22 @@ Cross-CRDT sync between `Y.XmlFragment('default')` (TipTap) and `Y.Text('source'
 
 Origins that atomically mutate BOTH `Y.XmlFragment` and `Y.Text` inside a single `doc.transact(..., ORIGIN)` block declare `context.paired: true` in their literal definition. `isPairedWriteOrigin(transaction.origin)` matches structurally (`origin.context.paired === true`) — no hardcoded registry. Observer A AND Observer B both detect the marker, refresh their shared baseline synchronously inside the observer callback, and decline to flag dirty state — the settlement handler then has nothing to dispatch for the drain. The four paired origins today: `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `MANAGED_RENAME_ORIGIN`.
 
+The browser-side form-write origin (`origin: 'form-write'`, mirrored by the binding at `packages/core/src/bridge/bind-frontmatter-doc.ts`) is intentionally **not** paired. Form writes touch only `Y.Text('source')` (the FM region of the same Y.Text the body editor binds to) — Observer B fires normally on the change and exits via the already-in-sync gate when the body half is unchanged. Adding the paired marker would short-circuit Observer B and skip the bridge invariant refresh. Frontmatter edits flow over the WebSocket via the binding, not through an HTTP endpoint.
+
+### Frontmatter storage (Y.Text-direct)
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. There is no separate `Y.Map('metadata')` for FM (that was the predecessor's per-key design; removed in the realtime-frontmatter-entries spec). Every write surface touches Y.Text directly:
+
+- **`onLoadDocument`** (`persistence.ts`) — populates Y.Text + XmlFragment atomically under `FILE_WATCHER_ORIGIN` via `applyDiskContentToDoc`. FM region byte-identical to disk; body region matches `mdManager.serialize(parseWithFallback(body))` so the bridge invariant holds for canonical-form-divergent constructs (NG7 — doc-start `---` → `***`).
+- **`applyExternalChange`** (`external-change.ts`) — file-watcher path. Same `applyDiskContentToDoc` primitive; preserves user-authored YAML formatting (indentation, scalar styles, comments) verbatim.
+- **Observer B** (`server-observers.ts`) — source-mode YAML edits land on Y.Text directly; the observer parses the body half, syncs XmlFragment via `updateYFragment`, and emits `recordFrontmatterEditSurface('source-mode')` when the FM region changed.
+- **`bindFrontmatterDoc`** (`@inkeep/open-knowledge-core/bridge/bind-frontmatter-doc.ts`) — browser-side binding for the property panel. Exposes `patch(patch)` (RFC 7396 Merge Patch), `rename(oldKey, newKey)` (preserves source position so renames don't reorder), and `reorder(orderedKeys)` (drag-to-reorder commit). Each write parses → edits at `Pair` level via yaml@2 → re-stringifies → replaces the Y.Text byte range in one `doc.transact(fn, FORM_WRITE_ORIGIN)` block.
+- **`applyAgentMarkdownWrite` / `applyAgentUndo`** (`agent-sessions.ts`) — agent-write path reads the existing FM via `stripFrontmatter(ytext.toString()).frontmatter`, composes the agent's payload, and writes back through `applyFastDiff` on Y.Text.
+
+L1 validation runs at the binding boundary (`FrontmatterPatchSchema`/`FrontmatterValueSchema` Zod, plus the 64 KB region cap and reserved-key rejection). There is no L3 server-side validation hook — Y.Text IS the source of truth (D31), including malformed bytes; defense moves to the panel's last-valid render against transient invalid bytes.
+
+`onStoreDocument` writes `ytext.toString()` to disk verbatim — no recompose step, so the disk file preserves byte-for-byte whatever the user authored in source mode or the panel produced via yaml@2's serializer.
+
 ### Content-preservation post-condition + silent recovery (Notion-style)
 
 Observer A's Path B (used when local Y.Text has diverged from the last-synced XmlFragment baseline) wraps `mergeThreeWay` (`@inkeep/open-knowledge-core/bridge`) with `assertContentPreservation` — a maximal-unique-line-substring + relative-order side-check that throws `BridgeMergeContentLossError` when the merge drops content from either side.
@@ -105,10 +121,16 @@ Every mutating POST handler calls `extractAgentIdentity(body)` at entry — this
 |---|---|---|
 | `POST /api/agent-write-md` | fires under `session.origin` via `applyAgentMarkdownWrite` (precedent #10) | XmlFragment-authoritative composition; mirrors Y.Text via `applyFastDiff` |
 | `POST /api/agent-write` | fires under `session.origin` | raw Y.XmlElement append (V3 validation surface) |
-| `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text |
+| `POST /api/agent-patch` | fires under `session.origin` | targeted find/replace on live Y.Text. Frontmatter-intersecting patches return HTTP 400 with `error: "Frontmatter edits are not supported via edit_document; edit frontmatter directly via the property panel binding"` |
 | `POST /api/agent-undo` | fires under per-session `session.undoOrigin` (distinct from `session.origin`) via `applyAgentUndo(session, scope)` — V0-14 landed surface | body: `{ connectionId, scope: 'last' \| 'session' }`. `session.um.undo()` runs inside the outer `doc.transact(..., session.undoOrigin)` so Observer A/B short-circuit; post-undo composes via `updateYFragment` + `applyFastDiff` |
+| `POST /api/rename-path` | fires under `MANAGED_RENAME_ORIGIN` via `applyManagedRename` (single spine for both `kind: 'file'` and `kind: 'folder'`) | body: `{ kind, fromPath, toPath, agentId?, summary? }`. Identity threaded via `extractActorIdentity(body, getPrincipal)` — body `agentId` → agent contributor; absent + loaded principal → `principal-<uuid>` contributor; neither → anonymous. Body `principalId` is silently ignored (HTTP body unauthenticated; trust boundary per precedent #24(d)). Rewrites inbound wiki-links + supported markdown links across affected docs. Recovery journal v2 (multi-doc) at `<contentDir>/.ok/managed-rename.json`; replayed at next boot via `recoverPendingManagedRename`. |
+| `POST /api/rollback` | fires under `ROLLBACK_ORIGIN` | body: `{ docName, commitSha, agentId?, summary? }`. Same `extractActorIdentity` routing as `/api/rename-path` — UI Restore button (no `agentId`) attributes to the loaded principal. |
+
+Frontmatter edits from the browser property panel do **not** appear in this table — they bypass HTTP entirely via `bindFrontmatterDoc` (in `@inkeep/open-knowledge-core/bridge`), reaching the YAML region of `Y.Text('source')` directly through the WebSocket. Attribution flows from the connection's `ctx.principalId` (resolved by `resolveWriterFromOrigin` in `persistence.ts`). L1 validation runs at the binding boundary; there is no L3 server-side hook (Y.Text is the source of truth — see "Frontmatter storage" above).
 
 `POST /api/save-version` uses `Author: <principal_display_name>` + `Co-Authored-By: <agent>` trailers (FR-9, D12) on the project-git commit; gracefully skips when the project dir is absent / not a git repo (D45). The history checkpoint always lands regardless of project-git state.
+
+`POST /api/rename` was deleted in [`specs/2026-04-29-rename-consolidation/SPEC.md`](../../specs/2026-04-29-rename-consolidation/SPEC.md) (D-A3) — clients (UI, MCP, scripts) target `/api/rename-path` exclusively. The route returns 404.
 
 Classified writer IDs for non-attributable writes: `file-system` (disk reconciliation), `git-upstream` (HEAD-move import), `openknowledge-service` (park snapshots, fallback). See `packages/core/src/shadow-repo-layout.ts` for `parseWriterId` / `WRITER_ID_RE` / `parseOkActor` / `formatOkActor` and AGENTS.md → "History repo & branch runtime" for the full taxonomy table.
 
@@ -175,7 +197,7 @@ Each channel's semantics are owned by its emitter. Adding a new `ch` value count
 
 | Channel            | Emitted from                                                                                              | Triggers                                                                                                                                                                              | Canonical refetch                                                                                              |
 | ------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `files`            | `standalone.ts` DiskEvent dispatch (V0-2, shipped)                                                        | Markdown `create \| delete \| rename` DiskEvents AND asset `asset-create \| asset-delete` events (editor-asset-embed-surface spec). `update` / `conflict` do not change the file list | `GET /api/documents` (and basename-index rebuild — see "Upload + asset-embed surface" below)                   |
+| `files`            | `server-factory.ts` DiskEvent dispatch (V0-2, shipped)                                                        | Markdown `create \| delete \| rename` DiskEvents AND asset `asset-create \| asset-delete` events (editor-asset-embed-surface spec). `update` / `conflict` do not change the file list | `GET /api/documents` (and basename-index rebuild — see "Upload + asset-embed surface" below)                   |
 | `backlinks`        | `persistence.ts` backlink-index update path (V0-3, pending)                                               | Content changes that invalidate the backlink index                                                                                                                                    | `GET /api/backlinks/:docName`                                                                                  |
 | `graph`            | TBD (V0-11, pending)                                                                                      | Graph-derived data changes                                                                                                                                                            | TBD                                                                                                            |
 | `session-activity` | `persistence.ts` L2 drain, after any successful `commitWipFromTree` whose `writerId.startsWith('agent-')` | Any agent-origin write that produced a shadow-repo commit                                                                                                                             | `GET /api/agent-activity?agentId=<connId>` — open Activity Panels re-fetch with a 500 ms hook-level debounce   |
@@ -255,8 +277,8 @@ Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time; `PO
 
 Two well-known synthetic docs back the in-app Settings pane and live-refresh of external edits:
 
-- `__config__/workspace` ↔ `<contentDir>/.open-knowledge/config.yml`
-- `__user__/config.yml` ↔ `~/.open-knowledge/config.yml`
+- `__config__/project` ↔ `<contentDir>/.ok/config.yml`
+- `__user__/config.yml` ↔ `~/.ok/config.yml`
 
 Both are admitted at boot via `hocuspocus.openDirectConnection()` and are **Y.Text-only** — there is no Y.XmlFragment, no markdown bridge, no TipTap binding. The Settings pane wires its `HocuspocusProvider` directly at the Y.Text and renders a Zod-walker form on top.
 
@@ -356,7 +378,7 @@ Finder-style renames arrive as `asset-delete` + `asset-create` pairs. The basena
 
 ### Basename index runtime
 
-Constructed in `standalone.ts` via `createBasenameIndex()` (from `@inkeep/open-knowledge-core/path-resolve` — browser+Node compatible, no `node:fs` imports). Seeded at boot via `seedBasenameIndex` (`src/asset-walk.ts`) which walks `contentDir` after `startWatcher` primes the `ContentFilter`'s dir-count (so assets only index if a markdown sibling admits the subtree). `visitedInodes` set prevents symlink cycles.
+Constructed in `server-factory.ts` via `createBasenameIndex()` (from `@inkeep/open-knowledge-core/path-resolve` — browser+Node compatible, no `node:fs` imports). Seeded at boot via `seedBasenameIndex` (`src/asset-walk.ts`) which walks `contentDir` after `startWatcher` primes the `ContentFilter`'s dir-count (so assets only index if a markdown sibling admits the subtree). `visitedInodes` set prevents symlink cycles.
 
 The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 
@@ -366,7 +388,7 @@ The single `resolveEmbed(basename, sourcePath)` closure is threaded through:
 - `applyExternalChange` → disk→CRDT bridge (markdown reload)
 - `applyAgentMarkdownWrite` → agent write composition
 
-The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `standalone.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
+The Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) does NOT call `createServer()` — it manually wires Hocuspocus + persistence + API extension + observer extension + basename index + `resolveEmbed` closure so dev mode achieves feature parity for asset-embed resolution. Unifying dev plugin + `createServer()` is tracked as architectural debt; until that lands, any change to `server-factory.ts`'s extension wiring must be mirrored in `hocuspocus-plugin.ts`.
 
 `createApiExtension({ installedAgentsProbe })` accepts a probe override so unit tests and integration tests don't shell out. The default uses `createOsProbe(process.platform)` from `handoff-api.ts`.
 
@@ -442,20 +464,20 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
 4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
 
-**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `server-factory.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
 
 ### Composition with existing primitives
 
 - **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
 - **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
-- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.ok/server.lock`, not a CC1 channel.
 
 ### Test coverage
 
 - Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
 - Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
 - Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
-- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- Server-side auth: `packages/server/src/server-factory.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
 - CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
 - Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
 - End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.
@@ -494,20 +516,20 @@ A browser tab holds its Y.Doc in memory. The Open Knowledge server restarts. Yjs
 3. `recycleAllEntries()` destroys the pool and rebuilds a fresh `HocuspocusProvider` + fresh persistence per doc.
 4. When a fresh provider's first `synced` fires and a buffered update exists, `Y.applyUpdate(freshDoc, buffered, TAB_REPLAY_ORIGIN)` — the unsynced delta rejoins under the new server-clientID and propagates on the next sync.
 
-**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `standalone.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
+**CC1 `branch-switched` coordinates cross-branch invalidation.** `CC1Broadcaster.emitBranchSwitched(branch)` fires synchronously at the END of the cross-branch path in `server-factory.ts#onBatchEnd` — AFTER Y.Doc reset from disk, backlink rebuild, WIP restore, detached cleanup. Clients parse via `parseCC1BranchSwitched` in `packages/app/src/lib/cc1.ts`, dispatch through `SystemDocSubscriber.onBranchSwitched` → `handleBranchSwitched(pool, branch)`: clears every entry's IDB then `recycleAllEntries`. Unlike the mismatch path, branch-switched does **not** buffer-and-replay — unsynced edits authored against branch A are semantically invalid against branch B and must be discarded, not replayed.
 
 ### Composition with existing primitives
 
 - **reconciledBase** (the three-way merge base) is unchanged — it tracks markdown, not the CRDT cache.
 - **parkBranch / restoreBranchWIP** are unchanged — WIP preservation lives in the shadow repo, not the client's IDB.
-- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.open-knowledge/server.lock`, not a CC1 channel.
+- **server-info / branch-switched / disk-ack / derived-view** share the `__system__` carrier doc; every CC1 channel emits via `Document.broadcastStateless` from the server's own DirectConnection. Server-lock is the on-disk file at `<contentDir>/.ok/server.lock`, not a CC1 channel.
 
 ### Test coverage
 
 - Client-persistence unit: `packages/app/src/editor/client-persistence.test.ts` — 8 tests (round-trip, self-origin filter, clearData, state-vector helpers).
 - Client-persistence integration: `packages/app/tests/integration/provider-pool-buffer-replay.test.ts` (T12), `cold-start-empty-idb.test.ts` (T13), `populated-idb-stale-server.test.ts` (T14).
 - Branch invalidation: `packages/app/src/editor/branch-invalidation.test.ts` + `packages/app/src/lib/cc1.test.ts` + T5 (`branch-switch-live-client.test.ts`).
-- Server-side auth: `packages/server/src/standalone.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
+- Server-side auth: `packages/server/src/server-factory.test.ts::onAuthenticate rejects 'server-instance-mismatch'` (5 tests).
 - CC1 emit: `packages/server/src/cc1-broadcast.test.ts` — `server-info` + `branch-switched` + derived-view debounce.
 - Client-side pool: `packages/app/src/editor/provider-pool.test.ts::ProviderPool authenticationFailed handling` + `ProviderPool buffer-and-replay` + `ProviderPool client-persistence attachment`.
 - End-to-end bug-class suite (`packages/app/tests/integration/`): T1-T14 cover fast restart, multi-client restart, slow restart, unsynced local edits, branch switch, agent write during restart, rollback, managed rename, external disk edit, Y.Text source-mode, mid-drain restart, buffer-and-replay mechanism, cold-start, populated-IDB stale-server.

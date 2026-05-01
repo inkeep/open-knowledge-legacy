@@ -220,6 +220,52 @@ type OkSeedApplyResult =
   | { ok: false; error: OkSeedError };
 
 /**
+ * Pre-project local-op event shapes — auth + clone flows surfaced to the
+ * Navigator window via IPC because it has no backing API server. See the
+ * desktop bridge-contract for the canonical wire shape.
+ */
+type OkLocalOpAuthEvent =
+  | {
+      type: 'verification';
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+    }
+  | {
+      type: 'complete';
+      host: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+    }
+  | { type: 'error'; message: string };
+
+type OkLocalOpCloneEvent =
+  | { type: 'progress'; phase: string; pct: number }
+  | { type: 'complete'; dir: string }
+  | { type: 'error'; message: string };
+
+interface OkLocalOpStream<E> {
+  readonly events: AsyncIterable<E>;
+  cancel(): void;
+}
+
+type OkLocalOpAuthStatusResponse =
+  | { authenticated: true; host: string; login: string; name?: string; email?: string }
+  | { authenticated: false; host: string; error?: string };
+
+interface OkLocalOpRepoEntry {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+}
+
+type OkLocalOpAuthReposResponse =
+  | { ok: true; host: string; repos: OkLocalOpRepoEntry[] }
+  | { ok: false; error: string };
+
+/**
  * Renderer-facing Electron bridge. Populated on `window.okDesktop` by the
  * desktop preload script (§8.4.2 of the spec). Web distribution omits the
  * global entirely — consumers MUST use `window.okDesktop?.` optional chaining.
@@ -313,7 +359,7 @@ export interface OkDesktopBridge {
       | { ok: false; reason: 'invalid-path' | 'not-installed' | 'timeout' | 'spawn-error' }
     >;
     /**
-     * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`
+     * Append a local-only telemetry line to `~/.ok/stats.jsonl`
      * (SPEC 2026-04-21 §5.1 / E5b). Zero phone-home (XQ3 LOCKED). Resolves
      * even if HOME is unwritable — telemetry failure must never bubble up
      * and affect the dispatch path. Literal-union shape mirrors
@@ -469,6 +515,22 @@ export interface OkDesktopBridge {
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     /** User clicked Skip (or pressed ESC). */
     skip(): Promise<OkMcpWiringResult>;
+  };
+
+  /**
+   * Pre-project local-op flows. Required by the Project Navigator window
+   * (no backing API server). Editor windows use the HTTP path; this
+   * surface is unused there.
+   */
+  localOp: {
+    auth: {
+      start(): OkLocalOpStream<OkLocalOpAuthEvent>;
+    };
+    clone: {
+      start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
+    };
+    authStatus(request?: { host?: string }): Promise<OkLocalOpAuthStatusResponse>;
+    authRepos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
   };
 
   /** Current platform — `process.platform` reported by preload. */

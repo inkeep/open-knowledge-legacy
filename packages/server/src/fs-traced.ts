@@ -15,8 +15,16 @@
  * and the overhead is a single function-call indirection.
  */
 
-import type { WriteFileOptions } from 'node:fs';
-import { linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import type { RmOptions, WriteFileOptions } from 'node:fs';
+import {
+  linkSync,
+  mkdirSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 import type { Attributes } from '@opentelemetry/api';
@@ -26,8 +34,8 @@ import { withSpan, withSpanSync } from './telemetry.ts';
  * Normalize an absolute path to its last two segments plus a leading ellipsis,
  * so traces don't explode attribute cardinality with full user-home paths.
  *
- * Example: `/Users/alice/Documents/project/.git/open-knowledge/HEAD` →
- *          `.../open-knowledge/HEAD`
+ * Example: `/Users/alice/Documents/project/.git/ok/HEAD` →
+ *          `.../ok/HEAD`
  */
 export function normalizeFsPath(p: string): string {
   const segments = p.split(sep).filter(Boolean);
@@ -40,15 +48,15 @@ export function normalizeFsPath(p: string): string {
  * cardinality blow-up while keeping meaningful filtering in Grafana Tempo.
  */
 export function classifyFsPath(p: string): string {
-  if (p.includes(`${sep}.git${sep}open-knowledge${sep}`) || p.includes('shadow-repo')) {
+  if (p.includes(`${sep}.git${sep}ok${sep}`) || p.includes('shadow-repo')) {
     return 'shadow-repo';
   }
   if (p.includes(`${sep}.git${sep}`)) return 'git';
   if (basename(p).endsWith('.lock') || basename(p) === 'lock') return 'lock';
   if (basename(p) === 'principal.json') return 'principal';
-  if (p.includes(`${sep}.open-knowledge${sep}conflict`)) return 'conflict';
+  if (p.includes(`${sep}.ok${sep}conflict`)) return 'conflict';
+  if (p.includes(`${sep}.ok${sep}`)) return 'ok-internal';
   if (p.endsWith('.md') || p.endsWith('.mdx')) return 'content-md';
-  if (p.includes(`${sep}.open-knowledge${sep}`)) return 'ok-internal';
   return 'other';
 }
 
@@ -156,4 +164,16 @@ export function tracedLinkSync(existingPath: string, newPath: string): void {
       linkSync(existingPath, newPath);
     },
   );
+}
+
+export function tracedRmSync(path: string, options?: RmOptions): void {
+  withSpanSync('fs.rmSync', { attributes: buildAttrs('rmSync', path) }, () => {
+    rmSync(path, options);
+  });
+}
+
+export function tracedRmdirSync(path: string): void {
+  withSpanSync('fs.rmdirSync', { attributes: buildAttrs('rmdirSync', path) }, () => {
+    rmdirSync(path);
+  });
 }

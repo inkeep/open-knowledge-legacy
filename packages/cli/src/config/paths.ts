@@ -20,7 +20,7 @@ export function resolveContentDir(config: Config, cwd: string): string {
 }
 
 /**
- * The `.open-knowledge/` directory inside a contentDir — where the server
+ * The `.ok/` directory inside a contentDir — where the server
  * lock, registry entries, and other per-project state files live.
  */
 export function resolveLockDir(contentDir: string): string {

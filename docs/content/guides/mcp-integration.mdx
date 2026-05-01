@@ -6,7 +6,7 @@ The Open Knowledge MCP server gives AI agents structured access to your knowledg
 
 ## Three operating modes
 
-The MCP server adapts its behavior based on whether a collaboration server is running and whether auto-start is enabled. On startup it reads `<contentDir>/.open-knowledge/server.lock`; a live lock tells MCP the real port to connect to. If the lock is absent or stale, `ok mcp` detach-spawns `ok start` as a sibling process by default (opt-out restores the pre-Zero-Ceremony disk-only behavior).
+The MCP server adapts its behavior based on whether a collaboration server is running and whether auto-start is enabled. On startup it reads `<contentDir>/.ok/server.lock`; a live lock tells MCP the real port to connect to. If the lock is absent or stale, `ok mcp` detach-spawns `ok start` as a sibling process by default (opt-out restores the pre-Zero-Ceremony disk-only behavior).
 
 <Tabs items={["Connected mode", "Auto-spawn on first use", "Disk-only mode"]}>
 <Tab value="Connected mode">
@@ -17,7 +17,7 @@ Active when a live `server.lock` is found at startup — `ok start` or `bun run 
 - Undo/redo tracks agent edits separately from human edits
 </Tab>
 <Tab value="Auto-spawn on first use">
-Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `npx @inkeep/open-knowledge start` as a sibling process with a kernel-fd stderr redirect to `.open-knowledge/last-spawn-error.log`, then polls the lockfile for `port > 0` with a 5-second deadline.
+Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `npx @inkeep/open-knowledge start` as a sibling process with a kernel-fd stderr redirect to `.ok/last-spawn-error.log`, then polls the lockfile for `port > 0` with a 5-second deadline.
 
 - Zero ceremony — the agent's first tool call resurrects the full stack
 - Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
@@ -29,7 +29,7 @@ Active when no live `server.lock` is present and auto-start is **not** opted out
 Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.
 
 - Workflow tools (`init-content`, `ingest`, `research`) work normally — agents use their native file I/O alongside the instructional workflow tools
-- Auto-generated catalogs in `.open-knowledge/catalogs/` are still maintained
+- Auto-generated catalogs in `.ok/catalogs/` are still maintained
 - Document tools (`write_document`, `edit_document`, etc.) are **not** available since there is no CRDT layer to route through
 </Tab>
 </Tabs>
@@ -60,40 +60,47 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `get_backlinks` / `get_forward_links`         | Both      | Wiki-link graph queries                                                                      |
 | `get_hubs` / `get_orphans` / `get_dead_links` | Both      | Link-graph diagnostics                                                                       |
 | `suggest_links`                               | Both      | Suggest missing wiki-links for a target page                                                 |
-| `get_config`                                  | Always    | Read the effective merged config (defaults → user → workspace)                              |
+| `get_config`                                  | Always    | Read the effective merged config (defaults → user → project)                              |
 | `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
-| `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
-| `edit_document`                               | Connected | Find-and-replace on a document through the CRDT                                              |
+| `write_document`                              | Connected | Write content to a document through the CRDT (full document, including frontmatter)          |
+| `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
+| `rename_folder`                               | Connected | Rename a folder and rewrite inbound links across every affected doc in one call              |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
 | `get_history`                                 | Connected | Query the shadow-repo version timeline                                                       |
 | `save_version`                                | Connected | Checkpoint the project to a named shadow-repo commit                                         |
 
 Tools marked `Always` operate directly on the YAML files via the imported Zod schema and so work whether or not `ok start` is running. When a server IS running, the file watcher detects the write and propagates it into Y.Text, refreshing any open Settings panes within ~500ms.
 
-All 21 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block).
+All 22 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block). `rename_folder` emits one `previewUrls` map keyed by the new docName for every affected doc.
 
 <Callout type="info">
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
 
+### Frontmatter writes
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. Agents edit frontmatter through `write_document` (full-doc replace, including the `---\n…\n---` block). The browser-side property panel uses an in-process binding to manipulate the same region directly; agent and human edits land on the same Y.Text and merge through Y.js character-level CRDT.
+
+`edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `write_document`. Body edits stay on `edit_document`; frontmatter edits route through `write_document`. Mixing the two in one batch — body edit via `edit_document`, FM rewrite via `write_document` — is the supported pattern.
+
 ### `summary` on write tools
 
-The four write tools — `write_document`, `edit_document`, `rename_document`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
+The five write tools — `write_document`, `edit_document`, `rename_document`, `rename_folder`, `rollback_to_version` — accept an optional `summary: string` describing the intent of the edit in outcome phrasing (e.g. `"Fixed token-refresh race"`, not `"Added 3 lines"`). Summaries are persisted per-contributor to the shadow-repo attribution journal and render as bullets on the document's [[timeline|Timeline]] row, so readers can scan recent agent activity without opening each diff.
 
 - **Cap.** 80 characters at the API boundary (49 visible + `…` suffix when truncated). The Zod schema caps input at 200 characters as a transport-safety bound; summaries longer than 80 are truncated server-side and the tool response includes `truncatedFrom: <original-length>` so the agent can adjust.
-- **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document` and `edit_document` produce a bulletless row in that case.
-- **Attribution.** Only MCP-driven calls (i.e. those that pass through agent identity) attach a contributor entry. Human Restore actions taken in the React editor stay anonymous on the timeline as they always have.
+- **Optional.** Empty strings and whitespace-only values are treated as absent. `rename_document` and `rollback_to_version` fill in a default (`"Renamed <from> → <to>"` or `"Restored to <sha-short>"`) when no summary is provided; `write_document`, `edit_document`, and `rename_folder` produce a bulletless row in that case. For `rename_folder`, one summary is applied to every affected-doc contributor entry — one folder rename is one user intent, not N.
+- **Attribution.** Agent calls (those carrying agent identity) attach an `agent-<id>` contributor entry. UI-driven renames and rollbacks (no `agentId` in the request) attribute to the server-loaded principal (`principal-<uuid>`) — see [[timeline|Timeline]] for how the rows render.
 - **Privacy.** Avoid secrets or PII in summaries — they are persisted to git history.
 
 ### Config tools
 
-`get_config`, `set_config`, and `set_folder_rule` operate directly on `.open-knowledge/config.yml` (workspace) and `~/.open-knowledge/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
+`get_config`, `set_config`, and `set_folder_rule` operate directly on `.ok/config.yml` (project) and `~/.ok/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
 
 #### `get_config`
 
-Read the full effective merged config (defaults → user → workspace), or a sub-path:
+Read the full effective merged config (defaults → user → project), or a sub-path:
 
 ```ts
 get_config()                              // full config
@@ -107,17 +114,15 @@ Read-only and idempotent; no allowlist gating — every field is readable. Retur
 
 Patch one or more fields on the agent-settable allowlist. The patch is a deep-partial; `null` at any leaf clears the field; arrays replace wholesale (RFC 7396 spirit, TypeScript-only — no wire format).
 
-The allowlist is exactly five paths:
+The allowlist is exactly three paths:
 
-- `content.include`
-- `content.exclude`
 - `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
 - `mcp.tools.search.maxResults`
 - `mcp.tools.read_document.historyDepth`
 
-Anything else returns `error.code: NOT_AGENT_SETTABLE`.
+Anything else returns `error.code: NOT_AGENT_SETTABLE`. (Content scope is configured via `.okignore` — not via `set_config` — see [Content filtering](/guides/content-filtering).)
 
-There is no `scope` parameter — the server picks the write target (workspace vs user) per leaf via the inspect-ladder: existing-at-workspace → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
+There is no `scope` parameter — the server picks the write target (project vs user) per leaf via the inspect-ladder: existing-at-project → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
 
 Validation runs as a single Zod parse over the merged config before any disk write; on failure the response shape is `{ ok: false, error: ConfigValidationError }` (a discriminated union of `YAML_PARSE | SCHEMA_INVALID | SCOPE_VIOLATION | NOT_AGENT_SETTABLE | MIXED_SCOPE | WRITE_ERROR | UNKNOWN`) with a human-rendered error in `content[].text` that primes a retry. On success, the response includes `{ applied, scope, current }` so the agent can confirm the effective state without re-fetching.
 
@@ -144,8 +149,8 @@ Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for
 
 1. `openknowledge://` URL scheme — emitted when the server detects it is running inside the Open Knowledge desktop app (via `OK_ELECTRON_PROTOCOL_HOST=1`, which the desktop main process injects at utility-fork time). The resulting URL is `openknowledge://open?project=<realpath>&doc=<docName>` and routes through the desktop's main-process URL handler to the correct project window. CLI / `bunx` servers never set the flag, so they fall through to the HTTP sources below.
 2. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
-3. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
-4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+3. `<contentDir>/.ok/ui.lock` — the live `ok ui` process's port.
+4. `config.preview.baseUrl` in `.ok/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 
@@ -166,7 +171,7 @@ CLI-origin `ok init` continues to produce the `{"command": "npx", "args": ["@ink
 
 ### Marker file
 
-The dialog records its outcome in `~/.open-knowledge/mcp-status.json` (next to `~/.open-knowledge/config.yml`):
+The dialog records its outcome in `~/.ok/mcp-status.json` (next to `~/.ok/config.yml`):
 
 ```json
 {
@@ -181,7 +186,7 @@ Skipped runs write `{ "configured": false, "skippedAt": "..." }` instead. Either
 
 ### Re-triggering the dialog
 
-Delete `~/.open-knowledge/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
+Delete `~/.ok/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
 
 <Callout type="info" title="CLI users">
 If you installed via `npx @inkeep/open-knowledge` and ran `ok init` from the terminal, MCP is already wired — the consent dialog is only relevant for users who arrived via the DMG. Both paths coexist safely; if you later install the DMG, the dialog detects your existing OK entries and overwrites them with the bundle-absolute `cliPath` shape (foreign customizations are preserved).
@@ -197,9 +202,9 @@ npx @inkeep/open-knowledge mcp
 
 ## Mirrored catalogs
 
-The MCP server maintains auto-generated `INDEX.md` files in `.open-knowledge/catalogs/` that mirror the project's directory structure. These are rebuilt when content files change (500ms quiet period, 2s max debounce).
+The MCP server maintains auto-generated `INDEX.md` files in `.ok/catalogs/` that mirror the project's directory structure. These are rebuilt when content files change (500ms quiet period, 2s max debounce).
 
-Agents use these catalogs for navigation -- the MCP server's connect instructions tell agents to start with `.open-knowledge/catalogs/INDEX.md`.
+Agents use these catalogs for navigation -- the MCP server's connect instructions tell agents to start with `.ok/catalogs/INDEX.md`.
 
 ## Supported clients
 

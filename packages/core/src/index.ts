@@ -86,8 +86,8 @@ export {
 } from './constants/activity.ts';
 export {
   CC1_CONTRACT_VERSION,
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   CONFIG_DOC_NAMES,
   type ConfigDocName,
   SYSTEM_DOC_NAME,
@@ -118,7 +118,12 @@ export {
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
 export { EscapeMark } from './extensions/escape-mark.ts';
-export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
+export {
+  FRONTMATTER_RE,
+  prependFrontmatter,
+  stripFrontmatter,
+  unwrapFrontmatterFences,
+} from './extensions/frontmatter.ts';
 export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';
 export { HtmlBlockFidelity } from './extensions/html-block-fidelity.ts';
@@ -177,6 +182,12 @@ export {
 export { MarkdownManager } from './markdown/index.ts';
 export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
+  isRelativeUrl,
+  isSafeUrl,
+  SAFE_URL_SCHEME_RE,
+  SAFE_URL_SCHEMES,
+} from './markdown/safe-url.ts';
+export {
   getParseHealth,
   incrementBlockFallback,
   incrementJsxAutoConvertFailed,
@@ -200,6 +211,7 @@ export {
   wildcardMeta,
 } from './registry/index.ts';
 export type {
+  ClipboardHastContext,
   JsxComponentMeta,
   PropDef,
   PropDefBase,
@@ -256,20 +268,74 @@ export { extensionOf } from './utils/extension.ts';
 export {
   applyFastDiff,
   applyIncrementalDiff,
+  applyPatchToFm,
+  applyRenameToFm,
+  applyReorderToFm,
   assertContentPreservation,
   BridgeMergeContentLossError,
   type BridgeMergeContentLossInfo,
   type BridgeMergeContentLossLogPayload,
   type BridgeMergeContentLossSide,
   type BridgeMergeContentLossWhich,
+  bindFrontmatterDoc,
   type DiffChange,
   defaultScheduler,
+  detectFmRegion,
   diffLinesFast,
-  getFrontmatter,
+  type FmEditError,
+  type FmEditResult,
+  FORM_WRITE_ORIGIN,
+  type FrontmatterBinding,
+  type FrontmatterBindingPatchResult,
+  type FrontmatterBindingPatchSuccess,
+  type FrontmatterBindingRenameResult,
+  type FrontmatterBindingRenameSuccess,
+  type FrontmatterBindingReorderResult,
+  type FrontmatterBindingReorderSuccess,
+  type FrontmatterBindingUnsubscribe,
+  type FrontmatterDocProvider,
+  type FrontmatterSnapshot,
+  MAX_FM_REGION_BYTES,
   mergeThreeWay,
   normalizeBridge,
+  type ParsedFmRegion,
+  parseFencedFmRegion,
+  parseFmRegion,
+  readFmKeys,
+  readFmMap,
+  readFmRegionWithError,
   type Scheduler,
 } from './bridge/index.ts';
+export {
+  type FrontmatterIssue,
+  FrontmatterIssueSchema,
+  type FrontmatterValidationError,
+  FrontmatterValidationErrorSchema,
+  fieldErrorsFromError,
+  toFrontmatterIssue,
+} from './frontmatter/errors.ts';
+export {
+  FRONTMATTER_TYPES,
+  type FrontmatterMap,
+  FrontmatterMapSchema,
+  type FrontmatterPatch,
+  FrontmatterPatchSchema,
+  type FrontmatterType,
+  FrontmatterTypeSchema,
+  type FrontmatterValue,
+  FrontmatterValueSchema,
+  inferType,
+  isIsoDateString,
+} from './frontmatter/schema.ts';
+// Frontmatter — per-key value schema + canonical YAML codec
+export {
+  applyPatchToDocument,
+  getDocumentKeys,
+  type ParsedFrontmatter,
+  parseFrontmatterYaml,
+  serializeFrontmatterMap,
+  withFences,
+} from './frontmatter/yaml-codec.ts';
 // Types
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {

@@ -1,13 +1,16 @@
 /**
- * Branch-routing tests for the WYSIWYG paste dispatcher (FR-3 / D6).
+ * Branch-routing tests for the WYSIWYG paste dispatcher.
  *
  * The dispatcher is a priority-ordered series of guards:
- *   0. FR-17 Cmd+Shift+V escape hatch
- *   0. FR-10 cursor-in-codeBlock short-circuit
+ *   0. Cmd+Shift+V escape hatch
+ *   0. Cursor-in-codeBlock short-circuit
  *   A. vscode-editor-data → fenced code block
  *   B. text/x-gfm → MarkdownManager.parse
- *   C. data-pm-slice → PM native parseFromClipboard (return false)
- *   B. Ambiguous paste (plain + html both, plain is markdown) → markdown path (FR-13)
+ *   B. Markdown-first tiebreak: plain (markdown-shaped) + html → mdManager.parse(plain).
+ *      Runs ahead of Branch C so OK→OK and cross-PM-editor pastes route
+ *      through the canonical text/plain markdown bytes.
+ *   C. data-pm-slice → PM native parseFromClipboard (return false). Reached
+ *      only when the markdown-first tiebreak above did not fire.
  *   D. Generic HTML → shared htmlToMdast pipeline
  *   E. text/plain only → markdown-first if threshold hit, else verbatim
  *
@@ -164,6 +167,36 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     );
   });
 
+  test('Branch A: malformed vscode-editor-data JSON falls through to a later branch', () => {
+    // The dispatcher's catch contract: when `JSON.parse` throws on
+    // malformed VS Code metadata, `tryBranchA` returns false (not throws),
+    // emits structured telemetry, and the dispatcher continues to the next
+    // branch. Without this contract, every paste from a misbehaving VS
+    // Code extension would die with an uncaught throw and lose the user's
+    // content. Pin the behavior so a refactor can't silently remove the
+    // catch.
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: fakeMdManager() as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      // Truncated / non-JSON metadata — `JSON.parse` throws.
+      'vscode-editor-data': '{not json',
+      'text/plain': 'fallback content',
+    });
+    // Returns true because a later branch (Branch E text/plain markdown
+    // tiebreak — `fallback content` is plain prose so isMarkdown returns
+    // false → CM6-default verbatim insert via Branch E) handles the
+    // payload. The exact branch isn't load-bearing here — the test pins
+    // that the catch path returned false so the dispatcher could continue
+    // (i.e., the throw didn't escape).
+    expect(() => paste(view, evt)).not.toThrow();
+    // Branch A's codeBlock.create must NOT have been called — the throw
+    // happened before dispatch.
+    expect(view.state.schema.nodes.codeBlock.create).not.toHaveBeenCalled();
+  });
+
   test('Branch C: data-pm-slice fingerprint returns false (PM handles)', () => {
     const paste = createHandlePaste({
       // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
@@ -261,6 +294,84 @@ describe('WYSIWYG paste dispatcher — branch routing', () => {
     const evt = fakeDT({ 'text/plain': '# H', 'text/html': '<h1>H</h1>' });
     Object.defineProperty(evt, 'shiftKey', { value: true, configurable: true });
     expect(paste(view, evt)).toBe(true);
+    expect(md.parse).not.toHaveBeenCalled();
+  });
+});
+
+describe('WYSIWYG paste dispatcher — markdown-first tiebreak ordering (D5/D13)', () => {
+  test('OK→OK <img/> JSX paste: markdown-first wins over Branch C data-pm-slice', () => {
+    // OK copy of `<img src="x.png" />` writes both text/plain (canonical
+    // markdown-shaped via lowercase-JSX-with-attr) AND text/html (with
+    // PM's auto-attached data-pm-slice). Pre-reorder, Branch C would catch
+    // first → return false → PM parseFromClipboard → TipTap Image extension
+    // parseDOM (priority 50) silently flips to image node. Post-reorder,
+    // markdown-first fires and routes through mdManager.parse so descriptor
+    // identity is preserved.
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '<img src="x.png" />',
+      'text/html': '<div data-pm-slice="0 0 paragraph"><img src="x.png" /></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('<img src="x.png" />');
+  });
+
+  test('OK→OK <Callout> JSX paste: markdown-first wins over Branch C', () => {
+    // Capitalized JSX signal in the heuristic catches `<Callout>` shape.
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '<Callout type="note">body</Callout>',
+      'text/html':
+        '<div data-pm-slice="0 0 paragraph"><pre><code>&lt;Callout&gt;</code></pre></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('<Callout type="note">body</Callout>');
+  });
+
+  test('Cross-PM-editor: markdown-canonical text/plain routes through markdown path even with PM slice', () => {
+    // Linear/Outline/BlockNote canonical markdown text/plain. Branch C
+    // would also handle this correctly today, but markdown-first preserves
+    // the canonical bytes more directly (no PM-tree round-trip through
+    // parseFromClipboard).
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': '# H\n\n- a\n- b\n',
+      'text/html': '<div data-pm-slice="0 0 paragraph"><h1>H</h1></div>',
+    });
+    expect(paste(view, evt)).toBe(true);
+    expect(md.parse).toHaveBeenCalledWith('# H\n\n- a\n- b\n');
+  });
+
+  test('Branch C still fires when text/plain is non-markdown prose (no false-positive on heuristic)', () => {
+    // OK→OK paste of plain prose (no markdown signals) → markdown-first
+    // does not fire → Branch C catches → PM handles natively.
+    const md = fakeMdManager();
+    const paste = createHandlePaste({
+      // biome-ignore lint/suspicious/noExplicitAny: narrow fake md manager
+      mdManager: md as any,
+    });
+    const view = fakeView();
+    const evt = fakeDT({
+      'text/plain': 'plain prose without markdown signals',
+      'text/html':
+        '<div data-pm-slice="0 0 paragraph"><p>plain prose without markdown signals</p></div>',
+    });
+    expect(paste(view, evt)).toBe(false);
     expect(md.parse).not.toHaveBeenCalled();
   });
 });

@@ -116,14 +116,14 @@ async function runClone(
 
   if (!opts.json) process.stderr.write('\n');
 
-  // Auto-init: scaffold .open-knowledge/ unconditionally. `runInit` is idempotent
+  // Auto-init: scaffold .ok/ unconditionally. `runInit` is idempotent
   // via per-file `writeIfMissing`, so it backfills a missing `.gitignore` even
-  // when upstream committed `.open-knowledge/config.yml` without one.
+  // when upstream committed `.ok/config.yml` without one.
   try {
     const { runInit } = await import('./init.ts');
     const initResult = await runInit({ cwd: targetDir, mcp: false });
     // Surface the `updated` classification so silent mutation of an
-    // upstream-tracked .open-knowledge/.gitignore doesn't hide behind ✓ Cloned.
+    // upstream-tracked .ok/.gitignore doesn't hide behind ✓ Cloned.
     if (initResult.contentUpdated.length > 0) {
       const msg = `auto-init: updated ${initResult.contentUpdated.join(', ')}`;
       if (opts.json) emit(true, { type: 'warning', message: msg });
@@ -137,7 +137,7 @@ async function runClone(
     else process.stderr.write(`  auto-init: ${msg}\n`);
   }
 
-  // Per-clone protection from upstream pollution: append `.open-knowledge/` to
+  // Per-clone protection from upstream pollution: append `.ok/` to
   // the cloned repo's `.git/info/exclude`. That file is per-clone and never
   // committed, so OK state can't accidentally land in someone else's tree from
   // a stray `git add .`. Symmetric with `ok init`'s stance — `init` is the
@@ -158,8 +158,8 @@ async function runClone(
  * Append `${OK_DIR}/` to `<projectDir>/.git/info/exclude` so the cloned repo's
  * outer git ignores OK state without mutating any tracked file.
  *
- * Idempotent: recognizes the common variants (`.open-knowledge`,
- * `.open-knowledge/`, leading-slash rooted forms) and only appends when none
+ * Idempotent: recognizes the common variants (`.ok`,
+ * `.ok/`, leading-slash rooted forms) and only appends when none
  * are present. Returns `'no-exclude'` when the file is absent (e.g., not a git
  * repo, or a bare repo with no `info/` dir) — the caller treats that case as
  * a no-op.

@@ -207,4 +207,35 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
       expect(doc.slice(delRanges[0].from, delRanges[0].to)).toBe('milk');
     });
   });
+
+  describe('YAML frontmatter — decorations skip the FM region', () => {
+    test('list-style items inside `--- … ---` do NOT get .cm-list-item', () => {
+      // Markdown-list parsing fires on `  - characters` even though the
+      // line is inside a YAML frontmatter block. Applying `.cm-list-item`'s
+      // negative `text-indent` to YAML lines clips the leading whitespace
+      // into negative-x and makes `  - foo` render flush-left. Skip those
+      // decorations for any node inside the FM region.
+      const doc = '---\ntags:\n  - characters\n  - air-nomads\n---\n# Body\n';
+      const decos = collect(doc);
+      // line 3 (`  - characters`) starts at offset 11; line 4 (`  - air-nomads`)
+      // at offset 28. Neither should carry `cm-list-item`.
+      expect(classesAtLine(decos, 11).join(' ')).not.toContain('cm-list-item');
+      expect(classesAtLine(decos, 28).join(' ')).not.toContain('cm-list-item');
+    });
+
+    test('body list items AFTER the FM block still get .cm-list-item', () => {
+      const doc = '---\ntags:\n  - characters\n---\n- body item\n';
+      const decos = collect(doc);
+      // Find the body list line — `- body item` after the closing fence.
+      const bodyListStart = doc.indexOf('- body item');
+      expect(classesAtLine(decos, bodyListStart).join(' ')).toContain('cm-list-item');
+    });
+
+    test('doc with no FM block: list items render with .cm-list-item as before', () => {
+      const doc = '- alpha\n- beta\n';
+      const decos = collect(doc);
+      expect(classesAtLine(decos, 0).join(' ')).toContain('cm-list-item');
+      expect(classesAtLine(decos, 8).join(' ')).toContain('cm-list-item');
+    });
+  });
 });

@@ -3,7 +3,7 @@
  *
  * Verifies:
  *   1. S1.um.undo() reverts only S1's last transaction (S2 preserved).
- *   2. One transact() touching Y.Text + metaMap + flashMap = one undo step.
+ *   2. One transact() touching Y.Text + flashMap = one undo step.
  *   3. closeSession() destroys the UM (no longer tracks new writes after destroy).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -53,32 +53,29 @@ describe('US-008: per-session UndoManager integration', () => {
     await sessionManager.closeSession(docName, 'agent-s2');
   });
 
-  test('one transact() on [Y.Text + metaMap + flashMap] = one undo step', async () => {
+  test('one transact() on [Y.Text + flashMap] = one undo step', async () => {
     const docName = `test-um-atomic-${crypto.randomUUID()}`;
     const sessionManager = server.instance.sessionManager;
 
     const session = await sessionManager.getSession(docName, 'agent-atomic');
     const ytext = session.dc.document.getText('source');
-    const metaMap = session.dc.document.getMap('metadata');
     const flashMap = session.dc.document.getMap('agent-flash');
 
-    // Single transaction touching all three Y-types.
+    // FM lives in the YAML region of Y.Text (D8) — single transaction
+    // touching Y.Text (which carries both FM region + body) and the flash
+    // map.
     session.dc.document.transact(() => {
-      ytext.insert(0, 'atomic write\n');
-      metaMap.set('frontmatter', '---\ntitle: Test\n---\n');
+      ytext.insert(0, '---\ntitle: Test\n---\natomic write\n');
       flashMap.set('agent-atomic', { timestamp: Date.now() });
     }, session.origin);
 
     // All writes in one transact() capture as one undo step.
     expect(session.um.undoStack.length).toBe(1);
 
-    // Undo reverts all three atomically.
+    // Undo reverts both atomically.
     session.um.undo();
 
     expect(ytext.toString()).toBe('');
-    // Y.Map undo restores the prior value (empty string), not undefined —
-    // the key existed before the transact() wrote '---\ntitle: Test\n---\n'.
-    expect(metaMap.get('frontmatter')).toBe('');
     expect(flashMap.get('agent-atomic')).toBeUndefined();
 
     await sessionManager.closeSession(docName, 'agent-atomic');

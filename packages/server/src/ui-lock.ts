@@ -6,7 +6,7 @@
  * `<lockDir>/ui.lock` contains JSON metadata used for stale detection and
  * for MCP tool preview-url discovery (see `preview-url.ts`).
  *
- * `lockDir` is `<contentDir>/.open-knowledge` by convention.
+ * `lockDir` is `<contentDir>/.ok` by convention.
  *
  * Sibling of `server-lock.ts` (guards the Hocuspocus collab server) and
  * `shadow-lock.ts` (guards the shadow repo). All three share

@@ -1,12 +1,12 @@
 /**
  * Per-scope config inspection — most-specific-set scope wins.
  *
- * Reads workspace + user-global YAML files SEPARATELY (not merged) and
+ * Reads project + user-global YAML files SEPARATELY (not merged) and
  * reports whether each requested path is set at each scope. Used by the
  * MCP `set_config` tool to infer the write target without exposing
  * `scope` to agents:
  *
- *   inspectConfig(path).workspace
+ *   inspectConfig(path).project
  *     ?? inspectConfig(path).user
  *     ?? fieldRegistry.get(field).defaultScope
  *     ?? 'user'
@@ -19,10 +19,10 @@ import { parseDocument } from 'yaml';
 import { resolveConfigPath } from './write-config-patch.ts';
 
 export interface ConfigPathPresence {
-  /** Whether the path is set in `<homedir>/.open-knowledge/config.yml`. */
+  /** Whether the path is set in `<homedir>/.ok/config.yml`. */
   user: boolean;
-  /** Whether the path is set in `<cwd>/.open-knowledge/config.yml`. */
-  workspace: boolean;
+  /** Whether the path is set in `<cwd>/.ok/config.yml`. */
+  project: boolean;
 }
 
 export interface InspectConfigPathsOptions {
@@ -48,19 +48,19 @@ export function inspectConfigPaths(
   opts: InspectConfigPathsOptions,
 ): Map<string, ConfigPathPresence> {
   const userJson = readJsonForScope('user', opts);
-  const workspaceJson = readJsonForScope('workspace', opts);
+  const projectJson = readJsonForScope('project', opts);
   const result = new Map<string, ConfigPathPresence>();
   for (const path of paths) {
     const key = path.join('.');
     result.set(key, {
       user: hasPathInJson(userJson, path),
-      workspace: hasPathInJson(workspaceJson, path),
+      project: hasPathInJson(projectJson, path),
     });
   }
   return result;
 }
 
-function readJsonForScope(scope: 'user' | 'workspace', opts: InspectConfigPathsOptions): unknown {
+function readJsonForScope(scope: 'user' | 'project', opts: InspectConfigPathsOptions): unknown {
   const absPath = resolveConfigPath(scope, opts.cwd, opts.homedirOverride);
   if (!existsSync(absPath)) return null;
   let raw: string;
@@ -69,8 +69,8 @@ function readJsonForScope(scope: 'user' | 'workspace', opts: InspectConfigPathsO
   } catch (e) {
     // Permission denied / unreadable file. Treat as "not present" for scope
     // inference, but warn so operators see the cause rather than silent
-    // mis-routing of writes (e.g., a workspace-locked field falling back
-    // to user scope because the workspace YAML couldn't be read).
+    // mis-routing of writes (e.g., a project-locked field falling back
+    // to user scope because the project YAML couldn't be read).
     const code = (e as NodeJS.ErrnoException).code;
     if (code !== 'ENOENT') {
       console.warn(

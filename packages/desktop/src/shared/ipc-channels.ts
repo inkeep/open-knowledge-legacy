@@ -18,7 +18,11 @@ import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
-import type { OkDesktopConfig } from './bridge-contract.ts';
+import type {
+  OkDesktopConfig,
+  OkLocalOpAuthReposResponse,
+  OkLocalOpAuthStatusResponse,
+} from './bridge-contract.ts';
 
 /** Recent-project row as surfaced to the Navigator. */
 export interface RecentProject {
@@ -47,7 +51,7 @@ export type SpawnOutcome =
 
 /**
  * Append-only telemetry payload — one JSONL line per Open-in-Agent dispatch
- * written to `~/.open-knowledge/stats.jsonl` (SPEC 2026-04-21 §5.1 / E5b).
+ * written to `~/.ok/stats.jsonl` (SPEC 2026-04-21 §5.1 / E5b).
  * Zero phone-home (XQ3 LOCKED). Local-only diagnostic counter — when a
  * dogfood user reports "it didn't work," the file gives target / outcome /
  * reason history without any network egress.
@@ -165,7 +169,7 @@ export interface RequestChannels {
    */
   'ok:shell:show-item-in-folder': { args: [path: string]; result: undefined };
   /**
-   * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`.
+   * Append a local-only telemetry line to `~/.ok/stats.jsonl`.
    * Zero phone-home (XQ3 LOCKED). Resolves on success; resolves (without
    * throwing) when HOME is unwritable so the dispatch path is never affected
    * by telemetry failure (SPEC 2026-04-21 §13.1 / E5b).
@@ -269,7 +273,7 @@ export interface RequestChannels {
    * M6b first-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
    * Main resolves the hybrid `cliPath` per D-M6-R9, classifies each editor's
    * existing entry via `computeForce`, calls `writeUserMcpConfigs`, and writes
-   * the user-scoped marker at `<home>/.open-knowledge/mcp-status.json` IFF
+   * the user-scoped marker at `<home>/.ok/mcp-status.json` IFF
    * every per-editor write succeeds (deferred-marker per OQ-19). Per-editor
    * failures emit `mcp-wiring-write-failed` structured logs and leave the
    * marker absent so the dialog re-fires next launch. Foreign (user-customized)
@@ -320,4 +324,44 @@ export interface RequestChannels {
    * SPEC 2026-04-24 Ship 1e / 1j (local-build simplification).
    */
   'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
+
+  /**
+   * Pre-project local-op flows for the Navigator window (which has no
+   * backing API server). The HTTP path at /api/local-op/auth/login +
+   * /api/local-op/clone is unreachable from Navigator (`apiOrigin` is
+   * empty), so these IPC channels spawn the same CLI subprocess directly
+   * from the main process and stream events via `webContents.send`.
+   *
+   * Editor windows continue using the HTTP path — no regression. See
+   * `packages/server/src/local-ops/` for the shared subprocess runners.
+   *
+   * Lifetime: `start` returns a `streamId` that subsequent `:event` push
+   * messages and the `:cancel` invoker reference. Main tracks one in-flight
+   * flow per channel; concurrent starts return `error: 'busy'`.
+   */
+  'ok:local-op:auth:start': {
+    args: [];
+    result: { ok: true; streamId: string } | { ok: false; error: string };
+  };
+  'ok:local-op:auth:cancel': { args: [streamId: string]; result: undefined };
+  'ok:local-op:clone:start': {
+    args: [request: { url: string; dir: string }];
+    result: { ok: true; streamId: string } | { ok: false; error: string };
+  };
+  'ok:local-op:clone:cancel': { args: [streamId: string]; result: undefined };
+
+  /**
+   * One-shot auth queries — Navigator uses these in place of the HTTP
+   * `/api/local-op/auth/{status,repos}` endpoints. Bounded responses
+   * (status: one line; repos: bounded list) so no streaming surface
+   * needed.
+   */
+  'ok:local-op:auth:status': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthStatusResponse;
+  };
+  'ok:local-op:auth:repos': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthReposResponse;
+  };
 }

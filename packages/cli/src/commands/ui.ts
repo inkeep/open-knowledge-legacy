@@ -154,7 +154,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // broken links from package-manager swaps; eager traversal makes UI boot
   // fail before it has served a single request.
   //
-  // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
+  // `dotfiles: false` still keeps `.ok/` out of reach.
   // `extensions: []` disables sirv's default `['html', 'htm']` fallback —
   // without this, a request to `/docs/evil` transparently resolves
   // `docs/evil.html` and serves it as `text/html`, bypassing the
@@ -171,8 +171,6 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
         contentFilter: createContentFilter({
           projectDir: opts.cwd,
           contentDir,
-          includePatterns: opts.config.content.include,
-          excludePatterns: opts.config.content.exclude,
         }),
         contentSirv: sirv(contentDir, { dotfiles: false, dev: true, extensions: [] }),
         inlineExtensions: INLINE_RENDERABLE_EXTENSIONS,
@@ -604,7 +602,7 @@ export function uiCommand(getConfig: () => Config): Command {
           // mid-shutdown throw still removes the lockfile. Inverting this
           // (lock first, socket close second) re-introduces the stale-lock
           // + EADDRINUSE race the zero-ceremony design set out to eliminate.
-          // Matches the shutdown pattern in `packages/server/src/standalone.ts`.
+          // Matches the shutdown pattern in `packages/server/src/server-factory.ts`.
           handle.detachSafetyNet();
           const finish = () => {
             try {

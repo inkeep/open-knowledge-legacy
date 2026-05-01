@@ -11,8 +11,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  CONFIG_DOC_NAME_PROJECT,
   CONFIG_DOC_NAME_USER,
-  CONFIG_DOC_NAME_WORKSPACE,
   type ConfigValidationError,
   isKnownConfigError,
 } from '@inkeep/open-knowledge-core';
@@ -68,7 +68,7 @@ function makeFixture(): Fixture {
 }
 
 function writeWorkspaceConfig(projectDir: string, content: string): string {
-  const path = join(projectDir, '.open-knowledge', 'config.yml');
+  const path = join(projectDir, '.ok', 'config.yml');
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, 'utf-8');
   return path;
@@ -85,15 +85,15 @@ afterEach(() => {
 });
 
 describe('configDocAbsPath', () => {
-  test('workspace doc resolves under projectDir/.open-knowledge/config.yml', () => {
-    expect(configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx)).toBe(
-      join(fx.projectDir, '.open-knowledge', 'config.yml'),
+  test('project doc resolves under projectDir/.ok/config.yml', () => {
+    expect(configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx)).toBe(
+      join(fx.projectDir, '.ok', 'config.yml'),
     );
   });
 
-  test('user doc resolves under homedirOverride/.open-knowledge/config.yml', () => {
+  test('user doc resolves under homedirOverride/.ok/config.yml', () => {
     expect(configDocAbsPath(CONFIG_DOC_NAME_USER, fx.ctx)).toBe(
-      join(fx.homedir, '.open-knowledge', 'config.yml'),
+      join(fx.homedir, '.ok', 'config.yml'),
     );
   });
 
@@ -108,10 +108,10 @@ describe('loadConfigDoc — cold start', () => {
     writeWorkspaceConfig(fx.projectDir, yaml);
     const doc = new Y.Doc();
 
-    loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
 
     expect(doc.getText('source').toString()).toBe(yaml);
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe(yaml);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe(yaml);
   });
 
   test('missing disk file → empty Y.Text + LKG = serialized defaults', () => {
@@ -130,13 +130,13 @@ describe('loadConfigDoc — cold start', () => {
     writeWorkspaceConfig(fx.projectDir, broken);
     const doc = new Y.Doc();
 
-    loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
 
     // Y.Text gets the raw bytes — the load surfaces what's actually on
     // disk; the L3 hook surfaces the rejection on first store.
     expect(doc.getText('source').toString()).toBe(broken);
     // LKG falls back to defaults so the revert path has a valid floor.
-    const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE);
+    const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT);
     expect(lkg).toBeDefined();
     expect(lkg).not.toBe(broken);
   });
@@ -151,7 +151,7 @@ describe('loadConfigDoc — cold start', () => {
       observedOrigin = tx.origin;
     });
 
-    loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
 
     expect(observedOrigin).toBe(CONFIG_VALIDATION_REVERT_ORIGIN);
   });
@@ -161,9 +161,9 @@ describe('loadConfigDoc — cold start', () => {
     writeWorkspaceConfig(fx.projectDir, yaml);
     const doc = new Y.Doc();
 
-    loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
     const firstLength = doc.getText('source').length;
-    loadConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    loadConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, fx.ctx);
 
     expect(doc.getText('source').length).toBe(firstLength);
   });
@@ -172,15 +172,15 @@ describe('loadConfigDoc — cold start', () => {
 describe('storeConfigDoc — happy path', () => {
   test('valid Y.Text content writes disk and updates LKG', async () => {
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, '');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, '');
     doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('persisted');
-    const path = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
     expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n');
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe('mcp:\n  autoStart: false\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe('mcp:\n  autoStart: false\n');
     expect(fx.rejections).toHaveLength(0);
   });
 
@@ -188,7 +188,7 @@ describe('storeConfigDoc — happy path', () => {
     const doc = new Y.Doc();
     doc.getText('source').insert(0, 'mcp:\n  autoStart: true\n');
 
-    expect(existsSync(join(fx.homedir, '.open-knowledge'))).toBe(false);
+    expect(existsSync(join(fx.homedir, '.ok'))).toBe(false);
     const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_USER, undefined, fx.ctx);
 
     expect(outcome).toBe('persisted');
@@ -200,9 +200,9 @@ describe('storeConfigDoc — happy path', () => {
     const doc = new Y.Doc();
     doc.getText('source').insert(0, 'mcp:\n  autoStart: false\n');
 
-    await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
-    const dir = join(fx.projectDir, '.open-knowledge');
+    const dir = join(fx.projectDir, '.ok');
     const entries = readdirSafe(dir);
     expect(entries.filter((e) => e.includes('.tmp.'))).toHaveLength(0);
     expect(entries).toContain('config.yml');
@@ -217,25 +217,25 @@ describe('storeConfigDoc — write failures', () => {
     // Pre-create absPath as a directory so the rename in atomic write fails
     // with EISDIR. Validation passes (content is well-formed); only the
     // disk write step throws.
-    const absPath = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    const absPath = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
     mkdirSync(absPath, { recursive: true });
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('write-failed');
     expect(fx.rejections).toHaveLength(1);
-    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_PROJECT);
     expect(fx.rejections[0]?.error.code).toBe('WRITE_ERROR');
 
     // LKG was NOT updated — next mutation will retry.
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBeUndefined();
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBeUndefined();
 
     // Y.Text retains the user's edit; content was valid, only the write failed.
     expect(doc.getText('source').toString()).toBe('mcp:\n  autoStart: false\n');
 
     // No leftover .tmp.* files in the parent directory — best-effort cleanup
     // ran when the rename threw.
-    const dir = join(fx.projectDir, '.open-knowledge');
+    const dir = join(fx.projectDir, '.ok');
     const entries = readdirSafe(dir);
     expect(entries.filter((e) => e.includes('.tmp.'))).toHaveLength(0);
   });
@@ -244,38 +244,38 @@ describe('storeConfigDoc — write failures', () => {
 describe('storeConfigDoc — short-circuits', () => {
   test('entry-gate: lastTransactionOrigin === CONFIG_VALIDATION_REVERT_ORIGIN → no-op', async () => {
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: true\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
     doc.getText('source').insert(0, 'totally garbage content not yaml');
 
     const outcome = await storeConfigDoc(
       doc,
-      CONFIG_DOC_NAME_WORKSPACE,
+      CONFIG_DOC_NAME_PROJECT,
       CONFIG_VALIDATION_REVERT_ORIGIN,
       fx.ctx,
     );
 
     expect(outcome).toBe('no-op');
-    expect(existsSync(join(fx.projectDir, '.open-knowledge', 'config.yml'))).toBe(false);
+    expect(existsSync(join(fx.projectDir, '.ok', 'config.yml'))).toBe(false);
     expect(fx.rejections).toHaveLength(0);
   });
 
   test('empty Y.Text → no-op (lazy file creation)', async () => {
     const doc = new Y.Doc();
     // Y.Text is empty by construction.
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('no-op');
-    expect(existsSync(join(fx.projectDir, '.open-knowledge', 'config.yml'))).toBe(false);
+    expect(existsSync(join(fx.projectDir, '.ok', 'config.yml'))).toBe(false);
   });
 
   test('content equals LKG → no-op (no spurious rewrite)', async () => {
     const yaml = 'mcp:\n  autoStart: true\n';
     writeWorkspaceConfig(fx.projectDir, yaml);
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, yaml);
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, yaml);
     doc.getText('source').insert(0, yaml);
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('no-op');
   });
@@ -284,11 +284,11 @@ describe('storeConfigDoc — short-circuits', () => {
 describe('storeConfigDoc — rejection + revert', () => {
   test('invalid YAML → reverts Y.Text to LKG + fires onConfigRejected', async () => {
     const lkgYaml = 'mcp:\n  autoStart: false\n';
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, lkgYaml);
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, lkgYaml);
     const doc = new Y.Doc();
     doc.getText('source').insert(0, 'not: [valid: yaml: at: all\n');
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('reverted');
     expect(doc.getText('source').toString()).toBe(lkgYaml);
@@ -296,23 +296,23 @@ describe('storeConfigDoc — rejection + revert', () => {
     const r = fx.rejections[0];
     expect(r).toBeDefined();
     if (!r) throw new Error('rejection missing');
-    expect(r.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(r.docName).toBe(CONFIG_DOC_NAME_PROJECT);
     expect(isKnownConfigError(r.error)).toBe(true);
     if (isKnownConfigError(r.error)) {
       expect(r.error.code).toBe('YAML_PARSE');
     }
     // Disk file unchanged (it never existed in this test).
-    expect(existsSync(join(fx.projectDir, '.open-knowledge', 'config.yml'))).toBe(false);
+    expect(existsSync(join(fx.projectDir, '.ok', 'config.yml'))).toBe(false);
   });
 
   test('schema-invalid → reverts Y.Text + structured SCHEMA_INVALID error with issues', async () => {
     const lkgYaml = 'mcp:\n  autoStart: false\n';
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, lkgYaml);
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, lkgYaml);
     const doc = new Y.Doc();
     // mcp.tools.search.maxResults is a positive int; string value fails safeParse.
     doc.getText('source').insert(0, 'mcp:\n  tools:\n    search:\n      maxResults: "fifty"\n');
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('reverted');
     expect(doc.getText('source').toString()).toBe(lkgYaml);
@@ -332,21 +332,21 @@ describe('storeConfigDoc — rejection + revert', () => {
     const doc = new Y.Doc();
     doc.getText('source').insert(0, 'mcp:\n  autoStart: "not-a-bool"\n');
 
-    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const outcome = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(outcome).toBe('reverted');
     const reverted = doc.getText('source').toString();
     expect(reverted).toContain('mcp:');
     expect(reverted).toContain('autoStart: true');
     // LKG was missing; revert seeded it with defaults so subsequent rejections have a floor.
-    const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE);
+    const lkg = fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT);
     expect(lkg).toBeDefined();
     expect(lkg).toBe(reverted);
     expect(fx.rejections).toHaveLength(1);
   });
 
   test('revert transaction uses CONFIG_VALIDATION_REVERT_ORIGIN — entry-gate would skip a re-fire', async () => {
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: true\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
     const doc = new Y.Doc();
     doc.getText('source').insert(0, 'broken: [yaml\n');
 
@@ -355,18 +355,18 @@ describe('storeConfigDoc — rejection + revert', () => {
       observedOrigins.push(tx.origin);
     });
 
-    await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
 
     expect(observedOrigins.some((o) => o === CONFIG_VALIDATION_REVERT_ORIGIN)).toBe(true);
   });
 
   test('back-to-back: invalid mutation reverts; subsequent valid mutation persists', async () => {
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: true\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
     const doc = new Y.Doc();
 
     // Round 1: invalid → revert
     doc.getText('source').insert(0, 'foo: [bar: [baz\n');
-    const r1 = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const r1 = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
     expect(r1).toBe('reverted');
 
     // Round 2: caller (e.g., re-typed input) writes a valid YAML.
@@ -375,12 +375,12 @@ describe('storeConfigDoc — rejection + revert', () => {
       t.delete(0, t.length);
       t.insert(0, 'mcp:\n  autoStart: false\n');
     });
-    const r2 = await storeConfigDoc(doc, CONFIG_DOC_NAME_WORKSPACE, undefined, fx.ctx);
+    const r2 = await storeConfigDoc(doc, CONFIG_DOC_NAME_PROJECT, undefined, fx.ctx);
     expect(r2).toBe('persisted');
-    expect(readFileSync(join(fx.projectDir, '.open-knowledge', 'config.yml'), 'utf-8')).toBe(
+    expect(readFileSync(join(fx.projectDir, '.ok', 'config.yml'), 'utf-8')).toBe(
       'mcp:\n  autoStart: false\n',
     );
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe('mcp:\n  autoStart: false\n');
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe('mcp:\n  autoStart: false\n');
   });
 });
 
@@ -405,7 +405,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
     // pass a minimal subset matching the type the implementation reads.
     await handle.extension.onLoadDocument?.({
       document,
-      documentName: CONFIG_DOC_NAME_WORKSPACE,
+      documentName: CONFIG_DOC_NAME_PROJECT,
       // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
@@ -426,12 +426,12 @@ describe('persistence extension dispatch — config-doc integration', () => {
 
     await handle.extension.onStoreDocument?.({
       document,
-      documentName: CONFIG_DOC_NAME_WORKSPACE,
+      documentName: CONFIG_DOC_NAME_PROJECT,
       lastTransactionOrigin: undefined,
       // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
-    const path = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
     expect(readFileSync(path, 'utf-8')).toBe('mcp:\n  autoStart: false\n');
   });
 
@@ -452,7 +452,7 @@ describe('persistence extension dispatch — config-doc integration', () => {
     // Seed LKG via load (read missing file → defaults LKG).
     await handle.extension.onLoadDocument?.({
       document,
-      documentName: CONFIG_DOC_NAME_WORKSPACE,
+      documentName: CONFIG_DOC_NAME_PROJECT,
       // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
@@ -461,14 +461,14 @@ describe('persistence extension dispatch — config-doc integration', () => {
 
     await handle.extension.onStoreDocument?.({
       document,
-      documentName: CONFIG_DOC_NAME_WORKSPACE,
+      documentName: CONFIG_DOC_NAME_PROJECT,
       lastTransactionOrigin: undefined,
       // biome-ignore lint/suspicious/noExplicitAny: minimal Hocuspocus shim
     } as any);
 
     expect(rejections).toHaveLength(1);
-    expect(rejections[0]?.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
-    expect(existsSync(join(fx.projectDir, '.open-knowledge', 'config.yml'))).toBe(false);
+    expect(rejections[0]?.docName).toBe(CONFIG_DOC_NAME_PROJECT);
+    expect(existsSync(join(fx.projectDir, '.ok', 'config.yml'))).toBe(false);
   });
 
   test('non-config doc names skip the config branch entirely', async () => {
@@ -519,7 +519,7 @@ function readdirSafe(p: string): string[] {
 describe('applyExternalConfigChange', () => {
   test('valid external content updates Y.Text under CONFIG_FILE_WATCHER_ORIGIN + LKG', () => {
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'theme: light\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'theme: light\n');
     doc.getText('source').insert(0, 'theme: light\n');
 
     let observedOrigin: unknown = null;
@@ -530,11 +530,11 @@ describe('applyExternalConfigChange', () => {
     });
 
     const newContent = 'theme: dark\n';
-    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, newContent, fx.ctx);
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, newContent, fx.ctx);
 
     expect(outcome).toBe('applied');
     expect(doc.getText('source').toString()).toBe(newContent);
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe(newContent);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe(newContent);
     expect(observedOrigin).toBe(CONFIG_FILE_WATCHER_ORIGIN);
     expect(fx.rejections).toHaveLength(0);
   });
@@ -542,7 +542,7 @@ describe('applyExternalConfigChange', () => {
   test('content equal to LKG short-circuits: no mutation, no rejection', () => {
     const doc = new Y.Doc();
     const yaml = 'mcp:\n  autoStart: false\n';
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, yaml);
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, yaml);
     doc.getText('source').insert(0, yaml);
 
     let mutationCount = 0;
@@ -551,7 +551,7 @@ describe('applyExternalConfigChange', () => {
       if (tx.origin === CONFIG_FILE_WATCHER_ORIGIN) mutationCount++;
     });
 
-    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, yaml, fx.ctx);
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, yaml, fx.ctx);
 
     expect(outcome).toBe('no-op');
     expect(mutationCount).toBe(0);
@@ -561,7 +561,7 @@ describe('applyExternalConfigChange', () => {
   test('null document → no-op (document not loaded yet)', () => {
     const outcome = applyExternalConfigChange(
       null,
-      CONFIG_DOC_NAME_WORKSPACE,
+      CONFIG_DOC_NAME_PROJECT,
       'theme: dark\n',
       fx.ctx,
     );
@@ -572,30 +572,30 @@ describe('applyExternalConfigChange', () => {
   test('YAML parse error → rejected; Y.Text NOT mutated; onConfigRejected fired', () => {
     const doc = new Y.Doc();
     const valid = 'theme: light\n';
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, valid);
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, valid);
     doc.getText('source').insert(0, valid);
 
     const broken = 'theme: !!!!!\n';
-    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, broken, fx.ctx);
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, broken, fx.ctx);
 
     expect(outcome).toBe('rejected');
     expect(doc.getText('source').toString()).toBe(valid);
     expect(fx.rejections).toHaveLength(1);
-    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_WORKSPACE);
+    expect(fx.rejections[0]?.docName).toBe(CONFIG_DOC_NAME_PROJECT);
     const error = fx.rejections[0]?.error;
     expect(error).toBeDefined();
     if (error && isKnownConfigError(error)) {
       expect(error.code).toBe('YAML_PARSE');
     }
-    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_WORKSPACE)).toBe(valid);
+    expect(fx.ctx.lkgCache.get(CONFIG_DOC_NAME_PROJECT)).toBe(valid);
   });
 
   test('schema-invalid external content → rejected with structured issues', () => {
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'mcp:\n  autoStart: true\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'mcp:\n  autoStart: true\n');
 
     const invalid = 'mcp:\n  tools:\n    search:\n      maxResults: "fast"\n';
-    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, invalid, fx.ctx);
+    const outcome = applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, invalid, fx.ctx);
 
     expect(outcome).toBe('rejected');
     expect(fx.rejections).toHaveLength(1);
@@ -628,10 +628,10 @@ describe('applyExternalConfigChange', () => {
     // persistence-hook from re-writing disk. Storing a doc whose last
     // transaction origin is CONFIG_FILE_WATCHER_ORIGIN must be a no-op.
     const doc = new Y.Doc();
-    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_WORKSPACE, 'theme: light\n');
+    fx.ctx.lkgCache.set(CONFIG_DOC_NAME_PROJECT, 'theme: light\n');
     doc.getText('source').insert(0, 'theme: light\n');
 
-    applyExternalConfigChange(doc, CONFIG_DOC_NAME_WORKSPACE, 'theme: dark\n', fx.ctx);
+    applyExternalConfigChange(doc, CONFIG_DOC_NAME_PROJECT, 'theme: dark\n', fx.ctx);
 
     // Now invoke storeConfigDoc with the file-watcher origin — it must not
     // entry-gate (we reserved that for REVERT origin), but the LKG-equality
@@ -639,13 +639,13 @@ describe('applyExternalConfigChange', () => {
     // updated LKG to match Y.Text content.
     const outcome = await storeConfigDoc(
       doc,
-      CONFIG_DOC_NAME_WORKSPACE,
+      CONFIG_DOC_NAME_PROJECT,
       CONFIG_FILE_WATCHER_ORIGIN,
       fx.ctx,
     );
     expect(outcome).toBe('no-op');
     // No file written for the watcher-driven path.
-    const path = configDocAbsPath(CONFIG_DOC_NAME_WORKSPACE, fx.ctx);
+    const path = configDocAbsPath(CONFIG_DOC_NAME_PROJECT, fx.ctx);
     expect(existsSync(path)).toBe(false);
   });
 });

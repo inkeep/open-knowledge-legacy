@@ -30,7 +30,7 @@ packages/
 docs/      — Next.js docs site (Fumadocs)
 ```
 
-Package-specific context lives in each package's `README.md`. The MCP substrate lives in `packages/cli/src/mcp/` and `.open-knowledge/`.
+Package-specific context lives in each package's `README.md`. The MCP substrate lives in `packages/cli/src/mcp/` and `.ok/`.
 
 ## Commands
 
@@ -82,7 +82,7 @@ git rebase --continue   # or git merge --continue
 
 Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.com/oven-sh/bun/issues/17717).
 
-**Post-ship corrigendum annotations.** Never rewrite prose in shipped specs. Append a breadcrumb on the same line: `<original><br>_[Corrected YYYY-MM-DD post-ship: <one-sentence correction>. Authoritative fix in <pointer>.]_`. Apply to every occurrence in the same doc. Pattern originates in [`specs/2026-04-16-post-ship-docs-polish/`](specs/2026-04-16-post-ship-docs-polish/) (D4).
+**Post-ship corrigendum annotations.** Never rewrite prose in shipped specs. Append a breadcrumb on the same line: `<original><br>_[Corrected YYYY-MM-DD post-ship: <one-sentence correction>. Authoritative fix in <pointer>.]_`. Apply to every occurrence in the same doc.
 
 ## Architectural precedents
 
@@ -92,9 +92,9 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 **`core`** — shared extensions, markdown pipeline, pure utilities. Browser+Node compatible (no React, no server deps). Key constraint: `sharedExtensions` (in `src/extensions/shared.ts`) MUST stay in sync between core/server/app — drift causes silent data corruption. Markdown pipeline details: see [Markdown Pipeline](#markdown-pipeline) below.
 
-**`server`** — Hocuspocus CRDT server library: persistence, file-watcher, agent sessions, shadow repo, HTTP API, server-authoritative observer bridge, CC1 broadcast, agent-presence map, server-instance-ID authority signal. See [`packages/server/README.md`](packages/server/README.md). Canonical boot entry point is `bootServer()` in `packages/server/src/boot.ts` (called by CLI `ok start`, Electron utility, `bunServer` path). Server lock at `<contentDir>/.open-knowledge/server.lock` prevents multi-server-per-contentDir collisions. Shadow repo at `<projectRoot>/.git/open-knowledge/` stores per-writer WIP refs + upstream-import + checkpoint — writer-ID taxonomy (precedent #25) has five categories: `agent-<connId>`, `principal-<UUID>`, `file-system`, `git-upstream`, `openknowledge-service`. CRDT restart recovery is client-side; see Client-side Yjs persistence below.
+**`server`** — Hocuspocus CRDT server library: persistence, file-watcher, agent sessions, shadow repo, HTTP API, server-authoritative observer bridge, CC1 broadcast, agent-presence map, server-instance-ID authority signal. See [`packages/server/README.md`](packages/server/README.md). Canonical boot entry point is `bootServer()` in `packages/server/src/boot.ts` (called by CLI `ok start`, Electron utility, `bunServer` path). Server lock at `<contentDir>/.ok/server.lock` prevents multi-server-per-contentDir collisions. Shadow repo at `<projectRoot>/.git/ok/` stores per-writer WIP refs + upstream-import + checkpoint — writer-ID taxonomy (precedent #25) covers `agent-*`, `principal-*`, `file-system`, `git-upstream`, `openknowledge-service`. CRDT restart recovery is client-side; see Client-side Yjs persistence below.
 
-**`cli`** — Commander.js v14 CLI published as `@inkeep/open-knowledge`; two bins (`open-knowledge` + `ok`). Commands: `ok start | init | mcp`. Hierarchical YAML config in `.open-knowledge/config.yml` (precedence: flags > env > workspace > user > defaults). MCP stdio server auto-discovers the running Hocuspocus port via `server.lock`. Distribution strategy: [`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`](specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md).
+**`cli`** — Commander.js v14 CLI published as `@inkeep/open-knowledge`; two bins (`open-knowledge` + `ok`). Commands: `ok start | init | mcp`. Hierarchical YAML config in `.ok/config.yml` (precedence: flags > env > project > user > defaults). MCP stdio server auto-discovers the running Hocuspocus port via `server.lock`. Distribution strategy: [`specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md`](specs/2026-04-20-cli-distribution-and-install-ux/SPEC.md).
 
 **`app`** — React editor frontend: TipTap WYSIWYG + CodeMirror source mode, real-time CRDT collaboration. Dev mode (`bun run dev`) serves Vite + Hocuspocus on port 5173 from one process via `packages/app/src/server/hocuspocus-plugin.ts` — shares the same `server.lock` as `open-knowledge start`, so both against the same contentDir is mutually exclusive.
 
@@ -104,16 +104,17 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ```
 Y.Doc
-├── Y.XmlFragment('default')  ← TipTap binds here
-├── Y.Text('source')          ← CodeMirror binds (y-codemirror.next)
-├── Y.Map('metadata')         ← frontmatter cache
-├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
-└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
+├── Y.XmlFragment('default')  ← TipTap binds (body)
+├── Y.Text('source')          ← CodeMirror binds (full doc: FM region + body)
+├── Y.Map('agent-flash')      ← agent write-flash side-channel
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer
 
 Server Observer A: XmlFragment → Y.Text  (OBSERVER_SYNC_ORIGIN)
 Server Observer B: Y.Text → XmlFragment  (OBSERVER_SYNC_ORIGIN)
 Client observers: baseline tracking only (write paths deleted — precedent #14)
 ```
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the property panel reads + writes via `bindFrontmatterDoc` (no `Y.Map('metadata')`). Spec: [`specs/2026-04-30-realtime-frontmatter-entries/SPEC.md`](specs/2026-04-30-realtime-frontmatter-entries/SPEC.md).
 
 **Three invariants** (assert before/after every propagation):
 
@@ -130,10 +131,11 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 | W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite | Persistence debounce |
 | W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange     | (direct)             |
 | W5 Agent Undo            | applyAgentUndo          | applyAgentUndo          | Persistence debounce |
+| W6 Property panel | bindFrontmatterDoc | (Observer B if body shifts) | Persistence debounce |
 
 **Full observer design** (server-authoritative Path A/B, settlement dispatch via `afterAllTransactions`, origin-guard truth tables, paired-write markers, `applyAgentMarkdownWrite` reference implementation): [`ARCHITECTURE.md`](./ARCHITECTURE.md) + the four spec directories under `specs/2026-04-1[4-6]-*/`. `packages/server/src/server-observers.ts` is the canonical implementation.
 
-**Agent-write attribution** — every mutating POST handler in `api-extension.ts` calls `extractAgentIdentity(body)` at entry before any Y.Doc mutation (FR-5, D42, precedent #24). Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and fails if a handler omits it or is missing from the allowlist. Writes use `session.dc.document.transact(fn, session.origin)` — the per-session frozen origin object (precedent #24, D32).
+**Agent-write attribution** — every mutating POST handler in `api-extension.ts` threads identity at entry (FR-5, D42, precedent #24): agent-write handlers via `extractAgentIdentity(body)`, rename/rollback via `extractActorIdentity(body, getPrincipal)` (see STOP rule). Meta-test at `packages/app/tests/integration/attribution-sweep-coverage.test.ts` scans the route registry and fails if a handler omits both. Writes use `session.dc.document.transact(fn, session.origin)` — the per-session frozen origin object (precedent #24, D32).
 
 **Agent presence** lives on `__system__` Y.Doc awareness as a map-valued `agentPresence: Record<agentId, AgentPresenceEntry>` (see `packages/server/src/agent-presence.ts`). Per-doc awareness would stomp across concurrent agents — each Hocuspocus `Document` has one shared `Awareness` with a single `clientID`. Cleanup is deterministic via the MCP keepalive WS (`/collab/keepalive` handler in `boot.ts`). Metrics at `GET /api/metrics/agent-presence` (diagnostic-only; clients don't poll).
 
@@ -175,7 +177,7 @@ Snapshots on failure write to `/tmp/fuzz-*`.
 - **Agent running Playwright + dev server:** Playwright sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; `bun run dev` uses `packages/content/`. No contention.
 - **VITE\_PORT** env var for custom port (`VITE_PORT=9999 bun run dev`, strict). Default 5173 (not strict).
 
-**Worktree gotcha — `bun install` after `git worktree add`.** Worktrees nested at `.claude/worktrees/X/` inherit `node_modules` via Bun's upward-walk resolution, causing ProseMirror-model dedup failures (`PmNode.fromJSON()` throws "multiple versions of prosemirror-model"). Also causes spurious `bun run knip` reports (missing `docs/.source/` postinstall artifacts). **Always run `bun install` in the worktree before `bun run check` or `git push`.** Full analysis: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
+**Worktree gotcha — always `bun install` in the worktree before `bun run check` or `git push`.** Nested worktrees inherit `node_modules` via Bun's upward-walk, causing PM-model dedup failures + spurious knip reports. Background: [`reports/bun-prosemirror-model-dedup/REPORT.md`](reports/bun-prosemirror-model-dedup/REPORT.md).
 
 ## STOP rules
 
@@ -184,7 +186,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Server-side Y.Doc transactions MUST use `session.dc.document.transact(fn, session.origin)`.** Never `session.dc.transact(fn)` — the per-session frozen origin is mandatory (precedent #24, D32). Omitting it routes writes to `openknowledge-service` and breaks per-session undo (UM's `trackedOrigins` Set-identity match silently skips the transaction).
 - **Server-side agent writes use the XmlFragment-authoritative pattern** (`applyAgentMarkdownWrite` / `applyAgentUndo` in `packages/server/src/agent-sessions.ts`, precedent #10). Never rebuild XmlFragment from raw Y.Text — that's the deleted `syncTextToFragment` / Bug-A / Bug-D anti-pattern. Reference: [`specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`](specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md).
 - **Don't bypass `writeTracker` or `skipStoreHooks`.** `writeTracker` prevents persistence↔file-watcher feedback loops; `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
-- **`isSystemDoc()` + `isConfigDoc()` gates at every documentName-keyed entry point.** Any subsystem keying off `documentName` MUST short-circuit on `isSystemDoc(name) || isConfigDoc(name)` at entry (see `cc1-broadcast.ts`). Synthetic docs: `__system__` (CC1); `__config__/workspace` + `__user__/config.yml` (Y.Text-only Settings-pane transport — markdown bridge gated in `server-observer-extension.ts`). L1 test asserts zero state in audited subsystems. `ContentFilter` + `POST /api/create-page` reject these prefixes.
+- **`isSystemDoc()` + `isConfigDoc()` gates at every documentName-keyed entry point.** Any subsystem keying off `documentName` MUST short-circuit on `isSystemDoc(name) || isConfigDoc(name)` at entry (see `cc1-broadcast.ts`). Synthetic docs: `__system__` (CC1); `__config__/project` + `__user__/config.yml` (Y.Text-only Settings-pane transport — markdown bridge gated in `server-observer-extension.ts`). L1 test asserts zero state in audited subsystems. `ContentFilter` + `POST /api/create-page` reject these prefixes.
 - **Server-side observer cross-CRDT writes use `OBSERVER_SYNC_ORIGIN`.** Do NOT re-add client-side cross-CRDT write paths in `observers.ts` (deleted under precedent #14; Mutation G in [`specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`](specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md) validates the deletion).
 - **Only one `BridgeMergeContentLossError` catch site.** The site in `server-observers.ts` Observer A Path B emits structured `bridge-merge-content-loss` telemetry, queues a silent `saveInMemoryCheckpoint` via `queueMicrotask`, applies the merge as-computed (SPEC §10 D3 LOCKED). A second catch site silently drops the observability signal. Reference: [`specs/2026-04-16-bridge-correctness/SPEC.md`](specs/2026-04-16-bridge-correctness/SPEC.md) §6 R7/R7b.
 - **Paired-write origins MUST declare `context.paired: true`.** Any new origin that atomically mutates BOTH Y.XmlFragment and Y.Text in a single `doc.transact(..., ORIGIN)` must opt in via the typed marker (precedent #1 extension, SPEC §6 R0). `isPairedWriteOrigin(origin)` is a structural check — no hardcoded registry. Omitting re-surfaces the observer-amplification class that US-001/US-002 regression tests T8/T9/T10 guard against.
@@ -192,7 +194,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Don't collapse the hybrid render tree** (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) to a pure `<Editor key={activeDocName} />` pattern. The hybrid is load-bearing for the flash-free UX (SPEC G1-G2-G5, precedent #18(b)). Add new write surfaces by wrapping them in their own `DocumentBoundary`. Canonical shape: `packages/app/src/components/EditorArea.tsx`.
 - **Agent-undo single-path.** `applyAgentUndo(session, scope)` in `packages/server/src/agent-sessions.ts` is the only sanctioned server-side undo write surface. Contract details (XmlFragment-authoritative composition, per-session `undoOrigin`, single transact, no client-side cross-CRDT writes) live as JSDoc on the function — don't re-derive them, don't add a second undo path.
 - **`recordContributor` summaries route through `normalizeSummary`** (`packages/server/src/agent-write-summary.ts`). Single API-boundary truncation point — don't scatter trimming/type-checking across handlers. Whitespace-only inputs classify as `absent` and don't count as adoption. SPEC: [`specs/2026-04-21-agent-write-summaries/SPEC.md`](specs/2026-04-21-agent-write-summaries/SPEC.md) §6 FR2 + D5/D24.
-- **`handleRename` / `handleRollback` guard `extractAgentIdentity` + `recordContributor` on explicit `agentId`.** In-editor Restore posts with no identity; the default `claude-1/Claude` fallback would attribute every human-driven rollback to Claude (D22 LOCKED 1-way-door, NG12). Adding attribution by default is scope-extension.
+- **`handleRenamePath` / `handleRollback` use `extractActorIdentity(body, getPrincipal)`**, NOT `extractAgentIdentity`. Body `agentId` → `agent-<id>`; absent + loaded principal → `principal-<uuid>`; neither → anonymous. Body `principalId` silently ignored — server's `getPrincipal()` is the only source (HTTP body unauthenticated). Both rename branches go through the single `applyManagedRename` spine. Spec: [`specs/2026-04-29-rename-consolidation/SPEC.md`](specs/2026-04-29-rename-consolidation/SPEC.md).
 - **Don't narrow PM mark `excludes` fields.** Precedent #9 covers mark attrs as add-only. US-017 widened `Code` via `CodeMarkFidelity` (`excludes: ''`) to let emphasis/strong coexist with inline code per CommonMark. Reverting via a Tiptap upgrade reintroduces idempotence failures.
 - **`shell.openPath` single-source + don't narrow `EXECUTABLE_BLOCKLIST_EXTENSIONS`.** Route every new surface through `openAssetSafely` (`packages/desktop/src/main/asset-allowlist.ts`); its three-check gate plus the `ok:shell:open-asset` IPC handler are the only sanctioned `shell.openPath` call sites. Unguarded `shell.openPath` is RCE-class; blocklist + rationale at `packages/core/src/constants/upload.ts`.
 - **No `upload.*` config + no runtime `.obsidian/app.json` reader.** Values live as constants in `packages/core/src/constants/upload.ts`. Obsidian-refugee onboarding is the future `ok migrate --from-obsidian-vault` CLI.
@@ -200,7 +202,7 @@ Load-bearing safety rules. Each is enforced by code review; many are also enforc
 - **Don't emit unbounded-cardinality span/metric attributes.** Raw paths, document content, and free-form user strings on histograms or high-volume span attributes blow up Tempo's index and Prometheus label storage. Normalize first: paths → `normalizeFsPath` + `classifyFsPath` from `fs-traced.ts` (last-two-segments + role); identifiers → pre-validated UUIDs / enums. Safe pre-normalized span attrs: `doc.name`, `shadow.writer`, `agent.write_position`, `http.route`.
 - **Serve-side asset admission via `createAssetServeMiddleware`.** Shared factory at `packages/server/src/asset-serve-middleware.ts` (consumed by Vite dev plugin + `ok ui`); inline for `INLINE_RENDERABLE_EXTENSIONS`, attachment otherwise. Don't drop the CD dispatch or the SPA-fallback 404 guard.
 - **Client-persistence ordering on `server-instance-mismatch`:** buffer → `clearData()` → `recycleAllEntries`. Reversing duplicates (stale IDB + new clientID → markers twice). Auth-token Zod-validated via `parseHocuspocusAuthToken`. Ref: `provider-pool.ts`.
-- **No OK sidecars in user-content paths.** OK state lives in `<contentDir>/.open-knowledge/`; no per-doc sidecars (no `.frontmatter.yml`, `_meta.json`, `_index.md`). Folder defaults live in `config.yml`'s `folders[]`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](specs/2026-04-25-config-edit-paths/SPEC.md).
+- **No OK sidecars in user-content paths.** OK state lives in `<contentDir>/.ok/`; no per-doc sidecars (no `.frontmatter.yml`, `_meta.json`, `_index.md`). Folder defaults live in `config.yml`'s `folders[]`. Writes via `applyAgentMarkdownWrite` / `applyAgentUndo`. Spec: [`specs/2026-04-25-config-edit-paths/SPEC.md`](specs/2026-04-25-config-edit-paths/SPEC.md).
 - **`ConfigSchema` leaves: `.register(fieldRegistry, ...)` BEFORE `.default()`/`.optional()`/`.nullable()`.** Zod v4 wrappers drop `_zod.parent` — metadata binds to the wrapper, not the leaf. Use the `@inkeep/open-knowledge-core` singleton; coverage test enforces.
 
 ## WARN rules
@@ -264,7 +266,7 @@ Comments explain the non-obvious **why** — a hidden constraint, a subtle invar
 
 **Don't cite the process that produced the code.** Spec paths, internal decision numbers (`D5`, `LOCKED`, `NOT NOW`, …), non-goal tags (`NG2`), AC / US / FR numbers, audit-finding IDs (`DC-M4`, `Mutation H`), dated audit-trail narratives ("post-ship amendment", "Per 2026-04-21 review"), and feature-work / milestone tags (`M3`, `V0-14`) all rot. They belong in the PR body or commit message, not source. When one appears next to substance worth keeping, strip the citation and keep the substance; when the whole comment only exists to cite, delete it.
 
-**Exempt — keep these:** STOP / WARN rules and cross-file contracts (already codified above); external standards with stable numbering (`CommonMark §2.4`, `RFC 3986`, upstream issue numbers like `electron/electron#32600`); `precedent #N` references (target [`PRECEDENTS.md`](./PRECEDENTS.md), an intentionally long-lived rulebook); explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
+**Exempt — keep these:** STOP / WARN rules and cross-file contracts; external standards with stable numbering (`CommonMark §2.4`, `RFC 3986`, upstream issue numbers like `electron/electron#32600`); `precedent #N` references targeting [`PRECEDENTS.md`](./PRECEDENTS.md); explicit drift warnings between sibling source files when TypeScript can't catch the divergence (e.g. the `HandoffFailureReason` four-way mirror in `packages/core/src/handoff/types.ts`).
 
 Rule of thumb: if the "why" is the task ticket, a review suggestion, or a spec paragraph, put it in the PR body and leave the code alone. If it's a permanent structural reason a future reader would stub their toe on, write that reason without the dated pointer.
 
@@ -279,7 +281,7 @@ Rule of thumb: if the "why" is the task ticket, a review suggestion, or a spec p
 
 ## Open Knowledge MCP
 
-This repo's `.md` / `.mdx` files (under `content.dir`, matching `content.include`, not in `content.exclude` or `.gitignore` — see [`.open-knowledge/config.yml`](.open-knowledge/config.yml); default `**/*.md` under `.`) are CRDT documents. When the Open Knowledge MCP server is registered for this project, route reads, listings, searches, and writes through its tools — never native `Read` / `Grep` / `Glob` / `Edit` / `Bash ls|find|cat|sed`. Native bypasses lose attribution (writes land as anonymous `file-system` per precedent #25), miss frontmatter / backlinks / recent-edit signal, and break the live preview the user is watching. MCP wiring varies per host (Claude Code / Codex / Cursor / Windsurf / VS Code–class) and tools may not appear as a top-level `exec` symbol — use the host's "call MCP tool" flow; that still counts as available.
+This repo's `.md` / `.mdx` files (under `content.dir`, not excluded by `.gitignore` or `.okignore` — see [`.ok/config.yml`](.ok/config.yml) and [`.okignore`](.okignore); `content.dir` defaults to `.`) are CRDT documents. When the Open Knowledge MCP server is registered for this project, route reads, listings, searches, and writes through its tools — never native `Read` / `Grep` / `Glob` / `Edit` / `Bash ls|find|cat|sed`. Native bypasses lose attribution (writes land as anonymous `file-system` per precedent #25), miss frontmatter / backlinks / recent-edit signal, and break the live preview the user is watching. MCP wiring varies per host (Claude Code / Codex / Cursor / Windsurf / VS Code–class) and tools may not appear as a top-level `exec` symbol — use the host's "call MCP tool" flow; that still counts as available.
 
 | Task                            | Native (don't)            | OK MCP (do)                                    |
 | ------------------------------- | ------------------------- | ---------------------------------------------- |
@@ -298,7 +300,7 @@ Subagents (`Explore`, `general-purpose`) use native tools internally and bypass 
 
 **Server-running fallback.** If a write returns "Hocuspocus server is not running", start it with `open-knowledge start` (via Bash) and retry — never fall back to native `Edit` for in-scope markdown.
 
-**Preview — open once if the server asks.** The user watches edits land in a browser preview. After a write, the response carries `previewUrl`; only when `warning: { action: "attach-preview-once" }` is also present is no browser attached. Open it then, one-shot (Claude Code Desktop: `preview_start("open-knowledge-ui")`; other hosts: their open-URL tool, or `open <url>` on macOS, or surface the URL in chat). Otherwise do nothing — server-push pushes focus to the open tab on each subsequent write. Never construct preview URLs by hand. Don't take `preview_screenshot` after each write — the CRDT response is the confirmation. Contract: [`specs/2026-04-24-preview-attach-once-per-session/SPEC.md`](specs/2026-04-24-preview-attach-once-per-session/SPEC.md) (supersedes the per-edit mandate in `specs/2026-04-15-preview-url-pre-edit/`).
+**Preview — open once if the server asks.** The user watches edits land in a browser preview. After a write, the response carries `previewUrl`; only when `warning: { action: "attach-preview-once" }` is also present is no browser attached. Open it then, one-shot (Claude Code Desktop: `preview_start("open-knowledge-ui")`; other hosts: their open-URL tool, or `open <url>` on macOS, or surface the URL in chat). Otherwise do nothing — server-push pushes focus to the open tab on each subsequent write. Never construct preview URLs by hand. Don't take `preview_screenshot` after each write — the CRDT response is the confirmation. Contract: [`specs/2026-04-24-preview-attach-once-per-session/SPEC.md`](specs/2026-04-24-preview-attach-once-per-session/SPEC.md).
 
 **Authoring.** Wiki-link liberally: `[[Page Title]]`. Redlinks ("this should exist") are fine; backlink density is how the KB stays navigable. When you add or edit a child doc in a folder with a hub (`INDEX.md`, `README.md`, `REPORT.md`, `SPEC.md`, or a file matching the folder name), update the hub interleaved with child writes — the hub becomes a live progress bar in the preview.
 

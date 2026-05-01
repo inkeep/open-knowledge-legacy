@@ -1,18 +1,19 @@
 /**
  * Shared handler for applying external file changes to a live Y.Doc.
  *
- * Used by both standalone.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
+ * Used by both server-factory.ts (CLI server) and hocuspocus-plugin.ts (Vite dev).
  * Extracted to prevent drift between copies — a bug fix in one would
  * otherwise easily miss the other.
  */
 
 import type { Hocuspocus } from '@hocuspocus/server';
-import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { applyFastDiff, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { formatReconcileSubject } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
 import { isConfigDoc, isSystemDoc } from './cc1-broadcast.ts';
 import { recordContributor } from './contributor-tracker.ts';
+import { recordFrontmatterEditSurface } from './frontmatter-telemetry.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { setReconciledBase } from './persistence.ts';
 import type { PairedWriteOrigin } from './server-observers.ts';
@@ -60,23 +61,37 @@ export function applyDiskContentToDoc(
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
+  // Y.Text body must match XmlFragment's serialization so the bridge invariant
+  // (`stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize
+  // (fragment))`) holds. Markdown has multiple equivalent representations for
+  // some constructs (NG7-NG11 — e.g. doc-start `---` → canonical `***` for
+  // thematic breaks; whitespace-collapse normalization in the mdast pipeline)
+  // — writing the raw disk bytes to Y.Text would diverge from XmlFragment's
+  // canonical form for any such input.
+  //
+  // FM region is preserved VERBATIM (D8/D26): `frontmatter` is the YAML
+  // bytes from disk, including user-authored indentation, scalar styles, and
+  // comments. The canonical-body composition only canonicalizes the body
+  // half. Malformed YAML round-trips as-is; the panel renders last-valid +
+  // a banner per D21.
+  const canonicalBody = mdManager.serialize(parsedJson);
+  const canonicalContent = prependFrontmatter(frontmatter, canonicalBody);
+
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-    const metaMap = document.getMap('metadata');
-    metaMap.set('frontmatter', frontmatter);
 
     const ytext = document.getText('source');
     const currentText = ytext.toString();
-    if (currentText !== content) {
-      applyFastDiff(ytext, currentText, content);
+    if (currentText !== canonicalContent) {
+      applyFastDiff(ytext, currentText, canonicalContent);
     }
   }, FILE_WATCHER_ORIGIN);
 }
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the
- * disk→CRDT bridge. Both standalone.ts (CLI) and the dev plugin delegate here.
+ * disk→CRDT bridge. Both server-factory.ts (CLI) and the dev plugin delegate here.
  *
  * 1. Looks up the live Y.Doc by docName (no-op if missing)
  * 2. Strips frontmatter and parses markdown → ProseMirror JSON
@@ -99,7 +114,18 @@ export function applyExternalChange(
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
 
+  // Capture prior FM region from Y.Text so the edit_surface counter only
+  // fires when disk content actually changed FM (body-only edits shouldn't
+  // count). After D8, the YAML region of `Y.Text('source')` IS the FM source
+  // of truth — read it before applyDiskContentToDoc applies the disk content.
+  const priorFm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+  const { frontmatter: nextFm } = stripFrontmatter(content);
+
   applyDiskContentToDoc(document, content, resolveEmbed, docName);
+
+  if (priorFm !== nextFm) {
+    recordFrontmatterEditSurface('file-watcher');
+  }
 
   // Attribute this disk-originated write to the file-system classified writer (D41).
   // FILE_WATCHER_ORIGIN has skipStoreHooks:true so persistence.ts:onStoreDocument

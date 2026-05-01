@@ -499,9 +499,9 @@ function scanMarkdownForMentions(
 function serializeLiveDocument(document: Document): string {
   const xmlFragment = document.getXmlFragment('default');
   const body = mdManager.serialize(yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON());
-  const metaMap = document.getMap('metadata');
-  const frontmatter = metaMap.get('frontmatter');
-  return prependFrontmatter(typeof frontmatter === 'string' ? frontmatter : '', body);
+  // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
+  const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+  return prependFrontmatter(fm, body);
 }
 
 async function readDocumentMarkdown(

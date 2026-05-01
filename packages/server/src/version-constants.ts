@@ -55,9 +55,9 @@ export const PROTOCOL_VERSION = 1 as const;
 
 /**
  * Durable on-disk state version. Bumped when the shadow repo, the
- * `.open-knowledge/` directory, or any other durable artifact changes shape
+ * `.ok/` directory, or any other durable artifact changes shape
  * in a way older binaries cannot safely read. The state manifest at
- * `<contentDir>/.open-knowledge/state.json` records the writer's
+ * `<contentDir>/.ok/state.json` records the writer's
  * `STATE_SCHEMA_VERSION`; cold-start refuses incompatible.
  *
  * Sentinel `0` is the pre-manifest adoption marker (see `state-manifest.ts`'s

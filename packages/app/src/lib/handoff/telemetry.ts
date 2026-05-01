@@ -1,6 +1,6 @@
 /**
  * Local-only telemetry counter for Open-in-Agent dispatch. Append-only JSONL
- * to `~/.open-knowledge/stats.jsonl` via the Electron main process. Zero
+ * to `~/.ok/stats.jsonl` via the Electron main process. Zero
  * phone-home.
  *
  * Electron host forwards to the `ok:shell:record-handoff` IPC. Web host is a
@@ -21,7 +21,7 @@ export type HandoffHost = 'electron' | 'web';
 type HandoffOutcomeStatus = 'ok' | 'error';
 
 /**
- * One JSONL line in `~/.open-knowledge/stats.jsonl`. Schema is intentionally
+ * One JSONL line in `~/.ok/stats.jsonl`. Schema is intentionally
  * narrow to keep the signal comparable across versions.
  */
 export interface HandoffStatsLine {

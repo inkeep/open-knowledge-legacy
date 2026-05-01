@@ -19,6 +19,7 @@
  */
 import type { Hocuspocus } from '@hocuspocus/server';
 import { type AgentFocusEntry, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
+import { isPresenceEligibleAgentId } from './agent-id.ts';
 import { getLogger } from './logger.ts';
 
 export class AgentFocusBroadcaster {
@@ -32,11 +33,13 @@ export class AgentFocusBroadcaster {
 
   /** Upsert an agent's focus entry. Merges into the existing map — other agents' entries are preserved. */
   setFocus(agentId: string, entry: AgentFocusEntry): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     this.mutateAgentFocus((current) => ({ ...current, [agentId]: entry }));
   }
 
   /** Remove an agent's entry. No-op if the entry doesn't exist. */
   clearFocus(agentId: string): void {
+    if (!isPresenceEligibleAgentId(agentId)) return;
     this.mutateAgentFocus((current) => {
       if (!(agentId in current)) return current;
       const { [agentId]: _dropped, ...rest } = current;

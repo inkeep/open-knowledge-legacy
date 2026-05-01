@@ -71,5 +71,10 @@ packages/core/tests/perf/results.*.json
 
 /test-doc.md
 
+# Repo-root scratch files used during local browser verification — never
+# meant to land. Anchored to the root so legitimate `*-testing.md` reports
+# under `reports/**` are unaffected.
+/sarah-testing.md
+
 # Open Knowledge per-machine runtime state self-ignores via
-# .open-knowledge/.gitignore. No OK-internal paths belong here.
+# .ok/.gitignore. No OK-internal paths belong here.

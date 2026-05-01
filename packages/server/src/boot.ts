@@ -27,7 +27,7 @@ import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
 import { isProcessAlive } from './process-alive.ts';
 import type { EnsureProjectGitResult } from './project-git.ts';
-import { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+import { createServer, type ServerInstance, type ServerOptions } from './server-factory.ts';
 import { initTelemetry, shutdownTelemetry } from './telemetry.ts';
 
 /** Default parent-death poll interval. Spec NFR2 — 5 s is well below CPU noise floor. */
@@ -50,8 +50,6 @@ export interface BootServerOptions
     | 'gitEnabled'
     | 'commitDebounceMs'
     | 'wipRef'
-    | 'includePatterns'
-    | 'excludePatterns'
     | 'destroyTimeoutMs'
     | 'localOpCliArgs'
     | 'onAgentWrite'
@@ -152,7 +150,7 @@ export interface BootedServer {
   httpServer: HttpServer;
   /** Composite shutdown — closes httpServer, detaches idle-shutdown, destroys the Hocuspocus server (which releases server.lock). */
   destroy: () => Promise<void>;
-  /** Absolute path to `<contentDir>/.open-knowledge`. */
+  /** Absolute path to `<contentDir>/.ok`. */
   lockDir: string;
   /** Resolved content directory. */
   contentDir: string;
@@ -244,8 +242,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     wipRef: opts.wipRef,
     enableTestRoutes: opts.enableTestRoutes,
     shadowRepo: opts.shadowRepo,
-    includePatterns: opts.includePatterns,
-    excludePatterns: opts.excludePatterns,
     destroyTimeoutMs: opts.destroyTimeoutMs,
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,

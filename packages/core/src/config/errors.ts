@@ -41,12 +41,12 @@ export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
 /**
  * Scope tag used by `SCOPE_VIOLATION` and `MIXED_SCOPE` payloads. Mirrors
  * `fieldRegistry` metadata: `'either'` means "valid at user OR
- * workspace"; `'user'` and `'workspace'` are scope-restricted.
+ * project"; `'user'` and `'project'` are scope-restricted.
  */
-export const FieldScopeSchema = z.enum(['user', 'workspace', 'either']);
+export const FieldScopeSchema = z.enum(['user', 'project', 'either']);
 export type FieldScope = z.infer<typeof FieldScopeSchema>;
 
-export const WriteScopeSchema = z.enum(['user', 'workspace']);
+export const WriteScopeSchema = z.enum(['user', 'project']);
 export type WriteScope = z.infer<typeof WriteScopeSchema>;
 
 export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [
@@ -76,6 +76,12 @@ export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [
         scope: WriteScopeSchema,
       }),
     ),
+  }),
+  z.object({
+    code: z.literal('REMOVED_KEY'),
+    path: z.array(z.string()),
+    redirect: z.string(),
+    source: ConfigIssueSourceSchema.optional(),
   }),
   z.object({
     code: z.literal('WRITE_ERROR'),
@@ -183,8 +189,8 @@ export function humanFormat(error: ConfigValidationError): string {
     case 'NOT_AGENT_SETTABLE':
       return [
         `Field ${error.path.join('.')} is not agent-settable.`,
-        'Agent-settable paths: content.include, content.exclude, folders[],',
-        'mcp.tools.search.maxResults, mcp.tools.read_document.historyDepth.',
+        'Agent-settable paths: folders[], mcp.tools.search.maxResults,',
+        'mcp.tools.read_document.historyDepth.',
         'Other fields can be edited via the Settings pane or by hand-editing config.yml.',
       ].join(' ');
     case 'MIXED_SCOPE': {
@@ -192,6 +198,19 @@ export function humanFormat(error: ConfigValidationError): string {
         .map(({ path, scope }) => `  ${path.join('.')} → ${scope}`)
         .join('\n');
       return ['Patch contains fields targeting multiple scopes:', summary].join('\n');
+    }
+    case 'REMOVED_KEY': {
+      const path = error.path.join('.');
+      const header = error.source
+        ? `Removed key at ${error.source.file}:${error.source.line}:${error.source.column}`
+        : 'Removed key in configuration';
+      const lines = [`${header}: ${path}`, error.redirect];
+      if (error.source?.snippet && error.source.snippet.length > 0) {
+        for (const snippetLine of error.source.snippet.split('\n')) {
+          lines.push(`  ${snippetLine}`);
+        }
+      }
+      return lines.join('\n');
     }
     case 'WRITE_ERROR':
       return `Failed to write config file: ${error.detail}`;

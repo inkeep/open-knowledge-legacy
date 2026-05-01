@@ -18,46 +18,25 @@ export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
 export const ConfigSchema = z.looseObject({
-  // `content.*` is WORKSPACE-scope. `dir` / `include` / `exclude` define
-  // which files are part of *this* project's knowledge graph; a user-global
-  // override doesn't make sense (each project has its own files, and a
-  // user-level glob would either be ignored or actively wrong when working
-  // across multiple repos). Settings pane hides these on the user tab via
-  // `isFieldVisibleAtScope`; loader rejects them in user YAML with a
-  // source-located error per the existing `preview.baseUrl` precedent.
-  // Supersedes the original 'either' framing per user direction 2026-04-29.
+  // `content.dir` is PROJECT-scope — names the root of the project's
+  // knowledge graph. `content.include` / `content.exclude` were removed:
+  // path rules now live in `.okignore` files (gitignore syntax) at the
+  // project root and at any folder depth. The YAML loader rejects the
+  // removed keys with a source-located REMOVED_KEY error directing the
+  // user to `.okignore`.
   content: z
     .looseObject({
       dir: z
         .string()
         .register(fieldRegistry, {
-          scope: 'workspace',
+          scope: 'project',
           agentSettable: false,
-          defaultScope: 'workspace',
+          defaultScope: 'project',
         })
         .default('.'),
-      include: z
-        .array(z.string())
-        .min(1)
-        .register(fieldRegistry, {
-          scope: 'workspace',
-          agentSettable: true,
-          defaultScope: 'workspace',
-        })
-        .default(['**/*.md', '**/*.mdx']),
-      exclude: z
-        .array(z.string())
-        .register(fieldRegistry, {
-          scope: 'workspace',
-          agentSettable: true,
-          defaultScope: 'workspace',
-        })
-        .default([]),
     })
     .default({
       dir: '.',
-      include: ['**/*.md', '**/*.mdx'],
-      exclude: [],
     }),
   github: z
     .looseObject({
@@ -94,13 +73,13 @@ export const ConfigSchema = z.looseObject({
     .default({ host: 'localhost', openOnAgentEdit: false }),
   preview: z
     .looseObject({
-      // `scope: 'workspace'` (strict): per spec §9.5.4, `baseUrl` at user-global
+      // `scope: 'project'` (strict): per spec §9.5.4, `baseUrl` at user-global
       // scope is the only ❌-marked placement (each project has its own deployed
       // wiki URL). The Settings pane disables this field on the user tab; the
       // loader rejects it with a source-located error if hand-set in user YAML.
       baseUrl: z
         .url()
-        .register(fieldRegistry, { scope: 'workspace', agentSettable: false })
+        .register(fieldRegistry, { scope: 'project', agentSettable: false })
         .optional(),
     })
     .default({}),
@@ -109,7 +88,7 @@ export const ConfigSchema = z.looseObject({
     .register(fieldRegistry, {
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     })
     .default([]),
   mcp: z
@@ -171,12 +150,12 @@ export const ConfigSchema = z.looseObject({
   // `appearance.*` canonicalizes the value into config.yml.
   //
   // Both are USER-scope: theme is a personal preference, not a project-
-  // shared setting. A workspace `appearance.theme` would force every
+  // shared setting. A project `appearance.theme` would force every
   // collaborator into the project owner's mode, which is a misuse
   // pattern and not what users expect from the chrome toggle. The
   // Settings pane hides these fields on the "This project" tab via
   // `isFieldVisibleAtScope`; SchemaStore validation flags them in
-  // workspace YAML; chrome toggle always writes via `userBinding.patch()`.
+  // project YAML; chrome toggle always writes via `userBinding.patch()`.
   appearance: z
     .looseObject({
       theme: z
@@ -197,6 +176,23 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
+  // `autoSync.*` is internal onboarding state (NOT a user preference). The
+  // SettingsPane intentionally omits these paths from `SECTIONS`, so they
+  // never render — the modal in `EditorPane` is the only writer.
+  // Project scope: each project tracks its own onboarding resolution.
+  autoSync: z
+    .looseObject({
+      onboardingResolvedAt: z.iso
+        .datetime()
+        .register(fieldRegistry, {
+          scope: 'project',
+          agentSettable: false,
+          defaultScope: 'project',
+        })
+        .nullable()
+        .default(null),
+    })
+    .default({ onboardingResolvedAt: null }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

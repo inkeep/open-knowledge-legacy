@@ -7,7 +7,7 @@ import { register } from './set-folder-rule.ts';
 import type { ServerInstance } from './shared.ts';
 
 const BASE_CONFIG: Config = {
-  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
+  content: { dir: '.' },
   github: { oauthAppClientId: 'Ov23liqlSd0V1MwR6rhI' },
   server: { host: 'localhost', openOnAgentEdit: false },
   preview: {},
@@ -41,7 +41,7 @@ type ToolHandler = (args: UpsertArgs) => Promise<ToolResult>;
 
 function newProject(): string {
   const cwd = mkdtempSync(join(tmpdir(), 'ok-set-folder-rule-'));
-  mkdirSync(join(cwd, '.open-knowledge'), { recursive: true });
+  mkdirSync(join(cwd, '.ok'), { recursive: true });
   return cwd;
 }
 
@@ -64,7 +64,7 @@ function captureHandler(cwd: string): ToolHandler {
 }
 
 function readConfigFile(cwd: string): string | null {
-  const p = join(cwd, '.open-knowledge', 'config.yml');
+  const p = join(cwd, '.ok', 'config.yml');
   return existsSync(p) ? readFileSync(p, 'utf-8') : null;
 }
 
@@ -152,7 +152,7 @@ describe('set_folder_rule tool', () => {
       scope: string;
     };
     expect(success.ok).toBe(true);
-    expect(success.scope).toBe('workspace');
+    expect(success.scope).toBe('project');
     expect(success.applied).toEqual(['folders']);
   });
 

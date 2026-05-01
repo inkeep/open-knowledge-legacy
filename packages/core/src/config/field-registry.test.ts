@@ -36,19 +36,19 @@ describe('getFieldMeta walker (descends innerType)', () => {
 
   test('descends through chained .optional().nullable().default()', () => {
     const inner = z.number();
-    fieldRegistry.add(inner, { scope: 'workspace', agentSettable: true });
+    fieldRegistry.add(inner, { scope: 'project', agentSettable: true });
     const wrapped = inner.optional().nullable().default(42);
-    expect(getFieldMeta(wrapped)).toEqual({ scope: 'workspace', agentSettable: true });
+    expect(getFieldMeta(wrapped)).toEqual({ scope: 'project', agentSettable: true });
   });
 
   test('descends through z.array(...).min(...).default(...)', () => {
     const arr = z.array(z.string()).min(1);
-    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'workspace' });
+    fieldRegistry.add(arr, { scope: 'either', agentSettable: true, defaultScope: 'project' });
     const wrapped = arr.default(['a']);
     expect(getFieldMeta(wrapped)).toEqual({
       scope: 'either',
       agentSettable: true,
-      defaultScope: 'workspace',
+      defaultScope: 'project',
     });
   });
 
@@ -122,7 +122,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     }
   });
 
-  test('agentSettable allowlist is exactly the 5 expected paths', () => {
+  test('agentSettable allowlist is exactly the 3 expected paths', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const allowlisted = leaves
@@ -130,29 +130,25 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
       .map((l) => l.path.join('.'))
       .sort();
     expect(allowlisted).toEqual(
-      [
-        'content.exclude',
-        'content.include',
-        'folders',
-        'mcp.tools.read_document.historyDepth',
-        'mcp.tools.search.maxResults',
-      ].sort(),
+      ['folders', 'mcp.tools.read_document.historyDepth', 'mcp.tools.search.maxResults'].sort(),
     );
   });
 
-  test('workspace-strict fields cover content.* + preview.baseUrl', () => {
-    // `content.dir` / `content.include` / `content.exclude` are workspace-only
-    // per user direction 2026-04-29 — they define which files are part of *this*
-    // project's knowledge graph; a user-global override doesn't make sense.
-    // `preview.baseUrl` is workspace-only per spec §9.5.4 ❌ marker.
+  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.onboardingResolvedAt', () => {
+    // `content.dir` is project-only — it names the root of this project's
+    // knowledge graph; a user-global override doesn't make sense. content.include
+    // / content.exclude were removed (path rules now live in `.okignore`).
+    // `preview.baseUrl` is project-only because each project has its own
+    // deployed wiki URL. `autoSync.onboardingResolvedAt` is per-project
+    // onboarding state.
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
-    const workspaceStrict = leaves
-      .filter((l) => getFieldMeta(l.schema)?.scope === 'workspace')
+    const projectStrict = leaves
+      .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(workspaceStrict).toEqual(
-      ['content.dir', 'content.exclude', 'content.include', 'preview.baseUrl'].sort(),
+    expect(projectStrict).toEqual(
+      ['autoSync.onboardingResolvedAt', 'content.dir', 'preview.baseUrl'].sort(),
     );
   });
 });

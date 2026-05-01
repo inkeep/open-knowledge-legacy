@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import type { Editor } from '@tiptap/core';
+import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import {
   __getActivityMountList,
@@ -45,6 +46,7 @@ import {
   parkTiptapEditor,
   setActivityMountList,
   shouldCacheEditor,
+  subscribePoolEviction,
   type TiptapCacheEntry,
   VIEW_COUNT_CACHE_THRESHOLD,
 } from './editor-cache';
@@ -686,6 +688,278 @@ describe('TipTap cache — __uncached / kill-switch path (US-001 AC 7)', () => {
   });
 });
 
+describe('TipTap cache — undoManager.restore cleanup on destroy', () => {
+  // Yjs's UndoManager constructor registers `doc.on('destroy', () => this.destroy())`
+  // with no stable reference, so `UndoManager.destroy()` cannot off it. The Set
+  // entry retains the UndoManager forever. Independently,
+  // @tiptap/extension-collaboration's plugin-view destroy assigns
+  // `undoManager.restore = closure(viewRet, view, editor, binding, ...)` —
+  // capturing the entire EditorView + ProsemirrorBinding + Editor + PM document
+  // tree. Together that's ~30 MB pinned per mount/destroy cycle on multi-MB
+  // docs. The cache MUST null `undoManager.restore` after `editor.destroy()` to
+  // break the closure chain.
+  //
+  // Verification strategy: the production cache reads the per-editor
+  // UndoManager via `yUndoPluginKey.getState(editor.state).undoManager`. We
+  // stub `yUndoPluginKey.getState` to return a sentinel UndoManager-shaped
+  // object whose `restore` field starts as a callable closure and assert it is
+  // `undefined` after the cache's destroy path runs.
+
+  let originalGetState: typeof yUndoPluginKey.getState;
+
+  beforeEach(() => {
+    __resetCacheForTests();
+    originalGetState = yUndoPluginKey.getState;
+    // The stub honors the production call shape but returns our sentinel for
+    // fake states tagged with __testUndoManager.
+    yUndoPluginKey.getState = ((state: unknown) => {
+      const tagged = state as { __testUndoManager?: unknown } | null | undefined;
+      if (tagged?.__testUndoManager) {
+        return { undoManager: tagged.__testUndoManager } as ReturnType<typeof originalGetState>;
+      }
+      return originalGetState.call(yUndoPluginKey, state as never);
+    }) as typeof originalGetState;
+  });
+
+  afterEach(() => {
+    yUndoPluginKey.getState = originalGetState;
+    __resetCacheForTests();
+  });
+
+  function attachStubUndoManager(
+    editor: Editor,
+  ): { restore: unknown } & { __initialRestore: () => string } {
+    const initialRestore = () => 'leak-marker';
+    const undoManager = {
+      restore: initialRestore as unknown,
+      __initialRestore: initialRestore,
+    };
+    (editor as unknown as { state: unknown }).state = {
+      __testUndoManager: undoManager,
+    };
+    return undoManager;
+  }
+
+  test('parkTiptapEditor on __uncached entry clears undoManager.restore after destroy', () => {
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    expect(undoManager.restore).toBe(undoManager.__initialRestore);
+
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    parkTiptapEditor(entry);
+
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(entry.activeMountKey).toBeNull();
+  });
+
+  test('evictTiptapEditor clears undoManager.restore after destroy', () => {
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    expect(undoManager.restore).toBe(undoManager.__initialRestore);
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
+  test('cleanup is resilient when editor.destroy() throws', () => {
+    // TipTap's throwing-proxy can throw mid-destroy; the cache already
+    // try/catches that. The capture-before-destroy ordering means we still
+    // hold the undoManager reference after destroy throws and can clear
+    // restore on the affected manager.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      throw new Error('throwing-proxy');
+    };
+
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    expect(() => parkTiptapEditor(entry)).not.toThrow();
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+  });
+
+  test('evictTiptapEditor capture-before-destroy ordering: state inaccessible AFTER destroy still clears restore', () => {
+    // Symmetric to the parkTiptapEditor ordering test — the evict path has
+    // the same inline-duplicated capture-before-destroy pattern. A localized
+    // refactor that moves readEditorUndoManager after editor.destroy() on
+    // the evict path would not be caught by the park-only ordering test.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      Object.defineProperty(h.editor, 'state', {
+        get() {
+          throw new Error('state after destroy — TipTap throwing proxy');
+        },
+        configurable: true,
+      });
+    };
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
+  test('evictTiptapEditor cleanup is resilient when editor.destroy() throws', () => {
+    // The evict path has its own inline cleanup (duplicated, not extracted) +
+    // emits ok/cache/evict-failed telemetry on editor.destroy() throws. This
+    // symmetric test guards against a refactor that moves restore-cleanup
+    // inside the destroy try-block on this path.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    mountTiptapEditor({
+      docName: h.docName,
+      container: h.container as unknown as HTMLElement,
+      factory: h.factory as unknown as (el: HTMLElement) => ReturnType<typeof h.factory>,
+    });
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      throw new Error('throwing-proxy');
+    };
+
+    const result = evictTiptapEditor(h.docName);
+
+    expect(result).toBe(true);
+    expect(h.spies.destroyCalls).toBe(1);
+    expect(h.providerSpies.destroyCalls).toBe(1);
+    expect(undoManager.restore).toBeUndefined();
+    expect(__peekTiptap(h.docName)).toBeUndefined();
+  });
+
+  test('capture-before-destroy ordering: state inaccessible AFTER destroy still clears restore', () => {
+    // Models real TipTap post-destroy semantics: editor.state is accessible
+    // before destroy, but becomes a throwing proxy after. The cleanup must
+    // capture the undoManager BEFORE calling destroy. This test fails if
+    // anyone reorders the production code to call readEditorUndoManager
+    // after editor.destroy() — at which point the throwing-proxy state
+    // would cause readEditorUndoManager to return null and the leak would
+    // return silently. Existing throw-tests don't catch this because they
+    // model "state always throws" or "destroy throws"; this test models the
+    // production transition state-OK → destroy-OK → state-throws.
+    const h = makeTiptapHarness('doc-a');
+    const undoManager = attachStubUndoManager(h.editor);
+    (h.editor as unknown as { destroy: () => void }).destroy = () => {
+      h.spies.destroyCalls++;
+      Object.defineProperty(h.editor, 'state', {
+        get() {
+          throw new Error('state after destroy — TipTap throwing proxy');
+        },
+        configurable: true,
+      });
+    };
+
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    parkTiptapEditor(entry);
+
+    expect(h.spies.destroyCalls).toBe(1);
+    // Capture must have happened pre-destroy — otherwise the throwing state
+    // proxy would have made readEditorUndoManager return null and restore
+    // would still be the original closure.
+    expect(undoManager.restore).toBeUndefined();
+  });
+
+  test('no crash when editor.state throws (TipTap throwing-proxy mid-teardown)', () => {
+    // editor.state is a throwing proxy in known TipTap mid-teardown windows.
+    // Pre-destroy capture must defensive-noop in that case rather than
+    // escaping.
+    const h = makeTiptapHarness('doc-a');
+    Object.defineProperty(h.editor, 'state', {
+      get() {
+        throw new Error('throwing-proxy state');
+      },
+      configurable: true,
+    });
+
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    expect(() => parkTiptapEditor(entry)).not.toThrow();
+    expect(h.spies.destroyCalls).toBe(1);
+  });
+
+  test('no-op when undoManager cannot be located (e.g. editor without y-undo plugin)', () => {
+    // TipTap editors without the y-undo plugin loaded (e.g. non-collaborative
+    // configurations) have no undoManager to clean up; the cache must skip
+    // the cleanup silently. (CM6 editors don't take this path at all —
+    // parkCmEditor/evictCmEditor never call readEditorUndoManager.)
+    const h = makeTiptapHarness('doc-a');
+    // No state attached → stubbed yUndoPluginKey.getState falls through to the
+    // real getState, which returns null for non-PM-state inputs.
+    const entry: TiptapCacheEntry = {
+      editor: h.editor,
+      ydoc: h.ydoc,
+      ytext: h.ytext,
+      provider: h.provider,
+      scrollTop: 0,
+      hadFocus: false,
+      activeMountKey: h.docName,
+      __uncached: true,
+    };
+
+    expect(() => parkTiptapEditor(entry)).not.toThrow();
+    expect(h.spies.destroyCalls).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // CM6 cache — symmetric tests
 // ---------------------------------------------------------------------------
@@ -1142,6 +1416,64 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
     });
     setActivityMountList(['cm-only-doc']);
     expect(h.providerSpies.connectCalls).toBe(1);
+  });
+
+  test('pool-resident-but-not-V2-cached doc: demote still disconnects via ProviderPool fallback', () => {
+    // FR3b regression test for ACTIVITY_MOUNT_LIMIT=1 silent violation. When
+    // a doc is pool-open (HocuspocusProvider connected) but the V2 editor
+    // cache rejected it (defer-mount + cache-miss, e.g. PROJECT > BYTES_CACHE_THRESHOLD),
+    // findProvider must fall back to pool.entries — otherwise the demote
+    // path silently skips the disconnect and the provider keeps draining
+    // peer bytes into the local Y.Doc forever.
+    const ydoc = new Y.Doc();
+    const { provider, spies } = makeFakeProvider(ydoc);
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>([
+        ['orphan-doc', { provider }],
+      ]) as ReadonlyMap<string, { provider: HocuspocusProvider }>,
+      onEvict: (_cb: (docName: string) => void) => () => {
+        // no-op: test doesn't exercise pool eviction
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      // Doc is NOT in V2 cache — only in pool.entries.
+      expect(__peekTiptap('orphan-doc')).toBeUndefined();
+      expect(__peekCm('orphan-doc')).toBeUndefined();
+
+      // Promote — provider connect (idempotent on already-connected pool provider).
+      setActivityMountList(['orphan-doc']);
+      expect(spies.connectCalls).toBe(1);
+
+      // Demote — must disconnect via pool fallback. This is the bug guard.
+      setActivityMountList([]);
+      expect(spies.disconnectCalls).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('subscribePoolEviction unsubscribe clears pool reference: subsequent demote no-ops without pool', () => {
+    // After unsubscribe, the cache must NOT retain a stale pool reference.
+    // Otherwise a later test or subsequent component lifecycle could see
+    // disconnects for providers that have already been torn down.
+    const ydoc = new Y.Doc();
+    const { provider, spies } = makeFakeProvider(ydoc);
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>([
+        ['orphan-doc', { provider }],
+      ]) as ReadonlyMap<string, { provider: HocuspocusProvider }>,
+      onEvict: (_cb: (docName: string) => void) => () => {},
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    setActivityMountList(['orphan-doc']);
+    expect(spies.connectCalls).toBe(1);
+
+    unsubscribe();
+
+    setActivityMountList([]);
+    // After unsubscribe the pool ref is gone; nothing to find, nothing to disconnect.
+    expect(spies.disconnectCalls).toBe(0);
   });
 });
 
