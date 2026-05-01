@@ -274,7 +274,7 @@ describe('getShadowRepoPath', () => {
     mkdirSync(resolve(project, '.git/openknowledge'), { recursive: true });
     writeFileSync(resolve(project, '.git/openknowledge/HEAD'), 'ref: refs/heads/main\n');
     // Legacy path is ignored — getShadowRepoPath reads through resolveShadowDir
-    // which always returns .git/open-knowledge/. The R9 rename shim in
+    // which always returns .git/ok/. The R9 rename shim in
     // initShadowRepo handles the on-disk migration at server start.
     expect(getShadowRepoPath(project)).toBe(null);
   });
@@ -286,9 +286,9 @@ describe('getShadowRepoPath', () => {
     expect(getShadowRepoPath(project)).toBe(null);
   });
 
-  test('returns null when .git/open-knowledge exists but HEAD is missing', () => {
+  test('returns null when .git/ok exists but HEAD is missing', () => {
     const project = resolve(tmp, 'project');
-    mkdirSync(resolve(project, '.git/open-knowledge'), { recursive: true });
+    mkdirSync(resolve(project, '.git/ok'), { recursive: true });
     expect(getShadowRepoPath(project)).toBe(null);
   });
 });

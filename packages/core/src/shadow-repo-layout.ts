@@ -2,11 +2,10 @@
  * Shadow-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The shadow repo lives at `<projectRoot>/.git/open-knowledge/` (SPEC
- * 2026-04-21-shadow-repo-single-mode). Pre-spec integrated shadows at
- * `.git/openknowledge/` (legacy path) are silently rename-migrated in-place
- * once per repo via `initShadowRepo()`. Its on-disk layout is a documented
- * invariant:
+ * The shadow repo lives at `<projectRoot>/.git/ok/`. Pre-rename integrated
+ * shadows at `.git/openknowledge/` (legacy path) are silently rename-migrated
+ * in-place once per repo via `initShadowRepo()`. Its on-disk layout is a
+ * documented invariant:
  *
  *   refs/wip/<project-branch>/<writer-id>
  *

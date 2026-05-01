@@ -19,9 +19,9 @@ import { parseDocument } from 'yaml';
 import { resolveConfigPath } from './write-config-patch.ts';
 
 export interface ConfigPathPresence {
-  /** Whether the path is set in `<homedir>/.open-knowledge/config.yml`. */
+  /** Whether the path is set in `<homedir>/.ok/config.yml`. */
   user: boolean;
-  /** Whether the path is set in `<cwd>/.open-knowledge/config.yml`. */
+  /** Whether the path is set in `<cwd>/.ok/config.yml`. */
   project: boolean;
 }
 
