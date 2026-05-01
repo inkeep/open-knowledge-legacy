@@ -129,8 +129,21 @@ export function runCommit<T extends Config = Config>(
     result.error.code === 'SCHEMA_INVALID' &&
     result.error.issues.length > 0
   ) {
+    // Clear stale child-path errors from prior failures before re-routing
+    // the current issue set. Without this, fixing one of N invalid fields
+    // and re-blurring leaves the resolved field's error in formState.errors
+    // (the loop below only sets errors for paths still in issues[]).
+    // RHF's clearErrors(name) calls unset(errors, name) which deletes the
+    // entire subtree at that path, so a single call covers all child paths.
+    form.clearErrors(name);
     for (const issue of result.error.issues) {
-      const issuePath = issue.path.map(String).join('.');
+      // Empty issue.path occurs for root-level Zod refinements
+      // (.refine/.superRefine on the schema object itself). Falling back
+      // to `name` keeps the error path under the form tree so subsequent
+      // clearErrors calls actually clear it; setError('') would land at a
+      // permanent invisible root-level position never cleared by
+      // unset(errors, 'folders').
+      const issuePath = issue.path.length > 0 ? issue.path.map(String).join('.') : name;
       form.setError(issuePath as FieldPath<T>, {
         type: 'config-binding',
         message: issue.message,

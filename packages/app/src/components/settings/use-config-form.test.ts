@@ -206,7 +206,12 @@ describe('runCommit — failure path', () => {
       type: 'config-binding',
       message: 'Expected number, received string',
     });
-    expect(clearErrors).not.toHaveBeenCalled();
+    // clearErrors(name) IS called in the SCHEMA_INVALID-with-issues branch
+    // before the per-issue setError loop, so stale child-path errors from
+    // a prior failure don't survive when the new issue set shrinks. See
+    // the "consecutive failures" regression test below for the scenario.
+    expect(clearErrors).toHaveBeenCalledTimes(1);
+    expect(clearErrors).toHaveBeenCalledWith('mcp.tools.search.maxResults');
     // resetField MUST stay inside the success branch — if it leaked to
     // the failure path, committed-but-invalid fields would lose their
     // dirty status and the next external update under
@@ -293,6 +298,100 @@ describe('runCommit — failure path', () => {
     const paths = setError.mock.calls.map((c) => c[0]);
     expect(paths).toContain('folders.0.match');
     expect(paths).toContain('folders.0.frontmatter.description');
+  });
+
+  test('clears prior child-path errors before re-routing the new issue set (consecutive failures)', () => {
+    // Concrete scenario: a folders row is rejected with both `match` and
+    // `frontmatter.description` invalid. The user fixes `match` and blurs;
+    // the second commit rejects with only `frontmatter.description` left.
+    // Without clearErrors(name) before the loop, the old `folders.0.match`
+    // error persists in formState.errors and the row visually shows a red
+    // FormMessage on a field the user has already fixed. RHF's
+    // unset(errors, 'folders') deletes the whole subtree, so a single
+    // clearErrors call on the parent path covers all child-path errors —
+    // verified against react-hook-form 7.74.0 dist/index.esm.mjs:897-919.
+    const { form, setError, clearErrors } = createMockForm(() => [
+      { match: 'specs/**', frontmatter: { description: 42 } },
+    ]);
+    const error: ConfigValidationError = {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['folders', 0, 'frontmatter', 'description'],
+          message: 'Expected string, received number',
+          issueCode: 'invalid_type',
+        },
+      ],
+    };
+    const { binding } = createMockBinding(() => ({ ok: false, error }));
+
+    runCommit(form, binding, 'folders');
+
+    expect(clearErrors).toHaveBeenCalledTimes(1);
+    expect(clearErrors).toHaveBeenCalledWith('folders');
+    // Order matters: the clearErrors call must precede the setError calls
+    // — otherwise the loop sets the new error but the stale ones survive.
+    // bun:test's `mock.calls` records call order across the same mock; we
+    // assert ordering via invocationCallOrder is unavailable, so instead
+    // verify that the resulting setError targets only the current issue.
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(setError.mock.calls[0]?.[0]).toBe('folders.0.frontmatter.description');
+  });
+
+  test('falls back to commit name when issue.path is empty (root-level refine guard)', () => {
+    // ConfigIssueSchema.path has no .min(1), so an empty path is
+    // schema-valid (e.g., a future .refine()/.superRefine() on the
+    // ConfigSchema root would emit issues with empty paths). Without the
+    // length guard, `''.map(String).join('.')` produces the empty string;
+    // setError('', …) lands at formState.errors[''] — invisible to every
+    // FormField and never cleared by clearErrors('folders') because
+    // unset(errors, 'folders') only touches the 'folders' subtree.
+    const { form, setError } = createMockForm(() => ({}));
+    const error: ConfigValidationError = {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: [],
+          message: 'cross-field invariant violated',
+          issueCode: 'custom',
+        },
+      ],
+    };
+    const { binding } = createMockBinding(() => ({ ok: false, error }));
+
+    runCommit(form, binding, 'folders');
+
+    expect(setError).toHaveBeenCalledTimes(1);
+    const [name, errArg] = setError.mock.calls[0] ?? [];
+    expect(name).toBe('folders');
+    expect(errArg).toMatchObject({
+      type: 'config-binding',
+      message: 'cross-field invariant violated',
+    });
+  });
+
+  test('SCHEMA_INVALID with empty issues[] falls back to humanFormat on the commit name', () => {
+    // The `issues.length > 0` guard in runCommit is intentional: a
+    // structurally-valid SCHEMA_INVALID (per ConfigIssueSchema) may carry
+    // an empty issues[] array. Routing it through the SCHEMA_INVALID
+    // branch with no issues would zero-iterate the loop and call no
+    // setError, leaving the commit silently failing. The else branch
+    // surfaces humanFormat(error) on the commit name instead.
+    const { form, setError } = createMockForm(() => 'localhost');
+    const error: ConfigValidationError = {
+      code: 'SCHEMA_INVALID',
+      issues: [],
+    };
+    const { binding } = createMockBinding(() => ({ ok: false, error }));
+
+    const result = runCommit(form, binding, 'server.host');
+
+    expect(result).toBe(false);
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(setError.mock.calls[0]?.[0]).toBe('server.host');
+    const errArg = setError.mock.calls[0]?.[1] as { message?: string } | undefined;
+    expect(errArg?.message).toBeDefined();
+    expect(errArg?.message?.length ?? 0).toBeGreaterThan(0);
   });
 });
 
