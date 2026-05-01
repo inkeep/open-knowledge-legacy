@@ -18,6 +18,7 @@
     "build:desktop": "turbo run build:desktop",
     "build:desktop:dir": "turbo run build:desktop:dir",
     "check:desktop": "turbo run lint typecheck test --filter=@inkeep/open-knowledge-desktop",
+    "diagnose:processes": "bash scripts/diagnose-server-processes.sh",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "biome check packages docs *.json *.jsonc *.ts --error-on-warnings",
