@@ -1040,60 +1040,6 @@ describe('Chain D — frontmatter strip/prepend conversion', () => {
   );
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Chain D — per-key frontmatter equivalence (US-013, AC #7)
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Under per-key Y.Map storage (US-001..US-005), the conversion path is:
-//
-//   Observer B reads Y.Text → stripFrontmatter → setFrontmatterFromYaml(doc, body)
-//   Observer A reads metaMap → getFrontmatter(doc) → prependFrontmatter(fm, body)
-//
-// The original Chain D above proved the regex pair (stripFrontmatter +
-// prependFrontmatter) is identity-correct on a single in-out string.
-// This extension closes the loop with the per-key codec: a YAML body fed
-// through `parseFrontmatterYaml → Y.Map → serializeFrontmatterMap → withFences`
-// must reproduce a fenced string that, when fed back into prependFrontmatter
-// against the original body, equates the original full markdown under the same
-// normalization the bridge invariant uses.
-//
-// Why this matters: the substrate bridge invariant (D11) composes one side of
-// the equality from `getFrontmatter(doc)` post per-key write. If the codec
-// drifts (e.g. yaml@2 changes scalar-style defaults), the watcher would flap
-// against per-key writes and integration tests would surface a noisy red.
-// This deterministic PBT pins the codec contract at the same tier the
-// observer conversion functions are tested.
-
-// A codec-compatible YAML frontmatter arbitrary. The legacy Chain D arbitrary
-// `mdWithFrontmatter` allows YAML that the per-key codec rejects (null values
-// from `key: ` / `key: -` / `key: ~`) or normalizes (`00` → `0`, leading-zero
-// integers). This arbitrary requires the value to start with a letter so:
-//   - YAML 1.2 null sentinels (`-`, `~`, `?`, `!`) cannot lead → no null map
-//   - The value cannot be parsed as a number (so the input token survives
-//     re-serialization byte-for-byte, which the body-token survival test
-//     in Chain D enforces).
-const codecValue = fc.stringMatching(/^[A-Za-z][A-Za-z0-9 _-]{0,19}$/);
-const codecFrontmatterBlock = fc
-  .array(fc.tuple(fc.stringMatching(/^[a-z][a-z0-9_]{1,10}$/), codecValue), {
-    minLength: 1,
-    maxLength: 3,
-  })
-  .map((pairs) => {
-    // Dedup on key so the YAML doesn't have duplicate keys (yaml@2 keeps the
-    // last; the test would compare against the first-write parse).
-    const seen = new Set<string>();
-    const lines: string[] = [];
-    for (const [k, v] of pairs) {
-      if (seen.has(k)) continue;
-      seen.add(k);
-      lines.push(`${k}: ${v}`);
-    }
-    return `---\n${lines.join('\n')}\n---\n`;
-  });
-const _mdWithCodecFrontmatter = fc
-  .tuple(codecFrontmatterBlock, bodyOnly)
-  .map(([fm, body]) => `${fm}${body}`);
-
 describe('Handler-specific survivability (chains A+C)', () => {
   const handlerCases: Array<{ label: string; md: string }> = [
     {

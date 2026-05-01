@@ -11,14 +11,7 @@
  * and Node (server / agent paths) can share one parser. No dep on `yjs` —
  * callers pass strings; they own the `Y.Text` mutation transact.
  */
-import {
-  Document,
-  type Pair,
-  parseDocument,
-  type Scalar,
-  type ToStringOptions,
-  type YAMLMap,
-} from 'yaml';
+import { Document, type Pair, parseDocument, type Scalar, type YAMLMap } from 'yaml';
 import { FRONTMATTER_RE, unwrapFrontmatterFences } from '../extensions/frontmatter.ts';
 import {
   type FrontmatterMap,
@@ -26,7 +19,7 @@ import {
   type FrontmatterValue,
   FrontmatterValueSchema,
 } from '../frontmatter/schema.ts';
-import { withFences } from '../frontmatter/yaml-codec.ts';
+import { STRINGIFY_OPTIONS, withFences } from '../frontmatter/yaml-codec.ts';
 
 /**
  * Maximum byte length the binding will admit for a fenced FM region. Source-mode
@@ -35,12 +28,6 @@ import { withFences } from '../frontmatter/yaml-codec.ts';
  * <1 KB.
  */
 export const MAX_FM_REGION_BYTES = 65536;
-
-const STRINGIFY_OPTIONS: ToStringOptions = {
-  defaultKeyType: 'PLAIN',
-  defaultStringType: 'PLAIN',
-  lineWidth: 0,
-};
 
 /**
  * Result of detecting the FM region within a full Y.Text snapshot. `fenced`

@@ -9,13 +9,19 @@
  *
  * Used at every YAML boundary: disk load (`onLoadDocument`), disk store
  * (`onStoreDocument`), source-mode reconciliation (Observer B), and the
- * MCP `frontmatter_patch` handler when a payload key needs to be re-rendered
- * inline with existing comments.
+ * `bindFrontmatterDoc` binding when re-serializing the FM region after a
+ * patch or rename.
  */
 import { Document, type Pair, parseDocument, type ToStringOptions } from 'yaml';
 import { type FrontmatterMap, FrontmatterMapSchema, FrontmatterValueSchema } from './schema.ts';
 
-const STRINGIFY_OPTIONS: ToStringOptions = {
+/**
+ * Shared `Document.toString()` options for every FM serializer in the repo
+ * (`serializeFrontmatterMap`, `applyPatchToDocument`, and the parse-edit-
+ * stringify primitives in `bridge/frontmatter-region.ts`). Exported so the
+ * region-level binding can keep one canonical site for these settings.
+ */
+export const STRINGIFY_OPTIONS: ToStringOptions = {
   defaultKeyType: 'PLAIN',
   defaultStringType: 'PLAIN',
   lineWidth: 0,

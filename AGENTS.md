@@ -114,7 +114,7 @@ Server Observer B: Y.Text → XmlFragment  (OBSERVER_SYNC_ORIGIN)
 Client observers: baseline tracking only (write paths deleted — precedent #14)
 ```
 
-**Frontmatter lives in the YAML region of `Y.Text('source')`** — the property panel reads + writes that region directly through `bindFrontmatterDoc` (in `@inkeep/open-knowledge-core/bridge`); body editor + source-mode editor share the same Y.Text via `y-codemirror.next` and the bridge. There is no separate `Y.Map('metadata')` — see `specs/2026-04-30-realtime-frontmatter-entries/SPEC.md`.
+Frontmatter lives in the YAML region of `Y.Text('source')` — the property panel reads + writes via `bindFrontmatterDoc` (no `Y.Map('metadata')`). Spec: [`specs/2026-04-30-realtime-frontmatter-entries/SPEC.md`](specs/2026-04-30-realtime-frontmatter-entries/SPEC.md).
 
 **Three invariants** (assert before/after every propagation):
 
@@ -131,9 +131,7 @@ Client observers: baseline tracking only (write paths deleted — precedent #14)
 | W3 Agent API             | applyAgentMarkdownWrite | applyAgentMarkdownWrite | Persistence debounce |
 | W4 Disk (file watcher)   | applyExternalChange     | applyExternalChange     | (direct)             |
 | W5 Agent Undo            | applyAgentUndo          | applyAgentUndo          | Persistence debounce |
-| W6 Property panel (FM)   | bindFrontmatterDoc      | (Server Observer B if body shifts) | Persistence debounce |
-
-The `→ Y.Text` column covers both body and FM region — frontmatter lives in the YAML region of `Y.Text('source')` directly. W3/W4/W5 write the full markdown (FM + body) through their respective helpers; W6 edits only the FM byte range under `FORM_WRITE_ORIGIN`.
+| W6 Property panel | bindFrontmatterDoc | (Observer B if body shifts) | Persistence debounce |
 
 **Full observer design** (server-authoritative Path A/B, settlement dispatch via `afterAllTransactions`, origin-guard truth tables, paired-write markers, `applyAgentMarkdownWrite` reference implementation): [`ARCHITECTURE.md`](./ARCHITECTURE.md) + the four spec directories under `specs/2026-04-1[4-6]-*/`. `packages/server/src/server-observers.ts` is the canonical implementation.
 

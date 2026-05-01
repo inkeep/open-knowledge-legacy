@@ -62,6 +62,21 @@ describe('bindFrontmatterDoc — patch()', () => {
     expect(readFmMap(provider.document.getText('source').toString())).toEqual({ title: 'Hello' });
   });
 
+  test('deleting every key removes the FM fences', () => {
+    const provider = makeProvider();
+    const binding = bindFrontmatterDoc(provider);
+    binding.patch({ title: 'Hello', status: 'draft' });
+    expect(readYTextFm(provider)).not.toBe('');
+
+    const result = binding.patch({ title: null, status: null });
+
+    expect(result.ok).toBe(true);
+    expect(provider.document.getText('source').toString()).toBe('');
+    expect(readYTextFm(provider)).toBe('');
+    expect(binding.current().map).toEqual({});
+    expect(binding.current().keys).toEqual([]);
+  });
+
   test('updating an existing key does NOT reorder properties (FR2)', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
