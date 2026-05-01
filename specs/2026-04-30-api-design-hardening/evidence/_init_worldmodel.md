@@ -94,7 +94,7 @@ PUBLISHES:                                       PUBLISHES:                     
   PrincipalResponseSchema (zod)              │       (precedent #24)                    UploadWriteReason as STRING (parsed
   CC1 schemas (10 zod-discriminated          │       classifyMarkdownHref               from JSON `error` field — no
    union frames)                             │       (S3 — bidirectional!)             type-link with the typed class)
-  upload constants (DEFAULT_*, *_RE)         │     consumes: DiskEvent (own)           
+  upload constants (DEFAULT_*, *_RE)         │     consumes: DiskEvent (own)
                                              └────► consumes:                           imports from desktop preload:
                                                       classifyMarkdownHref               window.okDesktop.shell.openAsset
                                                       (in backlink-index.ts —             (typed via IpcChannelMap)
