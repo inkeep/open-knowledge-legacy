@@ -98,7 +98,7 @@ describe('readStateManifest', () => {
       const record: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, record);
       expect(readStateManifest(lockDir)).toEqual({ status: 'present', manifest: record });
@@ -148,12 +148,10 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
       expect(result.createdBy.runtimeVersion).toBe('0.2.0');
-      expect(result.createdBy.protocolVersion).toBe(1);
       expect(result.createdBy.adoptedAt).toBeUndefined();
       expect(result.createdAt).toBe('2026-04-27T12:00:00.000Z');
 
@@ -173,7 +171,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(0);
@@ -193,7 +190,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.0',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T12:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
@@ -209,7 +205,7 @@ describe('assertCompatibleStateManifest', () => {
       const initial: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, initial);
       const result = assertCompatibleStateManifest({
@@ -217,7 +213,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.1',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T13:00:00.000Z'),
       });
       expect(result.stateSchemaVersion).toBe(1);
@@ -239,7 +234,7 @@ describe('assertCompatibleStateManifest', () => {
       const manifest: StateManifestRecord = {
         stateSchemaVersion: 2,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.3.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.3.0' },
       };
       writeStateManifest(lockDir, manifest);
       expect(() =>
@@ -248,7 +243,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         }),
       ).toThrow(StateManifestError);
 
@@ -258,7 +252,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         });
       } catch (err) {
         expect(err).toBeInstanceOf(StateManifestError);
@@ -279,7 +272,6 @@ describe('assertCompatibleStateManifest', () => {
         createdAt: '2026-04-27T12:00:00.000Z',
         createdBy: {
           runtimeVersion: '0.2.0',
-          protocolVersion: 1,
           adoptedAt: '2026-04-27T12:00:00.000Z',
         },
       };
@@ -290,7 +282,6 @@ describe('assertCompatibleStateManifest', () => {
         shadowRepoDir,
         currentStateSchemaVersion: 1,
         currentRuntimeVersion: '0.2.1',
-        currentProtocolVersion: 1,
         now: () => new Date('2026-04-27T13:00:00.000Z'),
       });
 
@@ -313,7 +304,6 @@ describe('assertCompatibleStateManifest', () => {
           shadowRepoDir,
           currentStateSchemaVersion: 1,
           currentRuntimeVersion: '0.2.0',
-          currentProtocolVersion: 1,
         }),
       ).toThrow(StateManifestError);
     } finally {
@@ -329,7 +319,7 @@ describe('writeStateManifest', () => {
       const record: StateManifestRecord = {
         stateSchemaVersion: 1,
         createdAt: '2026-04-27T00:00:00.000Z',
-        createdBy: { runtimeVersion: '0.2.0', protocolVersion: 1 },
+        createdBy: { runtimeVersion: '0.2.0' },
       };
       writeStateManifest(lockDir, record);
       const written = JSON.parse(readFileSync(join(lockDir, STATE_MANIFEST_FILENAME), 'utf-8'));

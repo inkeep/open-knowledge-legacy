@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import simpleGit, { type SimpleGitOptions } from 'simple-git';
 import { resolveAuth } from '../auth/resolve-auth.ts';
 import { createTokenStore } from '../auth/token-store.ts';
 import { OK_DIR } from '../constants.ts';
 import { parseGitUrl } from '../github/url.ts';
-import type { Config } from '../index.ts';
 
 
 const STAGE_RANGES: [string, number, number][] = [

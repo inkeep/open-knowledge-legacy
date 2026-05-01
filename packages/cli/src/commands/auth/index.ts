@@ -1,6 +1,6 @@
+import type { Config } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import { createTokenStore } from '../../auth/token-store.ts';
-import type { Config } from '../../index.ts';
 import { gitCredentialCommand } from './git-credential.ts';
 import { loginCommand } from './login.ts';
 import { patCommand } from './pat.ts';

@@ -1,4 +1,4 @@
-import type { Config } from '../config/schema.ts';
+import type { Config } from '@inkeep/open-knowledge-server';
 
 const DEFAULT_OAUTH_CLIENT_ID = 'Ov23liqlSd0V1MwR6rhI';
 

@@ -2,9 +2,14 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
+import {
+  buildExecResult,
+  commitWip,
+  type ExecStructuredResult,
+  initShadowRepo,
+  type WriterIdentity,
+} from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
-import { buildExecResult, type ExecStructuredResult } from '../src/mcp/tools/exec.ts';
 
 const root = resolve(tmpdir(), `ok-exec-probe-${Date.now()}`);
 mkdirSync(root, { recursive: true });

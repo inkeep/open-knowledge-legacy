@@ -105,15 +105,64 @@ export interface ServerOptions {
   gitEnabled?: boolean;
   commitDebounceMs?: number;
   wipRef?: string;
+  /**
+   * When true, register test-only routes (`/api/test-reset`,
+   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
+   * server state in ways unsafe for multi-client use and must never be
+   * exposed in production. Enable only in tests.
+   */
   enableTestRoutes?: boolean;
+  /** Shadow repo handle — passed to persistence. */
   shadowRepo?: ShadowHandle;
+  /** Content root relative to project dir. */
   contentRoot?: string;
+  /**
+   * Maximum time (ms) `destroy()` waits for all pending stores to drain
+   * before giving up and continuing with the rest of the shutdown sequence.
+   * Defaults to 10_000. Tune lower in tests (e.g., 500) to reclaim CI wall-time.
+   * Tune higher on slow-disk / NFS environments where a legitimate L1 flush
+   * could take more than 10s.
+   */
   destroyTimeoutMs?: number;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document) via the MCP API. The CLI uses this to open the browser
+   * on the first agent edit per session; consumers that don't care can omit.
+   */
   onAgentWrite?: () => void;
+  /**
+   * CLI argv prefix for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (CLI on PATH).
+   * Pass [process.execPath, process.argv[1]] from start.ts to use the exact
+   * runtime that launched this server — necessary in dev (bun + .ts entry).
+   */
   localOpCliArgs?: string[];
+  /**
+   * Server kind written into the lock metadata. `interactive` (default) for
+   * user-facing boots; `mcp-spawned` for the MCP detach-spawn path. Desktop
+   * attach validation refuses to attach to non-interactive locks.
+   */
   lockKind?: 'interactive' | 'mcp-spawned';
-  parentPid?: number;
+  /**
+   * Skip the durable state-manifest pre-flight gate
+   * (`assertCompatibleStateManifest` from `state-manifest.ts`). Default `false`.
+   *
+   * Production paths (CLI `ok start`, Electron utility, Vite dev plugin) leave
+   * this `false` so an incompatible cold start fails loud before the server
+   * touches the shadow repo.
+   *
+   * The integration test harness passes `true` because each test allocates a
+   * fresh tmpdir, so the manifest gate has nothing meaningful to assert and
+   * the writes would just generate noise across thousands of tmpdirs.
+   * (Resolves SPEC Q3 under D14.)
+   */
   skipStateManifestCheck?: boolean;
+  /**
+   * Override `os.homedir()` for config-doc persistence + file watching
+   * (US-006 / US-007). Tests scope user-global writes (`__user__/config.yml`)
+   * to a tempdir; if unset, defaults to `os.homedir()` via `resolveConfigPath`.
+   * Production callers leave this undefined.
+   */
   configHomedirOverride?: string;
 }
 
@@ -124,15 +173,52 @@ export interface ServerInstance {
   agentFocusBroadcaster: AgentFocusBroadcaster;
   agentPresenceBroadcaster: AgentPresenceBroadcaster;
   contentFilter: ContentFilter;
+  /**
+   * In-memory basename → paths index used by the mdast→PM wiki-embed
+   * handler. Seeded at boot from disk; updated live via the asset arms
+   * of handleDiskEvent.
+   */
   basenameIndex: BasenameIndex;
+  /**
+   * Random UUID generated once per `createServer()` call. Advertised to
+   * clients via `GET /api/server-info` + the `__system__` CC1 `server-info`
+   * channel. Clients cache the last-observed ID and include it in the
+   * `expectedServerInstanceId` field of their auth token on every connect —
+   * `onAuthenticate` rejects on mismatch, forcing a clean client recycle
+   * before Yjs sync can merge stale-client state with a post-restart
+   * server Y.Doc. Part of the CRDT server-restart recovery defense.
+   */
   readonly serverInstanceId: string;
   destroy: () => Promise<void>;
+  /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
+  /**
+   * Names of subsystems that failed to initialize during boot.
+   * Read AFTER `await ready` for a stable list; reads before may return a partial result.
+   * Empty array means all subsystems initialized successfully.
+   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * `'head-watcher'`.
+   */
   readonly degraded: readonly string[];
+  /**
+   * Directory holding the server lock (`<contentDir>/.ok`).
+   * Callers update the lock's port field via `updateServerLockPort(lockDir, port)`
+   * once the HTTP listener has bound to a kernel-assigned port.
+   */
   readonly lockDir: string;
+  /** Active sync engine instance, or null if dormant / no remote detected. */
   readonly syncEngine: SyncEngine | null;
 }
 
+/**
+ * Transaction origin for park-snapshot reads (US-017, D39).
+ *
+ * Wrapping each serializeDoc() call inside doc.transact(..., PARK_SNAPSHOT_ORIGIN)
+ * ensures Y.js serializes the snapshot capture atomically against concurrent
+ * in-flight transactions. skipStoreHooks: false — the transact is read-only
+ * (no Y.Doc mutations) so onStoreDocument will not fire. paired: true — if a
+ * concurrent observer somehow fires, it short-circuits symmetrically (D39).
+ */
 const PARK_SNAPSHOT_ORIGIN = (() => {
   const ctx = Object.freeze({ origin: 'park-snapshot', paired: true as const });
   return Object.freeze({
@@ -163,19 +249,46 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const log = getLogger('server');
 
+  // Initialize OpenTelemetry before any spans could be emitted. No-op when
+  // OTEL_SDK_DISABLED != 'false' (default — zero overhead). Idempotent; safe
+  // to call multiple times (bootServer also calls it, but dev-plugin path
+  // bypasses bootServer and enters createServer directly).
   initTelemetry();
 
+  // Generated once per process. Advertised to clients so they can detect
+  // restart-across-reconnect before Yjs sync merges stale state. See the
+  // field docstring on ServerInstance.serverInstanceId for the full
+  // defense-in-depth flow.
   const serverInstanceId = randomUUID();
 
+  // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
+  // HTTP listen, etc.). Collides fast with another running server in the same
+  // contentDir. Port may be 0 here — the CLI rewrites it post-listen via
+  // `updateServerLockPort(lockDir, realPort)`. See V0-1 spec.
   const lockDir = resolve(contentDir, '.ok');
   acquireServerLock(lockDir, {
     port: options.port ?? 0,
     worktreeRoot: projectDir,
     kind: options.lockKind ?? 'interactive',
-    ...(options.parentPid !== undefined && { parentPid: options.parentPid }),
+    // Every server booted through `createServer` wires Hocuspocus + WS
+    // upgrade in `boot.ts`. The capability flag lets future variants
+    // (e.g. an HTTP-only relay) advertise differently.
     capabilities: ['http', 'ws'],
   });
 
+  // Durable state-manifest gate. Runs AFTER lock acquisition so two
+  // cold-starting binaries serialize through the lock first, then the loser
+  // fails fast on ProcessLockCollisionError before reaching the manifest
+  // check. Runs BEFORE any shadow-repo or persistence side effect so an
+  // incompatible cold start refuses to boot before any durable mutation.
+  //
+  // Skipped when the caller passes `skipStateManifestCheck: true` — used by
+  // the integration test harness, which allocates a fresh tmpdir per test
+  // (no pre-existing state to gate on; writes would just generate noise
+  // across thousands of throwaway content dirs).
+  //
+  // On throw, release the lock before propagating so other processes can
+  // proceed (matches the cleanup path below for synchronous-init failures).
   if (!skipStateManifestCheck) {
     try {
       assertCompatibleStateManifest({
@@ -188,11 +301,21 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  // In-memory basename index for asset embed resolution. Populated from disk
+  // at boot, kept in sync via the asset-event arms of handleDiskEvent. Plain
+  // Map under the hood; rebuilds are cheap so no disk persistence.
   const basenameIndex: BasenameIndex = createBasenameIndex();
 
+  // `![[photo.png]]` embed refs resolve via the basename index. Shared by
+  // persistence (onLoadDocument), server Observer B (Y.Text → XmlFragment),
+  // the agent-write path, and external-change (disk → CRDT), so wherever
+  // markdown is parsed into the Y.Doc the embed's PM src/href reflects the
+  // current vault state. Returns null on unknown basename — the PM dispatch
+  // falls back to the literal target (broken-ref placeholder).
   const resolveEmbed = (basename: string, sourcePath: string): string | null =>
     basenameIndex.resolveEmbed(basename, sourcePath);
 
+  // Synchronous init — if any constructor throws, release the lock before propagating.
   let contentFilter: ReturnType<typeof createContentFilter>;
   let backlinkIndex: BacklinkIndex;
   let shadowRef: ShadowRef;
@@ -202,9 +325,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   let cc1Broadcaster: CC1Broadcaster | null = null;
   let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
   let agentPresenceBroadcaster: AgentPresenceBroadcaster | null = null;
+  // Mutable principal holder — populated by the async load in initAsync.
   let loadedPrincipal: Principal | null = null;
   const forceUnloadSet = new Set<Document>();
   let shutdownAllowsUnload = false;
+  // Assigned synchronously in the init `try` immediately after `new Hocuspocus` (before the try
+  // completes or awaits). Call sites (disk reconcile, API extension) only run after boot returns.
   let forceUnloadDocument!: (document: Document) => Promise<void>;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
@@ -232,8 +358,20 @@ export function createServer(options: ServerOptions): ServerInstance {
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       resolveEmbed,
       getPrincipal: () => loadedPrincipal,
+      // Emit CC1 ch:'session-activity' after any agent writer commits so
+      // Activity Panel clients get live invalidations (FR-P25, D-P11).
+      // cc1Broadcaster is initialized after persistence but captured by
+      // closure reference — the callback always sees the latest value.
       onAgentCommit: () => cc1Broadcaster?.signal('session-activity'),
+      // Emit CC1 ch:'disk-ack' after each successful L1 write so clients
+      // can advance their `lastDiskAckedSV` watermark. Same closure-deferred
+      // pattern as `onAgentCommit` — broadcaster is initialized after
+      // persistence but captured by reference.
       onDiskFlush: (docName, sv) => cc1Broadcaster?.emitDiskAck(docName, sv),
+      // L3 validation rejection (D45 / FR-34). Fired when the config-doc
+      // branch reverts Y.Text to LKG; the broadcast tells any open
+      // Settings pane to surface the rejection toast + flash the
+      // affected field. Same closure-deferred pattern.
       onConfigRejected: (docName, error) =>
         cc1Broadcaster?.emitConfigValidationRejected(docName, error),
     };
@@ -247,6 +385,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       extensions: [persistence.extension],
     });
 
+    // Hocuspocus unloads documents as soon as the last WebSocket disconnects.
+    // That is unsafe with client-side y-indexeddb: a browser refresh leaves a
+    // durable client copy of the same Yjs items, while the server rebuilds a
+    // fresh Y.Doc from markdown. The next sync union-merges both item sets and
+    // duplicates the document. Keep normal user docs resident for the server
+    // lifetime; explicit lifecycle paths opt into unload via `forceUnloadDocument`.
     const defaultShouldUnloadDocument = hocuspocus.shouldUnloadDocument.bind(hocuspocus);
     hocuspocus.shouldUnloadDocument = (document) =>
       (shutdownAllowsUnload || forceUnloadSet.has(document)) &&
@@ -272,12 +416,44 @@ export function createServer(options: ServerOptions): ServerInstance {
     });
     hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
+    // Browser tabs supply { principalId, tabSessionId } via the auth token.
+    // onAuthenticate parses the JSON token and hoists identity into connection
+    // context so persistence.resolveWriterFromOrigin sees source:'connection'
+    // with ctx.principalId set. Missing or invalid tokens are silently ignored
+    // (connection proceeds with SERVICE_WRITER fallback — non-browser clients
+    // like test harness and MCP never send tokens).
+    //
+    // The token is unauthenticated — a rogue browser tab (or a page that
+    // discovers the localhost port + passes the Origin allowlist) could claim
+    // any principalId it invents. We pin ctx.principalId to loadedPrincipal.id
+    // when the claim matches the server's loaded principal, and ignore the
+    // claim otherwise (falling back to SERVICE_WRITER via resolveWriterFromOrigin).
+    // This closes attribution-forgery on the single-user loopback deployment
+    // without requiring a signed token. When multi-principal support is ever
+    // added, upgrade this to a signed handshake from .ok/principal.json.
     const principalAuthExtension: Extension & { __kind: 'principal-auth' } = {
+      // Named marker so test code can find THIS extension specifically rather
+      // than "the first extension with an onAuthenticate hook" — future
+      // additions of other onAuthenticate-carrying extensions won't silently
+      // break identity-based extraction.
       __kind: 'principal-auth',
       async onAuthenticate(payload) {
         const tokenStr = payload.token;
+        // Route the parse through the Zod schema so the v3→v4 forward-compat
+        // story stays honest (fields we haven't seen yet survive via
+        // `.loose()`). Legacy untokened clients and malformed tokens both
+        // return `undefined` — we continue through the existing accept path.
         const parsed = parseHocuspocusAuthToken(tokenStr);
 
+        // CRDT server-restart recovery: if the client claimed a specific
+        // serverInstanceId and it doesn't match OUR instance ID, throw with
+        // `reason: 'server-instance-mismatch'` so the client's
+        // `authenticationFailed` handler can recycle all providers BEFORE
+        // any Yjs sync runs (which would merge ghost items under the stale
+        // clientID — the root cause this defends).
+        // Empty-string claim is treated as absent (matches client-side
+        // `buildAuthToken` behavior). Legacy clients without the field
+        // are accepted unconditionally for backward compat.
         const claimed = parsed?.expectedServerInstanceId;
         if (typeof claimed === 'string' && claimed.length > 0 && claimed !== serverInstanceId) {
           throw new HocuspocusAuthRejection(
@@ -286,6 +462,16 @@ export function createServer(options: ServerOptions): ServerInstance {
           );
         }
 
+        // Cross-branch invalidation late-join backstop. Mirrors the
+        // expectedServerInstanceId pattern. CC1 `branch-switched` is a
+        // stateless broadcast with no replay; clients offline during the
+        // emit, or fresh tabs restored from stale-branch IDB, would
+        // otherwise re-sync against the new branch with branch-A items
+        // still in IDB. Comparing the claimed branch against the live
+        // `getActiveBranch()` and rejecting on mismatch routes those
+        // clients through `handleBranchSwitched` BEFORE Yjs sync can
+        // union-merge stale-branch state. Empty / absent claim = legacy
+        // path (accepted unconditionally).
         const claimedBranch = parsed?.expectedBranch;
         const currentBranch = getActiveBranch();
         if (
@@ -302,9 +488,13 @@ export function createServer(options: ServerOptions): ServerInstance {
         if (!parsed) return;
         const ctx = payload.context as Record<string, unknown>;
         if (typeof parsed.principalId === 'string') {
+          // Pin to loaded principal when the claim matches; ignore on mismatch.
           if (loadedPrincipal && parsed.principalId === loadedPrincipal.id) {
             ctx.principalId = loadedPrincipal.id;
           } else if (loadedPrincipal) {
+            // Claim doesn't match — log at warn and omit principalId so the
+            // write falls through to SERVICE_WRITER. Preserves observability
+            // without letting the claim through.
             console.warn(
               JSON.stringify({
                 event: 'principal-token-mismatch',
@@ -313,6 +503,11 @@ export function createServer(options: ServerOptions): ServerInstance {
               }),
             );
           }
+          // When loadedPrincipal is null (not yet loaded), accept the claim
+          // — the async load is best-effort and browser writes need a writer
+          // ID even in the brief pre-load window. Classified writer fallback
+          // happens via resolveWriterFromOrigin when loaded fields aren't
+          // available for display-name lookup.
           else {
             ctx.principalId = parsed.principalId;
           }
@@ -325,6 +520,25 @@ export function createServer(options: ServerOptions): ServerInstance {
     };
     hocuspocus.configuration.extensions.push(principalAuthExtension);
 
+    // CC1 forgery guard. Hocuspocus's MessageReceiver relays every
+    // BroadcastStateless message from any peer to all peers on the
+    // same document with NO source filter (MessageReceiver.ts:88-94).
+    // The `__system__` doc is server→client only by design — every CC1
+    // channel (`server-info`, `branch-switched`, `disk-ack`, derived-
+    // view) flows out via the server's own DirectConnection through
+    // Document.broadcastStateless. A malicious client that opens a
+    // `__system__` WebSocket and sends a BroadcastStateless can forge
+    // any payload dispatchCC1Stateless accepts: a forged
+    // `branch-switched` would wipe IDB on every other peer, and a
+    // forged `disk-ack` would advance lastDiskAckedSV past unsynced
+    // bytes (re-opening the T11 content-loss bug class).
+    //
+    // Reject inbound BroadcastStateless on `__system__` from every
+    // client. The hook throws to abort message dispatch — Hocuspocus's
+    // Connection.ts catches and closes the offending connection,
+    // which is the right outcome (legitimate subscribers only receive,
+    // never broadcast). The IncomingMessage decoder reads the
+    // documentName prefix first, then the message type varUint.
     const systemDocBroadcastGuard: Extension & { __kind: 'system-doc-broadcast-guard' } = {
       __kind: 'system-doc-broadcast-guard',
       async beforeHandleMessage(payload) {
@@ -353,6 +567,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
+      // CC1 broadcaster is initialized after persistence but captured by
+      // closure reference (same pattern as `onAgentCommit` + `onDiskFlush`
+      // above). `getLatestDiskAckSVsAsBase64()` returns `{}` when the
+      // server has flushed nothing yet, matching the schema's
+      // empty-object case.
       getDiskAckSVs: () => cc1Broadcaster?.getLatestDiskAckSVsAsBase64() ?? {},
       contentRoot,
       backlinkIndex,
@@ -385,16 +604,26 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
+  // Config doc connections (US-005, D39/D40/FR-29). Held open for the
+  // server's lifetime so the synthetic Y.Docs stay materialized — clients
+  // (Settings pane + chrome controls) attach via WS. The bridge bypass
+  // (D41) is in `server-observer-extension.ts`; persistence/file-watcher/
+  // agent-sessions short-circuits in their respective modules.
   const configDocConnections = new Map<
     string,
     Awaited<ReturnType<Hocuspocus['openDirectConnection']>>
   >();
 
+  // Config file-watcher unsubscribes (US-007 / FR-15 / D52). One per admitted
+  // config doc whose on-disk file exists at startup (or appears via lazy
+  // first-write per D51). Drained at server shutdown phase-1 alongside the
+  // content-watcher cleanup; failures during startup degrade but never block.
   const configFileWatcherCleanups: Array<{
     docName: string;
     cleanup: ConfigFileWatcherUnsubscribe;
   }> = [];
 
+  /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
     const rescueBase = resolve(shadowGitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
@@ -402,19 +631,48 @@ export function createServer(options: ServerOptions): ServerInstance {
     return filePath;
   }
 
+  /** Serialize current Y.Doc to markdown for reconciliation. */
   function serializeDoc(docName: string): string | null {
     const document = hocuspocus.documents.get(docName);
     if (!document) return null;
     const xmlFragment = document.getXmlFragment('default');
     const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
+    // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
     const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
     return prependFrontmatter(fm, body);
   }
 
+  /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
   const applyToDoc = (docName: string, content: string): void =>
     applyExternalChange(hocuspocus, docName, content, resolveEmbed);
 
+  /**
+   * Re-render any open doc whose source contains `[[<assetBasename>]]` —
+   * fallback re-resolution when an asset is created or deleted outside of a
+   * cross-branch git operation. Without this, an open doc's PM image `src`
+   * stays frozen at the parse-time resolution: asset events update
+   * `basenameIndex` correctly, but documents whose markdown is byte-identical
+   * pre/post-event have no other re-render trigger.
+   *
+   * Why a substring scan instead of a reverse index: this fires only on
+   * asset create/delete (rare relative to text edits) and handles both
+   * `![[name.ext]]` (image embed) and `[[name.ext]]` (wiki-link with
+   * resolved href) shapes via the same `[[<name>]]` substring. A reverse
+   * index would buy throughput we don't need.
+   *
+   * Why Y.Text source instead of disk: the Y.Text already includes the user's
+   * pending edits within the persistence-debounce window. Reading disk content
+   * here would diff a stale tree against the live XmlFragment via
+   * `updateYFragment` — silently reverting unsaved edits. The pure CRDT helper
+   * `applyDiskContentToDoc` re-parses with the new resolveEmbed but doesn't
+   * call `recordContributor` or `setReconciledBase` (no actual disk write
+   * happened — only the embed resolution changed).
+   *
+   * Idempotent: `updateYFragment` diffs the computed PM tree against the live
+   * XmlFragment and only writes changed positions; re-parsing the same source
+   * with the same basenameIndex is a no-op on the Y.Doc.
+   */
   const rerenderDocsReferencingAssetBasename = (assetBasename: string): void => {
     if (!assetBasename) return;
     const needle = `[[${assetBasename}]]`;
@@ -435,15 +693,40 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   };
 
+  /**
+   * Schedule a deduplicated rerender for an asset basename. Multiple events
+   * arriving in the same parcel-watcher batch (e.g. `asset-delete photo.png`
+   * + `asset-create assets/photo.png` from a single `mv`) collapse into ONE
+   * rerender pass per unique basename — eliminating the broken-ref flicker
+   * during the inter-event window and halving the parse cost on N-asset
+   * folder moves.
+   *
+   * `setImmediate` runs in Node's check phase, AFTER the current macrotask's
+   * for-loop over batched events completes (microtask drains between awaits
+   * leave the loop intact). All asset events in a single parcel callback
+   * therefore land in the same pending Set before the deferred render fires.
+   */
   let pendingAssetRerenderBasenames: Set<string> | null = null;
   const scheduleAssetRerender = (assetBasename: string): void => {
     if (!assetBasename) return;
     if (pendingAssetRerenderBasenames === null) {
       pendingAssetRerenderBasenames = new Set();
       setImmediate(() => {
+        // Snapshot + reset BEFORE the try-block: these three lines are
+        // provably non-throwing (variable read, assignment, null check) and
+        // hoisting `toRender` out of the try makes it visible to the catch
+        // for log context.
         const toRender = pendingAssetRerenderBasenames;
         pendingAssetRerenderBasenames = null;
         if (!toRender) return;
+        // Top-level catch — `setImmediate` runs outside the file-watcher's
+        // handleDiskEvent try-catch scope. The per-doc body inside
+        // `rerenderDocsReferencingAssetBasename` already guards each
+        // `applyDiskContentToDoc` call, but Set iteration + the inner
+        // function's scaffolding are technically reachable here. An uncaught
+        // throw would crash the server with no actionable log; logging the
+        // basenames in scope at crash-time keeps any future regression
+        // immediately diagnosable without timestamp correlation.
         try {
           for (const b of toRender) rerenderDocsReferencingAssetBasename(b);
         } catch (err) {
@@ -454,6 +737,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     pendingAssetRerenderBasenames.add(assetBasename);
   };
 
+  /** Helper to extract a logging label from any DiskEvent variant. */
   function diskEventLabel(event: DiskEvent): string {
     switch (event.kind) {
       case 'rename':
@@ -466,6 +750,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  /** Reconciliation-aware dispatch for all DiskEvent types. */
   async function handleDiskEvent(event: DiskEvent): Promise<void> {
     try {
       switch (event.kind) {
@@ -499,6 +784,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           const result = reconcile({ docName, base, ours, theirs });
 
+          // Structured log with content hashes
           const baseH = contentHash(base).slice(0, 6);
           const oursH = contentHash(ours).slice(0, 6);
           const theirsH = contentHash(theirs).slice(0, 6);
@@ -533,6 +819,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   { err: e, docName },
                   `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
+                // Disk is source of truth — keep base in sync even if Y.Doc update failed
                 setReconciledBase(docName, theirs);
               }
               break;
@@ -553,6 +840,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   { err: e, docName },
                   `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
+                // Disk is source of truth — keep base in sync even if Y.Doc update failed
                 setReconciledBase(docName, theirs);
               }
               break;
@@ -577,6 +865,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   { err: e, docName },
                   `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
+                // Disk is source of truth — keep base in sync even if Y.Doc update failed
                 setReconciledBase(docName, theirs);
               }
               break;
@@ -612,6 +901,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           const isDirty = ours !== base;
 
           if (isDirty && shadowRef.current) {
+            // Silent rescue checkpoint (SPEC §6 R7e) — preserve in-memory
+            // content on a timeline ref so TimelinePanel renders it as an
+            // 'external-change-rescue' row. Fire-and-forget; failures warn
+            // but don't block the delete lifecycle.
             const shadowForCheckpoint = shadowRef.current;
             const branch = headWatcher?.getLastKnownBranch() ?? 'main';
             queueMicrotask(() => {
@@ -621,6 +914,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                 contents: ours,
                 label: `External change recovered @ ${new Date().toISOString()}`,
                 branch,
+                // Delete event has no incoming disk content — sentinel empty
+                // string so the TimelineRescueEntry shape round-trips.
                 metadata: { incomingDiskSha: '' },
               })
                 .then(() => {
@@ -646,6 +941,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           });
           log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
+          // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
           await forceUnloadDocument(document);
           signalChannel('files');
@@ -693,6 +989,15 @@ export function createServer(options: ServerOptions): ServerInstance {
           break;
         }
 
+        // SPEC §6 FR-6 + D-H Option A: asset events update the basename
+        // index and fire CC1 'files' only. They do NOT touch backlinkIndex
+        // (markdown-only). They DO trigger a fallback re-render of any open
+        // doc that references the changed basename via `[[name.ext]]` (see
+        // `rerenderDocsReferencingAssetBasename`) — without this, a doc
+        // whose markdown is unchanged across the asset move (e.g. the user
+        // organizes files into `assets/` while the doc still says
+        // `![[photo.png]]`) keeps its parse-time-resolved `src` and the
+        // rendered preview goes stale.
         case 'asset-create': {
           basenameIndex.add(event.relativePath);
           signalChannel('files');
@@ -717,9 +1022,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  // ─── Batch buffering ──────────────────────────────────────────────────────
 
   const eventBuffer: DiskEvent[] = [];
 
+  /** Wrapper that buffers events during batch operations. */
   async function onDiskEvent(event: DiskEvent): Promise<void> {
     if (isBatchInProgress()) {
       eventBuffer.push(event);
@@ -728,6 +1035,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     await handleDiskEvent(event);
   }
 
+  /** Drain buffered events after batch ends. */
   async function drainEventBuffer(): Promise<void> {
     const events = eventBuffer.splice(0, eventBuffer.length);
     for (const event of events) {
@@ -735,12 +1043,18 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
   let syncEngine: SyncEngine | null = null;
   let inflightDestroy: Promise<void> | null = null;
 
+  // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
+  // at node_modules/@hocuspocus/server/src/Server.ts:200-225. We can't use
+  // Server.destroy() directly because Server owns its own httpServer + crossws
+  // WebSocket adapter + signal binding, which conflicts with OK's shared HTTP
+  // server + /api/* routing + static asset serving + /collab-only upgrade.
   async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
     if (hocuspocus.documents.size === 0) return;
 
@@ -756,11 +1070,24 @@ export function createServer(options: ServerOptions): ServerInstance {
       });
     });
 
+    // Capture doc names before the race so the timeout error can name the
+    // documents that failed to unload — actionable context for operators
+    // debugging hung flushes, and the target list for the rescue-buffer
+    // dump below (D15 / OQ-P2-02).
     const pendingDocNames = Array.from(hocuspocus.documents.keys());
 
     hocuspocus.closeConnections();
     hocuspocus.flushPendingStores();
 
+    // shouldUnloadDocument blocks normal unloads while the server is running.
+    // `destroy()` assigns `shutdownAllowsUnload = true` synchronously at the
+    // start of its async IIFE (before the first await), so by the time this
+    // flush runs, explicit `unloadDocument` calls below are allowed through.
+    // Clients that disconnected before destroy() was called (e.g. pool.dispose()
+    // in test teardown) will have left documents resident with 0 connections.
+    // closeConnections() above is a no-op for those docs, so no unload events
+    // fire. Explicitly unload any document with no remaining connections so
+    // afterUnloadDocument can resolve.
     for (const doc of hocuspocus.documents.values()) {
       if (doc.getConnectionsCount() === 0) {
         void hocuspocus.unloadDocument(doc).catch((err: unknown) => {
@@ -781,6 +1108,13 @@ export function createServer(options: ServerOptions): ServerInstance {
         resolved = true;
         const stillLoaded = Array.from(hocuspocus.documents.keys());
 
+        // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. onStoreDocument
+        // did not complete for these docs, so the in-memory Y.Doc state IS the
+        // data-of-record — dump it to the shadow rescue/ tree so the user can
+        // recover via the existing /api/rescue endpoints. Best-effort per doc
+        // so one serialization failure doesn't block the others. Unconditional
+        // (no isDirty check like the reconcile-path rescue uses) because the
+        // hang semantic means diff-vs-reconciled-base is not the right gate.
         const rescued: string[] = [];
         const rescueFailed: string[] = [];
         if (shadowRef.current) {
@@ -789,6 +1123,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
+                // Doc was removed from hocuspocus.documents between the
+                // stillLoaded snapshot and this loop — race during teardown.
                 log.warn(
                   { docName },
                   `[rescue] skipping ${docName} — document dropped from map mid-rescue`,
@@ -798,6 +1134,9 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
               const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
               if (!rescuePath) {
+                // Path-traversal guard fired — docName tried to escape the
+                // rescue/ directory. Log at warn level since this is
+                // security-relevant, not just a write failure.
                 log.warn(
                   { docName, gitDir: shadowRef.current.gitDir },
                   `[rescue] path-traversal guard rejected docName: ${docName}`,
@@ -819,6 +1158,10 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
           }
         } else {
+          // Shadow repo unavailable (initAsync failed earlier) — nothing to
+          // write into. Warn rather than fail silently so operators seeing a
+          // `lost [...]` array in the timeout error can distinguish "no shadow
+          // repo" from per-doc write failures.
           log.warn(
             { stillLoadedCount: stillLoaded.length },
             `[rescue] shadow repo unavailable at flush timeout — ${stillLoaded.length} doc(s) will be lost: [${stillLoaded.join(', ')}]`,
@@ -856,6 +1199,10 @@ export function createServer(options: ServerOptions): ServerInstance {
       const phaseErrors: Array<{ phase: string; error: string }> = [];
       shutdownAllowsUnload = true;
 
+      // Wait for async init to complete before cleanup — prevents leaked watcher
+      // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
+      // Bounded to 5s so destroy() doesn't hang indefinitely if init is stuck
+      // (e.g., waiting for a shadow repo git lock held by another process).
       let initTimeoutId: ReturnType<typeof setTimeout> | undefined;
       const initSettled = await Promise.race([
         ready.then(
@@ -874,10 +1221,12 @@ export function createServer(options: ServerOptions): ServerInstance {
         log.warn({}, '[server] init did not complete within 5s during shutdown');
       }
 
+      // Capture after ready so the count reflects documents loaded during init
       const documentCount = hocuspocus.documents.size;
 
       try {
         try {
+          // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
           try {
             if (headWatcher) {
               await headWatcher.unsubscribe();
@@ -887,6 +1236,9 @@ export function createServer(options: ServerOptions): ServerInstance {
               await watcher.unsubscribe();
               watcher = null;
             }
+            // Config file watchers (US-007). Independent of the content
+            // watcher; teardown failures per-doc shouldn't block other
+            // cleanups, so each cleanup is wrapped in its own try/catch.
             for (const { docName, cleanup } of configFileWatcherCleanups) {
               try {
                 await cleanup();
@@ -906,6 +1258,12 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
           }
 
+          // Phase 1b: tear down CC1 broadcaster + agent-presence broadcaster +
+          // __system__ direct connection. Both broadcasters share the same
+          // `__system__` Y.Doc — their destroys clear internal state (debounce
+          // timers for CC1; idempotent no-op for agent-presence today but
+          // symmetric with the broadcaster-lifecycle contract). The single
+          // systemDocConnection handle is torn down last.
           try {
             cc1Broadcaster?.destroy();
             agentPresenceBroadcaster?.destroy();
@@ -932,6 +1290,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-1b CC1 teardown failed');
           }
 
+          // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
           try {
             await sessionManager.closeAll();
           } catch (err) {
@@ -942,6 +1301,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-2 agent session drain failed');
           }
 
+          // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
           try {
             await flushAllStoresAndWait(destroyTimeoutMs);
           } catch (err) {
@@ -952,6 +1312,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-3 flush failed');
           }
 
+          // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
+          // Bounded to destroyTimeoutMs so a stuck git process doesn't hang shutdown.
           let l2TimeoutId: ReturnType<typeof setTimeout> | undefined;
           try {
             await Promise.race([
@@ -975,6 +1337,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           } finally {
             if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
           }
+          // Phase 4.5: stop sync engine (CC8 Phase 5 per spec)
           try {
             if (syncEngine) {
               await syncEngine.destroy();
@@ -988,7 +1351,9 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown sync-engine-stop failed');
           }
         } finally {
+          // Phase 5: shadow repo release — ALWAYS runs
           if (shadowRef.current) {
+            // Persist current HEAD before releasing shadow lock (FR11)
             try {
               const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
               const currentHead = (await projectGit.revparse('HEAD')).trim();
@@ -1000,6 +1365,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 );
               }
             } catch {
+              // Fresh repo with no commits, or git not available — skip silently
             }
 
             try {
@@ -1027,6 +1393,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
         }
       } finally {
+        // Phase 6 (CC8): release server lock LAST — after shadow repo release,
+        // agent session drain, L1/L2 flush. If an earlier phase threw, we still
+        // release so a subsequent start can succeed. Invariant: no other process
+        // may acquire this lock until every prior phase has run.
         try {
           releaseServerLock(lockDir);
         } catch (err) {
@@ -1036,6 +1406,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           });
           log.error({ err }, '[server] shutdown phase-6 releaseServerLock failed');
         }
+        // Telemetry shutdown runs outside the lock-release try so a telemetry
+        // flush failure can never prevent the lock from being released. 5s
+        // internal timeout prevents a hung OTLP exporter from stalling teardown.
         try {
           await shutdownTelemetry();
         } catch (err) {
@@ -1050,9 +1423,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     return inflightDestroy;
   }
 
+  /** Subsystems that failed during initAsync — populated on catch, read after `await ready`. */
   const degraded: string[] = [];
 
+  /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
+    // Load (or create) the principal record — non-blocking best-effort.
     try {
       loadedPrincipal = await loadPrincipal(contentDir);
       log.info({ principalId: loadedPrincipal.id }, '[server] principal loaded');
@@ -1063,6 +1439,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       );
     }
 
+    // Auto-initialize shadow repo if not provided
     if (!shadowRef.current) {
       try {
         shadowRef.current = await initShadowRepo(projectDir);
@@ -1076,6 +1453,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    // Verify history repo integrity — reinit only on structural corruption, not transient errors
     if (shadowRef.current) {
       try {
         const sg = shadowGit(shadowRef.current);
@@ -1097,31 +1475,39 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    // HEAD-drift check (FR11): detect git operations that occurred while offline
+    // Compare stored last-known-head against current HEAD SHA and import if diverged
     if (shadowRef.current) {
       try {
         const lastKnownHeadPath = resolve(shadowRef.current.gitDir, 'last-known-head');
 
+        // Read last persisted HEAD SHA
         let lastKnownHead: string | null = null;
         try {
           lastKnownHead = readFileSync(lastKnownHeadPath, 'utf-8').trim() || null;
         } catch {
+          // File doesn't exist yet — first run
         }
 
+        // Read current HEAD SHA from project repo
         let currentHead: string | null = null;
         try {
           const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
           currentHead = (await projectGit.revparse('HEAD')).trim() || null;
         } catch {
+          // Fresh repo with no commits — skip drift check
         }
 
         if (currentHead !== null) {
           if (currentHead !== lastKnownHead) {
+            // Drift detected (includes null → SHA for fresh clone T0 case)
             let branch = 'main';
             try {
               const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
               const b = (await projectGit.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
               if (b && b !== 'HEAD') branch = b;
             } catch {
+              // Detached HEAD or error — fallback to 'main'
             }
 
             log.info(
@@ -1148,6 +1534,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             );
           }
 
+          // Always persist current HEAD so next startup has an accurate baseline
           try {
             writeFileSync(lastKnownHeadPath, currentHead, 'utf-8');
           } catch (e) {
@@ -1185,6 +1572,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('managed-rename-recovery');
     }
 
+    // SPEC §6 FR-2 / streaming-upload-refactor D5: reap orphaned tempfiles
+    // from .ok/tmp/ older than the 24h grace window. Adversarial
+    // or buggy clients that abort mid-upload leave a tempfile behind; the
+    // in-request cleanup handles the common path but a SIGKILL between
+    // pipeline completion and rename/unlink leaks the inode. Boot sweep is
+    // the correctness backstop.
     try {
       const sweep = cleanupOrphanUploadTempfiles(contentDir);
       if (sweep.deleted > 0 || sweep.errors > 0) {
@@ -1202,8 +1595,14 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('upload-tempfile-sweep');
     }
 
+    // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
+    // any browser connects. Must happen before the file watcher starts.
     try {
       systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+      // Emit the server-info signal once __system__ is materialized so any
+      // late-arriving client that subscribes to the channel gets the current
+      // serverInstanceId (part of the CRDT restart-recovery defense — clients
+      // cache this + claim it in their auth token on every connect).
       cc1Broadcaster?.emitServerInfo(serverInstanceId, getActiveBranch());
     } catch (err) {
       log.error(
@@ -1213,6 +1612,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('cc1-push');
     }
 
+    // Pre-materialize config Y.Docs (D39/D40/FR-29 — US-005). One per
+    // well-known synthetic name. Connections held for the server's
+    // lifetime so the docs stay loaded — Settings pane + chrome controls
+    // attach via the existing collab WS. Bridge bypass + agent-session
+    // short-circuits live in the respective modules; admission failure
+    // is non-fatal (Settings pane's first connect would re-materialize).
     for (const configDocName of CONFIG_DOC_NAMES) {
       try {
         const connection = await hocuspocus.openDirectConnection(configDocName);
@@ -1226,6 +1631,19 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    // Config file watchers (US-007 / FR-15 / D52). Watch both well-known
+    // config paths so external edits (CLI, IDE hand-edit, MCP from another
+    // instance) propagate to any open Settings pane via Y.Text observer.
+    // Workspace path is created lazily via `applyConfigPatch`; user-global
+    // path is created lazily via `writeConfigPatch` (D51). chokidar's
+    // single-file watch handles non-existent paths by waiting for them, so
+    // we start watchers unconditionally — `add` events fire when a lazy
+    // first-write lands.
+    //
+    // Self-write feedback loop is broken by `applyExternalConfigChange`'s
+    // LKG-equality short-circuit: when persistence writes content `C` to
+    // disk, it sets `lkgCache[doc] = C`; the watcher reads `C` back, sees
+    // it match LKG, and returns 'no-op' before mutating Y.Text.
     const configPathByDoc = new Map<string, string>([
       [CONFIG_DOC_NAME_PROJECT, resolveConfigPath('project', projectDir)],
       [CONFIG_DOC_NAME_USER, resolveConfigPath('user', projectDir, configHomedirOverride)],
@@ -1267,17 +1685,36 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    // Reset branch-scoped state to match THIS project's current HEAD before
+    // anything reads/writes it. `persistence.activeBranch` and the
+    // `BacklinkIndex.activeBranch` are mutable state; in single-process test
+    // runners (bun test) these leak across test files, so a prior test that
+    // triggered `switchReconciledBaseScope` leaves state at the wrong branch
+    // for the next server's reads. Detecting the actual HEAD here and
+    // normalizing both scopes in lock-step closes the leak.
     const gitDirForInit = resolveGitDir(projectDir);
     const startupBranch = gitDirForInit ? (readBranchFromHead(gitDirForInit) ?? 'main') : 'main';
     switchReconciledBaseScope(startupBranch);
     backlinkIndex.switchBranch(startupBranch);
 
+    // Start file watcher (with content filter for gitignore + config exclude)
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
       backlinkIndex.rebuildFromDisk(getActiveBranch());
       void backlinkIndex.saveToDisk().catch((err) => {
         console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
       });
+      // SPEC §6 FR-3b: seed the basename index from disk once the
+      // watcher's startup walk has finished. The watcher's fileIndex is
+      // markdown-only, so we walk the contentDir directly for assets.
+      //
+      // Per-entry skip accumulator: reviewer flagged that the outer-throw
+      // guard below is unreachable in practice — bare catch blocks
+      // inside `seedBasenameIndex` previously swallowed EACCES / EMFILE
+      // silently, truncating the walk without logging. `onSkip` now
+      // fires for each non-ENOENT failure; a non-zero count pushes
+      // `basename-index-partial` into `degraded[]` so the Electron
+      // utility's degraded banner + ops dashboards see the signal.
       let seedSkipCount = 0;
       try {
         seedBasenameIndex({
@@ -1301,6 +1738,12 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
       } catch (err) {
         log.error({ err }, '[basename-index] startup seed failed');
+        // An empty basename index means every `![[file.png]]` resolution
+        // returns null after boot — equivalent to the vault silently
+        // losing every wiki-embed. Surface via `degraded[]` so the
+        // Electron utility's `UtilityDegradedMessage` IPC can render a
+        // banner and operators know to investigate rather than hunting
+        // a rendering regression.
         degraded.push('basename-index');
       }
     } catch (err) {
@@ -1308,19 +1751,26 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('file-watcher');
     }
 
+    // Start HEAD watcher (only if project .git/ exists)
     try {
       headWatcher = await startHeadWatcher(
         projectDir,
+        // onBatchBegin — park current branch context before git modifies working tree
         async ({ trigger }) => {
           log.info({ trigger }, `[batch] begin trigger=${trigger}`);
           incrementBatch();
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
 
+          // Gate new L1/L2 writes BEFORE the park loop so any onStoreDocument
+          // calls that fire during the async parkBranch are blocked (D39).
           setBatchInProgress(true);
 
+          // Park current branch's Y.Doc state to shadow refs
           if (shadowRef.current) {
             const currentBranch = getActiveBranch();
+            // Read new branch from HEAD (already updated by git at onBatchBegin time)
+            // so the park subject can carry both ends of the switch (D39, D53).
             const gitDir = resolveGitDir(projectDir);
             const newBranch = gitDir
               ? (readBranchFromHead(gitDir) ?? currentBranch)
@@ -1328,6 +1778,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             const docs: ParkableDoc[] = [];
             for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
+              // Wrap in doc.transact so Y.js serializes snapshot capture atomically
+              // against concurrent in-flight agent transacts (PARK_SNAPSHOT_ORIGIN, D39).
               let markdown: string | null = null;
               document.transact(() => {
                 markdown = serializeDoc(docName);
@@ -1358,6 +1810,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
           }
         },
+        // onBatchEnd — dispatch on BatchKind
         async (info) => {
           const bufferedCount = eventBuffer.length;
           const newBranch = info.newBranch ?? 'main';
@@ -1374,17 +1827,52 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           if (info.batchKind === 'within-branch') {
             setBatchInProgress(false);
+            // Pull, merge, rebase on same branch — reconcile buffered events
             await drainEventBuffer();
             await persistence.flushDeferredStores('within-branch');
           } else {
+            // Cross-branch or detached-head — discard buffered events (wrong branch state)
             incrementBranchSwitch();
             eventBuffer.splice(0, eventBuffer.length);
 
+            // Switch reconciledBase scope to target branch
             switchReconciledBaseScope(newBranch);
             backlinkIndex.switchBranch(newBranch);
 
+            // Rebuild `ContentFilter`'s sibling-asset refcount BEFORE the
+            // basenameIndex reseed. ContentFilter's `dirCount` is normally
+            // maintained incrementally via `incrementMdDir` /
+            // `decrementMdDir` calls fired by the file watcher's create /
+            // delete events, but the cross-branch path discarded those
+            // events above (`eventBuffer.splice`). Without a rebuild, the
+            // refcount holds the previous branch's directory shape and
+            // legitimate sibling-asset pairs on the new branch
+            // (`assets/cover.md` next to `assets/photo.png`) are rejected
+            // by `seedBasenameIndex`'s admission check, leaving the asset
+            // unresolved.
             contentFilter.rebuildDirCount();
 
+            // Reseed `basenameIndex` BEFORE the doc-reset loop. The reset
+            // calls `applyToDoc` → `applyExternalChange` → mdast→PM with
+            // `resolveEmbed`, which resolves `![[photo.png]]` against the
+            // basename index. With the previous (stale) branch's paths
+            // still in the index, the PM image `src` carries the
+            // pre-switch resolution until the next user edit — disk
+            // markdown round-trips fine, but the rendered preview is
+            // wrong.
+            //
+            // Asset DiskEvents from the switch itself are discarded
+            // (`eventBuffer.splice` above) and `basenameIndex` is a flat
+            // Map without branch scope, so the explicit walk is the only
+            // mechanism by which post-switch paths enter the index.
+            // Mirror backlinkIndex's branch-scoped reset: drop the index,
+            // walk the new branch's disk, re-seed.
+            //
+            // `onSkip` wiring is symmetric with the boot path — a mid-
+            // session permission flip (EACCES), fd exhaustion (EMFILE),
+            // or root-scope read failure during the reseed walk surfaces
+            // the same `basename-index-partial` degraded indicator the
+            // boot path uses.
             try {
               let reseedSkipCount = 0;
               basenameIndex.clear();
@@ -1413,16 +1901,20 @@ export function createServer(options: ServerOptions): ServerInstance {
               log.error({ err, branch: newBranch }, '[basename-index] branch-switch reseed failed');
             }
 
+            // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
               if (isSystemDoc(docName) || isConfigDoc(docName)) continue;
               try {
                 const filePath = safeContentPath(docName, contentDir);
                 if (!existsSync(filePath)) {
+                  // File doesn't exist on target branch — tombstone
                   const base = getReconciledBase(docName) ?? '';
                   const ours = serializeDoc(docName) ?? '';
                   const isDirty = ours !== base;
 
                   if (isDirty && shadowRef.current) {
+                    // Silent rescue checkpoint on branch-switch tombstone
+                    // (SPEC §6 R7e). Same pattern as reconcile-delete above.
                     const shadowForCheckpoint = shadowRef.current;
                     queueMicrotask(() => {
                       saveInMemoryCheckpoint(shadowForCheckpoint, contentRoot ?? '', {
@@ -1458,6 +1950,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   continue;
                 }
 
+                // Reset Y.Doc from disk
                 const diskContent = readFileSync(filePath, 'utf-8');
                 applyToDoc(docName, diskContent);
                 setReconciledBase(docName, diskContent);
@@ -1476,6 +1969,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
             });
 
+            // Restore parked WIP if exists (three-way merge parked state against current disk)
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
@@ -1488,6 +1982,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                     docName,
                   );
                   if (!parked) continue;
+                  // Skip if no in-flight edits were parked
                   if (parked.markdown === parked.diskSnapshot) continue;
 
                   const currentDisk = getReconciledBase(docName);
@@ -1533,9 +2028,11 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
             }
 
+            // Clean up detached HEAD context if switching FROM detached TO named branch
             if (info.oldBranch?.startsWith('detached-') && shadowRef.current) {
               try {
                 const sg = shadowGit(shadowRef.current);
+                // List refs under the detached context
                 const refs = (
                   await sg.raw('for-each-ref', `refs/wip/${info.oldBranch}/`, '--format=%(refname)')
                 ).trim();
@@ -1555,11 +2052,21 @@ export function createServer(options: ServerOptions): ServerInstance {
               }
             }
 
+            // Notify connected clients that the branch scope changed so they can
+            // invalidate their IDB persistence caches. Emit AFTER all server-side
+            // state transitions (Y.Doc reset, backlink rebuild, WIP restore,
+            // detached-ref cleanup) so a client's recycle-triggered reconnect
+            // synchronizes against the new branch's fully-settled state.
             setBatchInProgress(false);
             await persistence.flushDeferredStores('discard-stale');
             cc1Broadcaster?.emitBranchSwitched(newBranch);
           }
 
+          // Record upstream import if HEAD moved AND content files were affected.
+          // A user's own `git commit` moves HEAD but doesn't change the working tree
+          // (files were already written by the user/editor). Only `git pull`, `git merge`,
+          // `git rebase`, or `git checkout` produce buffered file-watcher events, so
+          // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
           if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
             const contentRootForShadow = contentRoot ?? '.';
             try {
@@ -1590,6 +2097,9 @@ export function createServer(options: ServerOptions): ServerInstance {
       degraded.push('head-watcher');
     }
 
+    // Start SyncEngine (FR21): remote detection + auto-sync
+    // Build credentialArgs from localOpCliArgs so git fetch/push can authenticate.
+    // Pattern: ['-c', 'credential.helper=!<cli-binary> auth git-credential']
     const cliCmd = localOpCliArgs?.[0] ?? 'open-knowledge';
     const cliPrefix =
       localOpCliArgs && localOpCliArgs.length > 1 ? localOpCliArgs.join(' ') : cliCmd;

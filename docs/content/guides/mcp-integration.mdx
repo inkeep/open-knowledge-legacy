@@ -1,51 +1,52 @@
 ---
 title: MCP integration
-description: How the MCP server connects AI agents to your knowledge base — disk-only mode, Hocuspocus-connected mode, and available tools.
+description: How the HTTP MCP server and stdio shim connect AI agents to your knowledge base.
 ---
-The Open Knowledge MCP server gives AI agents structured access to your knowledge base. It runs over stdio and works with any MCP-compatible editor.
+The Open Knowledge MCP server gives AI agents structured access to your knowledge base. The server implementation lives in the running `ok start` process at `/mcp`; editors still launch `ok mcp` over stdio, but that command is only a transport shim that proxies JSON-RPC frames to the HTTP MCP endpoint.
 
-## Three operating modes
+## Startup and connection model
 
-The MCP server adapts its behavior based on whether a collaboration server is running and whether auto-start is enabled. On startup it reads `<contentDir>/.ok/server.lock`; a live lock tells MCP the real port to connect to. If the lock is absent or stale, `ok mcp` detach-spawns `ok start` as a sibling process by default (opt-out restores the pre-Zero-Ceremony disk-only behavior).
+On startup, `ok mcp` resolves the HTTP MCP endpoint for the current project. It reads `<contentDir>/.ok/server.lock`; a live lock tells the shim which port to proxy to. If the lock is absent or stale, the shim detach-spawns `ok start` as a sibling process by default, then polls the lockfile for `port > 0` with a 5-second deadline.
 
-<Tabs items={["Connected mode", "Auto-spawn on first use", "Disk-only mode"]}>
-<Tab value="Connected mode">
+<Tabs items={["Existing server", "Auto-spawn on first use", "Auto-start disabled"]}>
+<Tab value="Existing server">
 Active when a live `server.lock` is found at startup — `ok start` or `bun run dev` is already running.
 
-- All document tools become available — writes go through the CRDT layer for real-time sync with the browser editor
+- `ok mcp` proxies stdio JSON-RPC to `http://localhost:<port>/mcp`
+- Tool registration, schemas, identity, CRDT writes, and HTTP API access all run inside `ok start`
 - Agents and humans can co-edit the same document simultaneously
-- Undo/redo tracks agent edits separately from human edits
 </Tab>
 <Tab value="Auto-spawn on first use">
-Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `npx @inkeep/open-knowledge start` as a sibling process with a kernel-fd stderr redirect to `.ok/last-spawn-error.log`, then polls the lockfile for `port > 0` with a 5-second deadline.
+Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `ok start` as a sibling process with a kernel-fd stderr redirect to `.ok/last-spawn-error.log`, then proxies to the spawned server's `/mcp` endpoint once the lock advertises a port.
 
 - Zero ceremony — the agent's first tool call resurrects the full stack
-- Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
-- Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) in the first tool-result error rather than silently dropping to disk-only
-- Once the poll succeeds, subsequent behavior is identical to Connected mode
-- **Transitive auto-git-init:** the spawned `ok start` runs `ensureProjectGit` on the project directory, so if there is no parent `.git/` present it will be created (default branch `main`) before the collab server binds. Running `ok mcp` against a directory without `.git/` therefore creates one transitively — the disclosure line appears in the spawned server's stderr log. To suppress both the auto-spawn and the transitive git-init together, opt out with `OK_MCP_AUTOSTART=0` (env) or `mcp.autoStart: false` (config) to fall into Disk-only mode.
+- Sibling process (not embedded) so closing the stdio shim does **not** take down sibling editors' sessions
+- Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) to the editor rather than silently downgrading behavior
+- **Transitive auto-git-init:** the spawned `ok start` runs `ensureProjectGit` on the project directory, so if there is no parent `.git/` present it will be created (default branch `main`) before the collab server binds. Running `ok mcp` against a directory without `.git/` therefore creates one transitively — the disclosure line appears in the spawned server's stderr log. To suppress both the auto-spawn and the transitive git-init together, opt out with `OK_MCP_AUTOSTART=0` (env) or `mcp.autoStart: false` (config).
 </Tab>
-<Tab value="Disk-only mode">
-Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.
+<Tab value="Auto-start disabled">
+Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found.
 
-- Workflow tools (`init-content`, `ingest`, `research`) work normally — agents use their native file I/O alongside the instructional workflow tools
-- Auto-generated catalogs in `.ok/catalogs/` are still maintained
-- Document tools (`write_document`, `edit_document`, etc.) are **not** available since there is no CRDT layer to route through
+- `ok mcp` exits with a diagnostic telling you the Open Knowledge server is not running
+- Start the project server with `open-knowledge start` / `ok start`, or re-enable MCP auto-start
+- There is no separate disk-only MCP server; the HTTP MCP endpoint is the single implementation
 </Tab>
 </Tabs>
 
-### Precedence for the startup decision
+### Precedence for endpoint resolution
 
-`decideAutoStart` is the single function that classifies the MCP session into one of the three modes above. Its precedence:
+`resolveMcpHttpUrl` is the resolver that runs before the stdio bridge starts:
 
-1. `--port <n>` CLI override — bypasses discovery entirely; `> 0` connects, `= 0` means disk-only.
-2. Live `server.lock` with `port > 0` — connects to `ws://<host>:<port>` regardless of auto-start config. A pre-existing live lock always wins; opt-out only suppresses the spawn path.
-3. No live lock + auto-start allowed (default) — detach-spawn `ok start`.
-4. No live lock + auto-start opted out — disk-only mode.
+1. `--port <n>` CLI override with `n > 0` — proxy to `http://<host>:<port>/mcp`.
+2. Live `server.lock` with `port > 0` — proxy to `http://localhost:<port>/mcp` regardless of auto-start config. A pre-existing live lock always wins; opt-out only suppresses the spawn path.
+3. No live lock + auto-start allowed (default) — detach-spawn `ok start`, then proxy to its `/mcp` endpoint.
+4. No live lock + auto-start opted out — exit 1 with a diagnostic.
 
 Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned up automatically when read. The env var `OK_MCP_AUTOSTART=0` wins over `mcp.autoStart: true` in config.
 
 ## Tools reference
+
+Once the shim reaches `/mcp`, the running `ok start` process registers the full tool set:
 
 | Tool                                          | Mode      | Description                                                                                  |
 | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
@@ -65,6 +66,7 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
 | `write_document`                              | Connected | Write content to a document through the CRDT (full document, including frontmatter)          |
 | `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
+| `delete_document`                             | Connected | Delete a document through the managed delete flow — closes agent sessions, unloads from Hocuspocus, removes from disk |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rename_folder`                               | Connected | Rename a folder and rewrite inbound links across every affected doc in one call              |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
@@ -73,7 +75,7 @@ Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned 
 
 Tools marked `Always` operate directly on the YAML files via the imported Zod schema and so work whether or not `ok start` is running. When a server IS running, the file watcher detects the write and propagates it into Y.Text, refreshing any open Settings panes within ~500ms.
 
-All 22 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block). `rename_folder` emits one `previewUrls` map keyed by the new docName for every affected doc.
+All 23 docName-producing tools emit a preview URL in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block). `rename_folder` emits one `previewUrls` map keyed by the new docName for every affected doc. `delete_document` emits `previousPreviewUrl` instead of `previewUrl` since the doc is gone — agents use it to close any stale preview tab.
 
 <Callout type="info">
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
@@ -188,17 +190,23 @@ Skipped runs write `{ "configured": false, "skippedAt": "..." }` instead. Either
 
 Delete `~/.ok/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
 
+### Resetting older development entries
+
+Current desktop wiring overwrites entries only when they match today's canonical Open Knowledge shape. If an older development build left an entry that is now treated as foreign-customized, reset it manually: remove that editor's `open-knowledge` MCP entry, delete `~/.open-knowledge/mcp-status.json`, then relaunch the desktop app or run `ok init` from the terminal.
+
 <Callout type="info" title="CLI users">
-If you installed via `npx @inkeep/open-knowledge` and ran `ok init` from the terminal, MCP is already wired — the consent dialog is only relevant for users who arrived via the DMG. Both paths coexist safely; if you later install the DMG, the dialog detects your existing OK entries and overwrites them with the bundle-absolute `cliPath` shape (foreign customizations are preserved).
+If you installed via `npx @inkeep/open-knowledge` and ran `ok init` from the terminal, MCP is already wired — the consent dialog is only relevant for users who arrived via the DMG. Both paths coexist safely; if you later install the DMG, the dialog updates canonical OK-managed entries to the bundle `cliPath` shape and preserves foreign customizations.
 </Callout>
 
 ## Transport
 
-The MCP server uses stdio transport. stdout carries JSON-RPC messages; all diagnostics go to stderr. Each MCP client session spawns its own process:
+Editors still speak MCP over stdio by launching a command such as:
 
 ```bash
 npx @inkeep/open-knowledge mcp
 ```
+
+That process is a shim. stdout carries JSON-RPC messages from the editor, stderr carries diagnostics, and the shim proxies each JSON-RPC frame to the running `ok start` process's Streamable HTTP endpoint at `/mcp`. The shim does not register tools or schemas; the HTTP endpoint owns the MCP runtime.
 
 ## Mirrored catalogs
 

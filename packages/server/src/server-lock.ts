@@ -24,7 +24,6 @@ export function acquireServerLock(
     port: number;
     worktreeRoot: string;
     kind?: LockKind;
-    parentPid?: number;
     capabilities?: string[];
   },
 ): string {
