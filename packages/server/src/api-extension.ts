@@ -1125,6 +1125,21 @@ export interface ApiExtensionOptions {
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
+const MAX_BODY_BYTES = 1_048_576;
+
+async function readBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of req) {
+    totalBytes += (chunk as Buffer).length;
+    if (totalBytes > MAX_BODY_BYTES) {
+      throw new Error('Payload too large');
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 function json(
   res: ServerResponse,
   status: number,
@@ -6811,7 +6826,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, { handler: 'install-skill' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'install-skill',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
@@ -6827,17 +6845,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // Confine to $HOME consistent with sibling local-op handlers
           // (`handleLocalOpClone`, `handleLocalOpOpen`).
           if (!isSafeLocalPath(parsed.out)) {
-            json(res, 400, {
-              ok: false,
-              error: 'Output path must be within home directory',
-            });
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'Output path must be within home directory.',
+              { handler: 'install-skill' },
+            );
             return;
           }
           opts.out = parsed.out;
         }
       }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        handler: 'install-skill',
+        cause: e,
+      });
       return;
     }
 
@@ -6846,7 +6870,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+        handler: 'install-skill',
+        cause: err,
+      });
     }
   }
 

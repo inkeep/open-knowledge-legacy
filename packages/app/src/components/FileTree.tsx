@@ -214,6 +214,33 @@ async function parseServerResponse(
   return { ok: true, body };
 }
 
+/**
+ * Apply a per-handler success schema to a `parseServerResponse` body, with
+ * a typed fallback for schema drift. When the response shape diverges from
+ * what the schema expects (server-side change without client lockstep,
+ * forward-compat field rename, etc.), the caller's `fallback` value is
+ * returned and the divergence is logged via `console.warn` so the drift is
+ * observable in dev tools and forwarded to integration test harnesses.
+ *
+ * Mid-mutation flows (rename / delete / create) cannot recover from a thrown
+ * parse error mid-transaction — the server already committed the operation.
+ * The fallback keeps the UI consistent (e.g., derive docName from the path)
+ * while making the schema drift loud rather than silent.
+ */
+function parseSuccessOrWarn<TIn, TOut>(
+  schema: {
+    safeParse: (v: unknown) => { success: true; data: TIn } | { success: false; error: unknown };
+  },
+  body: unknown,
+  handler: string,
+  fallback: TOut,
+): TIn | TOut {
+  const result = schema.safeParse(body);
+  if (result.success) return result.data;
+  console.warn('[FileTree] response schema drift', { handler, body, error: result.error });
+  return fallback;
+}
+
 interface WorkspaceInfo {
   contentDir: string;
   pathSeparator: '/' | '\\';
@@ -775,8 +802,11 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           return;
         }
 
-        const success = CreatePageSuccessSchema.safeParse(parsed.body);
-        const docName = success.success ? success.data.docName : createPath.replace(/\.md$/i, '');
+        const fallbackDocName = createPath.replace(/\.md$/i, '');
+        const success = parseSuccessOrWarn(CreatePageSuccessSchema, parsed.body, 'create-page', {
+          docName: fallbackDocName,
+        });
+        const docName = success.docName;
         setDocuments((current) => {
           if (current.some((doc) => doc.docName === docName)) return current;
           const next = [
@@ -825,8 +855,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const success = RenamePathSuccessSchema.safeParse(parsed.body);
-      await applyRenamedDocuments(success.success ? success.data.renamed : []);
+      const success = parseSuccessOrWarn(RenamePathSuccessSchema, parsed.body, 'rename-path', {
+        renamed: [],
+      });
+      await applyRenamedDocuments(success.renamed);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -1024,8 +1056,10 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         return;
       }
 
-      const success = DeletePathSuccessSchema.safeParse(parsed.body);
-      const deletedDocNames = success.success ? success.data.deletedDocNames : [];
+      const success = parseSuccessOrWarn(DeletePathSuccessSchema, parsed.body, 'delete-path', {
+        deletedDocNames: [],
+      });
+      const deletedDocNames = success.deletedDocNames;
       const deleted = new Set(deletedDocNames);
       for (const docName of deleted) closeDocument(docName);
 
