@@ -3,15 +3,14 @@
  * user signed in?) and `auth repos` (list of accessible repositories).
  *
  * Two implementations:
- *   - `httpAuthQueryTransport` — wraps `fetch('/api/local-op/auth/...')`
- *     (existing path). Default for editor windows + web distribution.
+ *   - `httpAuthQueryTransport` — wraps `fetch('/api/local-op/auth/...')`.
+ *     Default for editor windows + web distribution.
  *   - `ipcAuthQueryTransport` — wraps `bridge.localOp.authStatus()` /
  *     `.authRepos()`. Used by the Project Navigator window where there
  *     is no backing API server (apiOrigin is empty).
  *
  * Bounded responses on both methods (status: one line; repos: bounded
- * list), so no streaming surface is needed — these are plain Promises
- * unlike the start/event/cancel pattern of the auth + clone transports.
+ * list), so no streaming surface is needed.
  */
 
 import type {
@@ -25,31 +24,47 @@ export interface AuthQueryTransport {
   repos(request?: { host?: string }): Promise<OkLocalOpAuthReposResponse>;
 }
 
+async function postJson(path: string, body: unknown): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
 /**
- * HTTP transport — wraps `fetch('/api/local-op/auth/{status,repos}')`.
- * The HTTP relay's response shapes match the IPC types exactly, so no
- * adaptation needed beyond JSON parsing.
+ * Pull the last parseable JSON line out of an NDJSON-ish body. The HTTP
+ * relays for status / repos emit one structured line; older builds may
+ * prefix with non-JSON log output.
  */
+function lastJsonLine(text: string): Record<string, unknown> | null {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    try {
+      const v = JSON.parse(line);
+      if (v && typeof v === 'object') return v as Record<string, unknown>;
+    } catch {
+      /* skip non-JSON */
+    }
+  }
+  return null;
+}
+
+/** HTTP transport — wraps the `/api/local-op/auth/{status,repos}` endpoints. */
 export function httpAuthQueryTransport(): AuthQueryTransport {
   return {
     async status(request) {
-      const res = await fetch('/api/local-op/auth/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request ?? {}),
-      });
-      if (!res.ok) {
-        return { authenticated: false, host: request?.host ?? 'github.com' };
-      }
-      // The HTTP relay forwards the CLI's parsed status JSON. Older
-      // builds emit `{type:'status', authenticated, ...}`; the relay
-      // strips the envelope and returns the inner shape.
+      const host = request?.host ?? 'github.com';
+      const res = await postJson('/api/local-op/auth/status', request);
+      if (!res.ok) return { authenticated: false, host };
       const data = (await res.json()) as Record<string, unknown>;
-      const host = typeof data.host === 'string' ? data.host : (request?.host ?? 'github.com');
+      const h = typeof data.host === 'string' ? data.host : host;
       if (data.authenticated === true && typeof data.login === 'string') {
         return {
           authenticated: true,
-          host,
+          host: h,
           login: data.login,
           name: typeof data.name === 'string' ? data.name : undefined,
           email: typeof data.email === 'string' ? data.email : undefined,
@@ -57,67 +72,37 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
       }
       return {
         authenticated: false,
-        host,
+        host: h,
         error: typeof data.error === 'string' ? data.error : undefined,
       };
     },
     async repos(request) {
-      const res = await fetch('/api/local-op/auth/repos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request ?? {}),
-      });
-      if (!res.ok || !res.body) {
+      const host = request?.host ?? 'github.com';
+      const res = await postJson('/api/local-op/auth/repos', request);
+      if (!res.ok) return { ok: false, error: 'Failed to fetch repositories' };
+      // CLI emits a single `{repos: [...]}` line; relay forwards as-is.
+      // No streaming reader needed — read the whole body and parse.
+      const data = lastJsonLine(await res.text());
+      if (!data || !Array.isArray(data.repos)) {
         return { ok: false, error: 'Failed to fetch repositories' };
       }
-      // The HTTP relay streams NDJSON; each line is `{repos: [...]}`. We
-      // accumulate then return the full bounded list.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       const repos: { full_name: string; clone_url: string; private: boolean }[] = [];
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as { repos?: unknown };
-            if (Array.isArray(event.repos)) {
-              for (const r of event.repos) {
-                if (
-                  r &&
-                  typeof r === 'object' &&
-                  typeof (r as Record<string, unknown>).full_name === 'string' &&
-                  typeof (r as Record<string, unknown>).clone_url === 'string'
-                ) {
-                  const rec = r as Record<string, unknown>;
-                  repos.push({
-                    full_name: rec.full_name as string,
-                    clone_url: rec.clone_url as string,
-                    private: rec.private === true,
-                  });
-                }
-              }
-            }
-          } catch {
-            /* ignore malformed line */
-          }
+      for (const r of data.repos) {
+        const rec = r as Record<string, unknown>;
+        if (typeof rec?.full_name === 'string' && typeof rec.clone_url === 'string') {
+          repos.push({
+            full_name: rec.full_name,
+            clone_url: rec.clone_url,
+            private: rec.private === true,
+          });
         }
       }
-      return { ok: true, host: request?.host ?? 'github.com', repos };
+      return { ok: true, host: typeof data.host === 'string' ? data.host : host, repos };
     },
   };
 }
 
-/**
- * IPC transport — wraps `bridge.localOp.authStatus()` / `.authRepos()`.
- * The bridge methods return the same shapes this transport exposes, so
- * the calls are direct.
- */
+/** IPC transport — wraps `bridge.localOp.{authStatus,authRepos}` directly. */
 export function ipcAuthQueryTransport(bridge: OkDesktopBridge): AuthQueryTransport {
   return {
     status: (request) => bridge.localOp.authStatus(request),
