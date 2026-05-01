@@ -22,6 +22,7 @@ import { OK_DIR } from '../constants.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
 import { resolveFolderFrontmatter } from './folder-rules.ts';
+import { parentFolderOf, resolveNestedFrontmatter } from './nested-folder-rules.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
 
@@ -347,21 +348,40 @@ async function fetchForwardLinks(
 }
 
 /**
- * Merge file frontmatter with folder-rule defaults (FR3 + FR4).
- * Scalars (title, description): file value wins when set; folder value fills in.
- * Tags: concat folder tags first, file tags last; dedup first-occurrence.
+ * Merge file frontmatter with folder-rule defaults.
+ *
+ * Three sources, applied in this order:
+ *   1. `folders[]` glob rules from `.ok/config.yml` — declaration order,
+ *      last-wins for scalars, concat-and-dedup for tags (today's behavior).
+ *   2. Nested `<folder>/.ok/frontmatter.yml` files walked root → leaf —
+ *      last-wins / replace for ALL keys including tags (D6, D14 in spec
+ *      2026-05-01-folder-level-metadata-and-templates).
+ *   3. The file's own frontmatter — wins per-scalar; tags concat-and-dedup
+ *      after the merged folder tags.
+ *
+ * Nested cascade overrides `folders[]` per-scalar. Tags from nested
+ * REPLACE the concatenated `folders[]` tags (D14 — nesting depth wins).
  */
 function mergeFileAndFolder(
   fileFm: { title?: string; description?: string; tags: string[] } | null,
   folderRules: FolderRule[] | undefined,
   relPath: string,
+  projectDir: string | undefined,
 ): { title?: string; description?: string; tags: string[] } {
   const rules = folderRules ?? [];
   const folderFm = rules.length === 0 ? {} : resolveFolderFrontmatter(rules, relPath);
-  const title = fileFm?.title ?? folderFm.title;
-  const description = fileFm?.description ?? folderFm.description;
+  const nestedFm = projectDir ? resolveNestedFrontmatter(projectDir, parentFolderOf(relPath)) : {};
+
+  // Nested overrides folders[] per-scalar.
+  const folderTitle = nestedFm.title ?? folderFm.title;
+  const folderDescription = nestedFm.description ?? folderFm.description;
+  const folderTags = nestedFm.tags !== undefined ? nestedFm.tags : (folderFm.tags ?? []);
+
+  // File wins per-scalar.
+  const title = fileFm?.title ?? folderTitle;
+  const description = fileFm?.description ?? folderDescription;
   const fileTags = fileFm?.tags ?? [];
-  const folderTags = folderFm.tags ?? [];
+
   let tags: string[];
   if (folderTags.length === 0) {
     tags = fileTags;
@@ -402,7 +422,7 @@ export async function enrichPath(
 
   if (!rich) {
     const fm = await fmPromise;
-    const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
+    const merged = mergeFileAndFolder(fm, deps.folderRules, relPath, deps.projectDir);
     return {
       path: relPath,
       title: merged.title,
@@ -434,7 +454,7 @@ export async function enrichPath(
     })),
   ]);
 
-  const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
+  const merged = mergeFileAndFolder(fm, deps.folderRules, relPath, deps.projectDir);
   return {
     path: relPath,
     title: merged.title,
@@ -556,12 +576,19 @@ export async function enrichDirectory(
   };
 
   const rules = deps.folderRules ?? [];
-  if (rules.length > 0) {
-    const folderFm = resolveFolderFrontmatter(rules, relPath);
-    if (folderFm.title !== undefined) result.title = folderFm.title;
-    if (folderFm.description !== undefined) result.description = folderFm.description;
-    if (folderFm.tags !== undefined && folderFm.tags.length > 0) result.tags = folderFm.tags;
-  }
+  const folderFm = rules.length === 0 ? {} : resolveFolderFrontmatter(rules, relPath);
+  // Nested cascade applies to the FOLDER itself — pass relPath directly,
+  // not its parent. (Spec D14: nesting depth wins on collision.)
+  const nestedFm = resolveNestedFrontmatter(deps.projectDir, relPath);
+
+  // Nested overrides folders[] per-scalar; tags REPLACE (D6).
+  const title = nestedFm.title ?? folderFm.title;
+  const description = nestedFm.description ?? folderFm.description;
+  const tags = nestedFm.tags !== undefined ? nestedFm.tags : (folderFm.tags ?? []);
+
+  if (title !== undefined) result.title = title;
+  if (description !== undefined) result.description = description;
+  if (tags.length > 0) result.tags = tags;
 
   return result;
 }
