@@ -1,10 +1,3 @@
-/**
- * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
- *
- * Implemented as a Hocuspocus onRequest extension so it works with both
- * the production Server (assembled by `createServer()` in `server-factory.ts`)
- * and the Vite dev plugin.
- */
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -190,10 +183,6 @@ import type { SyncEngine } from './sync-engine.ts';
 import { getMeter, getTracer, withSpan } from './telemetry.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
-// Cache the HTTP duration histogram at module scope — lazy-init at first use
-// so the meter is a real meter (post-`initTelemetry`), not the pre-init no-op.
-// Recreating the histogram every request allocates + registers a fresh
-// instrument on every hit (PR review finding 2026-04-24).
 let _httpDurationHist: ReturnType<ReturnType<typeof getMeter>['createHistogram']> | null = null;
 function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHistogram']> {
   if (!_httpDurationHist) {
@@ -205,8 +194,6 @@ function httpDurationHist(): ReturnType<ReturnType<typeof getMeter>['createHisto
   return _httpDurationHist;
 }
 
-// Lazy-init so the counter registers against a real meter post-initTelemetry
-// (not the pre-init no-op). Matches the httpDurationHist pattern above.
 let _hintEmittedCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null = null;
 function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
   if (!_hintEmittedCounter) {
@@ -218,10 +205,6 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
   return _hintEmittedCounter;
 }
 
-// Counter for `agent-patch` FM-intersecting calls. Bounded label set:
-// `result ∈ {'rejected','pre_deprecation_passthrough'}`. Today the handler
-// always rejects with 400 — the second label is reserved for a possible
-// passthrough mode during the deprecation window.
 let _agentPatchFmTouchCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
   null;
 function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
@@ -237,31 +220,8 @@ function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['cre
   return _agentPatchFmTouchCounter;
 }
 
-/**
- * Heuristic FM-intersection check for `agent-patch` find strings. Pure
- * function on the find string — runs before any doc state is read.
- *
- * Rejection signal:
- *   - find contains `---` (FM/body separator — opening or closing fence)
- *   - find matches `/^\s*[\w-]+:/` (yaml-style key-value at start)
- *
- * Catches the common case: agents that copy a YAML line verbatim into
- * `find` to splice an FM property. The position-based check inside the
- * transact block catches the rarer case where a non-yaml-shape find
- * happens to land in the FM region (e.g., `find: 'draft'` matching
- * `status: draft`). Together they cover both "find looks like FM" and
- * "find lands in FM."
- */
 function findLooksLikeFrontmatter(find: string): boolean {
-  // Line-anchored `---` (YAML document fence). Mid-string `---` (e.g. body
-  // text containing em-dash sequences or markdown thematic breaks embedded
-  // in larger find strings) flows to the position-based check below.
   if (/(^|\n)---(\s|\n|$)/.test(find)) return true;
-  // YAML key-value shape — require an actual value (`\s+\S` after the
-  // colon) so prose like `Note:` / `IMPORTANT:` / `Warning:` (no value)
-  // is left to the position-based check, which rejects only when the find
-  // actually lands inside the FM region. Empty-value YAML keys like
-  // `draft:` similarly fall through to position-based rejection.
   if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
   return false;
 }
@@ -278,44 +238,16 @@ function renameAttributionCounter(): ReturnType<ReturnType<typeof getMeter>['cre
   return _renameAttributionCounter;
 }
 
-/**
- * Test-only: clear the lazy-initialized rename counter so a test that
- * registers a fresh meter provider via `metrics.setGlobalMeterProvider`
- * can capture subsequent counter increments. Production code never calls this.
- */
 export function __resetRenameTelemetryForTesting(): void {
   _renameAttributionCounter = null;
 }
 
-/**
- * Transaction origin for rollback (TQ10 — typed `PairedWriteOrigin`).
- *
- * `skipStoreHooks: false` — L1 persistence SHOULD fire after rollback so the
- * restored content reaches disk through the normal pipeline. The
- * file-watcher's registerWrite hash check prevents the self-write from
- * re-triggering reconciliation.
- *
- * `paired: true` — rollback atomically writes both XmlFragment and Y.Text
- * inside one `doc.transact()` block. `satisfies PairedWriteOrigin` gates the
- * marker at authoring time (bridge-correctness SPEC §6 R0 + review iteration 5).
- */
 export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply', paired: true },
 } as const satisfies PairedWriteOrigin;
 
-/**
- * Managed-rename origin — typed `PairedWriteOrigin`.
- *
- * Exported so the bridge-invariant watcher can enforce by identity (precedent #1)
- * and so server observers can resolve `context.paired` without importing the
- * object transitively (bridge-correctness SPEC §6 R0d).
- *
- * `paired: true` — the caller atomically writes BOTH XmlFragment (via
- * `updateYFragment`) and Y.Text (via `applyFastDiff`) inside one transact
- * block. `satisfies PairedWriteOrigin` is the compile-time gate.
- */
 export const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
@@ -324,15 +256,10 @@ export const MANAGED_RENAME_ORIGIN = {
 
 const log = getLogger('api');
 
-/** Validates a docName and builds a shadow-repo-safe path.
- * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
- * but allows `/` for nested content directories (e.g. `test-content/test-doc`). */
 function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
   if (!docName || docName.includes('..') || docName.includes('\0')) {
     return { error: 'Invalid document name' };
   }
-  // Normalize: strip leading './' AND treat bare '.' as empty (git rejects
-  // both "./foo" and "./" pathspecs when operating against a bare repo).
   const normalized = contentRoot === '.' ? '' : contentRoot.replace(/^\.\//, '');
   const ext = getDocExtension(docName);
   const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
@@ -343,84 +270,36 @@ const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
-// F9: unicode-preserving. Permits any Unicode letter, number, or combining
-// mark, plus pictographic emoji and the punctuation whitelist (., -, _, space).
-// Everything else (including `/`, `\`, null bytes, control chars, CRLF) is
-// either stripped or replaced so path-escape guards downstream keep their
-// invariants. CJK, Arabic, Cyrillic, and emoji survive — macOS/Finder
-// ergonomics without sacrificing filesystem safety.
 const SAFE_FILENAME_CHARS = /[^\p{L}\p{N}\p{M}\p{Extended_Pictographic}.\-_ ]/gu;
-// Stripping C0 + DEL is the whole point — the rule fires on intentional use.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — sanitize must strip control bytes.
 const STRIP_ON_SIGHT = /[/\\\x00-\x1f\x7f]/g;
 
 export function sanitizeFilename(name: string): string {
-  // Strip path separators and null/control bytes BEFORE any other pass so
-  // they cannot reappear inside a replacement and dodge later checks.
   let stripped = name.replace(STRIP_ON_SIGHT, '');
   stripped = stripped.replace(SAFE_FILENAME_CHARS, '_');
 
-  // Collapse underscore and dot runs so "../etc/passwd" → "etcpasswd" and
-  // "foo__bar" → "foo_bar".
   stripped = stripped.replace(/_+/g, '_').replace(/\.{2,}/g, '.');
 
-  // No hidden files — trim leading dots and leading underscores.
   stripped = stripped.replace(/^[._]+/, '');
-  // Filesystem portability — strip trailing dots (Windows trims them too).
   stripped = stripped.replace(/\.+$/, '');
 
   if (stripped === '') return 'upload';
 
-  // Most filesystems cap basenames at 255 bytes (ext4, APFS, exFAT). Without a
-  // ceiling, a multipart `Content-Disposition` filename approaching busboy's
-  // header size can sail through Unicode-letter sanitization and surface as
-  // `ENAMETOOLONG` from `linkSync`, which classifies as a generic
-  // `storage-error` → 500. Truncate the stem (preserving the extension) to
-  // stay within the portable basename ceiling.
   const MAX_BYTES = 255;
   const encoder = new TextEncoder();
   if (encoder.encode(stripped).length > MAX_BYTES) {
     const dotIdx = stripped.lastIndexOf('.');
     const ext = dotIdx >= 0 ? stripped.slice(dotIdx) : '';
     let stem = dotIdx >= 0 ? stripped.slice(0, dotIdx) : stripped;
-    // `slice(0, -1)` removes one UTF-16 code unit. A trailing emoji is a
-    // surrogate pair, so the loop transiently produces a lone-surrogate
-    // string that `TextEncoder` re-encodes as U+FFFD (3 bytes) — harmless
-    // since the emoji is fully consumed before the loop exits and the
-    // returned string is always valid UTF-8.
     while (encoder.encode(stem + ext).length > MAX_BYTES && stem.length > 0) {
       stem = stem.slice(0, -1);
     }
     stripped = (stem || 'upload') + ext;
-    // The loop drains the stem; it cannot shrink the extension itself.
-    // An adversarial 250+ byte extension (e.g. `'x.' + 'a'.repeat(300)`)
-    // would drain the stem to empty and still leave `'upload' + ext`
-    // above the ceiling. Final-pass guard: fall back to extensionless
-    // `'upload'` when even the floor exceeds MAX_BYTES.
     if (encoder.encode(stripped).length > MAX_BYTES) stripped = 'upload';
   }
 
   return stripped;
 }
 
-/**
- * SPEC §6 FR-5 / docs/assets-and-embeds.mdx: resolve the destination
- * directory for an upload from the parent doc's path and the configured
- * `upload.attachmentFolderPath`. Matches Obsidian's literal schema (D-J
- * free-form string):
- *
- *   - `"./"` (default)  → same directory as the doc
- *   - `"/"`             → content-directory root
- *   - `"./<sub>"`       → subdirectory beside the doc
- *   - `"<name>"` (bare) → fixed content-relative path
- *
- * Treats any `./` prefix as "relative to doc dir," any other value as
- * "relative to content dir." Empty or whitespace-only strings fall back
- * to the default (doc dir).
- *
- * Returns an absolute path within `resolvedContentDir` — path-escape
- * enforcement happens at the caller via `isWithinContentDir` + `realpath`.
- */
 export function resolveUploadDestDir(
   parentDocName: string,
   attachmentFolderPath: string,
@@ -434,19 +313,11 @@ export function resolveUploadDestDir(
     return resolvedContentDir;
   }
   if (trimmed.startsWith('./')) {
-    // Subdirectory beside the doc. `"./attachments"` → `<docDir>/attachments`.
     return resolve(resolvedContentDir, dirname(parentDocName), trimmed.slice(2));
   }
-  // Bare name or nested path: fixed content-relative location.
   return resolve(resolvedContentDir, trimmed);
 }
 
-/**
- * Read at most `n` bytes from the start of `path`. Used by the SVG sniff
- * fallback — `fileTypeFromFile` can't detect text-based SVG, so we open
- * the tempfile, read its head, and check for `<svg` / `<?xml ... <svg`
- * without ever materializing the whole file.
- */
 function readTempFileHead(path: string, n: number): Buffer {
   const fd = openSync(path, 'r');
   try {
@@ -458,49 +329,8 @@ function readTempFileHead(path: string, n: number): Buffer {
   }
 }
 
-/**
- * SPEC §6 FR-2: scan `destDir` non-recursively for an existing file whose
- * sha256 matches the buffer's. Returns the matching basename (case-preserving)
- * or null if no match. Bounded by directory size — O(n) in sibling count, not
- * vault size, per NFR-1. Only files with extensions in ASSET_EXTENSIONS are
- * candidates; everything else (markdown, .git/, etc.) is skipped.
- *
- * `expectedSize` is the buffer's byte length — passed in so we can size-
- * prefilter before hashing siblings. sha256 collision requires equal-sized
- * inputs, so same-extension siblings with a different size are not
- * candidates and we skip their (potentially multi-MB) read. This turns
- * the common "paste a new screenshot" path from O(total asset bytes in
- * dir) back to O(sibling count × stat). Non-ENOENT read failures log at
- * WARN so silent dedup degradation has a signal.
- */
-/**
- * Upper bound on size-matched candidates we'll read+hash in a single
- * dedup call. A capture-device folder with 1000+ screenshots at the same
- * resolution could theoretically produce that many same-size siblings;
- * each candidate costs a sync readFileSync + sha256Hex of the entire
- * buffer, which would block the event loop for seconds per upload under
- * adversarial / pathological load.
- *
- * Past the bound, dedup degrades to best-effort: we log a structured
- * WARN and return null (treat as no-match → write a new file with the
- * collision-suffix loop). This is a bounded-resource defense, not a
- * correctness change — a duplicate that slips through produces the
- * cheap storage cost of one extra on-disk copy, not silent data loss.
- * The O(1) hash-cache alternative proposed in the review note is a
- * larger architectural change and a follow-on.
- */
 const MAX_DEDUP_SCAN_CANDIDATES = 1000;
 
-/**
- * Stream a file's bytes through a sha256 Hash transform and return the hex
- * digest. Keeps memory O(1) regardless of file size — a 500 MB candidate
- * read by the buffer-based `readFileSync` path would otherwise materialize
- * the whole file in heap, which defeats the streaming-upload amendment's
- * O(1) memory guarantee (SPEC.md §Post-finalization amendment, NFR-1).
- *
- * Throws on read errors so the caller can classify ENOENT (concurrent
- * rename — stay silent) vs other errors (log and skip).
- */
 async function streamingHashFile(path: string): Promise<string> {
   const hash = createHash('sha256');
   await pipeline(createReadStream(path), hash);
@@ -514,12 +344,6 @@ async function findDuplicateAsset(
 ): Promise<string | null> {
   let entries: string[];
   try {
-    // Async `readdir` so the directory walk doesn't block the event
-    // loop during uploads — bun's loop is shared with WebSocket sync
-    // and CRDT updates, and a 1k-entry walk is observable on bursty
-    // upload traffic. The MAX_DEDUP_SCAN_CANDIDATES cap (line ~76)
-    // bounds the worst case at 1000 same-size siblings, but the
-    // pre-cap entry list can still be much larger.
     entries = await readdir(destDir);
   } catch {
     return null;
@@ -537,9 +361,6 @@ async function findDuplicateAsset(
       continue;
     }
     if (!entryStat.isFile() || entryStat.size !== expectedSize) continue;
-    // Bounded scan: only count candidates that passed the cheap size
-    // prefilter, since same-size siblings are the ones that cost a
-    // full-file hash each (streaming now, not buffered).
     scanned++;
     if (scanned > MAX_DEDUP_SCAN_CANDIDATES) {
       log.warn(
@@ -556,13 +377,9 @@ async function findDuplicateAsset(
     }
     let candidateSha: string;
     try {
-      // Stream + hash the candidate to preserve the O(1) memory guarantee
-      // the upload pipeline otherwise maintains end-to-end. A 500 MB
-      // candidate otherwise spiked heap to 500 MB per scan.
       candidateSha = await streamingHashFile(fullPath);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      // ENOENT is the legitimate concurrent-rename race — stay silent.
       if (code !== 'ENOENT') {
         log.warn(
           { event: 'upload-dedup-skip', reason: 'read-failed', code, entry },
@@ -576,15 +393,6 @@ async function findDuplicateAsset(
   return null;
 }
 
-/**
- * Discriminator for write failures so the upload handler can surface a
- * specific error code (`collision-exhaustion` / `storage-full` /
- * `storage-readonly` / `storage-error`) instead of collapsing every
- * filesystem failure into a generic 500 "Failed to save file" response.
- * The code field is a stable part of the error envelope; the numeric
- * HTTP status differentiates transient-yet-retry (500) from full-disk
- * (507) per RFC 4918.
- */
 import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
 
 interface UploadResult {
@@ -596,36 +404,10 @@ interface UploadResult {
   byteLength: number;
 }
 
-/**
- * Stream multipart upload body to a tempfile while hashing on-the-fly.
- *
- * Replaces the buffer-to-memory pattern (chunks.push(chunk) +
- * Buffer.concat) with busboy's streaming 'file' event piped through a
- * HashingPassThrough Transform into createWriteStream(tempPath). Memory
- * becomes O(1); disk is the only bound.
- *
- * Error contract (typed via UploadWriteError.reason):
- *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
- *   - storage-full: ENOSPC / EDQUOT during the write stream
- *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
- *   - storage-error: any other write-stream error
- *
- * On any error, the tempfile is best-effort unlinked before propagating.
- * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
- */
 function readUploadBody(req: IncomingMessage, contentDir: string): Promise<UploadResult> {
   return new Promise((resolveP, reject) => {
     let bb: ReturnType<typeof busboy>;
     try {
-      // `files: 1` caps the file part; `fields` + `fieldSize` cap non-file
-      // surface so a flooded multipart can't buffer thousands of fields or a
-      // multi-MB string field in memory before the upload body resolves. The
-      // legitimate schema (agentId / docName / position / summary) is bounded
-      // — short identifiers, never approaching 2 KB or 10 entries. The
-      // ENAMETOOLONG-via-crafted-filename DoS path is closed by the 255-byte
-      // ceiling in `sanitizeFilename` (the filesystem-portability layer);
-      // busboy does not expose a header-section-size limit (only headerPairs
-      // count), so the parsed-value cap is the right place.
       bb = busboy({
         headers: req.headers,
         limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
@@ -641,18 +423,8 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     let parentDocName = '';
     let tempPath: string | undefined;
     let pipelineError: unknown;
-    // Track whether the 'file' event ever fired. busboy emits 'close' as
-    // soon as it finishes parsing the request body — but the file
-    // pipeline (createWriteStream + HashingPassThrough) is async and may
-    // still be running when 'close' fires. We must NOT resolve to an
-    // empty UploadResult on 'close' when a file IS being processed; the
-    // pipeline `.then()` is the legitimate resolver in that case. Only
-    // the no-file path needs the 'close' fallback.
     let fileEventFired = false;
 
-    // Mint the tempfile path lazily on the first 'file' event — busboy
-    // can fire 'error' before any file arrives (e.g. missing boundary)
-    // and we'd otherwise create a zero-byte tempfile for no reason.
 
     const fail = (reason: UploadWriteReason, cause: unknown) => {
       if (settled) return;
@@ -661,7 +433,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
         try {
           unlinkSync(tempPath);
         } catch {
-          // best-effort; orphan sweep catches stragglers
         }
       }
       reject(cause instanceof UploadWriteError ? cause : new UploadWriteError(reason, cause));
@@ -684,14 +455,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       filename = info.filename || 'upload';
       mimeType = info.mimeType || '';
 
-      // `mintTempUploadPath` does `tracedMkdirSync(.., { recursive: true })`
-      // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
-      // uncaught throw here bubbles back through busboy's `_write` and
-      // re-emits as `'error'`, which the listener below classifies as
-      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
-      // a full disk into chasing a phantom client bug. Catch the sync
-      // throw, classify via the same table the pipeline rejection uses,
-      // and drain the file part so busboy can finish parsing the rest.
       let path: string;
       try {
         path = mintTempUploadPath(contentDir);
@@ -720,8 +483,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
         })
         .catch((err) => {
           pipelineError = err;
-          // Classify from the deepest write error if available; otherwise
-          // treat as a generic storage-error. The unlink happens inside fail().
           const nodeErr = err as NodeJS.ErrnoException;
           fail(classifyWriteError(nodeErr), err);
         });
@@ -731,21 +492,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       fail('malformed-upload', err);
     });
 
-    // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
-    // fires once busboy finishes parsing the request body. If by then
-    // no `file` event ever fired, the request was a well-formed
-    // multipart with fields-only (no file part) — resolve with a
-    // synthetic empty UploadResult so the route handler's
-    // `byteLength === 0` guard returns the standard 400 "No file
-    // received." Without this hook the Promise never settles on fields-
-    // only uploads and the connection hangs until Node's request
-    // timeout fires (DoS).
-    //
-    // CRUCIAL: gate on `!fileEventFired`. If a file part IS present,
-    // busboy emits 'close' as soon as it finishes parsing — but the
-    // async write/hash pipeline below may still be running. Resolving
-    // here would race the pipeline's legitimate resolveP and produce a
-    // spurious empty result. Pipeline resolves win in that case.
     bb.on('close', () => {
       if (settled || pipelineError) return;
       if (fileEventFired) return;
@@ -760,9 +506,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       });
     });
 
-    // Guard the "client disconnected mid-stream" path. busboy never
-    // reaches `_final` if the request aborts before the closing boundary,
-    // so its `close` would not fire and the Promise would otherwise hang.
     req.on('close', () => {
       if (settled || pipelineError) return;
       if (!req.complete) {
@@ -774,10 +517,6 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
   });
 }
 
-/**
- * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
- * Throws if the resolved path escapes the base directory.
- */
 export function safeSubdir(baseDir: string, subdir: string): string {
   const resolved = resolve(baseDir, subdir);
   if (resolved !== baseDir && !resolved.startsWith(`${baseDir}/`)) {
@@ -834,14 +573,6 @@ function remapDocNameForRename(
   return `${toPath}${docName.slice(fromPath.length)}`;
 }
 
-/**
- * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
- * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
- * `link/new.md` are rejected if `link` resolves outside the content dir.
- *
- * Uses `realpathSync(resolvedContentDir)` as the boundary anchor so platform normalization
- * (e.g. macOS `/var` → `/private/var`) matches `realpathSync` of paths under it.
- */
 function assertNoSymlinkEscape(fullPath: string, resolvedContentDir: string): void {
   let contentRoot: string;
   try {
@@ -880,11 +611,6 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  // When kind is 'file': if the caller passed an explicit supported extension,
-  // use the path verbatim — this is how rename callers signal an extension
-  // change (toPath: "foo.mdx" renames foo.md → foo.mdx). Extension-less paths
-  // fall through to getDocExtension() + the registered extension map so legacy
-  // callers keep the source's existing extension.
   const relativePath =
     kind === 'file' ? (isSupportedDocFile(path) ? path : `${path}${getDocExtension(path)}`) : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
@@ -898,17 +624,6 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   return fullPath;
 }
 
-/**
- * Probe disk for the actual on-disk extension of a file's docName, registering
- * it in the doc-extensions map if found. Closes a boot/watcher race where the
- * rename handler runs before the file watcher has observed the source — without
- * this, `getDocExtension()` returns the `.md` default, which silently defeats
- * `.mdx`-specific exclusion patterns and routes existence checks to the wrong
- * path. Iterating in `SUPPORTED_DOC_EXTENSIONS` precedence order ensures the
- * `.mdx` precedence rule is preserved when both files exist on disk.
- * Idempotent — `registerDocExtension` is a no-op when the higher-precedence
- * extension is already registered.
- */
 function probeAndRegisterSourceFileExtension(contentDir: string, fromPath: string): void {
   if (!isValidRelativeContentPath(fromPath)) return;
   const resolvedContentDir = resolve(contentDir);
@@ -948,12 +663,6 @@ async function renameTrackedPathInGit(
 
   return await withParentLock(async () => {
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    // `ls-files` throws `GitError: fatal: not a git repository` when
-    // projectDir isn't a git checkout — normal in test tmpdirs and in Vite
-    // dev's isolated OK_TEST_CONTENT_DIR mode. Treat that as "not tracked"
-    // so the caller falls back to `fs.renameSync`. Any other git failure
-    // (permission denied, corrupted index) also falls through to fs rename
-    // rather than 500ing the /api/rename-path handler.
     let tracked = '';
     try {
       tracked = (await pg.raw('ls-files', '--', sourceRel)).trim();
@@ -977,123 +686,27 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
-  /**
-   * Per-process UUID advertised via `GET /api/server-info` and the
-   * `__system__` CC1 `server-info` broadcast. Clients cache this value
-   * and claim it in the `expectedServerInstanceId` field of their auth
-   * token on every connect; the server rejects on mismatch. Part of the
-   * CRDT server-restart recovery defense.
-   */
   serverInstanceId: string;
-  /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
-  /** Accessor for the alias map (alias docName → canonical docName). */
   getAliasMap?: () => ReadonlyMap<string, string>;
-  /**
-   * When true, register test-only routes (`/api/test-reset`,
-   * `/api/test-rescan-backlinks`). Defaults to `false` — these routes mutate
-   * server state in ways unsafe for multi-client use (reset wipes document
-   * content; rescan-backlinks rebuilds the index from disk, dropping
-   * unpersisted in-memory state) and must never be exposed in production.
-   * Enable only in tests and local dev mode.
-   */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
-  /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
-  /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
   getCurrentBranch?: () => string | null;
-  /**
-   * Accessor for the latest disk-ack state vectors per document. Wired
-   * to `cc1Broadcaster.getLatestDiskAckSVsAsBase64()` in boot.
-   * Returned as part of `GET /api/server-info` so clients can recover
-   * the per-doc `lastDiskAckedSV` watermark on `__system__` reconnect
-   * without relying on stateless CC1 broadcasts (which have no replay).
-   * Empty `{}` is the cold-server case (no docs flushed yet); omitted
-   * when the broadcaster isn't available (e.g. plugin mode in dev
-   * server). Values are base64-encoded `Uint8Array` state vectors.
-   */
   getDiskAckSVs?: () => Record<string, string>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
-  /**
-   * Optional. When present, agent write handlers publish per-write attribution
-   * entries on `__system__` awareness (`agentFocus` map) with writeKind +
-   * currentDoc — the signal that drives browser push-navigation to the doc the
-   * agent just wrote. Distinct from `agentPresenceBroadcaster` below, which
-   * publishes sustained session state.
-   */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
-  /**
-   * Optional. When present, agent write handlers publish presence entries on
-   * `__system__` awareness (`agentPresence` map) so clients can render the
-   * multi-agent presence bar and follow the active agent. Omit to disable
-   * presence broadcasts entirely (e.g. in tests that don't care).
-   */
   agentPresenceBroadcaster?: AgentPresenceBroadcaster;
-  /**
-   * Optional. Called after every successful agent write (write_document /
-   * edit_document). The handler is expected to be cheap and idempotent —
-   * the CLI uses it to open the browser on the first agent edit per session.
-   */
   onAgentWrite?: () => void;
-  /**
-   * Getter for the active SyncEngine instance (may be null when dormant or if
-   * no remote was detected). Called per-request so it always reflects current state.
-   */
   getSyncEngine?: () => SyncEngine | null;
-  /**
-   * CLI argv prefix used to spawn subprocesses for /api/local-op/* relay endpoints.
-   * Defaults to ['open-knowledge'] (assumes CLI is on PATH).
-   * Pass [process.execPath, process.argv[1]] from the CLI start command to use
-   * the exact runtime that started this server.
-   *
-   * Example: ['bun', '/path/to/packages/cli/src/cli.ts'] in dev,
-   *          ['open-knowledge'] in production.
-   */
   localOpCliArgs?: string[];
-  /**
-   * Path to the project's parent git working tree (i.e. the repo root, not the
-   * shadow git dir). When provided, `POST /api/save-version` and
-   * `POST /api/rollback` create an additional commit + `ok/v<N>` tag in the
-   * parent git repository to make checkpoints and restores team-visible.
-   * Parent-git operations are serialized through `parentGitMutex`.
-   */
   projectDir?: string;
-  /**
-   * Basename-index resolver for `![[photo.png]]` wiki-embed refs. Threaded
-   * into every server-side `mdManager.parseWithFallback` call (managed-rename
-   * body rewrite, rollback content apply) so the resulting PM image/link
-   * carries the resolved src/href.
-   */
   resolveEmbed?: (basename: string, sourcePath: string) => string | null;
-  /**
-   * Getter for the server's principal record. Called at request time so
-   * deferred async init propagates. Returns null if principal has not
-   * yet been loaded or loading failed.
-   */
   getPrincipal?: () => Principal | null;
-  /**
-   * Active ContentFilter (the same instance threaded into the file watcher).
-   * When present, `POST /api/rename-path` rejects destinations excluded by
-   * `.gitignore` / `.okignore` rules so renames cannot land outside the
-   * watched scope. Omit in tests where admission checks aren't relevant.
-   */
   contentFilter?: ContentFilter;
-  /**
-   * OS-scheme install probe used by `GET /api/installed-agents` (web-host
-   * parity for the Electron `ok:shell:detect-protocol` IPC — see
-   * `handoff-api.ts`). When omitted, the platform's default probe is used
-   * (`osascript` / `reg query` / `xdg-mime`). Tests inject a deterministic
-   * fake so the endpoint doesn't shell out.
-   */
   installedAgentsProbe?: (scheme: InstalledAgentScheme) => Promise<boolean>;
-  /**
-   * Explicit document unload hook. `createServer()` suppresses Hocuspocus's
-   * automatic unload-on-disconnect to avoid reload + IDB duplication, so API
-   * paths that intentionally retire a document must opt into unload here.
-   */
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
@@ -1123,10 +736,6 @@ function json(
   });
   res.end(JSON.stringify(data));
 }
-/**
- * Extract all ATX headings (# … ######) from a Markdown document.
- * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
- */
 export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
@@ -1160,17 +769,6 @@ function isSafeDocName(docName: string): boolean {
   );
 }
 
-/**
- * Returns true when an Origin header value is permitted to reach /api/* endpoints.
- *
- * Allowed:
- * - `"null"` (string) — opaque origin from file:// / packaged Electron (Fetch spec §4.3)
- * - http(s)://localhost[:port] — Electron dev server, ok-ui Vite, browser dev
- * - http(s)://127.x.x.x[:port] — 127.0.0.0/8 loopback block
- * - http(s)://[::1][:port] — IPv6 loopback
- *
- * Rejected: any other origin → 403 on /api/* (CSRF guard for unauthenticated mutating routes).
- */
 function isAllowedApiOrigin(origin: string): boolean {
   if (origin === 'null') return true; // file:// / packaged Electron renderer
   try {
@@ -1214,12 +812,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     forceUnloadDocument,
   } = options;
 
-  // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
 
-  // Per-scheme cache + in-flight dedup for GET /api/installed-agents.
-  // Factory is called once per createApiExtension() so the cache lives for
-  // the lifetime of the server (cleared on server restart).
   const installedAgentsCache = createInstalledAgentsProbe({
     probe: installedAgentsProbe ?? createOsProbe(process.platform),
   });
@@ -1268,7 +862,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
     } catch {
-      /* fall through to disk */
     }
     try {
       const filePath = resolveDocPath(docName);
@@ -1282,13 +875,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
-   * hub candidate exists in its folder tree, attach a hint suggesting the
-   * hub. Returns `undefined` when any prerequisite is unavailable (no
-   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
-   * Non-throwing — a hint-computation failure must not fail the write.
-   */
   function computeOrphanHints(
     docName: string,
   ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
@@ -1296,9 +882,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const backlinks = backlinkIndex.getBacklinks(docName);
       if (backlinks.length > 0) return undefined;
-      // This runs on every write — if hub-candidate walking becomes pathological
-      // on very large file indexes, we want an observable signal. 5ms is well
-      // above the typical <1ms cost for a small-to-medium repo.
       const start = performance.now();
       const candidates = findHubCandidates(docName, getFileIndex());
       const elapsed = performance.now() - start;
@@ -1327,15 +910,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
-  /**
-   * Return the number of live browser/editor connections currently subscribed
-   * to the given Hocuspocus document. Zero means the agent is writing to a
-   * room nobody is watching. Under the once-per-session preview-attach
-   * contract, this is a per-doc diagnostic — the hint threshold is
-   * `getSystemSubscriberCount()` (transport-presence on `__system__`).
-   *
-   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
-   */
   function getSubscriberCount(docName: string): number {
     try {
       const doc = hocuspocus.documents.get(docName);
@@ -1345,18 +919,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Return the number of live connections to the `__system__` Y.Doc — the
-   * shared awareness channel every editor tab subscribes to. Zero means no
-   * editor is attached to this server anywhere; non-zero means at least one
-   * tab is watching (and will follow agent writes via `AgentFocusBroadcaster`).
-   *
-   * This is the correct signal for the once-per-session preview-attach hint:
-   * the per-doc count flips on every new doc even when the user's tab is open
-   * and following, which would produce spurious "attach" hints.
-   *
-   * Never throws.
-   */
   function getSystemSubscriberCount(): number {
     try {
       const doc = hocuspocus.documents.get(SYSTEM_DOC_NAME);
@@ -1366,18 +928,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Fire-and-forget L1 → L2 flush for a single document.
-   *
-   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
-   * other documents are undisturbed.
-   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
-   * up-to-date before the shadow-repo commit.
-   *
-   * The returned promise is intentionally not awaited by callers — the HTTP
-   * response fires immediately after the CRDT transaction; persistence is
-   * best-effort background work.
-   */
   function flushDocToGit(docName: string, label: string): void {
     const debounceId = `onStoreDocument-${docName}`;
     const l1 = hocuspocus.debouncer.isDebounced(debounceId)
@@ -1416,7 +966,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
   function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
@@ -1568,10 +1117,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Apply rewrite via XmlFragment-authoritative pattern (PRECEDENTS.md precedent #12;
-      // replaces the deleted syncTextToFragment helper). Parse new markdown →
-      // updateYFragment (preserves user-content Items at matching positions) →
-      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
       const parseOpts = options.resolveEmbed
         ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
@@ -1605,22 +1150,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             throw new Error('Managed rename requires backlink index support');
           }
 
-          // Existence + stat + affected-doc enumeration all live inside the
-          // serialized critical section so a concurrent file watcher event
-          // (external mv add) or in-flight write to the source folder cannot
-          // land between enumeration and the disk move and produce a "ghost"
-          // file that the recovery journal doesn't know about. POSIX
-          // rename(2) does not fail-loud on overwrite, so the lock is the
-          // only backstop against silent data loss.
           const sourcePathRoot = resolveContentEntryPath(contentDir, kind, fromPath);
           const destinationPathRoot = resolveContentEntryPath(contentDir, kind, toPath);
-          // Handles the case where the client sends an explicit extension that
-          // matches the source's existing one (e.g. `toPath: "foo.md"` when
-          // the file is already `foo.md`) — `fromPath !== toPath` textually
-          // but the on-disk paths resolve to the same file. Treat as no-op,
-          // mirroring the extension-less `fromPath === toPath` short-circuit
-          // in the handler. Returning empty arrays here propagates as
-          // `{ ok: true, renamed: [], rewrittenDocs: [] }` to the caller.
           if (sourcePathRoot === destinationPathRoot) {
             return { renamed: [], rewrittenDocs: [] };
           }
@@ -1638,14 +1169,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             throw new ManagedRenameSourceTypeMismatchError(kind);
           }
 
-          // Downstream code (safeContentPath, setReconciledBase,
-          // backlinkIndex, file index, applyRenameMap) keys on extension-less
-          // docNames; folder rename naturally produces them via the file
-          // index, but file rename receives `fromPath`/`toPath` with the
-          // user-supplied extension. Strip here so the rename map matches
-          // currentDocName in applyRenameMap (otherwise pass 1's image-ref
-          // recompute is silently skipped) and syncRenamedDocsToDisk doesn't
-          // double-extension via getDocExtension fallback.
           const affectedDocNames =
             kind === 'file'
               ? [stripDocExtension(fromPath)]
@@ -1688,16 +1211,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           for (const docName of [...renameMap.keys(), ...backlinkSources]) {
             if (snapshotContents.has(docName)) continue;
 
-            // For backlink sources (non-renamed docs that link to a rename
-            // target): require a real on-disk file. A Y.Doc may be in
-            // memory for a docName that has no disk file (e.g.,
-            // `openDirectConnection` was triggered by a hover or pre-warm
-            // on a redlink). Treating in-memory-only Y.Docs as legitimate
-            // backlink sources here would funnel them into the
-            // `rewriteDocNames` loop and `writeManagedRenameDocumentToDisk`
-            // would materialize a phantom file — `tracedMkdirSync` +
-            // `tracedWriteFileSync` create whatever path it's handed.
-            // Treat as missing and let the index purge the stale entry.
             if (!renameMap.has(docName)) {
               const filePath = resolveContentEntryPath(contentDir, 'file', docName);
               if (!existsSync(filePath)) {
@@ -1765,17 +1278,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               tracedRenameSync(rootSourcePath, rootDestinationPath);
             }
 
-            // Pre-register destination extensions so loop 2's
-            // `resolveContentEntryPath` and `safeContentPath` produce the
-            // correct on-disk paths. For an extension-change rename
-            // (`foo.md` → `foo.mdx`), inheriting from the source's recorded
-            // extension would point at the no-longer-extant `.md` path; for
-            // a same-extension cross-folder rename, the destination docName
-            // has no recorded extension yet and would default to `.md`,
-            // miscomputing `.mdx` source paths. Forget the source mapping
-            // so a renamed-then-recreated source doesn't inherit a stale
-            // extension. The file watcher would converge to the same state
-            // asynchronously — this just makes loop 2 see it synchronously.
             const explicitDestExt: DocExtension | null =
               kind === 'file' && isSupportedDocFile(toPath)
                 ? (extname(toPath).toLowerCase() as DocExtension)
@@ -1843,16 +1345,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     );
   }
 
-  /**
-   * Canonical identity boundary (precedent #24) — every mutating POST handler calls this
-   * before any Y.Doc mutation. Resolves request body → {agentId, agentName, colorSeed, clientName}.
-   * The meta-test in attribution-sweep-coverage.test.ts asserts all handlers call this at entry.
-   *
-   * Body parsing + sanitization is shared with `extractActorIdentity` via
-   * `parseAgentBodyFields` in `agent-id.ts`. This wrapper adds the write-handler
-   * default — absent agentId becomes `'claude-1'` so attribution always lands on
-   * a stable broadcaster key (matches `getSession()` for presence bar color).
-   */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
     agentId: string;
@@ -1875,13 +1367,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  /**
-   * Build actor-tuple metadata (FR-8) for threading through recordContributor →
-   * ContributorEntry → OkActorEntry. Populates:
-   *   - principalId from getPrincipal() (stable UUID per local install)
-   *   - agentType derived from clientName
-   *   - clientName / clientVersion / label passed through from request body
-   */
   function buildAgentActor(args: {
     clientName: string | undefined;
     clientVersion?: string;
@@ -1903,28 +1388,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  /**
-   * Shape of the `summary` field appended to a handler's success JSON response
-   * when the caller provided a summary (spec FR8). Absent from the response
-   * entirely when the caller did not supply a summary (including empty string,
-   * which is treated as absent per `normalizeSummary`).
-   *
-   * `hint` is nested inside `summary` (not a sibling top-level key) so the
-   * truncation message always travels with the field it explains — this
-   * prevents naming collisions at the response root and tightens the coupling
-   * between `truncatedFrom` and the human-readable explanation.
-   */
   type SummaryResponse = { value: string; truncatedFrom?: number; hint?: string };
 
-  /**
-   * Pure response-shape derivation from a normalized summary — NO side effects.
-   * Returns the fields the handler appends to its success JSON when the caller
-   * supplied a summary (FR8/FR12). `undefined` return values mean "omit the
-   * corresponding response key entirely."
-   *
-   * The hint is nested inside `response.hint` when truncation fires — callers
-   * that want the top-level text line read the value via `response?.hint`.
-   */
   function summaryResponseFields(normalized: NormalizedSummary): {
     response?: SummaryResponse;
     stored: string | undefined;
@@ -1943,29 +1408,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return { response: { value: normalized.value }, stored: normalized.value };
   }
 
-  /**
-   * Strip truncation-specific fields from a `SummaryResponse`. Used by the
-   * rename / rollback default-substitution path: when the server generates a
-   * default like "Renamed X → Y" and that default itself overflows the cap,
-   * the agent did not submit the long string — so `truncatedFrom` and the
-   * "Summary truncated from ..." hint would misattribute blame to the caller.
-   * The stored value is still the truncated form (so the timeline bullet fits),
-   * but the diagnostic metadata is silenced in the response.
-   */
   function stripDefaultPathTruncation(response: SummaryResponse): SummaryResponse {
     return { value: response.value };
   }
 
-  /**
-   * Fire the M1/M2 counters for a summary that is about to be persisted.
-   * Call AFTER the contribution is guaranteed to land (i.e. not on 404/409
-   * early-returns) so adoption rate reflects successful writes.
-   *
-   * `fromDefault` suppresses the `summariesTruncated` increment when the
-   * truncation came from a server-generated default (rename / rollback default
-   * substitution). The agent had no control over those strings, so counting
-   * them toward M2 would muddy the "agent behavior" signal per spec §7 M2.
-   */
   function countNormalizedSummary(normalized: NormalizedSummary, fromDefault = false): void {
     if (normalized.kind !== 'value') return;
     incrementSummariesProvided();
@@ -2024,10 +1470,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const { response: summaryResponse, stored: storedSummary } =
         summaryResponseFields(normalizedSummary);
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -2039,9 +1481,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
           applyAgentMarkdownWrite(
             session.dc.document,
@@ -2153,10 +1593,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       const timestamp = new Date().toISOString();
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -2168,9 +1604,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
           applyAgentMarkdownWrite(
             session.dc.document,
@@ -2206,9 +1640,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      // Focus (attribution) on __system__ awareness. Focus drives browser
-      // push-navigation to the doc the agent just wrote (writeKind); presence
-      // is separately maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: resolvedDocName,
@@ -2217,19 +1648,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       onAgentWrite?.();
 
-      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
-      // backlinks and a plausible hub exists in its folder tree, suggest the
-      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
       const hints = computeOrphanHints(resolvedDocName);
 
       const subscriberCount = getSubscriberCount(resolvedDocName);
       const systemSubscriberCount = getSystemSubscriberCount();
 
-      // Once-per-session attach hint counter: fires when no editor is attached
-      // to `__system__` (transport-presence = false). Labels are bounded-
-      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
-      // is always `agent` at this call site (`handleAgentWriteMd`), and
-      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
       if (systemSubscriberCount === 0) {
         hintEmittedCounter().add(1, {
           'shadow.writer': 'agent',
@@ -2270,33 +1693,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Existing in-memory Y.Doc → read it directly; no need to round-trip
-      // through openDirectConnection (which would still resolve to the same
-      // doc but adds a connect/disconnect cycle).
       const existing = hocuspocus.documents.get(docName);
       if (existing) {
         json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
         return;
       }
 
-      // No in-memory doc → require an on-disk file before opening a
-      // connection. `openDirectConnection` on a missing path materializes
-      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
-      // suppressed for (PR #362's design). The persistence layer's
-      // phantom-doc guard blocks the eventual 0-byte file write, but any
-      // later code path that populates the lingering Y.Doc with content
-      // (a mis-routed agent write, the rename spine pulling it in via a
-      // stale backlink edge) would then land a phantom file because
-      // `reconciledBase` was never set. 404 here closes that whole class.
       const filePath = resolveContentEntryPath(contentDir, 'file', docName);
       if (!existsSync(filePath)) {
         json(res, 404, { ok: false, error: `Document not found: ${docName}` });
         return;
       }
 
-      // Read via a transient DirectConnection rather than sessionManager.getSession —
-      // this endpoint has no agent identity, and creating a cached session would
-      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
       const dc = await hocuspocus.openDirectConnection(docName);
       try {
         const document = dc.document;
@@ -2325,7 +1733,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const dir = url.searchParams.get('dir');
 
-      // Validate dir parameter (reject traversal attempts)
       if (dir) {
         try {
           safeSubdir(contentDir, dir);
@@ -2335,7 +1742,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Read from the watcher's in-memory file index (instant, no filesystem scan)
       const index = getFileIndex();
       const documents: {
         docName: string;
@@ -2348,11 +1754,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }[] = [];
 
       for (const [docName, entry] of index) {
-        // Filter by dir prefix if specified
         if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // Surfacing the registered on-disk extension lets the sidebar render
-        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
         const docExt = getDocExtension(docName);
 
         documents.push({
@@ -2365,7 +1768,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           targetPath: null,
         });
 
-        // Emit alias entries for this canonical file
         for (const alias of entry.aliases) {
           if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
           const targetRelPath = relative(contentDir, entry.canonicalPath);
@@ -2422,13 +1824,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
-   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
-   * (exec ls/grep/find slim enrichment) that need connection density per file
-   * without N-amplifying the single-doc `/api/backlinks` endpoint.
-   * docNames failing `isSafeDocName` are silently dropped from `counts`.
-   */
   async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2753,10 +2148,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let notFound = false;
       let staleTarget = false;
       let fmIntersect = false;
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
       try {
         const icon = iconFromClientName(clientName);
         const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
@@ -2768,17 +2159,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
         captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
         session.dc.document.transact(() => {
-          // Read current authoritative state. Search the FULL markdown
-          // (frontmatter + body) so agents can patch frontmatter fields
-          // (e.g. `title:`, `cluster:`) the same way they patch body text.
-          // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in the YAML region of `Y.Text('source')`
-          // (D8) and must be composed in for the search surface to
-          // reflect the document as the agent sees it on disk.
           const xmlFragment = session.dc.document.getXmlFragment('default');
           const ytext = session.dc.document.getText('source');
           const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
@@ -2802,29 +2184,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             return;
           }
 
-          // Position-based FM-intersection check. The string-shape
-          // heuristic above handles yaml-style find strings; this catches
-          // the residual class where a non-yaml find (e.g. a single word
-          // like `draft`) happens to first-match in the FM region.
-          // `pos < currentFm.length` is the necessary-and-sufficient
-          // signal — FM is contiguous at doc start, so any match starting
-          // before the FM-end byte overlaps the FM region.
           if (pos < currentFm.length) {
             fmIntersect = true;
             return;
           }
 
-          // Splice at the character level. Only body-region patches
-          // reach here, so this branch never modifies the FM.
-          // `applyAgentMarkdownWrite` reads the current FM from the
-          // YAML region of Y.Text and writes the canonical full
-          // document back, so a body-only payload here keeps the
-          // existing FM intact.
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          // FM lives in the YAML region of Y.Text directly (D8); body-only
-          // payloads to applyAgentMarkdownWrite preserve the existing FM
-          // because the helper reads `existingFm` from Y.Text.
           const { body: newBody } = stripFrontmatter(newFull);
           applyAgentMarkdownWrite(
             session.dc.document,
@@ -2844,9 +2210,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           });
         }, session.origin);
         if (!notFound && !staleTarget && !fmIntersect) {
-          // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 + FM-intersect 400 so adoption
-          // rate reflects successful writes, not total attempts.
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
@@ -2887,8 +2250,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
-      // Focus (attribution) on __system__ awareness. Presence is separately
-      // maintained via setPresence/touchMode pairs above.
       agentFocusBroadcaster?.setFocus(agentId, {
         agentName,
         currentDoc: docName,
@@ -2900,7 +2261,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const subscriberCount = getSubscriberCount(docName);
       const systemSubscriberCount = getSystemSubscriberCount();
 
-      // Once-per-session attach hint counter (matches handleAgentWriteMd).
       if (systemSubscriberCount === 0) {
         hintEmittedCounter().add(1, {
           'shadow.writer': 'agent',
@@ -2923,16 +2283,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
-   *
-   * Body: { docName?: string, connectionId: string, scope?: 'last' | 'session' }
-   *   connectionId — the session's agentId (matches sessionManager key)
-   *   scope — 'last' undoes the top UM stack item; 'session' undoes all items.
-   *
-   * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
-   * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
-   */
   async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -2956,11 +2306,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
-      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
-      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
-      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
       const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
         extractAgentIdentity(body);
 
@@ -2983,7 +2328,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const rawScope = body.scope;
-      // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
       const scope: 'last' | 'session' =
         rawScope === 'session' || rawScope === 'file' ? 'session' : 'last';
 
@@ -2994,15 +2338,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const session = await sessionManager.getSession(docName, connectionId);
 
-      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
-      // instead of the per-doc awareness — the per-doc awareness has ONE
-      // shared clientID across N concurrent agents and would stomp. The
-      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
-      // so the keepalive-WS close handler's cleanup path finds the entry.
-      //
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and the undo
-      // transact flips the badge back to idle rather than wedging it on 'writing'.
       let undone = false;
       try {
         const icon = iconFromClientName(clientName);
@@ -3015,13 +2350,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           mode: 'writing',
           ts: Date.now(),
         });
-        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
-        // applyAgentUndo wraps um.undo() + composition in one transact under
-        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        // Pass embedResolver so the post-undo body re-parse maps
-        // `![[photo.png]]` → resolved src on PM image nodes — matching
-        // applyAgentMarkdownWrite's composition contract so the XmlFragment
-        // shape stays equivalent to a fresh load of the same body.
         undone = applyAgentUndo(
           session,
           scope,
@@ -3029,9 +2357,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
             : undefined,
         );
-        // FR-5 / D42: record attribution for the undo write so the shadow-repo
-        // L2 drain fans it out under this session's writer-id. Skip when the
-        // UM stack was empty — a no-op undo has no mutation to attribute.
         if (undone) {
           recordContributor(
             docName,
@@ -3064,11 +2389,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * GET /api/agent-activity?agentId=<connId>
-   * Returns per-file + per-burst stats for one agent's session(s).
-   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
-   */
   async function handleAgentActivity(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3077,9 +2397,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
-      // POST handler) — consistent identity shape across all surfaces per
-      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
       const agentId = validateAgentId(url.searchParams.get('agentId'));
       if (agentId === null) {
         json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
@@ -3093,11 +2410,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * GET /api/agent-burst-diff?agentId=<connId>&docName=<path>&stackIndex=<n>
-   * Returns unified-diff text for one StackItem in a given session.
-   * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
-   */
   async function handleAgentBurstDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3118,8 +2430,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'docName required' });
         return;
       }
-      // Same docName validator every mutating POST handler uses — parity with
-      // the rest of the API surface (path traversal, reserved names).
       if (!isSafeDocName(rawDocName)) {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
@@ -3139,7 +2449,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Typed accessor — no `(as any).sessions` bypass.
       const session = sessionManager.getLiveSession(docName, agentId);
       if (!session) {
         json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
@@ -3155,14 +2464,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
       const stackItem = um.undoStack[stackIndex] as any;
       const ytext = session.dc.document.getText('source');
       const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
-      // `generatedAt` is the server's wall clock at response time (used for
-      // client-side cache staleness). The StackItem's capture timestamp is
-      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
-      // to duplicate it here.
       json(res, 200, { ok: true, diff, generatedAt: Date.now() });
     } catch (e) {
       log.error({ err: e }, '[agent-burst-diff] handler failed');
@@ -3180,21 +2484,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
 
-      // Path traversal guard — reuse the canonical validator from persistence.ts.
-      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
-      // we translate that to a 400 response. Keeping the guard in one place (not
-      // re-implementing the startsWith check inline) ensures handleTestReset stays
-      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
       let filePath: string;
       try {
         filePath = safeContentPath(docName, contentDir);
       } catch (err) {
-        // Log the original error (safeContentPath produces messages like
-        // `Invalid document name: ${docName}` which are useful for diagnosing
-        // unexpected failures beyond the standard path-traversal case — e.g.,
-        // encoding errors from resolve(), null-byte truncation, etc.) but
-        // still return a sanitized, uniform 400 message to the client so
-        // filesystem details never leak through the API boundary.
         console.error('[test-reset] safeContentPath rejected docName:', docName, err);
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
@@ -3203,9 +2496,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       await sessionManager.closeAll(docName);
       hocuspocus.closeConnections(docName);
 
-      // D18: Force-flush any pending onStoreDocument debounced work before unload.
-      // Without this, unloadDocument silently no-ops if the debouncer is active
-      // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
       const debounceId = `onStoreDocument-${docName}`;
       if (hocuspocus.debouncer.isDebounced(debounceId)) {
         await hocuspocus.debouncer.executeNow(debounceId);
@@ -3230,23 +2520,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
-   *
-   * Under CI CPU contention, `@parcel/watcher` can drop `create` events for
-   * files written into freshly-created subdirectories (the recursive subwatch
-   * is registered asynchronously after the IN_CREATE for the directory, so
-   * rapid follow-up file writes race the registration). That leaves the
-   * backlink index out of sync with the content directory on disk, which the
-   * backlink-dependent integration tests (e.g. `agent-focus-wiring.test.ts`
-   * orphan-hint shape) cannot otherwise recover from.
-   *
-   * This endpoint forces `backlinkIndex.rebuildFromDisk()` — authoritative
-   * resync from the filesystem that covers dropped events. It is NOT suitable
-   * for production: rebuild wipes any in-memory backlink state not yet
-   * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
-   * behind `enableTestRoutes` for that reason.
-   */
   async function handleTestRescanBacklinks(
     req: IncomingMessage,
     res: ServerResponse,
@@ -3296,7 +2569,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers + message + principal from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       let userMessage: string | undefined;
@@ -3328,7 +2600,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             };
           });
         }
-        // Optional principal identity: { name: string, email: string } (US-020, D12)
         const p = body.principal;
         if (p && typeof p === 'object' && !Array.isArray(p)) {
           const pr = p as Record<string, unknown>;
@@ -3341,7 +2612,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Thread agent identity — extends writers[] with calling agent (D42).
       const {
         rawAgentId: svRawAgentId,
         agentId: svAgentId,
@@ -3364,15 +2634,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[history] checkpoint ${result.checkpointRef}`);
 
-      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
-      // swapContributors() atomically captures all agent writes since the last checkpoint.
       const contributorSnapshot = swapContributors();
 
-      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
       let versionTag: string | undefined;
       if (projectDir) {
-        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
-        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
         let parentGitAvailable = false;
         try {
           const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
@@ -3387,12 +2652,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           try {
             versionTag = await withParentLock(async () => {
               const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-              // Count existing ok/v* tags to derive N
               const existing = await pg.tags(['--list', 'ok/v*']);
               const n = existing.all.length + 1;
               const tag = `ok/v${n}`;
 
-              // Author identity: principal from body > git config > openknowledge fallback
               let authorName = 'openknowledge';
               let authorEmail = 'noreply@openknowledge.local';
               if (principalName && principalEmail) {
@@ -3406,11 +2669,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                     authorEmail = gitId.email;
                   }
                 } catch {
-                  // no-op — use defaults
                 }
               }
 
-              // Co-Authored-By trailers for agent/principal session contributors (US-020)
               const coAuthorLines: string[] = [];
               for (const entry of contributorSnapshot.values()) {
                 if (
@@ -3422,14 +2683,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                 }
               }
 
-              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
               const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
               const commitMsg =
                 coAuthorLines.length > 0
                   ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
                   : subjectLine;
 
-              // Stage content changes and create commit (allow-empty so a tag always lands)
               const gitPathspec = resolvedContentRoot || '.';
               await pg.add(gitPathspec);
               await pg
@@ -3461,7 +2720,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/history ─────────────────────────────────────────────────────
   async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3526,7 +2784,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/history/:sha ─────────────────────────────────────────────────
   async function handleHistoryVersion(
     req: IncomingMessage,
     res: ServerResponse,
@@ -3556,14 +2813,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const docPath = pathResult.path;
     const sg = shadowGit(shadow);
 
-    // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
       json(res, 400, { ok: false, error: 'Invalid commit SHA' });
       return;
     }
 
     try {
-      // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
       } catch {
@@ -3573,7 +2828,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const content = await sg.raw('show', `${sha}:${docPath}`);
 
-      // Resolve commit metadata
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
 
@@ -3584,7 +2838,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── GET /api/diff ─────────────────────────────────────────────────────────
   async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3618,7 +2871,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const sg = shadowGit(shadow);
 
     try {
-      // Get "to" content
       let toContent: string;
       try {
         toContent = await sg.raw('show', `${to}:${docPath}`);
@@ -3627,7 +2879,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Get "from" content — either a commit SHA or current Y.Doc text
       let fromContent: string;
       if (from && /^[0-9a-f]{40}$/i.test(from)) {
         try {
@@ -3637,7 +2888,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           return;
         }
       } else {
-        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
         const doc = hocuspocus.documents.get(docName);
         if (!doc) {
           json(res, 409, {
@@ -3649,14 +2899,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      // Strip frontmatter from both sides so the diff shows only body changes.
-      // Git content includes frontmatter; Y.Text may or may not depending on
-      // sync state. Stripping both sides normalizes the comparison.
       const fromBody = stripFrontmatter(fromContent).body;
       const toBody = stripFrontmatter(toContent).body;
       const changes = diffLines(fromBody, toBody);
 
-      // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
       let additions = 0;
       let deletions = 0;
@@ -3677,7 +2923,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ── POST /api/rollback ────────────────────────────────────────────────────
   async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -3744,7 +2989,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const t0 = Date.now();
     try {
-      // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
       } catch {
@@ -3755,13 +2999,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
       const timestamp = new Date().toISOString();
 
-      // snapshot current state before the destructive rollback
       await safetyCheckpoint(shadow, resolvedContentRoot, {
         action: 'rollback',
         context: { docName, targetSha: commitSha },
       });
 
-      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
       const document = hocuspocus.documents.get(docName);
       if (!document) {
         json(res, 409, {
@@ -3771,9 +3013,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
-      // body parse only needs the body half — `frontmatter` is no longer
-      // mirrored into a separate metaMap slot.
       const { body: mdBody } = stripFrontmatter(markdown);
       const rollbackParseOpts = options.resolveEmbed
         ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
@@ -3786,9 +3025,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(document, xmlFragment, pmNode, meta);
 
-        // Y.Text receives the full markdown (FM + body) verbatim — the
-        // YAML region IS the FM source of truth (D8/D26). No separate
-        // metadata-map mirror.
         const ytext = document.getText('source');
         const currentText = ytext.toString();
         if (currentText !== markdown) {
@@ -3797,26 +3033,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }, ROLLBACK_ORIGIN);
 
-      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
-      // here. Setting the base before `onStoreDocument` has fired would trip the
-      // "skip write when serialized === currentBase" guard at
-      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
-      // — which also skips the following `scheduleGitCommit()`, orphaning any
-      // `recordContributor(...)` entry we add below into the next unrelated
-      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
-      // Letting `onStoreDocument` fire naturally writes disk AND updates the
-      // reconciled base (line 497 of persistence.ts), which is the correct order.
 
-      // Default summary `"Restored to <sha-short>"` applies for the agent path
-      // when no agent-supplied summary was given; the default goes through
-      // `normalizeSummary` so the 80-char cap covers it. When the default
-      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
-      // chars, but symmetric with `handleRenamePath` where defaults frequently
-      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
-      // `hint` from the response so the truncation message doesn't misattribute
-      // blame to the caller. The principal path records the contributor with
-      // the rollback subject but does NOT generate a default summary bullet —
-      // the rollback subject already drives the timeline display.
       let summaryResponse: SummaryResponse | undefined;
       switch (actor.kind) {
         case 'agent': {
@@ -3873,12 +3090,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
-      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
-      // restored version + attribution appear in the timeline within ~100ms
-      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
-      // the shared `flushDocToGit` helper (same pattern as the three
-      // agent-write handlers) rather than a raw `flushGitCommit()` which
-      // no-ops when no L2 timer is set yet.
       flushDocToGit(docName, 'rollback');
 
       const duration = Date.now() - t0;
@@ -3886,7 +3097,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
       );
 
-      // Parent-git commit for team-visible restore record (non-fatal)
       if (projectDir) {
         const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
         const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
@@ -3902,10 +3112,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       }
 
-      // Only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (principal or anonymous)
-      // must not trigger a cross-client push-nav as if an agent did the
-      // rollback.
       if (actor.kind === 'agent') {
         agentFocusBroadcaster?.setFocus(actor.writerId, {
           agentName: actor.displayName,
@@ -3952,42 +3158,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
-  /**
-   * GET /api/server-info
-   *
-   * Returns `{ ok, serverInstanceId, currentBranch, currentDiskAckSVs }`.
-   * Called by the client's `ProviderPool` as a boot-time warmup BEFORE
-   * any WebSocket provider opens, so the first provider's auth token
-   * can carry `expectedServerInstanceId` and `expectedBranch` on the
-   * very first connect (avoiding one "null-claim accept → broadcast →
-   * populate cache → next connect claim" cycle on cold start).
-   *
-   * `currentBranch` is the late-join backstop for CC1's `branch-switched`
-   * stateless broadcast — disconnected clients reconnecting compare it
-   * against their last-observed branch and trigger `handleBranchSwitched`
-   * on mismatch (also surfaced as the `expectedBranch` auth-token claim,
-   * see `auth-token-schema.ts`). Always populated — `getActiveBranch()`
-   * defaults to `'main'` when git is disabled.
-   *
-   * `currentDiskAckSVs` is the late-join backstop for the per-doc CC1
-   * `disk-ack` channel — same recovery shape as `currentBranch` but the
-   * per-doc state vector watermark used by mismatch-recycle baseline-
-   * selection. Omitted in dev/plugin mode (no CC1 broadcaster).
-   *
-   * Gating: protected by the global `/api/*` Origin allowlist (CSRF
-   * guard against cross-origin browsers). No-Origin requests (curl,
-   * server-to-server, LAN peers using non-browser tooling) pass through
-   * — the same posture as the rest of the read-side `/api/*` surface
-   * (`/api/documents`, `/api/document`, `/api/pages`, `/api/backlinks`).
-   * Disclosure shape: `serverInstanceId` is a per-process random UUID;
-   * `currentBranch` matches the workspace's git history; the SV map
-   * enumerates the same docName set as `/api/documents` plus per-
-   * client Lamport op counts (random clientID, no wall-clock).
-   * Single-user-loopback deployment model is documented in
-   * `server-factory.ts` near the principalAuthExtension; hosted/multi-
-   * tenant deployments must wrap this entire `/api/*` class with
-   * authentication and per-caller scoping.
-   */
   async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -3995,15 +3165,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     const currentBranch = getActiveBranch();
-    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
-    // server) doesn't have a CC1Broadcaster and omits the field. The
-    // schema's `.optional()` keeps the response shape valid in both
-    // cases without a separate "no broadcaster" branch on the client.
     const currentDiskAckSVs = getDiskAckSVs?.();
-    // `Cache-Control: no-store` matches the disclosure semantics: every
-    // field is per-process / per-moment state. A back/forward-cached
-    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
-    // the recycle baseline-selection on the next mismatch.
     json(
       res,
       200,
@@ -4018,15 +3180,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Loopback + Host-header gate. The principal record discloses operator
-    // PII — `display_name` (real name) and `display_email` — sourced from
-    // local `git config`. Under `--host 0.0.0.0` (demos, shared dev boxes,
-    // Codespaces) this would otherwise be readable by any LAN peer or
-    // cross-origin page that bypasses the Origin allowlist (non-browser
-    // callers send no `Origin` header). Matches the same gate
-    // `handleMetricsAgentPresence` and `handleWorkspace` apply.
-    // Authorization runs BEFORE method dispatch so a bad Host never leaks
-    // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -4052,15 +3205,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    // Loopback + Host-header gate — matches /api/workspace. The presence map
-    // exposes per-agent identity (`displayName` — operator-configured AGENT
-    // label) and the workspace-relative path each agent is currently writing
-    // to (`currentDoc`). Those are local-editing-only signals; if a user
-    // deploys to `0.0.0.0` / reverse-proxies the port, cross-origin pages or
-    // LAN peers MUST NOT be able to read the map. Authorization runs before
-    // method dispatch so a bad Host never leaks "verb the endpoint expects"
-    // via 405 (same pattern + rationale as handleWorkspace — see its
-    // comment block for the ASVS / DNS-rebinding background).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -4074,15 +3218,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    // Pre-filter stale entries using the same threshold the broadcaster
-    // uses for opportunistic eviction (runs inside setPresence). Eviction
-    // is write-triggered — if the last agent disconnects without the
-    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
-    // agent writes after, the raw map keeps the zombie entry. Clients
-    // already filter with their own 5s TTL so this is invisible to the
-    // bar, but `/api/metrics/agent-presence` would otherwise lie to
-    // operators. Filtering here matches what a "live" read returns
-    // without paying for a sparse timer.
     const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
     const now = Date.now();
     const presence: typeof rawPresence = {};
@@ -4095,26 +3230,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Authorization runs BEFORE method dispatch: reversing the order turns the
-    // method check into a fingerprinting oracle for unauth callers (GET → 403,
-    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
-    // V4.1.1 — "perform access control on every request."
-    //
-    // Loopback-only: this endpoint discloses the absolute host filesystem path
-    // (including home directory / username). That's fine for the local-editing
-    // use case the rest of the API is designed for, but if the user configures
-    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
-    // want to leak the host shape over the network or to cross-origin fetches.
-    // All loopback clients (including requests from a browser on the same
-    // machine) pass — connections from other interfaces are refused.
-    //
-    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
-    // for any request that reached the socket via loopback, including requests
-    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
-    // The Host-header allowlist below enforces that the caller actually spoke
-    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
-    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
-    // editor app pass; cross-origin rebinding attempts are refused.
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       json(res, 403, { ok: false, error: 'loopback-required' });
       return;
@@ -4127,18 +3242,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    // Absolute, canonical contentDir so the client can build full filesystem
-    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
-    // the workspace root are resolved via realpath so the path matches on-disk
-    // truth. We treat error kinds in line with the persistence layer's symlink
-    // contract (CLAUDE.md "Symlinks" §):
-    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
-    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
-    //     value when the directory was deleted between server start and this
-    //     request; the client decides whether to act on it.
-    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
-    //     persistence's stricter policy (cyclic symlinks are rejected
-    //     everywhere) and avoids handing the user a path that won't resolve.
     const resolvedRoot = resolve(contentDir);
     let resolvedContentDir = resolvedRoot;
     let symlinkResolved = true;
@@ -4157,9 +3260,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
     }
-    // `pathSeparator` lets the client build full paths without guessing from
-    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
-    // and on POSIX folders that contain a literal backslash in the name).
     json(res, 200, {
       ok: true,
       contentDir: resolvedContentDir,
@@ -4168,7 +3268,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
   async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -4183,10 +3282,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const now = Date.now();
-    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
-    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
-    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
-    // can treat both as interchangeable unless they need the checkpoint sha.
     interface RescueRowFlat {
       docName: string;
       timestamp: string;
@@ -4228,8 +3323,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Timeline-ref source — merged in so the unified response surfaces all
-    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
     try {
       const branch = getCurrentBranch?.() ?? 'main';
       const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
@@ -4259,9 +3352,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Flat-file source (shutdown-flush retains flat-file per SPEC). Try
-    // this first — the flat-file path is how shutdown-flush delivers the
-    // most recent unflushed state, which is the most relevant artifact.
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
@@ -4275,7 +3365,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         try {
           unlinkSync(filePath);
         } catch {
-          // ignore
         }
       } else {
         const content = readFileSync(filePath, 'utf-8');
@@ -4288,21 +3377,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Timeline-ref source — fall back to the most recent
-    // `external-change-rescue` checkpoint for this doc on the current
-    // branch (SPEC §6 R7f). Reads the blob via `git cat-file` so large
-    // docs stream directly from git object storage.
     try {
       const branch = getCurrentBranch?.() ?? 'main';
       const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
-      // Most recent for this doc
       const match = timelineEntries
         .filter((e) => e.docName === docName)
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
       if (match) {
         const sg = shadowGit(shadowRef.current);
         const tree = (await sg.raw('ls-tree', '-r', match.sha)).trim();
-        // The blob is the single entry; extract its object SHA.
         const firstLine = tree.split('\n')[0] ?? '';
         const parts = firstLine.split(/\s+/);
         const blobSha = parts[2];
@@ -4348,10 +3431,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      // Identity boundary (D22 LOCKED): only attribute when the caller
-      // explicitly supplies agentId. UI-driven creates fall through to the
-      // loaded principal (if any) or anonymous — never to a synthetic
-      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
       const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
       if (actor.kind === 'invalid-summary') {
         json(res, 400, { ok: false, error: 'summary must be a string' });
@@ -4398,12 +3477,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = stripDocExtension(filePath);
-      // Synchronously bump the content filter's sibling-asset dirCount so any
-      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
-      // rule. The file watcher's `create` event will also increment later,
-      // which would double-count — so we also `registerWrite` to mark this
-      // as a self-write, and the watcher skips its own `incrementMdDir` on
-      // self-writes. See file-watcher.ts for the paired logic.
       if (contentFilter) {
         contentFilter.incrementMdDir(dirname(docName));
       }
@@ -4421,7 +3494,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
           break;
         case 'anonymous':
-          // UI-driven create with no loaded principal — no contributor recorded.
           break;
         default: {
           const _exhaustive: never = actor;
@@ -4544,12 +3616,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
-      // Reject paths whose first segment is `.ok` — that directory
-      // holds per-machine OK runtime state (server.lock, principal.json, cache,
-      // etc.) and is symmetric with the `__system__` carve-out above. The
-      // `AGENTS.md` file inside `.ok/` is a tracked content file
-      // by design, but a rename TO or FROM this directory would clobber OK
-      // bookkeeping.
       if (
         fromPath === '.ok' ||
         fromPath.startsWith('.ok/') ||
@@ -4563,24 +3629,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
         return;
       }
-      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
-      // a case-only move would no-op or behave unpredictably; reject explicitly.
       if (fromPath.toLowerCase() === toPath.toLowerCase()) {
         json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
         return;
       }
 
-      // Register the source's actual on-disk extension before downstream
-      // checks so admission and existsSync probes both see the right value
-      // when the file watcher hasn't yet observed the source (boot race).
       if (kind === 'file') {
         probeAndRegisterSourceFileExtension(contentDir, fromPath);
       }
 
       if (contentFilter) {
-        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
-        // a destination like `bar.mdx` is checked verbatim instead of as
-        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
         const excluded =
           kind === 'file'
             ? contentFilter.isExcluded(
@@ -4847,8 +3905,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       uploadResult = await readUploadBody(req, contentDir);
     } catch (e) {
-      // All body-parse failures land as UploadWriteError with a typed reason.
-      // Tempfile cleanup is handled inside readUploadBody's error path.
       if (e instanceof UploadWriteError) {
         if (e.reason === 'malformed-upload') {
           json(res, 400, { ok: false, error: 'malformed-upload' });
@@ -4872,26 +3928,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
 
-    // Identity extracted from query params (multipart body precludes JSON).
-    // Capture agentId / agentName so structured upload logs carry
-    // attribution — mirrors precedent #24/#25 and lets operators trace
-    // unexpected file-creation events back to the originating agent
-    // during incident investigation. Both fields follow bounded shapes
-    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
-    // remain cardinality-safe for log indexing.
     const { agentId, agentName } = extractAgentIdentity(
       Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
     );
 
-    // Belt-and-braces cleanup: if anything below this point errors or
-    // early-returns, the tempfile must go away. Every early-return path
-    // below that does NOT consume tempPath via linkTempToFinal* runs this.
     const cleanupTempfile = () => {
       if (existsSync(tempPath)) {
         try {
           unlinkSync(tempPath);
         } catch {
-          // best-effort; orphan sweep reaps stragglers
         }
       }
     };
@@ -4908,7 +3953,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // D15: reject path-escape attempts
     if (
       parentDocName.includes('\x00') ||
       parentDocName.includes('..') ||
@@ -4930,8 +3974,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: 'path-escape' });
       return;
     }
-    // mkdir -p the destination — bare-name / nested attachmentFolderPath
-    // values produce directories that may not exist at first upload.
     try {
       mkdirSync(destDir, { recursive: true });
     } catch (err) {
@@ -4944,7 +3986,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
     try {
       const realDestDir = realpathSync(destDir);
       let realContentDir: string;
@@ -4961,7 +4002,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
-        // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
         cleanupTempfile();
         json(res, 400, { ok: false, error: 'path-escape' });
@@ -4969,29 +4009,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // D-M LOCKED accept-all: every file is accepted — there's no user-
-    // facing byte cap post-streaming (disk fullness surfaces as 507
-    // instead). The magic-byte sniff is only consulted to (a) preserve
-    // the SVG `<img>`-only routing for NFR-3 security and (b) recover
-    // an extension when the upload arrived with a generic clipboard
-    // filename. Non-sniffable bytes are accepted under the client-
-    // supplied filename.
-    //
-    // Post-streaming-refactor the sniff reads from tempPath via
-    // fileTypeFromFile which only pulls the minimum-required bytes.
     const fileTypeResult = await fileTypeFromFile(tempPath);
     let detectedMime: string | undefined = fileTypeResult?.mime;
     let detectedExt: string | undefined = fileTypeResult?.ext;
-    // file-type can't detect SVG (text-based, no magic bytes) — check manually.
-    // STOP: this fallback is LOAD-BEARING for NFR-3 — SVG must render via
-    // <img>, never inline DOM. Do not remove without a compensating guard.
     if (!detectedMime) {
       const head = readTempFileHead(tempPath, 256);
-      // Strip a leading UTF-8 BOM (U+FEFF) before the pattern match.
-      // `trimStart()` removes ECMAScript whitespace but not the BOM, so a
-      // file starting with `\xEF\xBB\xBF<svg ...>` would otherwise evade the
-      // head check the comment above documents as the SVG-disguised-as-PNG
-      // sniff fallback.
       const headText = head.toString('utf-8').replace(/^﻿/, '').trimStart();
       if (
         headText.startsWith('<svg') ||
@@ -5002,16 +4024,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     }
 
-    // Same-dir sha256 dedup. Bounded scan over destDir, skipped entirely
-    // when DEFAULT_DEDUP_MODE === 'off'. The dedup test happens BEFORE
-    // filename synthesis so a duplicate paste preserves the existing
-    // on-disk basename instead of producing a fresh pasted-<ts>.png stub.
-    // Server returns { deduped: true } so the client surfaces a toast.
-    //
-    // The hash + size come from the streaming pipeline (no buffer). On a
-    // dedup hit the tempfile is unlinked and we short-circuit without
-    // touching the destDir inode — `linkTempToFinalWithCollisionRetry`
-    // never runs.
     if (DEFAULT_DEDUP_MODE === 'same-dir') {
       const existing = await findDuplicateAsset(destDir, sha, byteLength);
       if (existing) {
@@ -5031,20 +4043,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           '[upload] dedup hit',
         );
-        // Include the contentDir-relative `path` in the response so the
-        // client honors non-default `attachmentFolderPath`. Without this
-        // the client assumes the asset is co-located with the parent doc
-        // and emits a broken relative ref when operators configure
-        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
-        // or similar.
         json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
         return;
       }
     }
 
-    // D8 / GENERIC_PASTE_NAMES: clipboard paste arrives with synthetic names
-    // ("image.png", "Clipboard 2024-04-21 14:23:45"). Replace with a
-    // timestamp stem so the disk filename is human-meaningful.
     let finalFilename: string;
     const isGenericPaste = !filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename);
     if (isGenericPaste) {
@@ -5054,8 +4057,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         .replace(/[-:T]/g, '')
         .slice(0, 14)
         .replace(/(\d{8})(\d{6})/, '$1-$2');
-      // Prefer the sniffed extension when present; otherwise try the
-      // client-supplied extname, finally fall back to .bin.
       const fallbackExt = filename ? extname(filename).slice(1) : '';
       const ext = detectedExt ?? fallbackExt ?? '';
       finalFilename = ext === '' ? `pasted-${ts}` : `pasted-${ts}.${ext}`;
@@ -5075,26 +4076,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           dedup: false,
           mime: detectedMime ?? null,
           size: byteLength,
-          // `destPath` is the contentDir-relative asset path. High-
-          // cardinality by nature — a vault with 10K assets produces
-          // 10K distinct values. Fine as a log field consumed by text-
-          // search / by-incident filtering; NEVER promote it to a
-          // metric label (Prometheus / Datadog will blow up memory on
-          // per-asset label explosion). Keep the nested-context shape
-          // below if you later route these through an aggregator so
-          // auto-label-extraction honors the sub-object convention.
           destPath: relPath,
           httpStatus: 200,
         },
         '[upload] write ok',
       );
-      // Major-1: same rationale as the dedup branch above — client needs
-      // the contentDir-relative path to emit correct refs under any
-      // attachmentFolderPath value.
       json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
     } catch (e) {
-      // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
-      // on throw; no extra cleanupTempfile() call needed here.
       const message = e instanceof Error ? e.message : String(e);
       const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
       log.error(
@@ -5113,8 +4101,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       );
       if (e instanceof UploadWriteError) {
         if (e.reason === 'storage-full') {
-          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
-          // retry makes no sense until the operator frees space.
           json(res, 507, { ok: false, error: 'storage-full' });
           return;
         }
@@ -5123,10 +4109,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           return;
         }
         if (e.reason === 'collision-exhaustion') {
-          // Exhausted 100 collision-suffix candidates in one directory —
-          // practically unreachable absent an adversarial workload, but
-          // surfacing the reason helps operators diagnose a pathological
-          // filename that's dodging sanitize.
           json(res, 500, { ok: false, error: 'collision-exhaustion' });
           return;
         }
@@ -5137,23 +4119,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
-  // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
 
   const LOCAL_OP_CLONE_KEY = '/api/local-op/clone';
   const LOCAL_OP_OPEN_KEY = '/api/local-op/open';
-  /** Wall-clock timeout for clone subprocess (10 min). */
   const LOCAL_OP_TIMEOUT_MS = 10 * 60 * 1000;
-  /** Max time to wait for a spawned server's lock file to show a port > 0. */
   const LOCAL_OP_OPEN_TIMEOUT_MS = 45_000;
 
-  /**
-   * POST /api/local-op/clone
-   *
-   * Body: { url: string, dir: string }
-   * Spawns: open-knowledge clone --json --dir <dir> <url>
-   * Streams: NDJSON lines via chunked HTTP.
-   */
   async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5161,7 +4132,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Parse request body
     let url: string;
     let dir: string;
     try {
@@ -5182,13 +4152,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Security: URL protocol allowlist
     if (!isAllowedGitUrl(url)) {
       json(res, 400, { ok: false, error: 'URL protocol not allowed' });
       return;
     }
 
-    // Security: dir must be within user home dir (no traversal)
     if (!isSafeLocalPath(dir)) {
       json(res, 400, {
         ok: false,
@@ -5197,13 +4165,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Concurrency guard: reject concurrent requests to this endpoint
     if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
       json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
       return;
     }
 
-    // Start chunked NDJSON response
     res.writeHead(200, {
       'Content-Type': 'application/x-ndjson',
       'Transfer-Encoding': 'chunked',
@@ -5211,11 +4177,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    // The CLI emits `{type:'complete', dir}` on success, but the browser
-    // client expects `{type:'complete', port}`. We intercept the CLI's
-    // complete event, boot a server at the cloned dir, then emit a rewritten
-    // complete with the port. Non-terminal events (progress / error) flow
-    // through unchanged.
     let cloneCompleteDir: string | null = null;
 
     const flow = runCloneSubprocess({
@@ -5243,14 +4204,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         await flow.done;
         if (cloneCompleteDir && !res.writableEnded) {
-          // Chain into server-start so the client can redirect.
           const result = await startServerAtDirAndGetPort(cloneCompleteDir);
           if (!res.writableEnded) {
             if ('port' in result) {
-              // `dir` is the absolute, tilde-expanded path to the cloned
-              // repo. Web clients ignore it and redirect via `port`; the
-              // Electron Navigator uses it to spawn a new editor window
-              // instead of navigating the launcher to a dev-server URL.
               res.write(
                 `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
               );
@@ -5265,64 +4221,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     })();
 
-    // Cancel the subprocess if the client disconnects.
     res.on('close', () => {
       flow.cancel();
     });
   }
 
-  /**
-   * Spawn a detached Open Knowledge server at `dir` and poll the server.lock
-   * until a real port appears. Reused by /api/local-op/open and by the clone
-   * handler to chain clone → server-start → redirect.
-   *
-   * NOTE: The CLI's `start` command has no `--content-dir` flag — it derives
-   * the content dir from cwd + config. So we spawn with `cwd: dir` instead
-   * of passing a flag.
-   */
-  /**
-   * Ensure both the collab server (`ok start`) and the React UI (`ok ui`) are
-   * live for `dir`, and return the UI port — that's the browser-navigable
-   * redirect target post-lifecycle-split. `ok start` serves only the collab
-   * API/WebSocket and returns 404 at `/` with an `ok ui`-pointing message.
-   *
-   * Three cases:
-   *   1. `ui.lock` is live → reuse its port (UI already running in that dir).
-   *   2. `server.lock` live but `ui.lock` absent/stale → spawn `ok ui` alone;
-   *      `ok start` won't re-spawn its UI sibling when the server-lock is held.
-   *   3. Nothing live → spawn `ok start`; it auto-spawns `ok ui` as a sibling
-   *      (see `start.ts` ~line 340, "auto-spawned ok ui sibling").
-   *
-   * Polls `ui.lock` (not `server.lock`) because only `ui.lock.port` hosts the
-   * React bundle. Single polling loop covers cases 2 and 3 uniformly.
-   */
   async function startServerAtDirAndGetPort(
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
     const lockDir = resolve(absDir, '.ok');
 
-    // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
     if (existingUi && existingUi.port > 0) {
       return { port: existingUi.port };
     }
 
-    // Case 2 vs 3: pick which CLI command to spawn based on whether the
-    // collab server is already live. `ok ui` alone is correct and necessary
-    // when `server.lock` is held (can't re-run `ok start` under a live lock).
     const existingServer = readServerLock(lockDir);
     const [cmd, ...baseArgs] = localOpCliArgs;
     const cliCmd = existingServer && existingServer.port > 0 ? 'ui' : 'start';
     const spawnArgs = [...baseArgs, cliCmd];
-    // Pipe stderr so we can log why a spawn failed; ignore stdout.
     const child = spawn(cmd, spawnArgs, {
       cwd: absDir,
       detached: true,
       stdio: ['ignore', 'ignore', 'pipe'],
-      // Explicit `interactive` — `OK_LOCK_KIND` may be inherited from a
-      // surrounding MCP-spawn parent and we don't want a user-driven
-      // local-op/open relay to mark its child server as `mcp-spawned`.
       env: { ...process.env, OK_LOCK_KIND: 'interactive', OK_PARENT_PID: String(process.pid) },
     });
 
@@ -5340,8 +4262,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       earlyExitCode = code ?? -1;
     });
 
-    // `unref` so the child survives past the parent. Do it after attaching
-    // the stderr listener so we still capture its output.
     child.unref();
 
     const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
@@ -5364,14 +4284,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     };
   }
 
-  /**
-   * POST /api/local-op/open
-   *
-   * Body: { dir: string }
-   * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.ok/server.lock until port > 0 appears.
-   * Returns: { port: number }
-   */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5393,7 +4305,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Security: dir must be within user home dir
     if (!isSafeLocalPath(dir)) {
       json(res, 400, {
         ok: false,
@@ -5402,7 +4313,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    // Concurrency guard
     if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
       json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
       return;
@@ -5420,10 +4330,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
-  // FR18: loopback + origin security enforced on all five endpoints.
-  // Each endpoint has its own concurrency key to allow parallel auth operations
-  // (e.g., status check while login is in progress).
 
   const LOCAL_OP_AUTH_LOGIN_KEY = '/api/local-op/auth/login';
   const LOCAL_OP_AUTH_STATUS_KEY = '/api/local-op/auth/status';
@@ -5431,14 +4337,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const LOCAL_OP_AUTH_SIGNOUT_KEY = '/api/local-op/auth/signout';
   const LOCAL_OP_AUTH_PAT_KEY = '/api/local-op/auth/pat';
 
-  /**
-   * POST /api/local-op/auth/login
-   *
-   * Body: { host?: string }
-   * Spawns: auth login --json [--host <host>]
-   * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
-   * The device-flow subprocess manages its own timeout.
-   */
   async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5479,9 +4377,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       },
     });
 
-    // Kill the child if the client disconnects so `auth login` doesn't keep
-    // polling in the background and write a token to the keychain that the
-    // user never saw confirmation for.
     const onClientClose = () => {
       flow.cancel();
     };
@@ -5494,13 +4389,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  /**
-   * POST /api/local-op/auth/status
-   *
-   * Body: { host?: string }
-   * Spawns: auth status --json [--host <host>]
-   * Returns: the single NDJSON line as parsed JSON.
-   */
   async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5550,9 +4438,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      // The CLI may emit non-JSON log lines on stdout before the terminal
-      // event (e.g. keychain probe messages on older builds). Find the last
-      // parseable JSON line and return that.
       const lines = output
         .split('\n')
         .map((l) => l.trim())
@@ -5563,7 +4448,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           parsed = JSON.parse(lines[i] as string);
           break;
         } catch {
-          /* skip non-JSON line */
         }
       }
       if (parsed !== null) {
@@ -5581,13 +4465,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/local-op/auth/repos
-   *
-   * Body: { host?: string }
-   * Spawns: auth repos --json [--host <host>]
-   * Streams: NDJSON via chunked HTTP.
-   */
   async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5668,13 +4545,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
-  /**
-   * POST /api/local-op/auth/signout
-   *
-   * Body: { host?: string }
-   * Spawns: auth signout [--host <host>]
-   * Returns: { ok: true }
-   */
   async function handleLocalOpAuthSignout(
     req: IncomingMessage,
     res: ServerResponse,
@@ -5733,13 +4603,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * POST /api/local-op/auth/pat
-   *
-   * Body: { pat: string, host?: string }
-   * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
-   * Returns: the NDJSON complete-event as parsed JSON.
-   */
   async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -5780,7 +4643,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const killTimer = setTimeout(() => {
           child.kill('SIGTERM');
         }, 30_000);
-        // Write the PAT to stdin and close it so the CLI readline resolves
         child.stdin.write(`${pat}\n`);
         child.stdin.end();
 
@@ -5800,8 +4662,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      // Same robustness as status: pick the last JSON line, ignore any
-      // non-JSON output the CLI may have emitted.
       const lines = output
         .split('\n')
         .map((l) => l.trim())
@@ -5812,7 +4672,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           parsed = JSON.parse(lines[i] as string);
           break;
         } catch {
-          /* skip non-JSON line */
         }
       }
       if (parsed !== null) {
@@ -5830,9 +4689,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
-  // Reads the resolved git identity via the identity resolution chain.
-  // Returns { ok: true, identity: { name, email } | null }.
 
   async function handleLocalOpAuthIdentity(
     req: IncomingMessage,
@@ -5848,10 +4704,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      // Step 3 of the chain (OAuth profile fallback) requires a tokenStore; the
-      // server package doesn't import the CLI's token store today, so we resolve
-      // only local + global config tiers here. Sign-in flows pre-fill the form
-      // with OAuth name/email separately.
       const identity = await resolveGitIdentity(projectDir);
       json(res, 200, { ok: true, identity });
     } catch (err) {
@@ -5862,11 +4714,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
-  // Writes git user.name + user.email to repo-local config via writeGitIdentity
-  // On success, nudges the sync engine to re-probe the identity chain
-  // so the UI unresolved-nudge clears immediately instead of waiting for the
-  // next push cycle.
 
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
@@ -5912,12 +4759,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     try {
       writeGitIdentity(projectDir, name, email);
-      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
-      // so the unresolved nudge clears in the UI without waiting on the push timer.
       void getSyncEngine?.()
         ?.refreshIdentity()
         .catch(() => {
-          /* best-effort — status will catch up on next push cycle */
         });
       json(res, 200, { ok: true });
     } catch (err) {
@@ -5930,11 +4774,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── Security helpers for sync endpoints ────────────────────────────────────
-  // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
-  // to avoid duplicating the same logic (checkLocalOpSecurity already imported above).
 
-  // ─── Sync endpoints ──────────────────────────────────────────────────────────
 
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
@@ -5944,8 +4784,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
-      // reads these fields unconditionally.
       json(res, 200, {
         state: 'dormant',
         lastSyncUtc: null,
@@ -5985,9 +4823,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
     } catch {
-      // Ignore parse errors — use default op
     }
-    // Fire-and-return: 202 Accepted immediately, trigger runs in background
     json(res, 202, { ok: true, op });
     void engine.trigger(op);
   }
@@ -6097,14 +4933,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 400, { ok: false, error: 'Missing required query param: file' });
       return;
     }
-    // Reject obvious path-traversal; git itself rejects paths outside the index.
     if (file.includes('..') || file.startsWith('/')) {
       json(res, 400, { ok: false, error: 'Invalid file path' });
       return;
     }
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-    // git stages: 1 = base, 2 = ours, 3 = theirs. Any may be missing for
-    // delete/edit or add/add conflicts — tolerate by returning empty content.
     async function showStage(stage: 1 | 2 | 3): Promise<string> {
       try {
         return await pg.raw(['show', `:${stage}:${file}`]);
@@ -6121,21 +4954,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
-  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
-  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
-  //
-  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
-  // three surfaces share `planSeed` / `applySeed` from the server seed module.
-  // Gated on `checkLocalOpSecurity` because the operation mutates the local
-  // filesystem; same contract as /api/local-op/* and /api/installed-agents.
 
-  /**
-   * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
-   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
-   * (absolute path, escape segments) surface as `{ ok: false, error }` so
-   * the dialog can render the message without an HTTP failure.
-   */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
@@ -6189,8 +5008,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      // The plan already has rootDir baked into its entries — apply only
-      // needs projectDir.
       const result = await applySeed(plan, { projectDir: contentDir });
       json(res, 200, { ok: true, result });
     } catch (err) {
@@ -6199,19 +5016,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  /**
-   * `POST /api/install-skill` — build `openknowledge.skill` and open it via
-   * the OS file association so Claude Desktop's native install dialog takes
-   * over. Web-host counterpart of the Electron `okDesktop.skill.buildAndOpen`
-   * bridge — both delegate to `buildAndOpenSkill` in `skill-install.ts`.
-   *
-   * Loopback-only via `checkLocalOpSecurity` — the handler spawns child
-   * processes (`open` / `start` / `xdg-open`) and writes to the user's
-   * `~/Downloads`, which is squarely state-mutating.
-   *
-   * Request body (optional JSON): `{ noOpen?: boolean, out?: string }`.
-   * Response: the `BuildAndOpenSkillResult` shape verbatim.
-   */
   async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
@@ -6226,10 +5030,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
         if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
         if (typeof parsed.out === 'string') {
-          // `out` flows into `path.resolve()` + `mkdir({recursive: true})` +
-          // `spawn('cmd', ['/c', 'start', '""', skillPath])` on Windows.
-          // Confine to $HOME consistent with sibling local-op handlers
-          // (`handleLocalOpClone`, `handleLocalOpOpen`).
           if (!isSafeLocalPath(parsed.out)) {
             json(res, 400, {
               ok: false,
@@ -6258,14 +5058,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    // Loopback + DNS-rebinding gate. Same contract the rest of the host-
-    // disclosure surface uses (`/api/workspace`, every `/api/local-op/*`) —
-    // this endpoint discloses a stable OS-level fingerprint of which AI
-    // agents are installed, readable without preflight under the permissive
-    // `Access-Control-Allow-Origin: *` that `/api/*` sets. Gating on
-    // `checkLocalOpSecurity` confines the fingerprint to same-machine,
-    // same-origin callers (the editor UI) and refuses cross-origin browser
-    // contexts + DNS-rebinding attempts that would otherwise succeed.
     if (!checkLocalOpSecurity(req, res, json)) return;
     return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
   }
@@ -6351,12 +5143,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     routes['/api/test-rescan-backlinks'] = handleTestRescanBacklinks;
   }
 
-  // DNS-rebinding defense: routes that mutate local filesystem / CRDT /
-  // vault state. A DNS-rebound cross-origin page could otherwise POST to
-  // these endpoints and write to the user's content dir. Read-only
-  // endpoints (document/pages/backlinks/…) stay accessible so the editor
-  // UI can bootstrap against the collab server; mutations require a
-  // loopback Host header. /api/workspace enforces this inline already.
   const MUTATING_ROUTES: ReadonlySet<string> = new Set([
     '/api/upload',
     '/api/create-page',
@@ -6375,10 +5161,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/test-rescan-backlinks',
     '/api/install-skill',
   ]);
-  // Every `/api/local-op/*` endpoint mutates local filesystem state or
-  // issues network requests on behalf of the user — clone/open/auth
-  // flows all fit. Prefix-match so new local-op handlers are protected
-  // by default.
   const STATE_MUTATING_PREFIXES: ReadonlyArray<string> = ['/api/local-op/'];
 
   return {
@@ -6387,21 +5169,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
-      // Origin-allowlist CORS for /api/*. Only loopback origins are accepted:
-      // - No Origin header (same-origin browser tab, curl, CLI): passes through.
-      // - Origin "null" (Electron packaged renderer, file:// per Fetch spec §4.3): allowed.
-      // - http(s)://localhost[:port] / 127.x.x.x[:port] / [::1][:port]: allowed.
-      // - Any other Origin: 403 — closes the CSRF door on unauthenticated mutating
-      //   routes (/api/agent-write-md, /api/rollback, /api/manage/delete, etc.)
-      //   without breaking the Electron renderer or local Vite dev servers.
-      //
-      // When an allowed Origin is present, it is reflected verbatim in ACAO (not
-      // `*`) so the browser's preflight check passes while non-loopback origins are
-      // still refused by the gate above. `Vary: Origin` prevents cache poisoning.
-      //
-      // Setting via `setHeader` (not `writeHead`) so handler responses that call
-      // `writeHead(status, { ... })` inherit these headers. The typeof guard handles
-      // unit tests that stub only `writeHead` + `end`.
       if (url.startsWith('/api/')) {
         const origin = request.headers.origin;
         if (origin !== undefined && !isAllowedApiOrigin(origin)) {
@@ -6418,13 +5185,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             response.setHeader('Vary', 'Origin');
           }
           response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-          // Allow OTel W3C trace-context propagation from the browser SDK.
           response.setHeader(
             'Access-Control-Allow-Headers',
             'Content-Type, Authorization, traceparent, tracestate, baggage',
           );
         }
-        // OPTIONS preflight — short-circuit with 204 + the headers above.
         if (request.method === 'OPTIONS') {
           response.writeHead(204);
           response.end();
@@ -6432,23 +5197,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // DNS-rebinding defense for state-mutating endpoints. The
-      // `isLoopbackAddress` TCP-peer check and `isAllowedWorkspaceHostHeader`
-      // Host-header check together block the standard rebinding pattern
-      // (attacker-owned hostname whose DNS resolves to 127.0.0.1 after an
-      // initial attacker-serves-JS response — the TCP peer is loopback,
-      // but the Host header names the attacker domain). The same mitigation
-      // already gates `/api/workspace`; without it, a rebinding page could
-      // POST /api/upload + /api/agent-write, mutating the local vault.
-      //
-      // Test-harness note: Node's production socket always has
-      // `remoteAddress` set by the kernel; the only path that reaches
-      // this check without a socket is a mocked `IncomingMessage` built
-      // from `Readable.from(...)`. Those mocks bypass the HTTP listener
-      // entirely and can't be reached by a real remote attacker, so a
-      // missing socket is treated as test-context and skips the check.
-      // The Host-header gate still fires (tests set `host: 'localhost'`),
-      // so the protection remains meaningful for any production path.
       if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
         const peerAddress = request.socket?.remoteAddress;
         if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
@@ -6461,17 +5209,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
       }
 
-      // Only /api/* gets a server span. Non-API routes (static file serving,
-      // Hocuspocus's own paths) fall through silently. (Route dispatch
-      // happens inside the OTel active-span block below.)
       if (!url.startsWith('/api/')) return;
 
-      // Extract incoming trace context (W3C traceparent header) so this server
-      // span attaches as a child of the browser-initiated trace.
       const extractedCtx = propagation.extract(context.active(), request.headers);
       const method = request.method ?? 'GET';
-      // Normalize route for low-cardinality metric labels. `:id` placeholders
-      // replace dynamic segments; anything else collapses to the URL prefix.
       let routeTemplate = url;
       if (url.startsWith('/api/rescue/')) routeTemplate = '/api/rescue/:docName';
       else if (url.startsWith('/api/history/')) routeTemplate = '/api/history/:sha';
@@ -6493,7 +5234,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           async (span) => {
             try {
-              // Static routes
               const handler = routes[url];
               if (handler) {
                 await handler(request, response);

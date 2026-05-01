@@ -44,7 +44,6 @@ describe('MCP server module', () => {
     const { buildInstructions } = await import('./server.ts');
     const config = ConfigSchema.parse({});
     const instructions = buildInstructions(config);
-    // G1: ≤ 1,500 bytes so it survives Claude Code's per-server cap intact.
     expect(instructions.length).toBeLessThanOrEqual(1500);
   });
 
@@ -63,7 +62,6 @@ describe('MCP server module', () => {
     const config = ConfigSchema.parse({});
     const instructions = buildInstructions(config);
     expect(instructions).toContain('Agent Skill');
-    // Does NOT inline per-tool descriptions — those reach clients via tools/list (SPEC D13)
     expect(instructions).not.toContain('### `exec`');
     expect(instructions).not.toContain('### `read_document`');
   });
@@ -93,7 +91,6 @@ describe('registerAllTools', () => {
     });
 
     expect(toolNames).toContain('get_dead_links');
-    // init-content is deliberately absent (removed per SPEC 2026-04-23-ok-seed-scaffold).
     expect(toolNames).not.toContain('init-content');
     const routedTools = [
       'exec',
@@ -106,7 +103,6 @@ describe('registerAllTools', () => {
       'suggest_links',
       'write_document',
       'edit_document',
-      'delete_document',
       'get_history',
       'save_version',
       'rollback_to_version',
@@ -124,8 +120,6 @@ describe('registerAllTools', () => {
   });
 
   it('each tool returns instructional text content', () => {
-    // We test the tool handlers indirectly by importing each module
-    // and verifying the textResult helper produces the expected shape
     const { textResult } = require('./tools/shared.ts');
     const result = textResult('test instructions');
     expect(result).toEqual({

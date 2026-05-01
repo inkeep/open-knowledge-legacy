@@ -1,26 +1,8 @@
-/**
- * Post-exec security-invariant check (FR21).
- *
- * Before every `exec` call we snapshot `(relPath, mtimeMs)` for files in
- * `projectDir`; after the call we re-snapshot and diff. Any path whose
- * mtime changed (or that newly exists) on a read-only command indicates
- * a parser bug that let a writer through — we abort the response with
- * `security_invariant_violation`.
- *
- * This is the defense-in-depth backstop (D23) — a lean alternative to
- * subprocess isolation. Typical overhead for dirs ≤500 files is <10ms.
- *
- * Bounded at `SCAN_CAP` entries; traversal skips hidden OK directories
- * (`.git/`, `.ok/`, `node_modules/`).
- *
- * Spec: SPEC.md FR21 + D23.
- */
 import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
 
-/** Upper bound on the number of files we scan. Typical content dirs are well under 500. */
 const SCAN_CAP = 1000;
 
 const SKIP_DIRS: ReadonlySet<string> = new Set([
@@ -36,10 +18,6 @@ const SKIP_DIRS: ReadonlySet<string> = new Set([
 
 type MtimeSnapshot = Map<string, number>;
 
-/**
- * Snapshot `(relPath, mtimeMs)` for files in `projectDir`. Bounded; returns
- * early at SCAN_CAP with a `truncated` flag caller can act on.
- */
 export async function snapshotMtimes(
   projectDir: string,
 ): Promise<{ snapshot: MtimeSnapshot; truncated: boolean }> {
@@ -74,7 +52,6 @@ export async function snapshotMtimes(
         snapshot.set(relative(root, full), s.mtimeMs);
         count++;
       } catch {
-        // ignore unreadable files
       }
     }
   }
@@ -84,15 +61,9 @@ export async function snapshotMtimes(
 }
 
 interface MtimeDiff {
-  /** Paths whose mtime changed between snapshots (or appeared/disappeared). */
   changed: string[];
 }
 
-/**
- * Diff two snapshots. Any path whose mtime differs is reported.
- * Paths present only in `after` (newly created) are reported.
- * Paths present only in `before` (deleted) are reported.
- */
 export function diffMtimes(before: MtimeSnapshot, after: MtimeSnapshot): MtimeDiff {
   const changed: string[] = [];
   for (const [path, mtime] of after) {

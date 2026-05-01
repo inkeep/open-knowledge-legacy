@@ -1,12 +1,3 @@
-/**
- * Source-level guards for FoldersSection.
- *
- * Repo convention (see SettingsPane.test.ts, CommandPalette.test.ts): full
- * DOM + interaction coverage lives in Playwright stress tests; these guards
- * pin the structural invariants — useFieldArray wiring, append/remove/move
- * shape, atomic-array commit semantics, TagPillInput integration — that a
- * silent refactor would otherwise break without a runtime signal.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -34,9 +25,6 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('append seeds new row with empty match + empty frontmatter', () => {
-    // The exact append shape is the contract — passing a different shape
-    // (e.g. omitting frontmatter, or seeding match with placeholder text)
-    // would change the L1 rejection semantics for new rows.
     expect(SRC).toMatch(/append\(\s*\{\s*match:\s*''\s*,\s*frontmatter:\s*\{\}\s*\}/);
   });
 
@@ -46,19 +34,12 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('per-row commit writes the WHOLE folders[] array atomically', () => {
-    // The atomic-full-array contract is load-bearing.
-    // Per-row blur must funnel through commitField at the top-level
-    // 'folders' path — never per-row paths like 'folders.0.match'.
     expect(SRC).toContain('FOLDERS_PATH');
     expect(SRC).toMatch(/FOLDERS_PATH\s*=\s*'folders'/);
     expect(SRC).toContain('commitField(FOLDERS_PATH)');
   });
 
   test('renders four FormFields per row (match / title / description / tags)', () => {
-    // Path strings are the contract — RHF's Controller registers a field
-    // by name. Drift on any of these silently re-paths the form state.
-    // Regex (not toContain) to avoid biome's noTemplateCurlyInString warning
-    // on string literals containing `${...}`.
     expect(SRC).toMatch(/`folders\.\$\{index\}\.match`/);
     expect(SRC).toMatch(/`folders\.\$\{index\}\.frontmatter\.title`/);
     expect(SRC).toMatch(/`folders\.\$\{index\}\.frontmatter\.description`/);
@@ -85,8 +66,6 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('Remove button aria-label references the row state', () => {
-    // The label uses the current match value when available, falling back
-    // to a generic phrasing when the row is fresh/empty.
     expect(SRC).toMatch(/aria-label=\{removeLabel\}/);
     expect(SRC).toContain('Remove untitled folder rule');
   });
@@ -108,15 +87,10 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('blur dirty-skip guard avoids no-op commits', () => {
-    // After a successful commit, the harness re-baselines the array;
-    // a subsequent blur on an unchanged field should NOT issue another
-    // binding.patch. The guard reads getFieldState(FOLDERS_PATH).isDirty.
     expect(SRC).toContain('getFieldState(FOLDERS_PATH).isDirty');
   });
 
   test('remove and move handlers commit unconditionally', () => {
-    // remove/move always mutate the array, so they bypass the dirty
-    // guard and call runCommit / commitField directly.
     expect(SRC).toContain('runCommit()');
     expect(SRC).toMatch(/handleRemove[\s\S]{0,400}runCommit\(\)/);
     expect(SRC).toMatch(/handleMoveUp[\s\S]{0,200}runCommit\(\)/);
@@ -124,10 +98,6 @@ describe('FoldersSection source-level guards', () => {
   });
 
   test('handleAdd does NOT commit (empty match would fail Zod min(1) immediately)', () => {
-    // Negative guard: a refactor that adds runCommit/commitField to
-    // handleAdd would make every Add click trigger an L1 rejection on
-    // the empty-match seed and confuse the user. The first commit must
-    // happen on the first valid match blur, not on Add.
     const handleAddIdx = SRC.indexOf('const handleAdd');
     expect(handleAddIdx).toBeGreaterThan(-1);
     const after = SRC.slice(handleAddIdx);
@@ -166,9 +136,6 @@ describe('FoldersSection accessibility guards', () => {
   });
 
   test('Remove button restores focus after row removal (no body-focus regression)', () => {
-    // After remove(i), the focused trash button vanishes with its <li>.
-    // Without a queueMicrotask focus restore, focus drops to <body> and
-    // the user must Tab through the page to return to the section.
     expect(SRC).toContain('queueMicrotask');
     expect(SRC).toContain('data-folder-action="remove"');
     expect(SRC).toContain('data-folder-action="add"');

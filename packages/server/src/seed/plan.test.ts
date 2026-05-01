@@ -158,7 +158,6 @@ describe('planSeed — rootDir scoping', () => {
     const plan = await planSeed({ projectDir: testDir, rootDir: 'brain' });
 
     const createdFolders = plan.created.filter((e) => e.kind === 'folder').map((e) => e.path);
-    // The root itself comes first, then the three starter folders scoped under it.
     expect(createdFolders).toEqual([
       'brain',
       'brain/external-sources',
@@ -220,8 +219,6 @@ describe('planSeed — rootDir scoping', () => {
 
   test('containment check rejects strings that resolve outside projectDir', async () => {
     scaffoldOkDir(testDir);
-    // `foo/../..` resolves above projectDir even though `..` is at depth — caught
-    // by the containment check, not the string-shape pre-check.
     await expect(
       planSeed({ projectDir: testDir, rootDir: 'foo/bar/../../..' }),
     ).rejects.toBeInstanceOf(SeedRootDirError);
@@ -229,19 +226,12 @@ describe('planSeed — rootDir scoping', () => {
 
   test('rejects rootDir whose first segment matches projectDir prefix without separator', async () => {
     scaffoldOkDir(testDir);
-    // `<projectDir>foo` (no separator) must not pass as `<projectDir>/foo` — the
-    // `+ sep` guard in the containment check prevents prefix-matching tricks.
-    // We can simulate this only through the string pre-check on absolute paths,
-    // since relative paths always go under projectDir; the test below covers
-    // the absolute case which is the realistic attack shape.
     await expect(
       planSeed({ projectDir: testDir, rootDir: `${testDir}foo` }),
     ).rejects.toBeInstanceOf(SeedRootDirError);
   });
 
   test('rootDir config edits only collide with matching-scoped entries', async () => {
-    // An existing unscoped `external-sources/**` entry should NOT cause the
-    // scoped `brain/external-sources/**` to be skipped — they're distinct.
     scaffoldOkDir(
       testDir,
       `folders:\n  - match: 'external-sources/**'\n    frontmatter:\n      title: Root scaffold\n`,
@@ -268,10 +258,7 @@ describe('planSeed — rootDir scoping', () => {
 describe('planSeed — corrupt config.yml', () => {
   test('surfaces a warning on unreadable config.yml but still returns a plan', async () => {
     scaffoldOkDir(testDir, ': invalid yaml :::\n');
-    // yaml's parseDocument is forgiving for this shape — but a plan still returns.
-    // This test asserts planSeed does not crash on malformed config.
     const plan = await planSeed({ projectDir: testDir });
-    // Expect all three configEdits to be queued (no existing matches readable)
     expect(plan.configEdits.length).toBeGreaterThan(0);
   });
 });

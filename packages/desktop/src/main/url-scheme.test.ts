@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseOpenKnowledgeUrl } from './url-scheme.ts';
 
-/**
- * Covers AC1 + validation half of AC3/AC4/AC5/AC6. Pure function — no
- * Electron bindings touched at module top, so Bun runs it directly.
- */
 
 describe('parseOpenKnowledgeUrl — valid inputs', () => {
   test('parses well-formed open/project/doc URL', () => {
@@ -34,9 +30,6 @@ describe('parseOpenKnowledgeUrl — valid inputs', () => {
   });
 
   test('accepts nested doc-name (common MCP producer shape)', () => {
-    // `preview-url.ts` (MCP) emits `doc=<encodeURIComponent(docName)>` where
-    // docName is routinely nested — `notes/meeting`, `docs/a`, etc. The
-    // parser MUST accept these or the entire MCP deep-link contract breaks.
     expect(parseOpenKnowledgeUrl('openknowledge://open?project=/abs&doc=docs%2Fa')).toMatchObject({
       doc: 'docs/a',
     });
@@ -67,7 +60,6 @@ describe('parseOpenKnowledgeUrl — protocol + host validation', () => {
   });
 
   test('rejects empty host', () => {
-    // `openknowledge:` with no authority part — URL parser may treat as opaque.
     expect(parseOpenKnowledgeUrl('openknowledge:?project=/abs&doc=x')).toBeNull();
   });
 
@@ -112,9 +104,6 @@ describe('parseOpenKnowledgeUrl — null-byte defense', () => {
   });
 
   test('rejects double-encoded %2500 in project (layered null-byte smuggle)', () => {
-    // URL.searchParams.get() decodes once ('%2500' → '%00'); decodeURIComponent
-    // decodes again ('%00' → '\x00'). The post-decode null-byte recheck must
-    // catch it — otherwise a layered encoding would bypass the raw-input gate.
     expect(
       parseOpenKnowledgeUrl('openknowledge://open?project=%2500/safe/proj&doc=x.md'),
     ).toBeNull();
@@ -183,15 +172,6 @@ describe('parseOpenKnowledgeUrl — path-traversal defense', () => {
   });
 });
 
-/**
- * Locks the producer/consumer contract with `packages/cli/src/mcp/tools/
- * preview-url.ts` — the MCP helper emits
- * `openknowledge://open?project=<encodeURIComponent(realpath)>&doc=<encodeURIComponent(docName)>`
- * for ANY docName (flat, nested, unicode). The parser MUST accept every
- * shape the producer emits, or deep-link routing silently fails for anything
- * other than project-root docs. If a change here breaks round-trip, the
- * MCP contract in preview-url.ts needs an accompanying breaking-change note.
- */
 describe('parseOpenKnowledgeUrl — MCP producer/consumer round-trip', () => {
   function buildProducerUrl(project: string, docName: string): string {
     return `openknowledge://open?project=${encodeURIComponent(project)}&doc=${encodeURIComponent(docName)}`;
@@ -214,8 +194,6 @@ describe('parseOpenKnowledgeUrl — MCP producer/consumer round-trip', () => {
   });
 
   test('producer-shape traversal attempts still rejected', () => {
-    // The producer never emits these, but belt-and-suspenders: simulate a
-    // malicious MCP client constructing the URL directly.
     expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', 'a/../b'))).toBeNull();
     expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', '../escape'))).toBeNull();
     expect(parseOpenKnowledgeUrl(buildProducerUrl('/abs', '/absolute'))).toBeNull();

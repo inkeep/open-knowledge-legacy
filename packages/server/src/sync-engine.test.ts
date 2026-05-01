@@ -1,13 +1,3 @@
-/**
- * Unit tests for SyncEngine — state machine, persistence, backoff, and lifecycle.
- *
- * These tests exercise the parts of SyncEngine that don't require a real git
- * repository: state transitions, state persistence round-trip, backoff levels,
- * and `stop()` idempotency.
- *
- * Tests that need live git operations (pull cycle, push cycle, conflict
- * detection) belong in a future integration test that spins up a bare git repo.
- */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,14 +7,12 @@ import simpleGit from 'simple-git';
 import type { SyncState } from './sync-engine.ts';
 import { SyncEngine } from './sync-engine.ts';
 
-// ─── Minimal ContentFilter stub ───────────────────────────────────────────────
 
 const stubContentFilter = {
   isExcluded: (_path: string) => false,
   isDirExcluded: (_path: string) => false,
 };
 
-// ─── Temp dir fixtures ────────────────────────────────────────────────────────
 
 let tmpDir = '';
 let projectDir = '';
@@ -54,7 +42,6 @@ function makeEngine(opts: { syncEnabled?: boolean; onStateChange?: (s: SyncState
   });
 }
 
-// ─── State machine ────────────────────────────────────────────────────────────
 
 describe('SyncEngine initial state', () => {
   test('starts in dormant state', () => {
@@ -92,7 +79,6 @@ describe('SyncEngine destroy()', () => {
   });
 });
 
-// ─── State persistence ────────────────────────────────────────────────────────
 
 describe('SyncEngine state persistence round-trip', () => {
   const statePath = () => join(okDir, 'sync-state.json');
@@ -100,12 +86,10 @@ describe('SyncEngine state persistence round-trip', () => {
   test('saveStateNow via destroy() writes sync-state.json', async () => {
     const engine = makeEngine();
     await engine.destroy(); // triggers saveStateNow() inside stop()
-    // File is written even when state is empty/dormant
     expect(existsSync(statePath())).toBe(true);
   });
 
   test('restores consecutiveFailures from disk on start()', async () => {
-    // Pre-write a state file with consecutiveFailures=4
     const persisted = {
       version: 1,
       lastSyncUtc: null,
@@ -116,10 +100,8 @@ describe('SyncEngine state persistence round-trip', () => {
     };
     writeFileSync(statePath(), JSON.stringify(persisted), 'utf-8');
 
-    // start() with syncEnabled=false so it doesn't hit git — just loads state
     const engine = makeEngine({ syncEnabled: false });
     await engine.start();
-    // The persisted consecutive failures should be loaded
     expect(engine.getStatus().consecutiveFailures).toBe(4);
   });
 
@@ -139,17 +121,11 @@ describe('SyncEngine state persistence round-trip', () => {
     expect(engine.getStatus().conflictCount).toBe(2);
   });
 
-  /**
-   * Set up a project repo with a real in-progress merge conflict on the given
-   * files. After this returns: `.git/MERGE_HEAD` exists and each file appears
-   * in `git diff --name-only --diff-filter=U`.
-   */
   async function setupRealMergeConflict(files: string[]): Promise<void> {
     const git = simpleGit(projectDir);
     await git.init(['--initial-branch=main']);
     await git.raw('config', 'user.name', 'Test');
     await git.raw('config', 'user.email', 'test@test.com');
-    // Base commit with all files
     for (const f of files) {
       const dir = join(projectDir, f, '..');
       mkdirSync(dir, { recursive: true });
@@ -157,12 +133,10 @@ describe('SyncEngine state persistence round-trip', () => {
     }
     await git.add('.');
     await git.commit('base');
-    // Feature branch diverges
     await git.checkoutLocalBranch('feature');
     for (const f of files) writeFileSync(join(projectDir, f), 'feature\n', 'utf-8');
     await git.add('.');
     await git.commit('feature changes');
-    // Main also diverges, then merging feature conflicts on every file
     await git.checkout('main');
     for (const f of files) writeFileSync(join(projectDir, f), 'main\n', 'utf-8');
     await git.add('.');
@@ -170,7 +144,6 @@ describe('SyncEngine state persistence round-trip', () => {
     try {
       await git.merge(['feature']);
     } catch {
-      // Expected — merge throws on conflict; MERGE_HEAD + unmerged stages now exist.
     }
     const bareDir = join(tmpDir, 'bare.git');
     mkdirSync(bareDir, { recursive: true });
@@ -178,10 +151,6 @@ describe('SyncEngine state persistence round-trip', () => {
     await git.addRemote('origin', bareDir);
   }
 
-  // Regression: state must transition to 'conflict' whenever conflictCount > 0
-  // on restart AND git agrees (MERGE_HEAD + unmerged stages present). Otherwise
-  // the ConflictBanner + paused sync UI won't render and the user sees only the
-  // stale conflictCount in the popover while sync appears active.
   test('state is "conflict" (not "idle") when restarting mid-merge with tracked conflicts', async () => {
     const files = ['docs/a.md', 'docs/b.md'];
     await setupRealMergeConflict(files);
@@ -212,7 +181,6 @@ describe('SyncEngine state persistence round-trip', () => {
     try {
       await engine.start();
       const status = engine.getStatus();
-      // The invariant: conflictCount > 0 (and git agrees) ⟹ state === 'conflict'.
       expect(status.conflictCount).toBe(2);
       expect(status.state).toBe('conflict');
     } finally {
@@ -220,12 +188,7 @@ describe('SyncEngine state persistence round-trip', () => {
     }
   });
 
-  // Regression: if the user resolved (or aborted) the merge externally via CLI
-  // between server runs, conflicts.json is stale. On restart we must trust git
-  // and clear the persisted conflicts — otherwise the conflict warning lingers
-  // forever even though there's nothing to resolve.
   test('clears stale conflicts.json when MERGE_HEAD is gone (user resolved externally)', async () => {
-    // Real repo + remote, no merge in progress
     const git = simpleGit(projectDir);
     await git.init(['--initial-branch=main']);
     await git.raw('config', 'user.name', 'Test');
@@ -238,7 +201,6 @@ describe('SyncEngine state persistence round-trip', () => {
     await simpleGit(bareDir).init(true);
     await git.addRemote('origin', bareDir);
 
-    // Stale persisted state from a previous run; user resolved via CLI in between.
     writeFileSync(
       join(okDir, 'conflicts.json'),
       JSON.stringify({
@@ -272,15 +234,10 @@ describe('SyncEngine state persistence round-trip', () => {
     }
   });
 
-  // Partial external resolve: user fixed one file via CLI but left the other,
-  // leaving the merge still in progress. On restart we should drop the resolved
-  // file from the store but keep the still-unmerged one.
   test('reconciles partial external resolve against git unmerged index', async () => {
     const files = ['docs/a.md', 'docs/b.md'];
     await setupRealMergeConflict(files);
 
-    // User resolved docs/a.md externally via `git checkout --theirs && git add`,
-    // leaving docs/b.md still unmerged.
     const git = simpleGit(projectDir);
     await git.raw(['checkout', '--theirs', '--', 'docs/a.md']);
     await git.raw(['add', '--', 'docs/a.md']);
@@ -320,8 +277,6 @@ describe('SyncEngine state persistence round-trip', () => {
     }
   });
 
-  // Complement of the restart test: resolving the last conflict must clear
-  // the 'conflict' state. Together these pin the invariant from both sides.
   test('state transitions out of "conflict" once the last conflict is resolved', async () => {
     const conflictedFile = 'a.md';
     await setupRealMergeConflict([conflictedFile]);
@@ -372,7 +327,6 @@ describe('SyncEngine state persistence round-trip', () => {
   });
 
   test('tolerates missing state file gracefully', async () => {
-    // No state file written — engine should start without error
     const engine = makeEngine({ syncEnabled: false });
     await expect(engine.start()).resolves.toBeUndefined();
     expect(engine.getStatus().consecutiveFailures).toBe(0);
@@ -386,7 +340,6 @@ describe('SyncEngine state persistence round-trip', () => {
   });
 });
 
-// ─── Status shape ─────────────────────────────────────────────────────────────
 
 describe('SyncEngine getStatus()', () => {
   test('returns all required fields in dormant state', () => {
@@ -404,28 +357,20 @@ describe('SyncEngine getStatus()', () => {
   });
 });
 
-// ─── No-remote detection ──────────────────────────────────────────────────────
 
 describe('SyncEngine no-remote detection', () => {
   test('stays dormant if project dir has no git remote (no .git/)', async () => {
-    // projectDir has no git repo — git remote -v will fail or return empty
     const engine = makeEngine();
     await engine.start();
-    // Without a git remote, engine should remain dormant
     expect(engine.getStatus().state).toBe('dormant');
     expect(engine.getStatus().hasRemote).toBe(false);
   });
 });
 
-// ─── updateCurrentBranch ──────────────────────────────────────────────────────
 
 describe('SyncEngine updateCurrentBranch()', () => {
   test('transitions to disabled when branch is null (detached HEAD)', () => {
     const states: SyncState[] = [];
-    // Manually set state to idle so the transition fires
-    // We can't reach idle without a remote, so we check the guard condition
-    // by reading the method directly on a fresh dormant engine.
-    // Since engine is dormant, transition to disabled is skipped (guard: !== dormant).
     const engine = makeEngine({ onStateChange: (s) => states.push(s) });
     engine.updateCurrentBranch(null); // no-op when dormant
     expect(engine.getStatus().state).toBe('dormant');
@@ -433,7 +378,6 @@ describe('SyncEngine updateCurrentBranch()', () => {
   });
 });
 
-// ─── Backoff / consecutive failure thresholds ────────────────────────────────
 
 describe('SyncEngine backoff thresholds via persisted state', () => {
   const statePath = () => join(okDir, 'sync-state.json');
@@ -483,13 +427,11 @@ describe('SyncEngine backoff thresholds via persisted state', () => {
     const engine = makeEngine({ syncEnabled: false });
     await engine.start();
     expect(engine.getStatus().consecutiveFailures).toBe(5);
-    // trigger() resets consecutiveFailures even when dormant
     await engine.trigger();
     expect(engine.getStatus().consecutiveFailures).toBe(0);
   });
 });
 
-// ─── Lifecycle edge cases ───────────────────────────────────────────────────
 
 describe('SyncEngine lifecycle edge cases', () => {
   test('double start() is idempotent (second call is no-op)', async () => {
@@ -533,15 +475,8 @@ describe('SyncEngine lifecycle edge cases', () => {
   });
 });
 
-// ─── Push cycle: ahead-of-origin without new commits ───────────────────────
 
 describe('SyncEngine push cycle pushes existing commits when local is ahead of origin', () => {
-  // Regression: after conflict resolution finalizes a merge with `git commit
-  // --no-edit`, the working tree matches the new HEAD. The push cycle's
-  // "tree unchanged" early-exit used to short-circuit before `git push`,
-  // leaving the merge commit unpushed forever. Repro: 2026-04-17, ~/Documents/concrete-wiki
-  // sat 2 commits ahead of origin including a merge commit; lastPushedSha
-  // recorded the merge SHA but origin/main had never received it.
   test('pushes existing HEAD when local is ahead of origin and tree is clean', async () => {
     const git = simpleGit(projectDir);
     await git.init(['--initial-branch=main']);
@@ -557,9 +492,6 @@ describe('SyncEngine push cycle pushes existing commits when local is ahead of o
     await git.addRemote('origin', bareDir);
     await git.push(['--set-upstream', 'origin', 'main']);
 
-    // Simulate the post-conflict-resolution state: a local commit that
-    // hasn't been pushed yet, and a clean working tree (commit-finalized
-    // merge, or any prior unpushed commit).
     writeFileSync(join(projectDir, 'README.md'), '# Test\n\nlocal change\n');
     await git.add('.');
     await git.commit('local commit not yet pushed');
@@ -582,7 +514,6 @@ describe('SyncEngine push cycle pushes existing commits when local is ahead of o
   });
 });
 
-// ─── Status shape completeness ──────────────────────────────────────────────
 
 describe('SyncEngine getStatus() with restored state', () => {
   const statePath = () => join(okDir, 'sync-state.json');

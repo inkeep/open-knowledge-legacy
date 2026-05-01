@@ -12,7 +12,6 @@ const schema = new Schema({
   marks: {},
 });
 
-/** Create a doc with the given paragraph texts and cursor inside the paragraph at cursorPara. */
 function makeState(paraTexts: string[], cursorPara = 0): EditorState {
   const nodes = paraTexts.map((t) =>
     t.length > 0 ? schema.node('paragraph', null, [schema.text(t)]) : schema.node('paragraph'),
@@ -24,14 +23,11 @@ function makeState(paraTexts: string[], cursorPara = 0): EditorState {
   return EditorState.create({ doc, selection: TextSelection.near(doc.resolve(pos)) });
 }
 
-/** Run a command, asserting it dispatches, and return the resulting state. */
 function run(
   state: EditorState,
-  // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Transaction
   cmd: (s: EditorState, d?: (tr: any) => void) => boolean,
 ): EditorState {
   let next: EditorState | null = null;
-  // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Transaction
   cmd(state, (tr: any) => {
     next = state.apply(tr);
   });
@@ -39,7 +35,6 @@ function run(
   return next as unknown as EditorState;
 }
 
-/** Extract the text content of each top-level block. */
 function docTexts(state: EditorState): string[] {
   const result: string[] = [];
   state.doc.forEach((node) => {
@@ -48,15 +43,11 @@ function docTexts(state: EditorState): string[] {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// currentTopLevelBlock
-// ---------------------------------------------------------------------------
 
 describe('currentTopLevelBlock', () => {
   test('returns block boundaries for cursor in first paragraph', () => {
     const state = makeState(['Hello', 'World']);
     const block = currentTopLevelBlock(state);
-    // para('Hello').nodeSize = 1 open + 5 chars + 1 close = 7  →  from=0, to=7
     expect(block).toEqual({ from: 0, to: 7 });
   });
 
@@ -72,9 +63,6 @@ describe('currentTopLevelBlock', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// moveBlockUp
-// ---------------------------------------------------------------------------
 
 describe('moveBlockUp', () => {
   test('returns false when cursor is in the first block (no-op)', () => {
@@ -98,7 +86,6 @@ describe('moveBlockUp', () => {
   });
 
   test('cursor stays inside the moved block after move', () => {
-    // 'World' (para 1) moves to position 0; cursor should be inside it.
     const next = run(makeState(['Hello', 'World'], 1), moveBlockUp);
     const sel = next.selection as TextSelection;
     expect(sel.$cursor).not.toBeNull();
@@ -106,9 +93,6 @@ describe('moveBlockUp', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// moveBlockDown
-// ---------------------------------------------------------------------------
 
 describe('moveBlockDown', () => {
   test('returns false when cursor is in the last block (no-op)', () => {
@@ -132,7 +116,6 @@ describe('moveBlockDown', () => {
   });
 
   test('cursor stays inside the moved block after move', () => {
-    // 'Hello' (para 0) moves to position 7; cursor should be inside it.
     const next = run(makeState(['Hello', 'World'], 0), moveBlockDown);
     const sel = next.selection as TextSelection;
     expect(sel.$cursor).not.toBeNull();

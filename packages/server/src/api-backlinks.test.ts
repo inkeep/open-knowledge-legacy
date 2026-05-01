@@ -130,7 +130,6 @@ describe('graph endpoints', () => {
         },
       ]);
 
-      // Bulk backlink-count lookup for slim enrichment (exec ls/grep/find).
       const counts = JSON.parse(
         (
           await callRoute(
@@ -209,8 +208,6 @@ describe('graph endpoints', () => {
       };
 
       expect(linkGraph.ok).toBe(true);
-      // Every scanned doc gets a forward entry (possibly empty), so nodes include pages
-      // with no outbound wikilinks (e.g. gamma) as well as edge endpoints.
       expect(linkGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta', 'gamma']);
       expect(linkGraph.nodes.find((n) => n.id === 'alpha')?.label).toBe('Alpha');
       expect(linkGraph.nodes.find((n) => n.id === 'beta')?.label).toBe('Beta');
@@ -455,15 +452,11 @@ describe('POST /api/test-rescan-backlinks', () => {
     mkdirSync(contentDir, { recursive: true });
 
     try {
-      // Simulate the "dropped create event" case: files are on disk but the
-      // backlink index hasn't observed them yet (no rebuildFromDisk / no
-      // file-watcher dispatch).
       writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n\nLinks to [[beta]].\n', 'utf-8');
       writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nBody.\n', 'utf-8');
 
       const fileIndex = new Map<string, FileIndexEntry>();
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
-      // Intentionally do NOT call rebuildFromDisk — mirrors the dropped-event state.
       expect(backlinkIndex.getBacklinks('beta')).toEqual([]);
 
       const rescanResp = await callRoute(
@@ -479,7 +472,6 @@ describe('POST /api/test-rescan-backlinks', () => {
       expect(rescanResp.status).toBe(200);
       expect(JSON.parse(rescanResp.body)).toEqual({ ok: true });
 
-      // Backlink index now reflects disk state.
       const backlinks = backlinkIndex.getBacklinks('beta');
       expect(backlinks.map((b) => b.source)).toEqual(['alpha']);
     } finally {
@@ -505,8 +497,6 @@ describe('POST /api/test-rescan-backlinks', () => {
           method: 'POST',
         },
       );
-      // Unregistered route → falls through past the onRequest handler → captured
-      // status remains 0 since writeHead was never called on the mock.
       expect(resp.status).toBe(0);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });

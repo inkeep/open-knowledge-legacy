@@ -1,15 +1,3 @@
-/**
- * `save_version` MCP tool — create a named checkpoint in the shadow repo.
- *
- * Calls POST /api/save-version to snapshot the current state of all documents
- * into a checkpoint commit in the shadow repo (and optionally the project repo).
- * The resulting checkpoint ref can later be found via `get_history`.
- *
- * previewUrl is always `null` per FR-2.1 / US-011: save_version operates on the
- * whole project (all documents), not a single docName, and the UI has no
- * checkpoint-level URL shape. Emitting null keeps the 21-tool contract uniform
- * without misleading agents into a nonexistent per-doc preview.
- */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';

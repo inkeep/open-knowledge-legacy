@@ -1,10 +1,3 @@
-/**
- * `ingest` MCP workflow tool — capture an external source as raw reference material
- * inside the project's content directory.
- *
- * Principle: raw preservation only. No summary, no analysis, no interpretation.
- * That's `research`'s job.
- */
 import { z } from 'zod';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
@@ -127,11 +120,6 @@ interface IngestDeps {
 }
 
 export function register(server: ServerInstance, deps: IngestDeps): void {
-  // previewUrl is null per FR-2.1: ingest is a workflow primer keyed on `source`
-  // (URL or local file) — the target docName is chosen by the agent later during
-  // Step 2 of the prompt. There is no single canonical document to preview at
-  // call time. Emitting null keeps the contract uniform across the 21-tool
-  // surface (per SPEC.md US-011 — same treatment as save_version).
   server.tool(
     'ingest',
     DESCRIPTION,

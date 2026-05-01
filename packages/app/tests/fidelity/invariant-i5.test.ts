@@ -1,10 +1,3 @@
-/**
- * Invariant I5 — Layer A === Layer B: the mdManager serialization path
- * produces the same output as the Y.Doc observer path on the same input.
- *
- * Layer A: serialize(parse(md))
- * Layer B: md → parse → nodeFromJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → serialize
- */
 
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
@@ -18,12 +11,10 @@ import { NUM_RUNS, normalize } from './helpers';
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-/** Layer A: direct md round-trip via mdManager. */
 function layerA(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-/** Layer B: Y.Doc path — parse → node → Y.XmlFragment → serialize. */
 function layerB(md: string): string {
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment('default');

@@ -1,13 +1,5 @@
 import { z } from 'zod';
 
-/**
- * Source location of an issue in a YAML file, if the issue was traced back
- * to a parsed `Document` AST. 1-indexed line and column to match the
- * conventions IDEs/CLIs use (Biome, tsc, ESLint).
- *
- * `snippet` is a multi-line preview of the source around the issue —
- * typically 1-3 lines with a caret marker under the offending token.
- */
 export const ConfigIssueSourceSchema = z.object({
   file: z.string(),
   line: z.number().int().min(1),
@@ -17,17 +9,6 @@ export const ConfigIssueSourceSchema = z.object({
 
 export type ConfigIssueSource = z.infer<typeof ConfigIssueSourceSchema>;
 
-/**
- * Path segments are coerced to (string | number) at the wire boundary —
- * Zod's native `issue.path` is `PropertyKey[]` (`string | number | symbol`),
- * and symbols don't survive JSON serialization. Every consumer of
- * `ConfigValidationError` (Settings pane walker, CLI source-located renderer,
- * MCP tool envelopes) gets a pre-coerced path.
- *
- * `source` is set when the issue was traced back to a yaml@2 `Document` AST
- * (loader path, `ok config validate`). Headless writers without an associated
- * file (e.g., MCP `set_config` writing to a fresh document) leave it unset.
- */
 export const ConfigIssueSchema = z.object({
   path: z.array(z.union([z.string(), z.number()])),
   message: z.string(),
@@ -38,11 +19,6 @@ export const ConfigIssueSchema = z.object({
 
 export type ConfigIssue = z.infer<typeof ConfigIssueSchema>;
 
-/**
- * Scope tag used by `SCOPE_VIOLATION` and `MIXED_SCOPE` payloads. Mirrors
- * `fieldRegistry` metadata: `'either'` means "valid at user OR
- * project"; `'user'` and `'project'` are scope-restricted.
- */
 export const FieldScopeSchema = z.enum(['user', 'project', 'either']);
 export type FieldScope = z.infer<typeof FieldScopeSchema>;
 
@@ -95,18 +71,10 @@ export const KnownConfigValidationErrorSchema = z.discriminatedUnion('code', [
 
 export type KnownConfigValidationError = z.infer<typeof KnownConfigValidationErrorSchema>;
 
-// Derived from the discriminated-union options so a new variant in
-// `KnownConfigValidationErrorSchema` flows through to `isKnownConfigError`
-// + `humanFormat` automatically — no risk of code/set drift.
 const KNOWN_CONFIG_ERROR_CODES: ReadonlySet<string> = new Set(
   KnownConfigValidationErrorSchema.options.map((opt) => opt.shape.code.value),
 );
 
-/**
- * Forward-compat tail variant: a future package version may emit codes the
- * current consumer doesn't know about. The catch-all keeps old clients
- * rendering generically rather than crashing.
- */
 export const ForwardCompatConfigErrorSchema = z.looseObject({
   code: z.string(),
   message: z.string().optional(),
@@ -121,27 +89,12 @@ export const ConfigValidationErrorSchema = z.union([
 
 export type ConfigValidationError = KnownConfigValidationError | ForwardCompatConfigError;
 
-/**
- * Type predicate: narrows to the discriminated `KnownConfigValidationError`
- * union when `error.code` is one of the known literals. Switch statements
- * inside the predicate's true branch get exhaustive narrowing on `code`.
- */
 export function isKnownConfigError(
   error: ConfigValidationError,
 ): error is KnownConfigValidationError {
   return KNOWN_CONFIG_ERROR_CODES.has(error.code);
 }
 
-/**
- * Render a `ConfigValidationError` as a human-readable string. Used by:
- * - CLI `ok config validate` (source-located output to stderr)
- * - MCP tool `content[].text` (with retry-framing suffix appended at the
- *   call site)
- * - Settings pane toast for L3 rejections
- *
- * Output is plain text, multi-line for `SCHEMA_INVALID` / `MIXED_SCOPE`,
- * single-line otherwise.
- */
 export function humanFormat(error: ConfigValidationError): string {
   if (!isKnownConfigError(error)) {
     return error.message ?? `Unknown error (${error.code}).`;
@@ -151,8 +104,6 @@ export function humanFormat(error: ConfigValidationError): string {
       return `Failed to parse YAML: ${error.detail}`;
     case 'SCHEMA_INVALID': {
       if (error.issues.length === 0) return 'Invalid configuration.';
-      // Group issues by file so a single header line precedes each file's
-      // issues. Issues without source go under a synthetic "<no source>" key.
       const grouped = new Map<string, ConfigIssue[]>();
       for (const iss of error.issues) {
         const key = iss.source?.file ?? '<no source>';

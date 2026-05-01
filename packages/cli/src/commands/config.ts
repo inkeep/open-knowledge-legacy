@@ -1,17 +1,3 @@
-/**
- * `ok config` command — inspect and maintain Open Knowledge config files.
- *
- * Subcommands:
- *   - `validate` — load merged config (defaults → user → project) and report
- *     conformance. Exit 0 on success, exit 1 with source-located errors on
- *     failure. Success message goes to stderr (stdout is reserved for
- *     structured CI output, of which we emit none).
- *   - `migrate` — codemod removing deprecated fields (`sync.*`,
- *     `persistence.{debounceMs,maxDebounceMs}`, `server.port`,
- *     `content.{include,exclude}`) idempotently. Funnels through
- *     `writeConfigPatch` so atomic-write + Zod safeParse invariants apply
- *     automatically.
- */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { type ConfigPatch, humanFormat } from '@inkeep/open-knowledge-core';
@@ -20,14 +6,6 @@ import { Command } from 'commander';
 import { parseDocument } from 'yaml';
 import { loadConfig } from '../config/loader.ts';
 
-/**
- * Dotted-path tuples the engine no longer reads. `sync` collapses to a
- * single key delete (the entire section is gone, all 7 subfields with it).
- * `persistence.{debounceMs, maxDebounceMs}` and `server.port` are
- * field-level deletes that leave their parent sections intact.
- * `content.{include, exclude}` were lifted to `.okignore` — patterns must be
- * recreated there manually; the codemod only removes the obsolete keys.
- */
 export const DROPPED_FIELD_PATHS: ReadonlyArray<readonly string[]> = [
   ['sync'],
   ['persistence', 'debounceMs'],
@@ -76,11 +54,8 @@ interface MigrateRunOpts {
 interface MigrateFileOutcome {
   path: string;
   scope: 'project' | 'user';
-  /** Dotted paths that exist in the file. */
   found: string[];
-  /** Dotted paths actually removed (== found unless dry-run or write failed). */
   removed: string[];
-  /** Set when the file is unparseable or writeConfigPatch returned an error. */
   error?: string;
 }
 
@@ -89,13 +64,6 @@ interface MigrateOutcome {
   ok: boolean;
 }
 
-/**
- * Discover which dropped field paths exist in a YAML file via parseDocument's
- * `hasIn`. Returns the dotted-path strings for fields that ARE present (so
- * the migrator can build a patch only for those — keeps `appliedPaths` honest
- * + lets the run summary report exact counts). Throws on unparseable YAML —
- * the user must fix the file before migration runs.
- */
 function findDroppedFields(absPath: string): string[] {
   const raw = readFileSync(absPath, 'utf-8');
   const doc = parseDocument(raw);
@@ -115,15 +83,6 @@ function isMutableObject(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
 }
 
-/**
- * Build the null-clear patch for a list of dropped paths. Cast to `ConfigPatch`
- * because the dropped fields are intentionally out-of-schema. At the runtime
- * layer, `applyPatchToDocument`'s null-walker calls `deleteIn` for each leaf
- * — works regardless of whether the path is in the schema.
- */
-/**
- * Test-only re-export. Internal helper; subject to change without notice.
- */
 export const buildClearPatchForTest = (paths: ReadonlyArray<readonly string[]>): ConfigPatch =>
   buildClearPatch(paths);
 
@@ -213,8 +172,6 @@ export async function runMigrate(opts: MigrateRunOpts = {}): Promise<MigrateOutc
     outcomes.push({ path: absPath, scope: targetScope, found, removed: found });
   }
 
-  // Errors always surface (even when no fields were found across other files);
-  // missing them when totalFound === 0 would silently swallow parse failures.
   for (const o of outcomes) {
     if (o.error) {
       error(`✗ ${o.path}: ${o.error}`);

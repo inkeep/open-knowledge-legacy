@@ -1,31 +1,3 @@
-/**
- * Cold-mount instrumentation — prototype-level monkey-patches that emit
- * `ok/cold/*` perf marks around the synchronous cost centers of the
- * `<TiptapEditor>` cold-mount call chain on large docs.
- *
- * Motivated by `/tmp/ok-perf-validation/cold-mount-profile/evidence/call-chain.md`
- * — a 9.7s cold-pool-warm on PROJECT.md has an INFERRED 5-component breakdown;
- * this instrumentation decomposes it into measured spans.
- *
- * Wrapped entry points:
- *   - `Editor.prototype.mount`                → `ok/cold/editor-mount`
- *   - `Editor.prototype.createView`           → `ok/cold/editor-create-view`
- *   - `Editor.prototype.createNodeViews`      → `ok/cold/create-node-views`
- *   - `EditorView.prototype.updateState`      → `ok/cold/pm-update-state` (per call)
- *   - `EditorView.prototype.setProps`         → `ok/cold/pm-set-props` (per call)
- *   - `ProsemirrorBinding.prototype._forceRerender` → `ok/cold/force-rerender`
- *   - `PureEditorContent.prototype.init`      → `ok/cold/ec-init`
- *
- * Also installs a PerformanceObserver for `paint` entries that re-emits
- * first-paint / first-contentful-paint via marks so they land in the
- * collector's data stream alongside the monkey-patched spans.
- *
- * The patch is a DIAGNOSTIC artifact — called ONCE from `main.tsx` before
- * any editor constructs. Safe to leave in production builds (the `mark()`
- * helper no-ops its collector push in PROD; `performance.measure` is cheap)
- * but the V2 spec should decide whether to promote a curated subset to
- * permanent telemetry.
- */
 
 import { Editor } from '@tiptap/core';
 import { EditorView } from '@tiptap/pm/view';
@@ -48,7 +20,6 @@ function wrapMethod<T extends Record<string, unknown>>(
 ): void {
   const original = target[key] as unknown as (...args: unknown[]) => unknown;
   if (typeof original !== 'function') {
-    // eslint-disable-next-line no-console -- diagnostic
     console.warn(`[cold-mount-instrumentation] target missing method "${key}"`);
     return;
   }
@@ -69,7 +40,6 @@ function wrapMethod<T extends Record<string, unknown>>(
       );
     }
   };
-  // biome-ignore lint/suspicious/noExplicitAny: prototype patch
   (target as any)[key] = wrapped;
 }
 
@@ -90,7 +60,6 @@ interface ProsemirrorBindingShape {
 
 interface EditorContentShape {
   props?: { editor?: unknown };
-  // biome-ignore lint/suspicious/noExplicitAny: react component internal
   [k: string]: any;
 }
 
@@ -112,7 +81,6 @@ export function installColdMountInstrumentation(): void {
   if (installed) return;
   installed = true;
 
-  // -------- Editor (TipTap) ----------
   wrapMethod(
     Editor.prototype as unknown as Record<string, unknown>,
     'mount',
@@ -128,7 +96,6 @@ export function installColdMountInstrumentation(): void {
     },
   );
 
-  // @tiptap/core marks createView as private in TS but it's a runtime prototype method
   wrapMethod(
     Editor.prototype as unknown as Record<string, unknown>,
     'createView' as 'mount',
@@ -158,7 +125,6 @@ export function installColdMountInstrumentation(): void {
     },
   );
 
-  // -------- EditorView (ProseMirror) ----------
   wrapMethod(
     EditorView.prototype as unknown as Record<string, unknown>,
     'updateState',
@@ -187,7 +153,6 @@ export function installColdMountInstrumentation(): void {
     },
   );
 
-  // -------- ProsemirrorBinding (y-prosemirror via @tiptap/y-tiptap) ----------
   wrapMethod(
     ProsemirrorBinding.prototype as unknown as Record<string, unknown>,
     '_forceRerender',
@@ -210,7 +175,6 @@ export function installColdMountInstrumentation(): void {
     },
   );
 
-  // -------- PureEditorContent.init (TipTap React) ----------
   wrapMethod(
     PureEditorContent.prototype as unknown as Record<string, unknown>,
     'init',
@@ -221,13 +185,11 @@ export function installColdMountInstrumentation(): void {
     },
   );
 
-  // -------- Paint observer ----------
   try {
     if (typeof PerformanceObserver !== 'undefined') {
       const obs = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const name = entry.name;
-          // first-paint or first-contentful-paint
           if (name === 'first-paint' || name === 'first-contentful-paint') {
             mark(
               name === 'first-paint' ? 'ok/cold/paint-fp' : 'ok/cold/paint-fcp',
@@ -240,9 +202,7 @@ export function installColdMountInstrumentation(): void {
       obs.observe({ type: 'paint', buffered: true });
     }
   } catch (_err) {
-    // Paint observer unsupported — not fatal.
   }
 
-  // Diagnostic flag — Playwright scenario can assert via window
   (globalThis as unknown as Record<string, unknown>).__okColdMountInstrumented = true;
 }

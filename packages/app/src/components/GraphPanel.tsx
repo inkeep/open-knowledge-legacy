@@ -54,7 +54,6 @@ function saveBoolPref(key: string, value: boolean): void {
       window.localStorage.removeItem(key);
     }
   } catch {
-    // quota exceeded / private mode — ignore, stays in-memory
   }
 }
 

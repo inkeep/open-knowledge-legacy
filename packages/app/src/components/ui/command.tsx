@@ -1,13 +1,3 @@
-/**
- * shadcn/ui Command primitive — thin styled wrapper around `cmdk` plus a
- * `<CommandDialog>` helper that composes Command with our shadcn Dialog.
- *
- * Based on the canonical shadcn/ui template:
- *   https://ui.shadcn.com/docs/components/command
- *
- * Vendored locally so we stay on our own design tokens + don't depend on the
- * shadcn CLI's overwrite behavior. Tracks cmdk@^1.1.x.
- */
 
 import { Command as CommandPrimitive } from 'cmdk';
 import { SearchIcon } from 'lucide-react';

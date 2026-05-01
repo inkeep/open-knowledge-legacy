@@ -1,11 +1,3 @@
-/**
- * Module-level smoke + source-level guards for the Settings pane.
- *
- * Repo convention (see `CommandPalette.test.ts`, `EditorActivityPool.test.ts`):
- * full DOM + interaction coverage lives in Playwright stress tests; unit
- * tests guard the export shape, regression-critical strings, and the
- * architectural choice to render as a pane (NOT a Dialog overlay).
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -42,9 +34,6 @@ describe('SettingsPane source-level guards', () => {
   });
 
   test('renders as a pane, NOT a Dialog overlay', () => {
-    // The architectural choice — the file should not import Dialog from ui/dialog
-    // for its own structural shell. (InstallInClaudeDesktopDialog is rendered
-    // inside the Integrations row, but uses its own internal Dialog.)
     expect(SRC).not.toMatch(/from\s+['"]@\/components\/ui\/dialog['"]/);
   });
 
@@ -70,9 +59,6 @@ describe('SettingsPane source-level guards', () => {
 
   test('per-field reset writes default OR null-as-clear', () => {
     expect(SRC).toContain('Reset to default');
-    // Post-RHF refactor: reset writes via form.setValue (defaultValue OR null
-    // for fields without a schema default — null-as-clear preserves RFC 7396
-    // semantics) followed by the harness's commitField.
     expect(SRC).toMatch(/form\.setValue\(/);
     expect(SRC).toContain('shouldDirty: false');
     expect(SRC).toMatch(/defaultValue\s*===\s*undefined\s*\?\s*null/);
@@ -89,8 +75,6 @@ describe('SettingsPane source-level guards', () => {
 
   test('uses the shadcn Form primitive (FormField / FormControl / FormMessage)', () => {
     expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/form['"]/);
-    // Ensure the imported names land on the JSX (FormField is the harness
-    // entry point; FormMessage owns the data-field-error attribute).
     expect(SRC).toMatch(/<FormField\b/);
     expect(SRC).toMatch(/<FormMessage\b/);
   });
@@ -108,20 +92,12 @@ describe('SettingsPane folders section integration', () => {
   });
 
   test('SectionDef is a discriminated union (scalar vs custom-folders) so illegal compositions are unrepresentable', () => {
-    // The scalar variant carries `custom?: never`; the custom-folders
-    // variant carries `custom: 'folders'` with `fields: []`. A refactor
-    // that collapses this back to a single interface would re-permit
-    // `{ custom: 'folders', fields: [{...}] }` — a composition where the
-    // field would silently never render under the dispatcher early-return.
     expect(SRC).toMatch(/custom\?:\s*never/);
     expect(SRC).toMatch(/custom:\s*'folders'/);
     expect(SRC).toMatch(/fields:\s*\[\]/);
   });
 
   test("SECTIONS includes a folders entry with custom: 'folders' and empty fields[]", () => {
-    // Locate the 'folders' SECTIONS entry by id and verify the custom tag
-    // + empty fields array. A regression that flips this to the scalar
-    // path would silently lose the FoldersSection render.
     const idMatch = SRC.match(/\{[\s\S]{0,400}id:\s*'folders'[\s\S]{0,400}custom:\s*'folders'/);
     expect(idMatch).toBeTruthy();
     expect(SRC).toMatch(/id:\s*'folders'[\s\S]{0,400}fields:\s*\[\]/);
@@ -133,8 +109,6 @@ describe('SettingsPane folders section integration', () => {
   });
 
   test('SettingsForm passes form into FoldersSection (atomic-array commit needs it)', () => {
-    // FoldersSection consumes form for useFieldArray + setFocus; without
-    // this prop the section can't drive the array.
     expect(SRC).toMatch(/SettingsFormProps[\s\S]{0,400}form:\s*UseFormReturn<Config>/);
     expect(SRC).toMatch(/<SettingsForm[\s\S]{0,200}form=\{form\}/);
   });

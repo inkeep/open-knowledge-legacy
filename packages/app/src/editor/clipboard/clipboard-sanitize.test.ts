@@ -1,11 +1,3 @@
-/**
- * Co-located unit tests for the clipboard FR-20 sanitization leaf module.
- *
- * Pure-helper boundary contract tests — no DOM required. The walker's
- * full DOM behavior (cloneNode parallel walk, view.nodeDOM lookup, fallback
- * palette firing on Activity-hidden subtrees) is exercised in Playwright
- * (US-009).
- */
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -60,10 +52,6 @@ describe('isSafeWalkerUrl — allowlist URL classifier', () => {
   });
 
   test('passes bare filename and relative-path forms (isRelativeUrl fallback)', () => {
-    // Walker operates on already-resolved live DOM where bare relative
-    // paths CAN appear (e.g., `<img src="one.png">`). The `isRelativeUrl`
-    // fallback in `isSafeWalkerUrl` is the test target — without it,
-    // these forms would be dropped on copy.
     expect(isSafeWalkerUrl('photo.png')).toBe(true);
     expect(isSafeWalkerUrl('path/to/image.jpg')).toBe(true);
     expect(isSafeWalkerUrl('subdir/file.svg')).toBe(true);
@@ -83,9 +71,6 @@ describe('isSafeWalkerUrl — allowlist URL classifier', () => {
   });
 
   test('blocks data: schemes including raster image MIME types', () => {
-    // Allowlist excludes all data: schemes — descriptor img/video/audio src
-    // already passes through `sanitizeComponentProps` upstream, which uses
-    // the same allowlist. Walker stays consistent with the upstream gate.
     expect(isSafeWalkerUrl('data:image/png;base64,iVBOR')).toBe(false);
     expect(isSafeWalkerUrl('data:image/svg+xml,<svg onload=alert(1)>')).toBe(false);
     expect(isSafeWalkerUrl('data:text/html,<script>')).toBe(false);
@@ -99,8 +84,6 @@ describe('isSafeWalkerUrl — allowlist URL classifier', () => {
   });
 
   test('blocks leading-whitespace bypass per WHATWG URL preprocessing', () => {
-    // Browsers strip leading ASCII whitespace before parsing href; a regex
-    // that anchors on `^javascript:` without trimming is bypassable.
     expect(isSafeWalkerUrl(' javascript:alert(1)')).toBe(false);
     expect(isSafeWalkerUrl('\tjavascript:alert(1)')).toBe(false);
     expect(isSafeWalkerUrl('\n  javascript:alert(1)')).toBe(false);
@@ -120,9 +103,6 @@ describe('isSrcsetSafe — comma-separated multi-URL classifier', () => {
   });
 
   test('fails when ANY candidate URL is dangerous (HTML srcset spec)', () => {
-    // Per WHATWG HTML §4.8.4.3 srcset is a comma-separated list of image
-    // candidate strings; a head-anchored `^javascript:` regex on the whole
-    // attribute value misses dangerous URLs after the first comma.
     expect(isSrcsetSafe('safe.jpg 1x, javascript:alert(1) 2x')).toBe(false);
     expect(isSrcsetSafe('javascript:alert(1) 1x, safe.jpg 2x')).toBe(false);
   });
@@ -147,8 +127,6 @@ describe('sanitizeEmbeddedUrlValue — text-attr URL substitution', () => {
   });
 
   test('preserves wrapping label text around the substitution', () => {
-    // Canonical OK shape: internal-link.ts emits aria-label="Link: <href>".
-    // Substitution must not drop the "Link: " prefix.
     const out = sanitizeEmbeddedUrlValue('Link: javascript:alert(1)');
     expect(out).toContain('Link:');
     expect(out).toContain('[blocked]');
@@ -168,13 +146,6 @@ describe('sanitizeEmbeddedUrlValue — text-attr URL substitution', () => {
   });
 
   test('passes no-space-after-colon labels through unchanged (label-fidelity)', () => {
-    // Earlier revision matched RFC 3986 scheme grammar broadly, so labels
-    // like "Item:value" got rewritten to "[blocked]" because their shape
-    // looked URL-like. The tightened matcher requires `://` (authority)
-    // OR a known dangerous scheme prefix — these label shapes survive
-    // intact. Aria-labels are read by assistive tech as text, not as
-    // URLs, so leaving novel-scheme tokens unblocked here trades label
-    // fidelity for a small surface that does not navigate.
     expect(sanitizeEmbeddedUrlValue('Item:value')).toBe('Item:value');
     expect(sanitizeEmbeddedUrlValue('Status:active')).toBe('Status:active');
     expect(sanitizeEmbeddedUrlValue('Tag:urgent')).toBe('Tag:urgent');
@@ -192,10 +163,6 @@ describe('sanitizeEmbeddedUrlValue — text-attr URL substitution', () => {
   });
 
   test('blocks each named dangerous scheme in embedded context', () => {
-    // URL_LIKE_TOKEN_RE alternation lists 6 dangerous schemes:
-    // javascript / vbscript / data / file / chrome-extension / moz-extension.
-    // A typo in the alternation would silently leak one scheme through —
-    // this loop pins each scheme as exercised in label content.
     const schemes: Array<[string, string]> = [
       ['javascript:alert(1)', 'javascript:alert(1)'],
       ['vbscript:msgbox(1)', 'vbscript:msgbox(1)'],
@@ -218,7 +185,6 @@ describe('sanitizeEmbeddedUrlValue — text-attr URL substitution', () => {
     expect(out).not.toContain('data:text/html');
     expect(out).toContain('See ');
     expect(out).toContain('and ');
-    // Both URLs replaced — count [blocked] occurrences.
     expect(out?.match(/\[blocked\]/g)?.length).toBe(2);
   });
 });
@@ -238,8 +204,6 @@ describe('isDangerousEventHandlerAttr — on* event handler classifier', () => {
   });
 
   test('does NOT match non-event attributes that happen to start with on', () => {
-    // `one`, `only`, `once` etc. are not event handlers — require length
-    // discriminator (event handlers like `onfoo` are at least 3 chars).
     expect(isDangerousEventHandlerAttr('on')).toBe(false);
   });
 
@@ -253,9 +217,6 @@ describe('isDangerousEventHandlerAttr — on* event handler classifier', () => {
 
 describe('sanitizeStyleAttrValue — inline-style url() / expression() filter', () => {
   test('drops styles containing url(javascript:...) payloads', () => {
-    // Browsers resolve `url(javascript:...)` against `background-image`,
-    // `content`, `list-style-image`, `cursor`, etc. — defense-in-depth at
-    // the walker boundary mirrors `sanitizeStyleString` in sanitize-url.ts.
     expect(sanitizeStyleAttrValue('background: url(javascript:alert(1))')).toBe('');
     expect(sanitizeStyleAttrValue("background: url('javascript:alert(1)')")).toBe('');
     expect(sanitizeStyleAttrValue('color: red; background-image: url(vbscript:msgbox)')).toBe('');
@@ -283,32 +244,23 @@ describe('sanitizeStyleAttrValue — inline-style url() / expression() filter', 
   });
 
   test('drops mega-payloads above MAX_STYLE_SCAN_LEN without a regex scan', () => {
-    // Defense-in-depth ceiling on regex-scan cost. A 12KB payload is two
-    // orders of magnitude above any legitimate inline style; values above
-    // the threshold are dropped entirely (no scan, no opportunity for
-    // ReDoS amplification on adversarial inputs).
     const oversized = 'color: red; '.repeat(1000); // ~12KB
     expect(oversized.length).toBeGreaterThan(MAX_STYLE_SCAN_LEN);
     expect(sanitizeStyleAttrValue(oversized)).toBe('');
   });
 
   test('passes payloads at-or-just-below MAX_STYLE_SCAN_LEN through normally', () => {
-    // Boundary case — exactly MAX_STYLE_SCAN_LEN - 1 chars. Should still
-    // scan the value (and pass through, since no dangerous pattern).
     const justUnder = 'a'.repeat(MAX_STYLE_SCAN_LEN - 1);
     expect(justUnder.length).toBeLessThan(MAX_STYLE_SCAN_LEN);
     expect(sanitizeStyleAttrValue(justUnder)).toBe(justUnder);
   });
 
   test('MAX_STYLE_SCAN_LEN is a number compatible with the sibling sanitize-url.ts ceiling', () => {
-    // Anchor — both walker and sanitize-url use the same 10_000 ceiling.
-    // A regression that changes one without the other surfaces here.
     expect(MAX_STYLE_SCAN_LEN).toBe(10_000);
   });
 });
 
 describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fallback', () => {
-  // Helper: extract first rgb-channel triple from "rgb(R, G, B)".
   function rgbTriple(value: string): [number, number, number] | null {
     const m = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
     if (!m) return null;
@@ -316,51 +268,26 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   }
 
   test('converts oklch to rgb on the happy path', () => {
-    // `oklch(0.62 0.15 240)` is a mid-saturation blue; sanity-check the
-    // triple is in the blue family — exact integer values depend on
-    // floating-point precision so we range-bound rather than equality-pin.
     const out = convertCssColors('oklch(0.62 0.15 240)');
     expect(out).toMatch(/^rgb\(\d+,\s*\d+,\s*\d+\)$/);
     const triple = rgbTriple(out);
     expect(triple).not.toBeNull();
     if (triple) {
       const [r, g, b] = triple;
-      // Blue dominates green dominates red for this hue.
       expect(b).toBeGreaterThan(g);
       expect(g).toBeGreaterThan(r);
     }
   });
 
   test('pins endpoint oklch(0 0 0) → rgb(0, 0, 0) (sRGB transfer-function anchor at L=0)', () => {
-    // Mechanical pin against any future change to `linearToSrgbChannel`'s
-    // small-value branch (the linear `12.92x` segment for x ≤ 0.0031308).
     expect(convertCssColors('oklch(0 0 0)')).toBe('rgb(0, 0, 0)');
   });
 
   test('pins endpoint oklch(1 0 0) → rgb(255, 255, 255) (sRGB transfer-function anchor at L=1)', () => {
-    // Anchors the gamma branch (`1.055·x^(1/2.4) − 0.055`) and the byte
-    // clamp at the upper extreme. A coefficient drift that pushes the
-    // result to 254 / 256 surfaces here.
     expect(convertCssColors('oklch(1 0 0)')).toBe('rgb(255, 255, 255)');
   });
 
   test('pins in-gamut oklch(0.5 0.1 240) ≈ rgb(31, 106, 150) ± 3 (Ottosson-matrix coefficient anchor)', () => {
-    // Pinned reference triple for `oklch(0.5 0.1 240)` — chosen because it
-    // is *in-gamut* (no channel hits 0 or 255), so a coefficient regression
-    // in `oklabToLinearSrgb` (sign error, dropped term, transposed entry)
-    // changes the triple in a way clip-clamping cannot mask. Tolerance ±3
-    // per channel accommodates floating-point path differences across
-    // engine versions; tighter than the reviewer's ±6 because no gamut
-    // mapping is in play here.
-    //
-    // Reference values were computed by *this implementation* against the
-    // Ottosson matrix on 2026-04-30. They diverge from Chrome's
-    // `getComputedStyle()` triple for the same input — Chrome implements
-    // CSS Color Module Level 4 gamut-mapping (binary-search chroma
-    // reduction in oklch), whereas this walker does naive clip-after-
-    // conversion since it is converting at *copy time* for cross-app
-    // fidelity, not for in-app rendering. The naive clip is documented in
-    // `clipboard-sanitize.ts:301-305` (`toByte`).
     const out = convertCssColors('oklch(0.5 0.1 240)');
     const triple = rgbTriple(out);
     expect(triple).not.toBeNull();
@@ -388,7 +315,6 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   test('converts every modern color in a multi-color value (gradients)', () => {
     const out = convertCssColors('linear-gradient(oklch(0.5 0.1 0), oklch(0.5 0.1 240))');
     expect(out).not.toContain('oklch(');
-    // Two rgb() values inside the gradient.
     expect(out.match(/rgb\(/g)?.length).toBe(2);
   });
 
@@ -399,42 +325,28 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   });
 
   test('handles CSS Color 4 `none` keyword (achromatic oklch produces a gray)', () => {
-    // Tailwind's neutral palette uses `oklch(L none H)` for fully
-    // achromatic (zero-chroma) values. `parseColorComponent` maps `none`
-    // to 0 per CSS Color 4 spec, so the math collapses to L-only and the
-    // result must be a gray (r ≈ g ≈ b).
     const out = convertCssColors('oklch(0.5 none 0)');
     expect(out).toMatch(/^rgb\(/);
     const triple = rgbTriple(out);
     expect(triple).not.toBeNull();
     if (triple) {
       const [r, g, b] = triple;
-      // Achromatic — all three channels equal within rounding tolerance.
       expect(Math.abs(r - g)).toBeLessThanOrEqual(1);
       expect(Math.abs(g - b)).toBeLessThanOrEqual(1);
     }
   });
 
   test('handles `none` for oklab a/b components and oklch hue', () => {
-    // All four positions accept `none`. None-only oklab is structurally
-    // equivalent to (L, 0, 0) and produces a gray.
     expect(convertCssColors('oklab(0.5 none none)')).toMatch(/^rgb\(/);
     expect(convertCssColors('oklch(0.5 0.1 none)')).toMatch(/^rgb\(/);
   });
 
   test('handles negative a/b components in oklab (covers full sRGB color wheel)', () => {
-    // The Ottosson matrix is a real-valued linear transform — negative
-    // `a` (greener) and negative `b` (bluer) are valid oklab inputs that
-    // appear in Chrome's `getComputedStyle()` output for any color in the
-    // green / blue / cyan / purple quadrants. A regression that mishandles
-    // sign on these terms would silently break half the color wheel.
     const out = convertCssColors('oklab(0.5 -0.1 0.05)');
     expect(out).toMatch(/^rgb\(/);
     const triple = rgbTriple(out);
     expect(triple).not.toBeNull();
     if (triple) {
-      // Negative `a` is greener than red; the green channel should
-      // dominate the red channel.
       const [r, g] = triple;
       expect(g).toBeGreaterThan(r);
     }
@@ -454,7 +366,6 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   });
 
   test('clamps out-of-gamut colors to [0, 255] without NaN', () => {
-    // High-chroma red far outside sRGB.
     const out = convertCssColors('oklch(0.9 0.4 30)');
     const triple = rgbTriple(out);
     expect(triple).not.toBeNull();
@@ -468,7 +379,6 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   });
 
   test('returns input unchanged on malformed function bodies (no throw)', () => {
-    // Garbage body — replacement leaves the original token in place.
     expect(convertCssColors('oklch(garbage)')).toBe('oklch(garbage)');
     expect(convertCssColors('1px solid oklch(only-two 240)')).toBe('1px solid oklch(only-two 240)');
   });
@@ -476,8 +386,6 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
   test('passes payloads above MAX_COLOR_VALUE_LEN through unchanged (defense-in-depth ceiling)', () => {
     const oversized = `${'a'.repeat(MAX_COLOR_VALUE_LEN)} oklch(0.5 0.1 240)`;
     expect(oversized.length).toBeGreaterThan(MAX_COLOR_VALUE_LEN);
-    // No conversion happens — the entire value passes through (not blocked,
-    // unlike `sanitizeStyleAttrValue` which drops oversized payloads).
     expect(convertCssColors(oversized)).toBe(oversized);
   });
 
@@ -494,12 +402,6 @@ describe('convertCssColors — modern CSS color (oklch/oklab/lab/lch) → rgb fa
 
 describe('OPT_OUT_ATTR — descriptor opt-out marker', () => {
   test('value is exactly `data-clipboard-omit`', () => {
-    // Anchor — the literal value is the attribute name descriptors must
-    // set on chrome elements that should not reach clipboard. A typo
-    // (e.g., `data-clipboard-ommit`) would silently fail to opt out, so
-    // descriptors MUST import this constant rather than hardcode the
-    // string. Pin the literal here so a refactor that renames the
-    // attribute fails the consumer-side checks loudly.
     expect(OPT_OUT_ATTR).toBe('data-clipboard-omit');
   });
 });

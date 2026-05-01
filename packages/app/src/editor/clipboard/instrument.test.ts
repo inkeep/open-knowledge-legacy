@@ -1,19 +1,3 @@
-/**
- * Unit tests for instrument.ts behaviors with module-level state and
- * the `classifyError` taxonomy classifier.
- *
- * Most `log*` helpers are stateless — they JSON-stringify and
- * `console.warn`. Those are exercised end-to-end through Playwright (the
- * walker fires them as a side-effect of cross-app paste). The exceptions
- * pinned here:
- *   - `logUnmappedLucideIcon` — module-level dedup set; behavioral contract.
- *   - `classifyError` — pure 4-branch classifier reused at 12 call sites
- *     across the dispatchers (`handle-paste.ts`, `source-clipboard.ts`); a
- *     regression would silently drop the `errorClass` dimension at every
- *     site.
- *
- * Both are fully testable in bun-test without a real DOM.
- */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowledge-core';
@@ -68,8 +52,6 @@ describe('logUnmappedLucideIcon — once-per-process per-class dedup', () => {
   });
 
   test('dedup persists across distinct view values for the same class', () => {
-    // Class identity, not (class, view) tuple, gates the dedup. A future
-    // Source-view caller hitting the same class would still suppress.
     logUnmappedLucideIcon({ lucideClass: 'lucide-foo', view: 'wysiwyg' });
     logUnmappedLucideIcon({ lucideClass: 'lucide-foo', view: 'source' });
     expect(warnings).toHaveLength(1);
@@ -89,8 +71,6 @@ describe('classifyError — taxonomy classifier for `errorClass` telemetry field
   });
 
   test('ChunkedInsertError instance returns its name', () => {
-    // ChunkedInsertError requires partial-progress fields — see types in
-    // @inkeep/open-knowledge-core. Construct with realistic shape.
     const err = new ChunkedInsertError('insert failed', {
       chunksCompleted: 1,
       totalChunks: 5,
@@ -109,15 +89,10 @@ describe('classifyError — taxonomy classifier for `errorClass` telemetry field
   });
 
   test('plain `new Error()` (default name === "Error") returns undefined', () => {
-    // The third branch's `name && err.name !== 'Error'` guard elides the
-    // default Error name to avoid polluting the errorClass dimension with
-    // a value that provides no signal beyond `reason`.
     expect(classifyError(new Error('boom'))).toBeUndefined();
   });
 
   test('non-Error thrown values return undefined', () => {
-    // `instanceof Error` short-circuits all three branches for non-Errors.
-    // Telemetry should omit the field rather than misclassify.
     expect(classifyError('string')).toBeUndefined();
     expect(classifyError(42)).toBeUndefined();
     expect(classifyError(null)).toBeUndefined();

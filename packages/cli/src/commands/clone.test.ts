@@ -40,7 +40,6 @@ describe('ensureOkExcludedFromGit', () => {
     expect(ensureOkExcludedFromGit(testDir)).toBe('appended');
     const after = readFileSync(excludePath, 'utf-8');
     expect(after).toContain(`${OK_DIR}/`);
-    // Original template preserved
     expect(after.startsWith(defaultTemplate)).toBe(true);
   });
 

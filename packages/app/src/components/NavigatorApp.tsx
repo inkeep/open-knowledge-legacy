@@ -1,16 +1,3 @@
-/**
- * Project Navigator — persistent-launcher UI shown when the desktop app
- * boots without a `lastOpenedProject`, OR when the user holds Option at
- * launch (D24 revised).
- *
- * three primary cards (Clone from GitHub, Open folder on disk, Start fresh) above a Recent list.
- *  Every project pick spawns a NEW editor window via `ok:project:open` IPC (D3 revised
- * — no switch-in-place in v0). Navigator window stays open.
- *
- * Web / CLI distribution never reaches this component — it only renders
- * when `window.okDesktop?.config.mode === 'navigator'` (gated in
- * `packages/app/src/main.tsx`).
- */
 
 import { FolderOpenIcon, Loader2Icon, PlusIcon } from 'lucide-react';
 import { type ComponentType, useEffect, useState } from 'react';
@@ -29,9 +16,6 @@ import { OkIcon } from './icons/ok';
 import { McpConsentDialog } from './McpConsentDialog';
 import { Badge } from './ui/badge';
 
-// Re-exports for tests — callers previously imported these directly from
-// NavigatorApp.tsx; keeping the surface here avoids churn in existing test
-// files and keeps the shared-helper move transparent.
 export { resolveErrorMessage };
 export const runWithErrorStatePure = (
   fn: () => Promise<void>,
@@ -48,18 +32,10 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [returnToCloneAfterAuth, setReturnToCloneAfterAuth] = useState(false);
-  // Mirror EditorPane's auth-modal state shape so the two surfaces stay
-  // structurally identical. Today Navigator only ever opens with step
-  // 'auth' (no identity-prompt entry point), but keeping the state +
-  // prop wired prevents silent divergence if Navigator gains an identity
-  // surface later (e.g. profile menu).
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
 
   useEffect(() => {
     let cancelled = false;
-    // Promise-chain instead of try/catch/finally — React Compiler (BuildHIR)
-    // does not yet support `finally` clauses; `.finally(...)` on the Promise
-    // is equivalent and compiler-safe.
     bridge.project
       .listRecent()
       .then((result) => {
@@ -79,14 +55,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     };
   }, [bridge]);
 
-  /**
-   * Wrap any bridge call in a visible error state. Without this the IPC
-   * rejection (utility failed to boot, bad folder, dialog rejected) lands as
-   * an unhandled promise rejection and the UI stays frozen in its pre-click
-   * state — no feedback, no retry path. Delegates to the pure
-   * `runWithErrorStatePure` helper so the rejection-handling logic can be
-   * unit-tested without React.
-   */
   const runWithErrorState = (fn: () => Promise<void>, fallback: string) =>
     runWithErrorStatePure(fn, fallback, setError);
 
@@ -112,11 +80,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
     }, 'Failed to open project.');
 
   return (
-    // `overflow-hidden` on the outer flex column + `shrink-0` on everything
-    // fixed-height + `min-h-0 overflow-y-auto` on the Recent list pins the
-    // primary affordances (header + three cards + footer) on-screen at the
-    // default 720×520 Navigator window size. Only the Recent list can scroll,
-    // and only when a user has >~6 entries. Matches VS Code / Cursor Welcome.
     <div
       className={`flex h-screen w-screen flex-col overflow-hidden bg-primary-foreground dark:bg-background p-12 pb-2 text-foreground max-w-5xl space-y-10 mx-auto ${
         !loading && recents.length === 0 ? 'justify-center' : ''
@@ -227,7 +190,6 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           setAuthModalOpen(true);
         }}
         onCloneComplete={({ dir }) => {
-          // Navigator stays open; spawn the cloned project in a new editor window.
           void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
         }}
       />

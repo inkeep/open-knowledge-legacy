@@ -39,17 +39,6 @@ export function deriveKnownFolderPaths(docNames: Iterable<string>): Set<string> 
   return folderPaths;
 }
 
-/**
- * Bug A widening (2026-04-24). When `options.pagesBySlug` is provided,
- * `pages.has(target)` misses fall back to a slug-keyed lookup so a
- * dropped `.md` file carrying a lowercased slug (e.g. `casecheck123`)
- * resolves against a case-preserved cache entry (e.g. `CaseCheck123`).
- * Returns the canonical docName via the index, which becomes the target
- * of the `doc` result so downstream `hashDocName` navigation hits the
- * correct file. If `pagesBySlug` is omitted the resolver stays exact-
- * match only (backward compatible for tests constructing bare
- * `{pages: new Set(...)}` options).
- */
 function slugResolve(
   normalizedTarget: string,
   pagesBySlug: ReadonlyMap<string, string> | undefined,

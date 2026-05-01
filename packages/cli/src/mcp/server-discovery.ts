@@ -14,36 +14,8 @@ import type { Config } from '../config/schema.ts';
 import { normalizeCwd } from '../utils/normalize-cwd.ts';
 import type { McpLogger } from './logger.ts';
 
-/**
- * Classify how the running MCP child was launched, by inspecting the path of
- * `process.argv[1]` (or whatever the caller passes). Used to tailor the
- * remedy in the protocol-mismatch diagnostic.
- *
- * - `'npx-cache'` — the launch path lives inside an npx / bunx / pnpm-dlx
- *   cache. Each editor relaunch may resolve a different version. Remedy:
- *   stop `ok start` so the next spawn matches; consider `ok init --pin` for
- *   determinism.
- * - `'stable-shim'` — well-known shim location (M6 bundled CLI at
- *   `/usr/local/bin/ok`, Homebrew at `/opt/homebrew/bin/ok`, or the bundle's
- *   in-app shim). The desktop or a package upgrade likely bumped the shim
- *   while a project server was still running. Remedy: close and reopen the
- *   project window, or stop `ok start`.
- * - `'absolute-pin'` — looks like a user-specific absolute path that does not
- *   match the other shapes (matches `ok init --pin`-style writes pointing at
- *   a worktree dist, a custom prefix, or a per-version shim). Remedy: re-run
- *   `ok init --pin` from the current install.
- * - `'unknown'` — anything else (relative path, empty, or unknown shape).
- *   Remedy: generic.
- *
- * The classifier is intentionally conservative — false-negatives demote
- * `stable-shim` / `absolute-pin` to `unknown` and just print the generic
- * remedy. False-positives are the more harmful failure mode.
- *
- * Exported for tests.
- */
 export type McpLaunchShape = 'npx-cache' | 'stable-shim' | 'absolute-pin' | 'unknown';
 
-/** Path segments that indicate the binary is being served from a transient package-manager cache. */
 const NPX_CACHE_MARKERS = [
   '/_npx/',
   '/.npm/_npx/',
@@ -52,7 +24,6 @@ const NPX_CACHE_MARKERS = [
   '/pnpm/dlx/',
 ];
 
-/** Absolute paths that count as a "stable shim" — symlink/wrapper that survives upgrades in place. */
 const STABLE_SHIM_PATHS = new Set([
   '/usr/local/bin/ok',
   '/usr/local/bin/open-knowledge',
@@ -66,21 +37,12 @@ export function classifyMcpLaunchPath(launchPath: string | undefined): McpLaunch
     if (launchPath.includes(marker)) return 'npx-cache';
   }
   if (STABLE_SHIM_PATHS.has(launchPath)) return 'stable-shim';
-  // macOS `/Applications/…` only — substring `/Applications/` matches `/home/x/Applications/ok`.
   if (launchPath.startsWith('/Applications/')) return 'stable-shim';
   if (launchPath.includes('.app/Contents/')) return 'stable-shim';
-  // Absolute paths that didn't match the cache or shim heuristics — typical
-  // shape of an `ok init --pin` write (dist/cli.mjs, ~/.npm-global/bin/ok,
-  // /Users/x/.local/bin/ok, etc.).
   if (launchPath.startsWith('/')) return 'absolute-pin';
   return 'unknown';
 }
 
-/**
- * Build a launch-shape-specific remedy hint for the protocol-mismatch
- * diagnostic. Kept as a separate function (not inlined into the message
- * template) so tests can assert each shape's text independently.
- */
 export function describeProtocolMismatchRemedy(
   shape: McpLaunchShape,
   launchPath: string | undefined,
@@ -110,17 +72,11 @@ export function describeProtocolMismatchRemedy(
   }
 }
 
-/** True when `spawn` failed because an executable or script path was missing (ENOENT). */
 export function isSpawnEnoentMessage(message: string): boolean {
   if (!message) return false;
   return /\bENOENT\b/i.test(message);
 }
 
-/**
- * Hint when MCP auto-start cannot spawn `ok start` because the CLI entry is gone —
- * typical after changing install method while the editor still points at an old
- * `ok init --pin` path. Exported for tests.
- */
 export function describeSpawnEnoentRemedy(launchPath: string | undefined): string {
   const shape = classifyMcpLaunchPath(launchPath);
   switch (shape) {
@@ -162,21 +118,11 @@ function formatSpawnFailedMessage(
   return out;
 }
 
-/** Default deadline for the post-spawn `server.lock` poll. */
 const DEFAULT_SPAWN_TIMEOUT_MS = 5000;
-/** Default polling interval during the spawn deadline window. */
 const DEFAULT_POLL_INTERVAL_MS = 100;
-/** Tempfile name used by the kernel stderr redirect — also consumed on timeout. */
 const SPAWN_ERROR_LOG = 'last-spawn-error.log';
-/** Short TTL: avoids re-stat/spawn checks on bursty tool usage in one project. */
 const DEFAULT_SERVER_URL_CACHE_MS = 1000;
 
-/**
- * Read `OK_MCP_SPAWN_TIMEOUT_MS` from the environment. Returns the parsed
- * number of milliseconds, or undefined when unset / invalid. Invalid values
- * fall back to the default rather than crashing the MCP — the env knob is an
- * operator escape hatch, not a precondition.
- */
 export function parseSpawnTimeoutEnv(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -205,34 +151,10 @@ interface DecideAutoStartInput {
   configAutoStart: boolean;
   readLock: () => ServerLockMetadata | null;
   isAlive: (pid: number) => boolean;
-  /**
-   * Protocol version this MCP child speaks. Compared against `lock.protocolVersion`
-   * on the connect path; mismatch (or `undefined` lock value — pre-version-field
-   * lock format) returns `action: 'incompatible'`. Defaults to the server
-   * package's `PROTOCOL_VERSION` constant.
-   */
   expectedProtocolVersion?: number;
-  /**
-   * Path to the executable / script that launched this MCP child. Defaults to
-   * `process.argv[1]`. Used only on the `incompatible` branch to classify the
-   * launch shape and pick a tailored remedy in the diagnostic — see
-   * `classifyMcpLaunchPath`. Tests pass an explicit value to drive each branch.
-   */
   launchPath?: string;
 }
 
-/**
- * Pure decision function. Returns one of three verdicts:
- *
- *   - `connect` — we should reuse an existing server (either the live lock
- *     or an explicit `--port` override).
- *   - `spawn` — no live server and auto-start is allowed; detach-spawn one.
- *   - `disk-only` — no live server and auto-start is opted out; or `--port=0`.
- *
- * A live lock takes precedence over opt-out: if a user manually ran `ok start`
- * we connect regardless of `mcp.autoStart`. Opt-out only suppresses the spawn
- * path.
- */
 export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision {
   if (input.portOverride !== undefined) {
     const parsed = Number.parseInt(input.portOverride, 10);
@@ -251,11 +173,6 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
 
   const lock = input.readLock();
   if (lock && lock.port > 0 && input.isAlive(lock.pid)) {
-    // Protocol gate (specs/2026-04-24-cross-install-version-handshake §3 G6 +
-    // D14). Connect only when the lock owner speaks the same `protocolVersion`
-    // we do. Pre-version-field locks (`lock.protocolVersion === undefined`)
-    // count as a mismatch — we cannot safely assume contract compatibility
-    // with a binary that pre-dates the lock-version scheme.
     const expected = input.expectedProtocolVersion ?? SERVER_PROTOCOL_VERSION;
     const actual = lock.protocolVersion;
     if (actual === expected) {
@@ -286,7 +203,6 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
     };
   }
 
-  // Env wins over config (matches spec §9 code sample + FR-1.15).
   if (input.envAutoStart === '0') {
     return {
       action: 'disk-only',
@@ -301,10 +217,6 @@ export function decideAutoStart(input: DecideAutoStartInput): AutoStartDecision 
   }
 
   if (lock) {
-    // Lock exists but we decided to spawn — either port=0 (foreign process
-    // still booting) or dead pid (readLock already filtered out cross-host
-    // and stale locks, so this is a live-but-not-usable same-host lock).
-    // Surface the state for operator diagnosis.
     return {
       action: 'spawn',
       message: `existing lock is not usable (port=${lock.port}, pid=${lock.pid}) — spawning ok start`,
@@ -320,29 +232,16 @@ interface EnsureServerRunningOptions {
   portOverride: string | undefined;
   envAutoStart: string | undefined;
   configAutoStart: boolean;
-  /** Structured logger for observability. */
   logger?: McpLogger;
-  /** Injectable — defaults to `node:child_process#spawn`. */
   spawn?: typeof nativeSpawn;
-  /** Injectable — defaults to reading `server.lock` via the server package. */
   readLock?: () => ServerLockMetadata | null;
-  /** Injectable — defaults to the server-package `isProcessAlive`. */
   isAlive?: (pid: number) => boolean;
-  /** Injectable — async delay used in the poll loop. Defaults to `setTimeout`. */
   sleep?: (ms: number) => Promise<void>;
-  /** Injectable — defaults to reading `<lockDir>/last-spawn-error.log`. */
   readErrorLog?: (path: string) => string;
-  /** Injectable — defaults to `fs.openSync(path, 'w')` (truncate on each spawn). */
   openErrorLog?: (path: string) => number;
-  /** Injectable — defaults to `fs.closeSync`. */
   closeFd?: (fd: number) => void;
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /**
-   * Path used to classify the protocol-mismatch remedy. Defaults to
-   * `process.argv[1]`. See `classifyMcpLaunchPath` — only used on the
-   * `incompatible` branch.
-   */
   launchPath?: string;
 }
 
@@ -351,13 +250,6 @@ interface EnsureServerRunningResult {
   message: string;
 }
 
-/**
- * Decide + (optionally) detach-spawn the server sibling, then poll
- * `server.lock` for a usable port. Returns the ws URL on success or
- * `undefined` for disk-only. Throws when spawn was attempted but the poll
- * timed out; the error message includes any captured stderr so operators can
- * diagnose without a follow-up log read.
- */
 export async function ensureServerRunning(
   opts: EnsureServerRunningOptions,
 ): Promise<EnsureServerRunningResult> {
@@ -397,10 +289,6 @@ export async function ensureServerRunning(
     return { serverUrl: undefined, message: decision.message };
   }
   if (decision.action === 'incompatible') {
-    // MCP has no attended user and cannot prompt — exit 1 surfaces the error
-    // to the editor's MCP log where the user can reconcile (specs/2026-04-24-cross-install-version-handshake
-    // §3 G6 + D7). Throwing here causes ensureServerRunning's caller (the
-    // MCP main entry) to exit with code 1.
     opts.logger?.error('protocol mismatch — refusing to connect', undefined, {
       expectedProtocolVersion: decision.expectedProtocolVersion,
       actualProtocolVersion: decision.actualProtocolVersion,
@@ -413,7 +301,6 @@ export async function ensureServerRunning(
     throw new Error(decision.message);
   }
 
-  // action === 'spawn' — detach-spawn ok start as a sibling process.
   if (!existsSync(opts.lockDir)) {
     mkdirSync(opts.lockDir, { recursive: true });
   }
@@ -421,15 +308,6 @@ export async function ensureServerRunning(
   const stderrFd = openErrorLog(stderrPath);
   let child: ChildProcess | undefined;
 
-  // Async spawn errors (e.g. ENOENT) are reported via `error` events — which
-  // Node may emit before the next microtask. Attach the listener SYNCHRONOUSLY
-  // (before the finally-block and any await) so we never miss an error.
-  //
-  // Sync-throw path: some spawn failures (EACCES on the npx binary, PATH
-  // resolution throws on certain platforms) are surfaced as synchronous
-  // exceptions from `spawnFn()` itself. Catch those and convert into the same
-  // `asyncSpawnError` shape so the downstream reporting is uniform regardless
-  // of whether Node chose sync-throw or async-emit for this particular failure.
   let asyncSpawnError: string | undefined;
   const self = resolveSelfSpawn();
   opts.logger?.info('spawning server', {
@@ -443,11 +321,6 @@ export async function ensureServerRunning(
         detached: true,
         stdio: ['ignore', 'ignore', stderrFd],
         cwd: opts.contentDir,
-        // The spawn detaches (so process.ppid in the child becomes 1 once
-        // we exit). Threading the parent pid + kind through env lets the
-        // child's parent-death poll target THIS process specifically and
-        // lets the desktop's attach validation refuse to bind to an
-        // mcp-spawned server.
         env: {
           ...process.env,
           OK_LOCK_KIND: 'mcp-spawned',
@@ -465,7 +338,6 @@ export async function ensureServerRunning(
     try {
       closeFd(stderrFd);
     } catch {
-      // Best-effort — some mocks may not return a real fd.
     }
   }
 
@@ -493,13 +365,6 @@ export async function ensureServerRunning(
     }
   }
 
-  // Post-deadline: check one more time for an async spawn error that landed
-  // between the last poll tick and the deadline — otherwise an ENOENT that
-  // fires late surfaces as a generic "did not start in 5s" instead of the
-  // actual cause when available.
-  //
-  // Read stderr AFTER the asyncSpawnError check so a late error event +
-  // matching late-written stderr are both captured together.
   if (asyncSpawnError) {
     const stderr = readErrorLog(stderrPath);
     opts.logger?.error('spawn failed (post-deadline)', undefined, {
@@ -540,7 +405,6 @@ interface CreateProjectServerUrlResolverOptions {
   host: string;
   portOverride: string | undefined;
   envAutoStart: string | undefined;
-  /** Structured logger for observability. */
   logger?: McpLogger;
   timeoutMs?: number;
   pollIntervalMs?: number;
@@ -552,19 +416,10 @@ interface CreateProjectServerUrlResolverOptions {
   readErrorLog?: (path: string) => string;
   openErrorLog?: (path: string) => number;
   closeFd?: (fd: number) => void;
-  /**
-   * Passed to `ensureServerRunning` for launch-shape hints (spawn ENOENT, protocol mismatch).
-   * Defaults to `process.argv[1]` when omitted.
-   */
   launchPath?: string;
   ensureServerRunningFn?: EnsureServerRunningFn;
 }
 
-/**
- * Create a lazy ws-url resolver that discovers or auto-starts the Open
- * Knowledge project server for the cwd of the current tool call. The returned
- * function is safe to share across the entire MCP stdio lifetime.
- */
 export function createProjectServerUrlResolver(
   opts: CreateProjectServerUrlResolverOptions,
 ): (cwd?: string) => Promise<string | undefined> {

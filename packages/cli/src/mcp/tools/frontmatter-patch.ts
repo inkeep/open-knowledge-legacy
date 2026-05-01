@@ -1,21 +1,3 @@
-/**
- * `frontmatter_patch` MCP tool — PARKED.
- *
- * The `/api/frontmatter-patch` HTTP transport was removed when the property
- * panel migrated to direct CRDT writes via `bindFrontmatterDoc`. This file
- * is preserved to make the future re-enable diff small: the next change
- * should swap `httpPost` for a server-side CRDT path (open a
- * `DirectConnection` and apply per-key writes inside one
- * `dc.document.transact(fn, origin)` block, similar to how
- * `applyAgentMarkdownWrite` in `packages/server/src/agent-sessions.ts` runs
- * under the per-session `session.origin`) and re-add the `register(...)`
- * call in `index.ts`. A non-paired form-write origin will need to be
- * reintroduced if the new path requires a separate writer-ID — it was
- * removed alongside this tool.
- *
- * The registration in `index.ts` is commented out, so this tool is not
- * advertised over MCP today.
- */
 import { FRONTMATTER_TYPES, FrontmatterValueSchema } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
@@ -56,10 +38,6 @@ interface FrontmatterPatchDeps {
   identityRef?: { current: AgentIdentity };
 }
 
-// Compose against the canonical FrontmatterValueSchema in core so the MCP
-// tool stays aligned with server-side validation. Adding `null` here adds
-// the delete sentinel for JSON Merge Patch (RFC 7396) — a `null` value
-// deletes the key.
 const PatchValueSchema = z
   .union([FrontmatterValueSchema, z.null()])
   .describe('Property value (string|number|boolean|string[]) — `null` deletes the key');
@@ -74,10 +52,6 @@ export function register(server: ServerInstance, deps: FrontmatterPatchDeps): vo
         .record(z.string(), PatchValueSchema)
         .describe('JSON Merge Patch — `{key: value}` sets, `{key: null}` deletes'),
       types: z.record(z.string(), z.enum(FRONTMATTER_TYPES)).optional().describe(
-        // Currently shape-validated server-side but NOT persisted — the
-        // override is silently dropped on the next session. Don't waste
-        // tokens reasoning about whether to send this. Server-side
-        // persistence is tracked as a follow-up.
         'Currently ignored (shape-validated for forward-compat but not persisted). Type is inferred from value shape on read. Will become a real per-key widget-type override (text|number|boolean|date|list) once persistence lands.',
       ),
       summary: summaryArgSchema,

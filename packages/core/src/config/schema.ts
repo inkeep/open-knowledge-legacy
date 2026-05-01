@@ -18,12 +18,6 @@ export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
 export const ConfigSchema = z.looseObject({
-  // `content.dir` is PROJECT-scope — names the root of the project's
-  // knowledge graph. `content.include` / `content.exclude` were removed:
-  // path rules now live in `.okignore` files (gitignore syntax) at the
-  // project root and at any folder depth. The YAML loader rejects the
-  // removed keys with a source-located REMOVED_KEY error directing the
-  // user to `.okignore`.
   content: z
     .looseObject({
       dir: z
@@ -73,10 +67,6 @@ export const ConfigSchema = z.looseObject({
     .default({ host: 'localhost', openOnAgentEdit: false }),
   preview: z
     .looseObject({
-      // `scope: 'project'` (strict): per spec §9.5.4, `baseUrl` at user-global
-      // scope is the only ❌-marked placement (each project has its own deployed
-      // wiki URL). The Settings pane disables this field on the user tab; the
-      // loader rejects it with a source-located error if hand-set in user YAML.
       baseUrl: z
         .url()
         .register(fieldRegistry, { scope: 'project', agentSettable: false })
@@ -144,18 +134,6 @@ export const ConfigSchema = z.looseObject({
         search: { maxResults: 50 },
       },
     }),
-  // `appearance.theme` and `appearance.editorModeDefault` default to UNSET in
-  // config.yml (no `'system'` / `'wysiwyg'` default). The chrome FOUC scripts
-  // read localStorage as the cache; the first explicit Settings-pane write of
-  // `appearance.*` canonicalizes the value into config.yml.
-  //
-  // Both are USER-scope: theme is a personal preference, not a project-
-  // shared setting. A project `appearance.theme` would force every
-  // collaborator into the project owner's mode, which is a misuse
-  // pattern and not what users expect from the chrome toggle. The
-  // Settings pane hides these fields on the "This project" tab via
-  // `isFieldVisibleAtScope`; SchemaStore validation flags them in
-  // project YAML; chrome toggle always writes via `userBinding.patch()`.
   appearance: z
     .looseObject({
       theme: z
@@ -176,34 +154,10 @@ export const ConfigSchema = z.looseObject({
         .optional(),
     })
     .default({}),
-  // `autoSync.*` is internal onboarding state (NOT a user preference). The
-  // SettingsPane intentionally omits these paths from `SECTIONS`, so they
-  // never render — the modal in `EditorPane` is the only writer.
-  // Project scope: each project tracks its own onboarding resolution.
-  autoSync: z
-    .looseObject({
-      onboardingResolvedAt: z.iso
-        .datetime()
-        .register(fieldRegistry, {
-          scope: 'project',
-          agentSettable: false,
-          defaultScope: 'project',
-        })
-        .nullable()
-        .default(null),
-    })
-    .default({ onboardingResolvedAt: null }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-/**
- * Deep-partial input shape for patch operations against `ConfigSchema`.
- *
- * Used by `writeConfigPatch` / `ConfigBinding.patch` callers (MCP tools,
- * Settings pane, CLI) to describe partial updates. Null at any path means
- * "clear this field" (RFC 7396 spirit, TypeScript-only — no wire format).
- */
 export type ConfigPatch = DeepPartial<Config>;
 
 type DeepPartial<T> =

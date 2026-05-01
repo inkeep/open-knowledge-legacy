@@ -179,10 +179,6 @@ describe('classifyGitError', () => {
     });
 
     test('simple-git GitResponseError shape (CONFLICTS: file:reason)', () => {
-      // Mirrors the actual error simple-git throws from `git.merge()` when
-      // conflicts occur: `new GitResponseError(MergeSummaryDetail)` produces
-      // `message = "CONFLICTS: <file>:<reason>[, …]"` and `git` is the
-      // MergeSummaryDetail object whose toString() yields the same string.
       const mergeSummary = {
         conflicts: [{ file: 'test.md', reason: 'content' }],
         merges: [],
@@ -303,7 +299,6 @@ describe('classifyGitError', () => {
 
     test('rawStderr is optional but included when available', () => {
       const r = classifyGitError(mkErr('fatal', 'stderr content here'));
-      // rawStderr may or may not be populated depending on classification path
       if (r.rawStderr !== undefined) {
         expect(typeof r.rawStderr).toBe('string');
       }

@@ -17,7 +17,6 @@ function itemKey(item: WikiLinkSuggestionItem): string {
   return item.kind === 'anchor' ? `${item.docName}#${item.slug}` : item.docName;
 }
 
-/** Screen-reader announcement text for the currently-selected item. */
 function announcementText(item: WikiLinkSuggestionItem): string {
   if (item.kind === 'anchor') return `Heading H${item.level}: ${item.text}`;
   if (item.kind === 'create') return item.actionLabel;
@@ -42,7 +41,6 @@ export function WikiLinkSuggestionMenu({
       ? `${listboxId}-option-${selectedIndex}`
       : undefined;
 
-  // Scroll selected item into view
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -51,8 +49,6 @@ export function WikiLinkSuggestionMenu({
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
-  // Prevent any click on the popup (buttons or empty space) from stealing focus
-  // from the editor — without this, Backspace events go to the popup instead.
   const preventFocusSteal = (e: React.MouseEvent) => e.preventDefault();
 
   if (loading) {

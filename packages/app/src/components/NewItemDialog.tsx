@@ -26,10 +26,6 @@ interface NewItemDialogProps {
   onOpenChange: (open: boolean) => void;
   kind: 'file' | 'folder';
   initialDir: string;
-  /**
-   * Pre-fills the file name input. Only applies when `kind === 'file'`;
-   * ignored when `kind === 'folder'` (folder always defaults to `index.md`).
-   */
   suggestedName?: string;
   description?: ReactNode;
   onCreated?: (docName: string) => void;
@@ -50,17 +46,6 @@ export function ensureMdExtension(name: string): string {
   return `${name}.md`;
 }
 
-/**
- * Compose the final path to POST to /api/create-page.
- *
- * Precedence for the final extension:
- *  1. If `fileName` already carries a supported extension (.md or .mdx),
- *     it wins — Finder-like "typed-in extension always authoritative."
- *  2. Otherwise, the optional `fileExtension` picker state applies.
- *  3. If neither is set, defaults to `.md` (preserves pre-picker behavior).
- *
- * Returns the canonical path relative to the content directory (no leading slash).
- */
 export function composeNewItemPath(args: {
   kind: 'file' | 'folder';
   initialDir: string;
@@ -70,8 +55,6 @@ export function composeNewItemPath(args: {
 }): string {
   const trimmed = args.fileName.trim();
   const sniffed = detectExtension(trimmed);
-  // Typed-in extension wins over picker state. When neither is present,
-  // `fileExtension` (or its default `.md`) applies.
   const file = sniffed ? trimmed : `${trimmed}${args.fileExtension ?? '.md'}`;
   if (args.kind === 'folder') {
     const folder = (args.folderName ?? '').trim();
@@ -81,15 +64,7 @@ export function composeNewItemPath(args: {
   return args.initialDir ? `${args.initialDir}/${file}` : file;
 }
 
-/**
- * Pure predicate: does a keyboard event match the Cmd/Ctrl+Alt+N shortcut
- * and is it coming from a target that is NOT an input/textarea/contenteditable?
- * Used by the global NewItemShortcutHandler; exported for unit testing.
- */
 interface ShortcutEventLike {
-  // Use a duck-typed target shape so the predicate is trivially unit-testable
-  // without constructing real DOM events. Production callers pass
-  // KeyboardEvent which widens to this via a cast at the call site.
   target: { tagName?: string; isContentEditable?: boolean } | null;
   metaKey: boolean;
   ctrlKey: boolean;
@@ -145,8 +120,6 @@ export function NewItemDialog({
       setBusy(false);
       setFolderName('');
       const initial = kind === 'file' ? (suggestedName ?? 'untitled') : 'index';
-      // If the caller's suggestedName carries an extension, adopt it as the
-      // picker state and strip from the displayed name.
       const sniffed = detectExtension(initial);
       setFileExtension(sniffed ?? '.md');
       setFileName(sniffed ? stripExt(initial) : initial);
@@ -154,10 +127,6 @@ export function NewItemDialog({
   }, [open, kind, suggestedName]);
 
   function handleFileNameChange(next: string) {
-    // Finder-like: if the user typed a supported extension inside the name
-    // field, treat it as authoritative — adopt it into the picker state and
-    // strip from the visible name. This keeps the rendered input uncluttered
-    // while still honoring keyboard-power-user flows.
     const sniffed = detectExtension(next);
     if (sniffed) {
       setFileExtension(sniffed);

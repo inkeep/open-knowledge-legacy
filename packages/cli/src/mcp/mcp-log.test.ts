@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code detection
 const ANSI_RE = /\x1b\[[0-9;]*m/;
 
 describe('MCP log function', () => {
@@ -24,9 +23,7 @@ describe('MCP log function', () => {
     });
     const stdout = result.stdout.toString();
     const stderr = result.stderr.toString();
-    // stdout must be clean — MCP protocol requires exclusive stdout access
     expect(stdout).toBe('');
-    // stderr has the colored prefix and message
     expect(stderr).toContain('[mcp]');
     expect(stderr).toContain('test message');
     expect(stderr).toMatch(ANSI_RE);

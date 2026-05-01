@@ -1,4 +1,3 @@
-// Burst-grouping utility (FR-12, D20)
 export {
   type Burst,
   bucketIntoBursts,
@@ -6,15 +5,8 @@ export {
   type SessionTransaction,
 } from './burst-grouping.ts';
 
-// Markdown pipeline (new unified+remark)
 
-// Re-export VFileMessage for Observer B's error classification (instanceof check
-// instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
-// Headless config writers (US-003 — D5 reshape Part B / D38 reshaped / D63).
-// UI ConfigBinding (US-008 — D5 reshape Part A / FR-33 / D48 / D59).
-// Browser+node compatible — no Node deps; structural ConfigDocProvider type
-// keeps `@hocuspocus/provider` out of core's runtime deps.
 export {
   bindConfigDoc,
   type ConfigBinding,
@@ -47,8 +39,6 @@ export {
   getFieldMeta,
 } from './config/field-registry.ts';
 export type { Err, Ok, Result } from './config/result.ts';
-// Config (config-edit-paths spec — D44/D50/FR-31, US-001)
-// Schema, error envelope, and Result helper. Browser+node compatible.
 export {
   type Config,
   type ConfigPatch,
@@ -61,10 +51,6 @@ export {
 export { getLeafFieldMeta, resolveLeafSchema } from './config/schema-leaf.ts';
 export { CONFIG_SCHEMA_MAJOR, CONFIG_SCHEMA_MAJOR_PATH } from './config/schema-version.ts';
 export { type LocateOptions, locateIssue } from './config/source-locator.ts';
-// OTel helpers for config-edit spans (US-014 / FR-38 / D53). Browser+node
-// compatible — imports only `@opentelemetry/api`. Spans are inert no-ops
-// when no SDK is registered (server: OTEL_SDK_DISABLED gate; app:
-// VITE_OTEL_ENABLED gate).
 export {
   addConfigSpanEvent,
   type ConfigOutcome,
@@ -76,7 +62,6 @@ export {
   withConfigSpan,
   withConfigSpanSync,
 } from './config/telemetry.ts';
-// Constants
 export {
   ACTIVITY_TTL_MS,
   evictStaleEntries,
@@ -114,7 +99,6 @@ export {
   WIKI_EMBED_EXTENSIONS,
 } from './constants/upload.ts';
 
-// Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
 export { EscapeMark } from './extensions/escape-mark.ts';
@@ -143,22 +127,10 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
-// `WikiLinkEmbed` is transient: client-insert-only at drop time, never
-// emitted by server-side mdast→PM dispatch (US-013). Post round-trip
-// the node becomes PM `image` (image ext) or PM text+link mark (non-
-// image), NOT this PM node type. Still re-exported symmetrically with
-// the `WikiLink` peer so future consumers that need the node type or
-// attr shape directly (e.g. a non-default editor surface, a schema
-// introspection tool, a typed-component-nodes Phase 2 consumer) have a
-// public import path. Binding to the shape is an intentional contract
-// — the attrs (`target` / `alias` / `anchor` / `resolvedSrc`) are
-// schema-add-only per precedent #9, so the export commits to additive
-// evolution only.
 export {
   WikiLinkEmbed,
   type WikiLinkEmbedAttrs,
 } from './extensions/wiki-link-embed.ts';
-// Handoff — Open-in-Agent dropdown (specs/2026-04-21-open-in-agent-desktop/)
 export {
   buildClaudeAiWebUrl,
   buildClaudeUrl,
@@ -203,7 +175,6 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
-// Registry
 export {
   builtInComponents,
   type ComponentRegistry,
@@ -247,24 +218,8 @@ export {
 } from './schemas/cc1.ts';
 export { extensionOf } from './utils/extension.ts';
 
-// Desktop bridge types (`OkDesktopBridge`, `OkDesktopConfig`, etc.) are
-// defined locally per package: `packages/desktop/src/shared/bridge-contract.ts`
-// for the desktop preload, and a future `packages/app/src/lib/desktop-bridge-
-// types.ts` for the app renderer's optional `window.okDesktop` access. Keeping
-// the contract co-located instead of re-exporting from this barrel avoids
-// dragging the full markdown / CRDT-bridge surface into desktop's compilation
-// context (TypeScript follows barrel re-exports through workspace symlinks
-// and complains about transitive deps that desktop doesn't declare directly).
-// `packages/core/src/desktop-bridge.ts` is the canonical reference shape;
-// drift between the per-package copies is caught by a contract-equality test
-// added in US-010.
 
-// Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
-// and would contaminate core's browser-compatibility contract. Import via the
-// subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
-// (D22/FR20 — CLI read path and server write path are the only consumers.)
 
-// Bridge — observer/CRDT-bridge shared utilities (precedent #14)
 export {
   applyFastDiff,
   applyIncrementalDiff,
@@ -327,7 +282,6 @@ export {
   inferType,
   isIsoDateString,
 } from './frontmatter/schema.ts';
-// Frontmatter — per-key value schema + canonical YAML codec
 export {
   applyPatchToDocument,
   getDocumentKeys,
@@ -336,7 +290,6 @@ export {
   serializeFrontmatterMap,
   withFences,
 } from './frontmatter/yaml-codec.ts';
-// Types
 export type { Actor, PrincipalId, SessionId } from './types/actor.ts';
 export type {
   AgentFlashEntry,
@@ -355,7 +308,6 @@ export type {
   TimelineEntry,
 } from './types/timeline.ts';
 
-// Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export { createCodeFenceTracker } from './utils/code-fence-tracker.ts';

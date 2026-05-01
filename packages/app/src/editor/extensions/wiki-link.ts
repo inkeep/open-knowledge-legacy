@@ -1,23 +1,3 @@
-/**
- * App-specific WikiLink extension — V2 plain-DOM NodeView routed via the
- * shared InteractionLayer (FR4/FR6).
- *
- * Pre-V2: per-instance `ReactNodeViewRenderer(WikiLinkView)` mounted one
- * React subtree per `[[wiki-link]]` atom. V2: an imperative plain-DOM
- * NodeView mirrors the US-006 RawMdxFallback pattern — chip rendered as
- * pure DOM with `data-node-id` for InteractionLayer event delegation, and
- * a singleton `WikiLinkPropPanel` mounts at editor root on activation.
- *
- * WikiLink is an atom node (no inline content). Stable identity comes from
- * a per-NodeView monotonic counter (`wiki-link-${++counter}`) — there is no
- * mark-identity equivalent for atom nodes. This is symmetric to the
- * RawMdxFallback `nextRawMdxNodeId` pattern (US-006).
- *
- * The pre-V2 `+ [[ suggestion plugin (`configureWikiLinkSuggestion`) and the
- * Backspace/Delete keyboard shortcuts that trigger atom-deletion when the
- * wikiLink suggestion popover is closed remain unchanged — they're orthogonal
- * to the chip rendering.
- */
 import { WikiLink as BaseWikiLink, classifyWikiLinkTarget } from '@inkeep/open-knowledge-core';
 import { createElement } from 'react';
 import { getInteractionLayer } from '../interaction-layer-host';
@@ -26,20 +6,12 @@ import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { WikiLinkPropPanel } from './WikiLinkPropPanel';
 import { configureWikiLinkSuggestion, wikiLinkSuggestionKey } from './wiki-link-suggestion';
 
-// Module-level monotonic counter — drives the stable `data-node-id` attribute
-// used by InteractionLayer's event delegation. Mirrors the
-// `nextRawMdxNodeId` (US-006) pattern.
 let __wikiLinkNodeIdCounter = 0;
 
-/**
- * Allocate a fresh stable node id for a WikiLink NodeView instance.
- * Exported for monotonicity testing.
- */
 function nextWikiLinkNodeId(): string {
   return `wiki-link-${++__wikiLinkNodeIdCounter}`;
 }
 
-/** Reset the counter. Test-only. */
 function __resetWikiLinkNodeIdCounterForTests(): void {
   __wikiLinkNodeIdCounter = 0;
 }
@@ -48,12 +20,6 @@ interface BuildChipDomResult {
   dom: HTMLElement;
 }
 
-/**
- * Build the plain-DOM chip structure for a WikiLink NodeView.
- *
- * Exported for unit testing — the DOM layout (attributes, class list) can be
- * exercised without constructing a full TipTap Editor.
- */
 function buildWikiLinkChipDom(params: {
   nodeId: string;
   target: string;
@@ -84,10 +50,8 @@ function buildWikiLinkChipDom(params: {
     `Wiki link: ${params.target}${params.anchor ? `#${params.anchor}` : ''}`,
   );
   dom.classList.add('wiki-link-chip');
-  // touch-action: manipulation eliminates iOS 300ms tap delay.
   dom.style.touchAction = 'manipulation';
 
-  // Visible label — text content of the chip.
   const labelText = params.alias ?? `${params.target}${params.anchor ? `#${params.anchor}` : ''}`;
   const labelNode = docImpl.createTextNode(labelText);
   dom.appendChild(labelNode);
@@ -96,9 +60,6 @@ function buildWikiLinkChipDom(params: {
 }
 
 export const WikiLink = BaseWikiLink.extend({
-  // Higher priority ensures the suggestion plugin's handleKeyDown fires before
-  // TipTap's base keymap (Enter → split block, Backspace → joinBackward), so
-  // Enter completes a suggestion and Backspace/Delete can target adjacent atoms.
   priority: 200,
 
   addNodeView() {
@@ -109,16 +70,6 @@ export const WikiLink = BaseWikiLink.extend({
       const anchor = node.attrs.anchor != null ? String(node.attrs.anchor) : null;
       const { dom } = buildWikiLinkChipDom({ nodeId, target, alias, anchor });
 
-      // Reassigned on every `update(newNode)` call — PM's NodeView contract
-      // passes a fresh node object to `update`, but the factory-closure
-      // `node` argument is NOT rebound. `handlePrimary` reads
-      // `currentNode.attrs` so PropPanel edits flow through to the
-      // Cmd/Ctrl+click destination without a full NodeView recreate
-      // (review Pass-2 Major #6). Pre-fix, editing a wiki-link's target
-      // via the PropPanel Save button correctly updated the visible chip
-      // DOM (via the `update` hook below) but left the closure's `node`
-      // variable pointing at the ORIGINAL attrs — Cmd+click then opened
-      // the pre-edit target.
       let currentNode = node;
 
       const safeGetPos = (): number | undefined => {
@@ -139,10 +90,6 @@ export const WikiLink = BaseWikiLink.extend({
               onClose: ctx.deactivate,
             }),
         },
-        // review Major #4: Cmd/Ctrl/middle-click opens the wiki target in
-        // a new tab. Bare click falls through to the PropPanel (return
-        // false). Reads `currentNode.attrs` (reassigned by the `update`
-        // hook below on PropPanel edits) — review Pass-2 Major #6.
         handlePrimary: ({ newTab }) => {
           if (!newTab) return false;
           const live = currentNode.attrs;
@@ -158,7 +105,6 @@ export const WikiLink = BaseWikiLink.extend({
             });
             return true;
           }
-          // external — refuse unsafe schemes (review Major #13).
           if (!isSafeNavigationUrl(classified.url)) return false;
           openHashHrefInNewTab(classified.url);
           return true;
@@ -169,13 +115,7 @@ export const WikiLink = BaseWikiLink.extend({
         dom,
         ignoreMutation: () => true,
         update: (updatedNode) => {
-          // Atom node — only attrs change. Mirror updates back into the chip
-          // DOM so external attr changes (e.g. PropPanel's setNodeMarkup)
-          // refresh the visible label without re-creating the NodeView.
           if (updatedNode.type.name !== 'wikiLink') return false;
-          // Reassign currentNode BEFORE the DOM writes so any synchronous
-          // observer that reads it (unlikely in current code, but cheap
-          // safety) sees consistent state (review Pass-2 Major #6).
           currentNode = updatedNode;
           const newTarget = String(updatedNode.attrs.target ?? '');
           const newAlias = updatedNode.attrs.alias != null ? String(updatedNode.attrs.alias) : null;
@@ -202,7 +142,6 @@ export const WikiLink = BaseWikiLink.extend({
   addKeyboardShortcuts() {
     return {
       Backspace: () => {
-        // WARN: Reads @tiptap/suggestion internal state — verify shape on upgrades.
         const pluginState = wikiLinkSuggestionKey.getState(this.editor.state) as
           | { active: boolean }
           | undefined;

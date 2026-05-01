@@ -1,16 +1,3 @@
-/**
- * Unit tests for `OpenInAgentMenuItem` — exercises the pure helpers that drive
- * per-row visual state, web-fallback URL construction, and toast copy.
- *
- * Repo convention (no `@testing-library/react` / `happy-dom`): full UI
- * interaction (hover, click) lands under Playwright in US-013. Here we cover:
- *   - `computeRowState` per AC4-AC8 (enabled / disabled / pre-probe /
- *     web-host Cursor override / web-fallback presence on Claude rows only)
- *   - `computeWebFallbackUrl` round-trips a prompt through
- *     `buildClaudeAiWebUrl`
- *   - `successToastForWebFallback` matches the agreed copy
- *   - Module surface — both components export functions
- */
 
 import { describe, expect, test } from 'bun:test';
 import type { InstallState, TargetData } from '@inkeep/open-knowledge-core';
@@ -36,8 +23,6 @@ describe('OpenInAgentMenuItem module surface', () => {
 
   test('OK_DESKTOP_INSTALL_URL points at the releases page, not the source README', async () => {
     const { OK_DESKTOP_INSTALL_URL } = await import('./OpenInAgentMenuItem');
-    // The URL must land on installers directly. A repo-root URL drops users on
-    // the README which is actively misleading as an "install" destination.
     expect(OK_DESKTOP_INSTALL_URL).toContain('/releases');
   });
 });
@@ -45,7 +30,6 @@ describe('OpenInAgentMenuItem module surface', () => {
 describe('computeRowHint — short inline status hint on the trigger row', () => {
   test('Cursor on web-host → "Desktop only" (E4 DIRECTED takes precedence)', async () => {
     const { computeRowHint } = await import('./OpenInAgentMenuItem');
-    // Even when the server reports cursor:true the web-host row is disabled.
     const hint = computeRowHint({
       target: targetById('cursor'),
       installState: { installed: true, lastChecked: 1 },
@@ -147,8 +131,6 @@ describe('computeRowState — branch 2: pre-probe (AC8)', () => {
       installState: { installed: null },
       isElectronHost,
     });
-    // Web-host Cursor is forced to its own tooltip via branch 1; explicitly
-    // verify the row IS disabled but tooltip handling differs by branch.
     expect(state.enabled).toBe(false);
     if (id === 'cursor' && !isElectronHost) {
       expect(state.tooltip).not.toBeNull();
@@ -301,12 +283,9 @@ describe('install-state cardinality used by the dropdown', () => {
       for (const isElectronHost of [true, false]) {
         for (const installState of installStates) {
           const state = computeRowState({ target, installState, isElectronHost });
-          // Either enabled (no tooltip) or disabled (tooltip optional).
           if (state.enabled) {
             expect(state.tooltip).toBeNull();
           } else {
-            // pre-probe row has no tooltip; not-installed has one;
-            // web-host Cursor always has one regardless of probe state.
             expect(state.tooltip === null || state.tooltip !== undefined).toBe(true);
           }
         }

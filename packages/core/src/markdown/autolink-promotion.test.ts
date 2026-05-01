@@ -1,9 +1,3 @@
-/**
- * Tests for autolink semantic promotion transformer.
- *
- * Validates that `<scheme:uri>` patterns in text nodes are promoted to
- * semantic `link` mdast nodes with `data.sourceStyle: 'autolink'`.
- */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
@@ -70,11 +64,9 @@ describe('autolink promotion: basic shapes', () => {
 describe('autolink promotion: paragraph context', () => {
   test('autolink in middle of text produces 3 PM children', () => {
     const json = mdManager.parse('See <https://example.com> here.\n');
-    // Should have: text "See ", link, text " here."
     const para = json.content?.find((n: JSONContent) => n.type === 'paragraph');
     expect(para).toBeDefined();
     const children = para?.content ?? [];
-    // At least 3 children (text + linked-text + text)
     expect(children.length).toBeGreaterThanOrEqual(3);
     const linkedChild = children.find((c: JSONContent) => c.marks?.some((m) => m.type === 'link'));
     expect(linkedChild).toBeDefined();
@@ -122,7 +114,6 @@ describe('autolink promotion: round-trip byte-identity', () => {
 
 describe('autolink promotion: negative cases (should NOT promote)', () => {
   test('<Callout> is JSX, not autolink (no scheme colon)', () => {
-    // <Callout> has no ":" so the autolink regex doesn't match
     const json = mdManager.parse('<Callout>body</Callout>\n');
     const links = findLinks(json);
     const autolinkLinks = links.filter((l) => l.attrs.linkStyle === 'autolink');
@@ -137,7 +128,6 @@ describe('autolink promotion: negative cases (should NOT promote)', () => {
   });
 
   test('<foo> without colon is not promoted', () => {
-    // No scheme:uri pattern — no promotion
     const input = '<foo>\n';
     const json = mdManager.parse(input);
     const links = findLinks(json);

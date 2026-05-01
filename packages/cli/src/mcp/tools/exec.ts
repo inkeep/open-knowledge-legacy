@@ -1,23 +1,3 @@
-/**
- * `exec` MCP tool — the enriched bash surface.
- *
- * Orchestrates:
- *   1. parseCommand (shell-quote + allowlist) — primary security boundary
- *   2. snapshotMtimes (pre) — defense-in-depth baseline
- *   3. execBash via just-bash + ReadWriteFs (sandbox)
- *   4. snapshotMtimes (post) + diff — abort on any mutation (FR21)
- *   5. extractReferencedPaths
- *   6. enrichPath per path (slim shape for multi-path; rich for single-cat)
- *   7. Format: raw stdout + markdown `### Referenced files` block +
- *      structuredContent `{ enrichedPaths, error? }`
- *
- * Soft cap: 500 lines / 50 KB with truncation marker (per D9).
- * Hard cap: 16 MB → `output_overflow` error (StdoutOverflowError).
- * NG8: binary content (non-text/markdown files in `cat` argv) triggers
- * a warning banner.
- *
- * Spec: SPEC.md FR1 + FR4 + FR5 + FR6 + FR8 + FR14 + FR21 + D10 + D21.
- */
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -49,12 +29,9 @@ import {
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { resolveProjectServerContext, textPlusStructured } from './shared.ts';
 
-/** Soft output cap: lines. */
 const SOFT_CAP_LINES = 500;
-/** Soft output cap: rendered bytes. */
 const SOFT_CAP_BYTES = 50 * 1024;
 
-/** Non-text extensions that trigger the NG8 binary-content warning. */
 const BINARY_EXT_RE = /\.(png|jpe?g|gif|webp|svg|pdf|zip|tar|gz|tgz|mp4|mov|mp3|wav|ico|bmp)$/i;
 
 export const DESCRIPTION = [
@@ -76,22 +53,8 @@ export const DESCRIPTION = [
 ].join('\n');
 
 interface ExecDeps {
-  /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
-  /**
-   * Hocuspocus URL. Accepts a raw string (tests) or a lazy resolver (runtime,
-   * see `packages/cli/src/mcp/server.ts`) so discovery can happen after the
-   * MCP client advertises its roots rather than being frozen at startup.
-   */
   serverUrl: ServerUrlOrResolver;
-  /**
-   * Full resolved config. Threaded through `enrichPath` / `enrichDirectory`
-   * for two independent purposes:
-   *   - `config.folders` → folder-frontmatter rules (main's US-005/QA-002).
-   *   - `config` is passed to the previewUrl resolver (US-012) to dereference
-   *     `ui.lock.port` for per-row `previewUrl` and the top-level `ui` block.
-   * Required — every registration site in `tools/index.ts` passes config.
-   */
   config: ConfigOrResolver;
 }
 
@@ -102,29 +65,10 @@ type ExecEnrichedEntry = EnrichedEntry & {
 
 export interface ExecStructuredResult {
   enrichedPaths: ExecEnrichedEntry[];
-  /**
-   * Top-level UI info block (FR-2.6). `{baseUrl: null, port: null}` when the
-   * UI lock is absent. Omitted only when config is not supplied.
-   */
   ui?: UiInfo;
-  /** Resolved project directory for this call — useful for verifying routing. */
   cwd?: string;
-  /**
-   * Raw stdout (after soft-cap truncation). Duplicated from the `text` content
-   * stream into `structuredContent` because some MCP clients (notably Claude
-   * Desktop) hide or drop `content[].text` when `structuredContent` is present,
-   * leaving the agent with only enrichedPaths + no actual output. Duplication
-   * costs ~50KB per response (soft-capped) and unlocks every client.
-   */
   stdout?: string;
-  /**
-   * Tool-level warnings — head/tail truncation, binary-file detection, stderr.
-   * Duplicated here for the same reason as `stdout`: the text-content banner
-   * path is invisible on Desktop, so safety signals must live in structured
-   * content too or agents miss them.
-   */
   warnings?: string[];
-  /** True when stdout was truncated by the soft cap (500 lines / 50KB). */
   stdoutTruncated?: boolean;
   error?: { category: ErrorCategory; message: string };
 }
@@ -137,13 +81,11 @@ interface CapResult {
 
 function applySoftCap(stdout: string): CapResult {
   const lines = stdout.split('\n');
-  // Trailing empty line from final newline: don't count it as "content".
   const contentLineCount = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
   if (contentLineCount <= SOFT_CAP_LINES && stdout.length <= SOFT_CAP_BYTES) {
     return { text: stdout, truncated: false, omittedLines: 0 };
   }
   const cutoff = Math.min(contentLineCount, SOFT_CAP_LINES);
-  // Build up kept text by bytes too
   let keptBytes = 0;
   let keptLines = 0;
   for (let i = 0; i < cutoff; i++) {
@@ -162,7 +104,6 @@ function applySoftCap(stdout: string): CapResult {
 }
 
 function detectBinaryArgs(stages: Stage[]): string[] {
-  // Only cat args are dereferenced as content; ls/grep/find list paths.
   const hits: string[] = [];
   for (const s of stages) {
     if (s.command !== 'cat') continue;
@@ -174,54 +115,32 @@ function detectBinaryArgs(stages: Stage[]): string[] {
   return hits;
 }
 
-/**
- * Best-effort parse of a `head`/`tail` `-N` line-count limit. Recognized forms:
- *   `head -30` / `head -n 30` / `head -n30` / `head --lines=30`
- * Falls back to head/tail's POSIX default of 10 when no explicit flag is found.
- */
 function extractHeadTailLimit(args: string[]): number {
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
-    // `--lines=N`
     const longEq = arg.match(/^--lines=(\d+)$/);
     if (longEq) return Number(longEq[1]);
-    // `--lines N`
     if (arg === '--lines' && i + 1 < args.length) {
       const n = Number(args[i + 1]);
       if (Number.isFinite(n)) return n;
     }
-    // `-n N`
     if (arg === '-n' && i + 1 < args.length) {
       const n = Number(args[i + 1]);
       if (Number.isFinite(n)) return n;
     }
-    // `-n30` (joined short form)
     const nJoined = arg.match(/^-n(\d+)$/);
     if (nJoined) return Number(nJoined[1]);
-    // `-30` (classic short form)
     const shortN = arg.match(/^-(\d+)$/);
     if (shortN) return Number(shortN[1]);
   }
   return 10;
 }
 
-/**
- * When `head` or `tail` is the final pipeline stage AND the output hit its
- * line cap, the upstream stages may have had more matches that never made it
- * into stdout. Surface this as a banner so agents don't mistake a truncated
- * result for an exhaustive one. See the "Scope searches" section of the MCP
- * handshake instructions for the recommended patterns (`grep -rl` for
- * existence, unbounded `grep -rn` for enumeration).
- */
 function detectHeadTailTruncation(stages: Stage[], stdout: string): { banner: string } | null {
   if (stages.length < 2) return null; // need at least one upstream stage
   const last = stages[stages.length - 1];
   if (last.command !== 'head' && last.command !== 'tail') return null;
   const limit = extractHeadTailLimit(last.args);
-  // Mirror applySoftCap's line counting: count all lines and only ignore the
-  // trailing empty line from a final newline. Filtering ALL empty lines (the
-  // previous impl) under-counted legitimate blank lines in grep output and
-  // made the warning miss real truncations.
   const rawLines = stdout.split('\n');
   const contentLineCount =
     rawLines[rawLines.length - 1] === '' ? rawLines.length - 1 : rawLines.length;
@@ -251,9 +170,6 @@ function isDirectoryMeta(e: EnrichedEntry): e is DirectoryMeta {
 }
 
 function formatDirectoryEntry(d: DirectoryMeta): string {
-  // When a `folders:` rule supplied a title, lead with it like file entries do;
-  // otherwise fall back to the path label. Either way show the path in parens
-  // so agents can always resolve the on-disk location.
   const leader = d.title ? `**${d.title}** (${d.path}/)` : `**${d.path}/** (directory)`;
   const parts: string[] = [leader];
   if (d.description) parts.push(d.description);
@@ -301,25 +217,6 @@ function formatFileEntry(m: EnrichedMeta): string {
   return `- ${parts.join(' — ')}`;
 }
 
-/**
- * Prepend a self-identifying header to stdout so the agent can see the
- * subject of the command (dir for `ls`, single file for `cat`/`head`/`tail`)
- * directly in the raw output — not only in the enriched `Referenced files`
- * block. Mirrors GNU conventions: `ls -R` uses `<dir>/:` headers, and
- * `head`/`tail` use `==> <path> <==`.
- *
- * Walks the stage list backwards like `extractReferencedPaths` so the last
- * subject-identifying stage wins. `head`/`tail` are skipped when used as
- * pipe trimmers (no file arg) so upstream `cat` / `ls` headers survive.
- *
- * Gated on the path actually being enriched (present in `dirByPath` /
- * `fileByPath`) — avoids emitting misleading headers for invalid args.
- *
- * Multi-file `cat a b` emits no header: we cannot interleave boundaries
- * into concatenated content (would require re-executing per file), and a
- * block of headers at the top implies boundaries that don't exist. The
- * `enrichedPaths` entries still list every file read.
- */
 function buildStdoutProvenance(
   stages: Stage[],
   dirByPath: Map<string, DirectoryMeta>,
@@ -352,8 +249,6 @@ function buildStdoutProvenance(
     return `${n}/:\n`;
   }
 
-  // cat / head / tail: emit `==> <path> <==` only for single-file reads.
-  // Multi-file → no header (see JSDoc above — can't interleave boundaries).
   const wikiFiles = pathArgs.filter((p) => /\.(md|mdx)$/.test(p) && fileByPath.has(p));
   if (wikiFiles.length !== 1) return '';
   return `==> ${wikiFiles[0]} <==\n`;
@@ -368,7 +263,6 @@ function formatEnrichedBlock(enriched: EnrichedEntry[]): string {
   return lines.join('\n');
 }
 
-/** Classify candidate paths into files vs directories via stat. */
 async function classifyPaths(
   cwd: string,
   paths: string[],
@@ -385,8 +279,6 @@ async function classifyPaths(
           files.push(p);
         }
       } catch {
-        // Path doesn't exist (e.g., grep-matched path from stdin, or parse artifact).
-        // Fall back to extension heuristic: .md/.mdx → file, else skip.
         if (/\.(md|mdx)$/i.test(p)) files.push(p);
       }
     }),
@@ -402,12 +294,6 @@ function errorCategoryResult(category: ErrorCategory, message: string) {
   return textPlusStructured(message, structured, true);
 }
 
-/**
- * Attach `previewUrl` + optional `previewUrlSource` to each enriched entry.
- * Files use `docNameFromPath` (strip `.md`/`.mdx`); directories pass through
- * their path unchanged so a docName-addressable directory page resolves. When
- * `resolve` returns null the field is `null` — never missing.
- */
 function withPreviewUrls(
   entries: EnrichedEntry[],
   resolve: (docName: string) => { url: string; source: PreviewUrlSource } | null,
@@ -437,24 +323,17 @@ export async function buildExecResult(
   if (!context.ok) {
     return errorCategoryResult('shell_construct_blocked', `exec failed: ${context.error}`);
   }
-  // 0. Resolve effective cwd (explicit arg → single client root → error).
   const { cwd, config, url: resolvedServerUrl } = context;
 
-  // 1. Parse + validate
   const parsed = parseCommand(args.command);
   if ('error' in parsed) {
     return errorCategoryResult(parsed.error.category, parsed.error.message);
   }
-  // Auto-inject `WIKI_EXCLUDE_DIRS` filters into recursive grep/find stages so
-  // agents don't wait 20s scanning `node_modules/` etc. Safe: user-provided
-  // excludes disable injection for the affected stage.
   const stages = augmentStagesWithExcludes(parsed.stages);
   const effectiveCommand = serializeStages(stages);
 
-  // 2. Pre-exec mtime snapshot (FR21 baseline)
   const pre = await snapshotMtimes(cwd);
 
-  // 3. Execute via just-bash
   const bash = createBashInstance(cwd);
   let stdout = '';
   let stderr = '';
@@ -475,7 +354,6 @@ export async function buildExecResult(
     );
   }
 
-  // 4. Post-exec mtime check (FR21 backstop)
   const post = await snapshotMtimes(cwd);
   const mtimeDiff = diffMtimes(pre.snapshot, post.snapshot);
   if (mtimeDiff.changed.length > 0) {
@@ -485,13 +363,10 @@ export async function buildExecResult(
     );
   }
 
-  // 5. Apply soft cap to stdout
   const capped = applySoftCap(stdout);
 
-  // 6. Extract referenced wiki paths + enrich
   const paths = extractReferencedPaths(stdout, stages);
   const { files, dirs } = await classifyPaths(cwd, paths);
-  // Single-path cat enrichment gets rich fields; all others get slim.
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
   const folderRules = config.folders;
   const fileEnriched: EnrichedMeta[] = await Promise.all(
@@ -532,9 +407,6 @@ export async function buildExecResult(
       ),
     ),
   );
-  // Backfill backlinkCount on slim entries via one batched server call so
-  // multi-path listings (ls/grep/find/multi-cat) get connection-density
-  // without N-amplifying /api/backlinks. Single-path rich cat already has it.
   if (!isSinglePathCat && resolvedServerUrl && fileEnriched.length > 0) {
     const docNames = fileEnriched.map((f) => pathToDocName(f.path));
     const counts = await fetchBacklinkCountsBatch(resolvedServerUrl, docNames).catch(() => null);
@@ -545,7 +417,6 @@ export async function buildExecResult(
       }
     }
   }
-  // Preserve stdout order: walk `paths` and pick up the matching entry.
   const fileByPath = new Map(fileEnriched.map((e) => [e.path, e]));
   const dirByPath = new Map(dirEnriched.map((e) => [e.path, e]));
   const enriched: EnrichedEntry[] = [];
@@ -559,7 +430,6 @@ export async function buildExecResult(
     if (d) enriched.push(d);
   }
 
-  // 7. Format output
   const binaryHits = detectBinaryArgs(stages);
   const banners: string[] = [];
   if (binaryHits.length > 0) {
@@ -581,7 +451,6 @@ export async function buildExecResult(
   const enrichmentBlock = formatEnrichedBlock(enriched);
   const content = `${bannerText}${stdoutText}${enrichmentBlock}`;
 
-  // Attach per-row previewUrl (FR-2.2) + top-level `ui` block (FR-2.6).
   const { resolve, ui } = await buildListResolver({
     config,
     resolveCwd: async () => cwd,
@@ -589,10 +458,6 @@ export async function buildExecResult(
   const enrichedWithPreview: ExecEnrichedEntry[] = withPreviewUrls(enriched, resolve);
   const uiBlock: UiInfo | undefined = ui;
 
-  // Duplicate stdout + banners into structuredContent. Claude Desktop and some
-  // other MCP clients hide the text content stream when structuredContent is
-  // present; without this duplication, Desktop agents see only enrichedPaths
-  // and miss both the actual output AND our safety warnings.
   const structured: ExecStructuredResult = {
     enrichedPaths: enrichedWithPreview,
     stdout: stdoutText,

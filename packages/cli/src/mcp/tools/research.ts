@@ -1,12 +1,3 @@
-/**
- * `research` MCP workflow tool — analyze a topic by gathering external sources,
- * reading them alongside existing content, and writing provisional findings
- * to the project's content directory.
- *
- * Principle: provisional, not canonical. Research articles capture findings,
- * trade-offs, and open questions at a point in time. Promoted to canonical
- * articles via the `consolidate` tool only when decisions solidify.
- */
 import { z } from 'zod';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
@@ -395,10 +386,6 @@ interface ResearchDeps {
 }
 
 export function register(server: ServerInstance, deps: ResearchDeps): void {
-  // previewUrl is null per FR-2.1: research is a workflow primer keyed on a
-  // `topic` — the target research doc's path is chosen by the agent during the
-  // prompt's Step 4. There is no single canonical document to preview at call
-  // time. Uniform with ingest / consolidate / save_version.
   server.tool(
     'research',
     DESCRIPTION,

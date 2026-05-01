@@ -5,10 +5,6 @@ export interface GhDetectResult {
   token?: string;
 }
 
-/**
- * Detect whether `gh` CLI is on PATH and currently authenticated.
- * Returns the token from `gh auth token` if successful.
- */
 export function detectGh(): GhDetectResult {
   try {
     const token = execFileSync('gh', ['auth', 'token'], {

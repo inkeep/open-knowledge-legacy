@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document / delete_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
+description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
   version: "0.3.0"
@@ -59,8 +59,6 @@ If the server isn't running, you'll see a `"Hocuspocus server is not running"` e
 ## Writing
 
 Call `write_document` / `edit_document` as soon as you have content. Native `Edit` / `sed` / direct `Write` on in-scope markdown is forbidden — it bypasses the CRDT and loses agent attribution in the shadow repo.
-
-To delete a doc, call `delete_document` — never `rm` / `unlink` / native `Bash` removal on in-scope markdown. The MCP path closes open agent sessions and unloads the doc from Hocuspocus before unlinking; native `rm` desynchronizes those. Deletion is irreversible from this tool — call `save_version` first if you may need to roll back, and `get_backlinks` first if you want to fix the referrers that will become redlinks.
 
 ## Grounding — every factual claim needs a source (MUST)
 
@@ -213,7 +211,6 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Find all SPEC.md files                          | `Glob: **/SPEC.md`                                                                 | `exec("find specs -name SPEC.md")`                                                |
 | Search a phrase across markdown                 | `Grep: "pattern" *.md`                                                             | `search({ query: "pattern" })`                                                    |
 | Read an individual doc                          | `Read: specs/foo/SPEC.md`                                                          | `exec("cat specs/foo/SPEC.md")` or `read_document(...)`                           |
-| Delete a markdown doc                           | `Bash: rm` / `unlink` / native deletion on in-scope `.md`                          | `delete_document` — `save_version` first if rollback may be needed                |
 | Explore a markdown-heavy dir                    | `Agent(Explore): "..."`                                                            | Do `exec`-based exploration yourself                                              |
 | Wait for the server to tell you to open preview | Skip the session-start preview open and wait for the `attach-preview-once` hint    | Open the preview browser at session start; the hint is a fallback when you didn't |
 | Ignore the attach hint                          | Skip the `warning: { action: "attach-preview-once" }` hint in write-tool responses | Open the `previewUrl` when the hint fires; otherwise do nothing                   |

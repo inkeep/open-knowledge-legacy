@@ -143,7 +143,6 @@ describe('set_config — happy paths', () => {
     expect(success.scope).toBe('user');
     expect(success.applied).toEqual(['mcp.tools.search.maxResults']);
 
-    // user-global file should exist
     const userYaml = readUserYaml(project.home);
     expect(userYaml).toContain('maxResults: 100');
   });
@@ -180,8 +179,6 @@ describe('set_config — happy paths', () => {
 
   test('routes to project when path is already set in project YAML (scope-inference ladder)', async () => {
     const project = newProjectWithHome();
-    // Pre-seed mcp.tools.search.maxResults in project YAML so the inspect
-    // ladder sees `project: true` even though the field's defaultScope=user.
     writeFileSync(
       join(project.cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 75\n',
@@ -224,9 +221,6 @@ describe('set_config — error paths', () => {
   });
 
   test('rejects MIXED_SCOPE when leaves resolve to different scopes', async () => {
-    // Pre-seed mcp.tools.search.maxResults in user YAML and folders[] in
-    // project YAML so the inspect ladder reports
-    // `mcp.tools.search.maxResults` → user, `folders` → project.
     const project = newProjectWithHome();
     writeFileSync(
       join(project.home, '.ok', 'config.yml'),

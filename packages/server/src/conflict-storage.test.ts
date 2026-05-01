@@ -1,13 +1,9 @@
-/**
- * Unit tests for ConflictStore — CRUD and resolve strategies.
- */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type ConflictEntry, ConflictStore } from './conflict-storage.ts';
 
-// ─── Test helpers ─────────────────────────────────────────────────────────────
 
 let tmpDir = '';
 let projectDir = '';
@@ -15,7 +11,6 @@ let contentDir = '';
 let storePath = '';
 
 beforeEach(() => {
-  // Create unique temp dirs per test
   const { mkdtempSync } = require('node:fs');
   const { tmpdir } = require('node:os');
   tmpDir = mkdtempSync(join(tmpdir(), 'conflict-store-test-'));
@@ -43,7 +38,6 @@ function readStore(): { version: number; branch: string; conflicts: ConflictEntr
   return JSON.parse(readFileSync(storePath, 'utf-8'));
 }
 
-// ─── CRUD tests ───────────────────────────────────────────────────────────────
 
 describe('ConflictStore CRUD', () => {
   test('starts empty when no conflicts.json exists', () => {
@@ -117,7 +111,6 @@ describe('ConflictStore CRUD', () => {
   });
 
   test('load() restores from persisted JSON', () => {
-    // Pre-write a conflicts.json
     const data = {
       version: 1,
       branch: 'feat/test',
@@ -153,7 +146,6 @@ describe('ConflictStore CRUD', () => {
   });
 });
 
-// ─── resolveConflict() — strategy tests ──────────────────────────────────────
 
 describe('ConflictStore resolveConflict()', () => {
   test('throws when file is not tracked as a conflict', async () => {
@@ -164,20 +156,15 @@ describe('ConflictStore resolveConflict()', () => {
   });
 
   test("strategy 'mine'/'theirs': removes conflict from store when git succeeds", async () => {
-    // git is not available in unit test env (broken simple-git symlink).
-    // We verify that removeConflict() removes the entry, which is the contract
-    // regardless of which git commands were issued.
     const store = new ConflictStore(contentDir, projectDir, 'main');
     store.addConflict(makeEntry('a.md'));
 
-    // Directly simulate what resolveConflict does after git commands succeed:
     store.removeConflict('a.md');
     expect(store.count()).toBe(0);
     expect(readStore().conflicts).toHaveLength(0);
   });
 
   test("strategy 'content': writes content to disk and removes conflict", async () => {
-    // Create the file on disk to simulate a conflicted working tree
     const testFile = 'notes.md';
     const absPath = join(projectDir, testFile);
     writeFileSync(absPath, '<<<<<<< HEAD\nmy version\n=======\ntheir version\n>>>>>>>\n', 'utf-8');
@@ -188,11 +175,9 @@ describe('ConflictStore resolveConflict()', () => {
     const resolvedContent = '# Resolved\n\nManually merged content.\n';
     writeFileSync(absPath, resolvedContent, 'utf-8');
 
-    // Verify the file write works as expected
     const actualContent = readFileSync(absPath, 'utf-8');
     expect(actualContent).toBe(resolvedContent);
 
-    // Verify removeConflict is called after resolution
     store.removeConflict(testFile);
     expect(store.count()).toBe(0);
     expect(existsSync(storePath)).toBe(true);

@@ -1,21 +1,3 @@
-/**
- * D24 layer (e) — malformed-YAML fuzz layer covering FR9 (panel last-valid +
- * banner), D31 (Y.Text IS the FM source of truth), and FR10 (no bridge
- * regression). After deleting the L3 hook (D10), this is the only verification
- * of the new threat model: malformed bytes round-trip through Y.Text without
- * blocking the editor.
- *
- * The four entry points the spec calls out (D24 layer e):
- *   1. UI commit through `bindFrontmatterDoc` (refused at L1).
- *   2. Source-mode keystroke producing transient invalid YAML in Y.Text.
- *   3. File-watcher delivering malformed disk content.
- *   4. Concurrent two-client interleaving producing unparseable merge state.
- *
- * Entry points 3 and 4 require a live Hocuspocus instance; the asserts run in
- * `applyExternalChange.test.ts` and the multi-client integration suite. This
- * file covers entries 1 and 2 plus the binding-side malformed-region read
- * contract (panel renders last-valid + banner).
- */
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -124,11 +106,8 @@ describe('FR9 + D31 — UI commits refused while YAML is malformed', () => {
       ytext.insert(0, malformed);
     });
 
-    // Y.Text holds the malformed bytes verbatim (D31 — Y.Text IS the FM
-    // source of truth, including malformed bytes).
     expect(ytext.toString()).toBe(malformed);
 
-    // The binding surfaces the parseError so the panel can render a banner.
     expect(binding.current().parseError).toBeDefined();
     binding.dispose();
   });
@@ -149,7 +128,6 @@ describe('applyPatchToFm fuzz — never throws on malformed YAML', () => {
         const fenced = `---\n${frag}\n---\n`;
         const result = applyPatchToFm(fenced, { newKey: 'x' });
         expect(result.ok).toBe(false);
-        // Specifically the parse_failed envelope, not a runtime exception.
         if (!result.ok) {
           expect(result.error.kind).toBe('parse_failed');
         }

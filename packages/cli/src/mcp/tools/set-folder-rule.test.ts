@@ -95,7 +95,6 @@ describe('set_folder_rule tool', () => {
     });
     const yaml = readConfigFile(cwd);
     expect(yaml).toContain('Specs (updated)');
-    // reports rule must still be there
     expect(yaml).toContain('match: reports/**');
   });
 
@@ -124,7 +123,6 @@ describe('set_folder_rule tool', () => {
   test('transactional all-or-nothing: invalid rule blocks the entire batch', async () => {
     const cwd = newProject();
     const handler = captureHandler(cwd);
-    // First rule is valid; second has empty match (Zod validation: min(1)).
     const result = await handler({
       rules: [
         { match: 'specs/**', frontmatter: { description: 'Specs' } },
@@ -135,7 +133,6 @@ describe('set_folder_rule tool', () => {
     const payload = result.structuredContent?.result as { ok: boolean; error?: { code: string } };
     expect(payload.ok).toBe(false);
     expect(payload.error?.code).toBe('SCHEMA_INVALID');
-    // No file written: lazy first-write was rolled back by atomic semantics.
     expect(readConfigFile(cwd)).toBeNull();
   });
 

@@ -17,11 +17,9 @@ describe('findFencedRegions', () => {
   });
 
   test('mismatched fence types do not close each other', () => {
-    // Backtick open + tilde line → tilde is not a close for backtick
     const src = '```\ncode\n~~~\nstill code\n```';
     const regions = findFencedRegions(src);
     expect(regions).toHaveLength(1);
-    // The backtick fence should span from first ``` to last ```
     expect(src.slice(regions[0][0], regions[0][1])).toBe('```\ncode\n~~~\nstill code\n```');
   });
 
@@ -60,7 +58,6 @@ describe('findFencedRegions', () => {
   });
 
   test('shorter closing fence does not match longer opening', () => {
-    // ```` opened with 4 backticks, ``` (3) should not close it
     const src = '````\ncode\n```\nstill inside\n````';
     const regions = findFencedRegions(src);
     expect(regions).toHaveLength(1);
@@ -100,7 +97,6 @@ describe('isInsideFence', () => {
   test('offset at fence end boundary is outside', () => {
     const src = '```\ncode\n```';
     const fences = findFencedRegions(src);
-    // end offset is exclusive
     expect(isInsideFence(src.length, fences)).toBe(false);
   });
 });

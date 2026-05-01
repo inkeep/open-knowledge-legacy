@@ -25,18 +25,11 @@ function makeFixture(): Fixture {
       try {
         rmSync(root, { recursive: true, force: true });
       } catch {
-        /* best-effort */
       }
     },
   };
 }
 
-/**
- * Wait until either `predicate()` returns true or `timeoutMs` elapses.
- * Polls every 25ms — fast enough that chokidar's awaitWriteFinish (100ms
- * stabilityThreshold) dominates the latency. Returns true on success,
- * false on timeout.
- */
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -54,12 +47,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // Tear down watchers before deleting tempdir so chokidar releases handles.
   for (const cleanup of cleanups.splice(0)) {
     try {
       await cleanup();
     } catch {
-      /* best-effort */
     }
   }
   fx.cleanup();
@@ -106,8 +97,6 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    // Give chokidar a generous window to settle. If it were going to fire
-    // for the initial read, it would have by now.
     await new Promise((r) => setTimeout(r, 250));
     expect(events).toEqual([]);
   });
@@ -121,9 +110,6 @@ describe('startConfigFileWatcher', () => {
     });
     cleanups.push(cleanup);
 
-    // Simulate the persistence layer's atomic write: write to tmp, then
-    // rename. Without awaitWriteFinish, chokidar would emit unlink + add for
-    // the rename. With it, the events coalesce to a single change.
     const tmpPath = `${fx.absPath}.tmp.test`;
     writeFileSync(tmpPath, 'theme: dark\n', 'utf-8');
     await rename(tmpPath, fx.absPath);
@@ -132,7 +118,6 @@ describe('startConfigFileWatcher', () => {
     expect(fired).toBe(true);
     expect(events.at(-1)).toBe('theme: dark\n');
 
-    // Hold for additional debounce window — assert no extra events arrived.
     await new Promise((r) => setTimeout(r, 200));
     expect(events.length).toBeGreaterThan(0);
     expect(events.length).toBeLessThanOrEqual(2);
@@ -155,7 +140,6 @@ describe('startConfigFileWatcher', () => {
   test('cleanup function returned is idempotent', async () => {
     const cleanup = await startConfigFileWatcher(fx.absPath, () => {});
     await cleanup();
-    // Second call must not throw.
     await cleanup();
   });
 
@@ -174,7 +158,6 @@ describe('startConfigFileWatcher', () => {
     writeFileSync(fx.absPath, 'first\n', 'utf-8');
     await waitFor(() => firstFired);
 
-    // Watcher must still be alive — second write fires despite the throw.
     writeFileSync(fx.absPath, 'theme: dark\n', 'utf-8');
     const fired = await waitFor(() => secondFired);
     expect(fired).toBe(true);

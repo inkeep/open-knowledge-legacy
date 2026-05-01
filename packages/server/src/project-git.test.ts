@@ -65,7 +65,6 @@ describe('ensureProjectGit', () => {
       process.env.PATH = originalPath;
     }
 
-    // On failure, we should NOT have created .git/
     expect(existsSync(resolve(projectRoot, '.git'))).toBe(false);
   });
 
@@ -73,8 +72,6 @@ describe('ensureProjectGit', () => {
     const projectRoot = resolve(tmpDir, 'partial');
     mkdirSync(projectRoot, { recursive: true });
 
-    // Create a fake `git` binary that creates .git/ but NOT .git/HEAD.
-    // Simulates a defensively-checked post-condition failure.
     const fakeBin = resolve(tmpDir, 'fake-bin');
     mkdirSync(fakeBin);
     const fakeGit = resolve(fakeBin, 'git');

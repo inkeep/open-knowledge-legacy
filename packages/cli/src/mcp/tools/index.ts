@@ -1,27 +1,3 @@
-/**
- * MCP tool registry.
- *
- * Aggregates workflow tools (ingest, research, consolidate),
- * document tools (write_document, edit_document, delete_document,
- * rename_document, undo_agent_edit, redo_agent_edit, list_documents),
- * link-graph tools
- * (get_backlinks, get_forward_links, get_orphans, get_hubs, get_dead_links),
- * and enriched tools
- * (read_document, search) into a single `registerAllTools` function that
- * `server.ts` calls during startup.
- *
- * - Workflow tools return instructional text and don't need a server connection.
- * - Document tools make HTTP calls to Hocuspocus and require `serverUrl`.
- * - Enriched tools (read_document, search) need filesystem + catalog access
- *   plus (optionally) Hocuspocus for backlinks.
- *
- * Project-level scaffolding (folders + config.yml entries) is handled by
- * the `ok seed` CLI, not via an MCP tool. The former `init-content` tool
- * was removed per SPEC 2026-04-23-ok-seed-scaffold.
- *
- * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
- * `register(...)` export, then import and call it from here.
- */
 
 import type { AgentIdentity } from '../agent-identity.ts';
 import { getCurrentMcpLogger, type McpLogger } from '../logger.ts';
@@ -31,29 +7,10 @@ import {
   register as registerConsolidate,
 } from './consolidate.ts';
 import {
-  DESCRIPTION as DELETE_DOCUMENT_DESCRIPTION,
-  register as registerDeleteDocument,
-} from './delete-document.ts';
-import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
 import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exec.ts';
-// `frontmatter_patch` is parked: its HTTP transport `/api/frontmatter-patch`
-// was removed when the property panel migrated to direct CRDT writes via
-// `bindFrontmatterDoc`. The MCP path needs a server-side CRDT migration of
-// its own (open a DirectConnection and apply per-key writes inside one
-// `dc.document.transact(fn, origin)` block, similar to how
-// `applyAgentMarkdownWrite` in `packages/server/src/agent-sessions.ts` runs
-// under the per-session `session.origin`) before it can be re-enabled.
-// A non-paired form-write origin will need to be reintroduced if the new
-// path requires a separate writer-ID — it was removed alongside this tool.
-// Imports are commented out so registration can be parked without a knip
-// orphan-file warning on the unused module.
-// import {
-//   DESCRIPTION as FRONTMATTER_PATCH_DESCRIPTION,
-//   register as registerFrontmatterPatch,
-// } from './frontmatter-patch.ts';
 import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
@@ -124,7 +81,6 @@ import {
   DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
 } from './write-document.ts';
 
-/** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
 const _TOOL_DESCRIPTIONS = {
   exec: EXEC_DESCRIPTION,
   ingest: INGEST_DESCRIPTION,
@@ -137,8 +93,6 @@ const _TOOL_DESCRIPTIONS = {
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
-  delete_document: DELETE_DOCUMENT_DESCRIPTION,
-  // frontmatter_patch parked — see import block above.
   get_history: GET_HISTORY_DESCRIPTION,
   save_version: SAVE_VERSION_DESCRIPTION,
   rollback_to_version: ROLLBACK_DESCRIPTION,
@@ -153,24 +107,10 @@ const _TOOL_DESCRIPTIONS = {
   set_folder_rule: SET_FOLDER_RULE_DESCRIPTION,
 } as const;
 
-/**
- * Per-call cwd resolver. Returns the absolute host directory that the
- * current tool call should operate against. Priority:
- *   1. explicit `cwd` arg from the tool call
- *   2. the client's only advertised MCP root
- *   3. otherwise error
- */
 type ResolveCwd = (explicit?: string) => Promise<string>;
 
 interface RegisterAllToolsOptions {
-  /**
-   * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
-   * lazy resolver that re-discovers per-call from the effective project cwd.
-   * The resolver variant is what lets one MCP stdio process route different
-   * tool calls to different Open Knowledge projects.
-   */
   serverUrl?: ServerUrlOrResolver;
-  /** Resolves the cwd for a given tool call (see `ResolveCwd` docs). */
   resolveCwd: ResolveCwd;
   config: ConfigOrResolver;
   identityRef?: { current: AgentIdentity };
@@ -202,14 +142,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
       }
     };
 
-  // exec — the primary surface (V0-24 / L2-aggressive per D2).
   registerExec(registrationServer, {
     resolveCwd: named('exec'),
     serverUrl: opts.serverUrl,
     config: opts.config,
   });
 
-  // Workflow tools — return instructional text, no server connection needed
   registerIngest(registrationServer, { config: opts.config, resolveCwd: named('ingest') });
   registerResearch(registrationServer, { config: opts.config, resolveCwd: named('research') });
   registerConsolidate(registrationServer, {
@@ -217,7 +155,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('consolidate'),
   });
 
-  // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(registrationServer, {
     resolveCwd: named('read_document'),
     config: opts.config,
@@ -234,7 +171,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('suggest_links'),
   });
 
-  // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(registrationServer, {
     serverUrl: opts.serverUrl,
     config: opts.config,
@@ -247,14 +183,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('edit_document'),
     identityRef: opts.identityRef,
   });
-  registerDeleteDocument(registrationServer, {
-    serverUrl: opts.serverUrl,
-    config: opts.config,
-    resolveCwd: named('delete_document'),
-    identityRef: opts.identityRef,
-  });
-  // frontmatter_patch is parked — see import block at top of file.
-  // Re-enable once a server-side CRDT path replaces /api/frontmatter-patch.
   registerRenameDocument(registrationServer, {
     serverUrl: opts.serverUrl,
     config: opts.config,
@@ -316,18 +244,6 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: named('get_dead_links'),
   });
 
-  // Config tools — fs-direct (no Hocuspocus required).
-  //
-  // These three use `server.registerTool(name, {description, inputSchema,
-  // outputSchema, annotations}, handler)` — the modern MCP TS-SDK API that
-  // accepts a typed `outputSchema` and `annotations` (`readOnlyHint` /
-  // `idempotentHint` / `destructiveHint`). The older tools above call
-  // `server.tool(name, description, schema, handler)` — same registration
-  // semantics minus the structured-output + annotations channels. Both
-  // routes are wrapped by `createLoggedServer` (see tool-logging.ts).
-  // When touching an older tool, prefer migrating to `registerTool` so the
-  // outputSchema can be enforced; until every tool migrates, both APIs
-  // coexist intentionally.
   registerGetConfig(registrationServer, {
     config: opts.config,
     resolveCwd: named('get_config'),

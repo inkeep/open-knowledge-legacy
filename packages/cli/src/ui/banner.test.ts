@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderBanner } from './banner.ts';
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code detection
 const ANSI_RE = /\x1b\[[0-9;]*m/;
 const VERSION = '0.0.1';
 
@@ -85,7 +84,6 @@ describe('renderBanner', () => {
       version: VERSION,
       localUrl: 'http://localhost:3000',
     });
-    // Round box style from cli-boxes
     expect(output).toContain('╭');
     expect(output).toContain('╰');
     expect(output).toContain('│');
@@ -99,15 +97,11 @@ describe('renderBanner', () => {
       localUrl: 'http://localhost:3000',
       networkUrl: 'http://0.0.0.0:3000',
     });
-    // Strip ANSI color codes and OSC 8 hyperlink sequences for width comparison
     const stripped = output
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI stripping
       .replace(/\x1b\[[0-9;]*m/g, '')
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional OSC 8 hyperlink stripping
       .replace(/\x1b\]8;;[^\x07]*\x07/g, '');
     const lines = stripped.split('\n').filter((l) => l.trim().length > 0);
     const widths = lines.map((l) => l.length);
-    // All lines should have the same visible width
     const uniqueWidths = [...new Set(widths)];
     expect(uniqueWidths).toHaveLength(1);
   });
@@ -136,7 +130,6 @@ describe('banner NO_COLOR behavior', () => {
     });
     const output = result.stdout.toString();
     expect(output).not.toMatch(ANSI_RE);
-    // Box characters should still be present
     expect(output).toContain('╭');
     expect(output).toContain('open-knowledge');
     expect(output).toContain('http://localhost:3000');

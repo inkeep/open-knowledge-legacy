@@ -1,8 +1,3 @@
-/**
- * Tests for rehypeStripVscodeSpans — structural fallback for VS Code
- * clipboard HTML. Handles the case where the vscode-editor-data MIME
- * is NOT available and we only see the monospace per-line-div shape.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -48,7 +43,6 @@ describe('rehypeStripVscodeSpans', () => {
   });
 
   test('single-line monospace div (not VS Code) is not transformed', () => {
-    // Below threshold (<2 child divs) — leave as-is.
     const html =
       '<div style="font-family:monospace"><span style="color:red">just one line</span></div>';
     const mdast = htmlToMdast(html, {

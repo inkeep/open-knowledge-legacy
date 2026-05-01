@@ -1,14 +1,3 @@
-/**
- * CloneDialog — dialog for cloning a GitHub repo into a new Open Knowledge project.
- *
- * Supports:
- *   - Paste URL or owner/repo shorthand
- *   - Authenticated repo browse when signed in (GET /api/local-op/auth/repos)
- *   - Local path auto-filled to ~/Documents/<repo-name>
- *   - Clone via POST /api/local-op/clone (NDJSON streaming progress)
- *   - Sign-in integration: onSignIn prop opens AuthModal (US-027)
- *   - On complete: redirect to the new server port
- */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -53,10 +42,8 @@ function phaseLabel(phase: ClonePhase): string {
   }
 }
 
-/** Extract repo name from a URL or owner/repo shorthand. */
 function extractRepoName(input: string): string {
   const trimmed = input.trim();
-  // owner/repo shorthand
   if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) return trimmed.split('/')[1];
   try {
     const url = new URL(trimmed.replace(/^git@([^:]+):/, 'https://$1/'));
@@ -79,34 +66,9 @@ function extractRepoName(input: string): string {
 interface CloneDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Called when "Sign in to GitHub" is clicked. */
   onSignIn?: () => void;
-  /**
-   * Called when the clone completes successfully. When provided, the dialog
-   * does NOT redirect via `window.location.href` — the caller takes over
-   * navigation. Used by the Electron Navigator to spawn a new editor window
-   * at `dir` instead of navigating the launcher itself to the new dev port.
-   *
-   * Shape is the flattened union of the two transport `complete` variants:
-   * HTTP relay emits `{port, dir}`; IPC main emits `{dir}` only. `dir` is
-   * always present (server-side guarantee, type-pinned by the drift catcher
-   * `local-op-types-drift.test.ts`); `port` is HTTP-only.
-   */
   onCloneComplete?: (info: { port?: number; dir: string }) => void;
-  /**
-   * Transport for the clone subprocess. Defaults to the HTTP path (POST
-   * /api/local-op/clone) so existing editor / web callers don't change.
-   * The Project Navigator passes an IPC transport because its window has
-   * no backing API server.
-   */
   transport?: CloneTransport;
-  /**
-   * Transport for the one-shot auth-status / repos queries. Defaults to
-   * the HTTP path (POST /api/local-op/auth/{status,repos}). Navigator
-   * passes an IPC transport — without it the queries 404 on the renderer
-   * dev server and the dialog persistently shows the Sign-in button even
-   * when the user is signed in.
-   */
   authQueryTransport?: AuthQueryTransport;
 }
 
@@ -130,11 +92,6 @@ export function CloneDialog({
   const cancelRef = useRef<(() => void) | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
-  // Check auth status when the dialog opens. The transport defaults to the
-  // HTTP path; Navigator passes an IPC transport because its window has no
-  // backing API server (apiOrigin === '') — the HTTP fetch would 404 on the
-  // renderer dev server and the dialog would persistently show "Sign in".
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -151,7 +108,6 @@ export function CloneDialog({
     };
   }, [open]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!isSignedIn || !open) return;
     let cancelled = false;
@@ -203,8 +159,6 @@ export function CloneDialog({
     cancelRef.current = handle.cancel;
 
     try {
-      // Manual iterator drive — React Compiler (BuildHIR) does not yet
-      // support `for await ... of` lowering.
       const iter = handle.events[Symbol.asyncIterator]();
       let sawTerminal = false;
       let result = await iter.next();
@@ -235,7 +189,6 @@ export function CloneDialog({
         result = await iter.next();
       }
       if (!sawTerminal) {
-        // Stream ended without a terminal 'complete' or 'error' event.
         toast.error('Clone stream ended unexpectedly — check if the clone completed', {
           id: toastId,
         });
@@ -243,8 +196,6 @@ export function CloneDialog({
         cancelRef.current = null;
       }
     } catch (err) {
-      // Log so non-transport exceptions (e.g. an `onCloneComplete` callback
-      // throwing) aren't lost behind the generic toast message.
       console.error('[CloneDialog] clone iteration failed:', err);
       toast.error('Clone failed — connection error', { id: toastId });
       setCloning(false);

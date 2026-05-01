@@ -1,10 +1,3 @@
-/**
- * Editor MCP target registry.
- *
- * Each editor has a different location and config format for MCP server
- * configuration. This module encodes those differences declaratively so that
- * `init.ts` can loop over targets without per-editor branching.
- */
 import { homedir } from 'node:os';
 import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
 import { MCP_SERVER_NAME } from '../constants.ts';
@@ -30,48 +23,12 @@ const DEV_MCP_ENV = {
   OK_LOG_FILE: '/tmp/ok-mcp.log',
 } as const;
 
-/**
- * MCP install modes for `ok init`-written editor configs.
- *
- * - `'published'` (default) — `{command: 'npx', args: ['@inkeep/open-knowledge', 'mcp']}`.
- *   Self-heals after CLI reinstalls; the version each editor's MCP child runs
- *   may drift over time (the protocol gate at `cli/mcp/server-discovery.ts`
- *   refuses on mismatch).
- * - `'dev'` — `{command: 'node', args: [<dist/cli.mjs>, 'mcp'], env: {...}}`.
- *   Used by `--dev-mcp` for monorepo development against a worktree-local CLI.
- * - `'pinned'` — `{command: 'node', args: [<absolute process.argv[1]>, 'mcp']}`.
- *   Used by `ok init --pin` (specs/2026-04-24-cross-install-version-handshake
- *   §3 G7 + D14). The absolute path is the cli entry of whatever ran `ok init`.
- *   Recommended pin target is M6's stable shim at `/usr/local/bin/ok` (the
- *   desktop's auto-updater replaces the symlink target atomically); volatile
- *   pins (worktree dist, npx-cache) silently stale.
- */
 type McpInstallMode = 'published' | 'dev' | 'pinned';
 
 export interface McpInstallOptions {
   mode?: McpInstallMode;
   cliEntryPath?: string;
-  /**
-   * Absolute path to a CLI binary that spawns the Open Knowledge MCP server
-   * directly (e.g. the Electron-bundled `ok.sh` wrapper, or the `/usr/local/bin/ok`
-   * symlink when M6a is installed). When set, the managed entry is
-   * `{ command: cliPath, args: ['mcp'] }` — bypasses `npx` entirely.
-   *
-   * Highest-precedence branch of `buildManagedServerEntry`: takes effect even
-   * when `mode === 'dev'` is also set. Intended for Electron main's first-launch
-   * MCP wiring (M6b / D-M6-R9); the CLI `ok init` path never sets this.
-   */
   cliPath?: string;
-  /**
-   * Skip `writeEditorMcpConfig`'s `isEditorTargetAvailable` check. Default
-   * `ok init` behavior (main branch PR #282) rejects writes for editors
-   * whose config dir doesn't exist — reasonable when the default editor list
-   * is being fanned out without user intent. M6b's consent dialog shows
-   * every editor with a checkbox and the user explicitly toggles; their
-   * click IS the consent, so the availability check would silently drop
-   * the selection. `writeUserMcpConfigs` (the M6b entry point) sets this
-   * to `true`; terminal-invoked `ok init` never sets it.
-   */
   skipAvailabilityCheck?: boolean;
 }
 
@@ -227,35 +184,24 @@ export function resolveCodexConfigPath(options: AppSupportOptions = {}): string 
 
 export interface EditorMcpTarget {
   id: EditorId;
-  /** Human-friendly name for CLI output. */
   label: string;
-  /** Resolve the absolute path to the MCP config file. */
   configPath: (cwd: string, home?: string) => string;
-  /** On-disk config format for this editor. */
   format: 'json' | 'toml';
-  /** Top-level key that holds the server map. */
   topLevelKey: 'mcpServers' | 'servers' | 'mcp_servers';
-  /** Config key used for this project's MCP server entry. */
   serverName: (cwd: string) => string;
-  /** Build the server entry object for this editor. */
   buildEntry: (cwd: string, options?: McpInstallOptions) => Record<string, unknown>;
-  /** True when the managed MCP fields already match the target entry. */
   isCompatible: (
     existing: Record<string, unknown>,
     cwd: string,
     options?: McpInstallOptions,
   ) => boolean;
-  /** Merge only the managed MCP fields into an existing entry. */
   mergeManagedFields: (
     existing: Record<string, unknown>,
     cwd: string,
     options?: McpInstallOptions,
   ) => Record<string, unknown>;
-  /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
-  /** Filesystem path whose existence implies the editor is installed. */
   detectPath?: (cwd: string, home?: string) => string;
-  /** Project-local MCP config path (used for project-scope installs). */
   projectConfigPath?: (cwd: string) => string;
 }
 
@@ -376,14 +322,10 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     buildEntry: (_cwd, options) => buildManagedServerEntry(options),
     scope: 'global',
     detectPath: (_cwd, home) => dirname(resolveCodexConfigPath({ home })),
-    // Codex reads CODEX_HOME (default ~/.codex) for user config; project-local
-    // .codex/config.toml support was added by analogy with the other editors.
-    // Verify against Codex CLI release notes before promoting in docs.
     projectConfigPath: (cwd) => join(cwd, '.codex', 'config.toml'),
   }),
 };
 
-/** Validate and resolve editor IDs to targets. Throws on unknown IDs. */
 export function resolveEditorTargets(ids: EditorId[]): EditorMcpTarget[] {
   const unknown = ids.filter((id) => !(id in EDITOR_TARGETS));
   if (unknown.length > 0) {

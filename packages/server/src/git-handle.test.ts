@@ -8,9 +8,6 @@ import { createGitInstance } from './git-handle.ts';
 import { withParentLock } from './git-mutex.ts';
 
 describe('createGitInstance (credential.helper config)', () => {
-  // Tier A (gh) and Tier B/C (stored token) both pass a
-  // `credential.helper=!…` config string. Keep a regression test that the
-  // SimpleGit constructor accepts it with our current package version.
   let tmpDir: string;
 
   beforeEach(() => {
@@ -26,9 +23,6 @@ describe('createGitInstance (credential.helper config)', () => {
     const handle = createGitInstance(tmpDir, {
       credentialArgs: ['-c', 'credential.helper=!open-knowledge auth git-credential'],
     });
-    // Any command triggers simple-git's block-unsafe-operations plugin, which
-    // scans argv synchronously before spawning git. `--version` is the lightest
-    // probe that exercises that plugin path.
     const version = await handle.git.raw(['--version']);
     expect(version).toContain('git version');
   });
@@ -83,6 +77,5 @@ describe('withParentLock', () => {
   });
 });
 
-// Suppress unused import warnings for lifecycle hooks
 void beforeEach;
 void afterEach;

@@ -1,17 +1,3 @@
-/**
- * `consolidate` MCP workflow tool — promote research findings into a canonical
- * article inside the project's content directory.
- *
- * Principle: canonical, not provisional. Consolidation is a deliberate step
- * taken after research has stabilized and a team has made decisions. The
- * output is the source of truth for future agents — not a snapshot of
- * uncertainty.
- *
- * Relationship to other workflow tools:
- *   - `ingest`     — captures raw external sources (no analysis)
- *   - `research`   — synthesizes provisional findings from sources (analysis, uncertain)
- *   - `consolidate` — promotes research + sources into canonical articles (analysis, decided)
- */
 import { z } from 'zod';
 import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
@@ -195,10 +181,6 @@ interface ConsolidateDeps {
 }
 
 export function register(server: ServerInstance, deps: ConsolidateDeps): void {
-  // previewUrl is null per FR-2.1: consolidate is a workflow primer keyed on a
-  // `topic` — the target canonical article's path is chosen by the agent during
-  // the prompt's Step 3. There is no single canonical document to preview at
-  // call time. Uniform with ingest / research / save_version.
   server.tool(
     'consolidate',
     DESCRIPTION,

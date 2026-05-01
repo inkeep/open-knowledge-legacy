@@ -1,10 +1,3 @@
-/**
- * Tests for POST /api/create-page — create a new empty markdown file.
- *
- * These tests exercise the handler through the `createApiExtension` factory,
- * using a real temp directory on the filesystem so 409 (already exists) and
- * the actual file creation can be verified without mocking node:fs.
- */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -18,9 +11,6 @@ import { BacklinkIndex } from './backlink-index.ts';
 import { clearContributors, contributorCount, hasContributor } from './contributor-tracker.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeReq(method: string, body: unknown): IncomingMessage {
   const raw = JSON.stringify(body);
@@ -71,7 +61,6 @@ async function callCreatePage(
   });
   const req = makeReq(method, body);
   const { res, captured } = makeRes();
-  // onRequest is guaranteed to be defined by createApiExtension
   await (
     ext as {
       onRequest: (ctx: { request: IncomingMessage; response: ServerResponse }) => Promise<void>;
@@ -80,9 +69,6 @@ async function callCreatePage(
   return captured;
 }
 
-// ---------------------------------------------------------------------------
-// Test setup
-// ---------------------------------------------------------------------------
 
 let tmpDir: string;
 
@@ -92,8 +78,6 @@ function setupTmpDir(): string {
 }
 
 beforeEach(() => {
-  // Isolate the in-process pendingContributors map so attribution assertions
-  // see only what the test under test wrote.
   clearContributors();
 });
 
@@ -102,14 +86,10 @@ afterEach(() => {
     try {
       rmSync(tmpDir, { recursive: true, force: true });
     } catch {
-      // ignore cleanup failures
     }
   }
 });
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('POST /api/create-page', () => {
   test('creates a file and returns { ok: true, docName }', async () => {
@@ -132,7 +112,6 @@ describe('POST /api/create-page', () => {
     expect(body.ok).toBe(true);
     expect(body.docName).toBe('component');
     expect(existsSync(join(dir, 'component.mdx'))).toBe(true);
-    // Must not create a shadow .md file.
     expect(existsSync(join(dir, 'component.md'))).toBe(false);
   });
 
@@ -198,10 +177,8 @@ describe('POST /api/create-page', () => {
 
   test('returns 409 when the file already exists', async () => {
     const dir = setupTmpDir();
-    // Create the file first
     await callCreatePage(dir, 'POST', { path: 'existing.md' });
 
-    // Try to create again — should 409
     const result = await callCreatePage(dir, 'POST', { path: 'existing.md' });
 
     expect(result.status).toBe(409);
