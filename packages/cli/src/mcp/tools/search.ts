@@ -7,8 +7,11 @@
  *
  * See spec: specs/2026-04-12-enriched-read-tools/SPEC.md § Tool 2.
  */
+import { relative as relativePath, resolve as resolvePath } from 'node:path';
+import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
+import { resolveContentDir } from '../../config/paths.ts';
 import { OK_DIR } from '../../constants.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
 import {
@@ -104,18 +107,24 @@ export async function buildSearchResult(
   }
   const { cwd, config, url: resolvedServerUrl } = context;
   const maxResults = config.mcp.tools.search.maxResults;
-  // `content.{include,exclude}` were removed from the schema (path rules
-  // moved to .okignore). Pass historical defaults until the search tool
-  // delegates to ContentFilter for path rules.
-  const include = ['**/*.md', '**/*.mdx'];
-  const exclude: string[] = [];
 
   // Request one extra match so we can tell whether the result set was truncated.
-  const matches = await grep(args.query, cwd, {
+  const rawMatches = await grep(args.query, cwd, {
     caseInsensitive: !(args.case_sensitive ?? false),
-    include,
-    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', OK_DIR],
+    include: ['**/*.md', '**/*.mdx'],
+    exclude: ['node_modules', '.git', '.claude', '.changeset', OK_DIR],
     maxResults: maxResults + 1,
+  });
+
+  // Apply user-defined .gitignore + .okignore rules via ContentFilter so
+  // search agrees with the file watcher about which files belong in the
+  // document index.
+  const contentDir = resolveContentDir(config, cwd);
+  const filter = createContentFilter({ projectDir: cwd, contentDir });
+  const matches = rawMatches.filter((m) => {
+    const contentRelPath = relativePath(contentDir, resolvePath(cwd, m.path));
+    if (contentRelPath.startsWith('..')) return false;
+    return !filter.isExcluded(contentRelPath);
   });
 
   const truncated = matches.length > maxResults;

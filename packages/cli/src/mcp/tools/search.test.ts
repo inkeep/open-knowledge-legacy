@@ -145,6 +145,43 @@ describe('search — folder-rule flow-through (US-005)', () => {
   });
 });
 
+describe('search — .okignore exclusion', () => {
+  test('files under a .okignore-excluded path do not appear in results', async () => {
+    const project = await bootstrap();
+    const drafts = resolve(project, 'drafts');
+    const articles = resolve(project, 'articles');
+    mkdirSync(drafts, { recursive: true });
+    mkdirSync(articles, { recursive: true });
+    writeFileSync(resolve(drafts, 'wip.md'), '# Draft\n\nsearchterm in draft\n');
+    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm in article\n');
+    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    );
+
+    const paths = (structured?.results ?? []).map((r) => r.path);
+    expect(paths).toContain('articles/pub.md');
+    expect(paths).not.toContain('drafts/wip.md');
+  });
+
+  test('cross-source negation — .okignore !pattern re-includes a .gitignore-excluded file', async () => {
+    const project = await bootstrap();
+    writeFileSync(resolve(project, 'secret.md'), '# Secret\n\nsearchterm in secret\n');
+    writeFileSync(resolve(project, '.gitignore'), 'secret.md\n');
+    writeFileSync(resolve(project, '.okignore'), '!secret.md\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    );
+
+    const paths = (structured?.results ?? []).map((r) => r.path);
+    expect(paths).toContain('secret.md');
+  });
+});
+
 describe('search — previewUrl + ui block', () => {
   test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';

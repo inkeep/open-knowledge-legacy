@@ -103,6 +103,31 @@ content:
 
 `content.include` and `content.exclude` are no longer config keys. If they appear in your `config.yml`, OK rejects the file with a source-located error directing you to move the patterns to `.okignore`.
 
+### Migrating from content.include / content.exclude
+
+Patterns convert 1:1 — gitignore syntax is a superset of the picomatch globs the old keys used:
+
+```yaml
+# config.yml (before)
+content:
+  exclude:
+    - drafts/**
+    - "*.draft.md"
+```
+
+```text title=".okignore (after)"
+drafts/
+*.draft.md
+```
+
+Then drop the obsolete keys from `config.yml`:
+
+```bash
+npx @inkeep/open-knowledge config migrate
+```
+
+`content.include` had only one real job — gating which extensions count as content — and `.md`/`.mdx` extension matching is now hardcoded upstream. If your old `content.include` was the default (`['**/*.md', '**/*.mdx']`), you don't need to add anything to `.okignore` for it.
+
 ## Performance
 
 <Callout type="info">

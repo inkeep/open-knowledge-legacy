@@ -49,7 +49,7 @@ Three layers, each with its own cadence and responsibility.
 
 `@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT. The same watcher also emits asset events (images, PDFs, video, audio, fonts, archives) for the basename index and the file sidebar.
 
-- ContentFilter drops excluded files (gitignored, config patterns)
+- ContentFilter drops excluded files (`.gitignore` + `.okignore` rules)
 - Symlinks resolved to canonical paths via `realpath`; multiple paths to the same file share one Y.Doc
 - Markdown events classified as create, update, delete, rename, or conflict
 - Asset events classified as `asset-create` or `asset-delete` (Finder-style renames arrive as a delete+create pair; the basename index's add/remove is idempotent so the end state is correct)

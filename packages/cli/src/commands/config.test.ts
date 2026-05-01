@@ -188,6 +188,26 @@ describe('runMigrate', () => {
     );
   });
 
+  test('removes content.{include,exclude} leaf fields (project)', async () => {
+    const wsPath = projectConfigPath(project.cwd);
+    const original = `content:\n  dir: .\n  include:\n    - "**/*.md"\n  exclude:\n    - drafts/**\n`;
+    writeConfigYaml(wsPath, original);
+    const outcome = await runMigrate({
+      cwd: project.cwd,
+      scope: 'project',
+      homedirOverride: project.userHome,
+      log: () => {},
+    });
+    expect(outcome.ok).toBe(true);
+    const migrated = readFileSync(wsPath, 'utf-8');
+    expect(migrated).not.toContain('include:');
+    expect(migrated).not.toContain('exclude:');
+    // Sibling field preserved
+    expect(migrated).toContain('dir: .');
+    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
+    expect(wsOutcome?.removed.sort()).toEqual(['content.exclude', 'content.include'].sort());
+  });
+
   test('idempotent — second run is a no-op', async () => {
     const wsPath = projectConfigPath(project.cwd);
     writeConfigYaml(wsPath, 'sync:\n  pushIntervalSeconds: 30\nmcp:\n  autoStart: true\n');
@@ -348,6 +368,8 @@ describe('DROPPED_FIELD_PATHS', () => {
       ['persistence', 'debounceMs'],
       ['persistence', 'maxDebounceMs'],
       ['server', 'port'],
+      ['content', 'include'],
+      ['content', 'exclude'],
     ]);
   });
 });

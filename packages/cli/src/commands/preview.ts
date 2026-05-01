@@ -3,9 +3,9 @@
  *
  * Prints the same Content block that `init` writes after scaffolding, but
  * without side effects. Works pre-init (loads schema defaults), post-init
- * (loads `.ok/config.yml`), and after config edits — re-running
- * is the cheap way to verify an `include`/`exclude` change before restarting
- * the server.
+ * (loads `.ok/config.yml`), and after config edits — re-running is the cheap
+ * way to verify a scope change (`.okignore` edit, `content.dir` update)
+ * before restarting the server.
  */
 import { Command } from 'commander';
 import { resolveContentDir } from '../config/paths.ts';
