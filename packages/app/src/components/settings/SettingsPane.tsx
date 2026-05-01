@@ -371,7 +371,7 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
     const unsubscribe = subscribeToConfigValidationRejected(
       (event: CC1ConfigValidationRejectedPayload) => {
         const isMatchingScope =
-          (scope === 'workspace' && event.docName === CONFIG_DOC_NAME_WORKSPACE) ||
+          (scope === 'project' && event.docName === CONFIG_DOC_NAME_PROJECT) ||
           (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
         if (!isMatchingScope) return;
 
