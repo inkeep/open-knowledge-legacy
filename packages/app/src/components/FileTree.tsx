@@ -237,7 +237,7 @@ function parseSuccessOrWarn<TIn, TOut>(
 ): TIn | TOut {
   const result = schema.safeParse(body);
   if (result.success) return result.data;
-  console.warn('[FileTree] response schema drift', { handler, body, error: result.error });
+  console.warn('[FileTree] response schema drift:', handler, body, result.error);
   return fallback;
 }
 
@@ -688,11 +688,11 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         const data = await res.json().catch(() => null);
         if (!active) return;
         if (!res.ok) return;
-        const parsed = WorkspaceSuccessSchema.safeParse(data);
-        if (!parsed.success) return;
+        const parsed = parseSuccessOrWarn(WorkspaceSuccessSchema, data, 'workspace', null);
+        if (!parsed) return;
         setWorkspace({
-          contentDir: parsed.data.contentDir,
-          pathSeparator: parsed.data.pathSeparator,
+          contentDir: parsed.contentDir,
+          pathSeparator: parsed.pathSeparator,
         });
       })
       .catch((err) => {
@@ -914,8 +914,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           setBusyPath(null);
           return;
         }
-        const success = RenamePathSuccessSchema.safeParse(parsed.body);
-        renamed = renamed.concat(success.success ? success.data.renamed : []);
+        const success = parseSuccessOrWarn(
+          RenamePathSuccessSchema,
+          parsed.body,
+          'rename-path:drop',
+          { renamed: [] },
+        );
+        renamed = renamed.concat(success.renamed);
       }
 
       await applyRenamedDocuments(renamed);
