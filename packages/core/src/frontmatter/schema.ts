@@ -19,11 +19,11 @@ export type FrontmatterType = (typeof FRONTMATTER_TYPES)[number];
 export const FrontmatterTypeSchema = z.enum(FRONTMATTER_TYPES);
 
 /**
- * Raw value shape — what an MCP agent sends in a Merge Patch payload, what
- * Observer B parses out of source-mode YAML, and what is stored in the
- * per-key `Y.Map('metadata')` slot (the slot may wrap an editable string in
- * `Y.Text` or a list in `Y.Array<Y.Text>`, but the value shape it represents
- * is one of these four).
+ * Raw value shape — what `bindFrontmatterDoc.patch` accepts (RFC 7396 Merge
+ * Patch values), what Observer B parses out of source-mode YAML, and what
+ * `parseFrontmatterYaml` returns to disk-side readers. The value lives as
+ * plain YAML inside the `---\n…\n---` region of `Y.Text('source')`; this
+ * schema constrains the shape independent of CRDT representation.
  *
  * Lists are flat string arrays only — nested objects and multi-typed lists
  * are out of scope.
@@ -43,13 +43,13 @@ export function isIsoDateString(value: unknown): value is string {
 }
 
 /**
- * Infer the widget type from a raw value's shape. Used by the
- * `frontmatter_patch` handler when an agent creates a new property without an
- * explicit `types` override.
+ * Infer the widget type from a raw value's shape. Used by the property panel
+ * + `bindFrontmatterDoc` when a user adds a new property and the type isn't
+ * explicitly set — value shape decides the widget class.
  *
- * Note: ISO 8601 strings infer as `date`; bare strings infer as `text`. An
- * agent that wants a date-shaped string stored as `text` (e.g. a version
- * string) must pass an explicit `types` override.
+ * Note: ISO 8601 strings infer as `date`; bare strings infer as `text`.
+ * Values that should stay as plain text despite matching a date pattern must
+ * be authored as quoted YAML strings.
  */
 export function inferType(value: FrontmatterValue): FrontmatterType {
   if (Array.isArray(value)) return 'list';
@@ -60,9 +60,10 @@ export function inferType(value: FrontmatterValue): FrontmatterType {
 }
 
 /**
- * Map shape for an entire frontmatter block — `getFrontmatterMap` returns
- * this; `frontmatter_patch` accepts `Record<string, FrontmatterValue | null>`
- * (null = delete, per RFC 7396 Merge Patch).
+ * Map shape for an entire frontmatter block — `parseFrontmatterYaml` and
+ * `readFmMap` return this; `bindFrontmatterDoc.patch` accepts
+ * `Record<string, FrontmatterValue | null>` (null = delete, per RFC 7396
+ * Merge Patch).
  */
 export const FrontmatterMapSchema = z.record(z.string(), FrontmatterValueSchema);
 export type FrontmatterMap = z.infer<typeof FrontmatterMapSchema>;

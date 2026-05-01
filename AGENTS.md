@@ -104,16 +104,17 @@ Bun's lockfile auto-resolution is tracked in [oven-sh/bun#17717](https://github.
 
 ```
 Y.Doc
-├── Y.XmlFragment('default')  ← TipTap binds here
-├── Y.Text('source')          ← CodeMirror binds (y-codemirror.next)
-├── Y.Map('metadata')         ← frontmatter cache
-├── Y.Map('agent-flash')      ← agent write-flash side-channel (D57)
-└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer (D49)
+├── Y.XmlFragment('default')  ← TipTap binds (body)
+├── Y.Text('source')          ← CodeMirror binds (full doc: FM region + body)
+├── Y.Map('agent-flash')      ← agent write-flash side-channel
+└── Y.Map('agent-effects')    ← bounded activity-log ring-buffer
 
 Server Observer A: XmlFragment → Y.Text  (OBSERVER_SYNC_ORIGIN)
 Server Observer B: Y.Text → XmlFragment  (OBSERVER_SYNC_ORIGIN)
 Client observers: baseline tracking only (write paths deleted — precedent #14)
 ```
+
+**Frontmatter lives in the YAML region of `Y.Text('source')`** — the property panel reads + writes that region directly through `bindFrontmatterDoc` (in `@inkeep/open-knowledge-core/bridge`); body editor + source-mode editor share the same Y.Text via `y-codemirror.next` and the bridge. There is no separate `Y.Map('metadata')` — see `specs/2026-04-30-realtime-frontmatter-entries/SPEC.md`.
 
 **Three invariants** (assert before/after every propagation):
 

@@ -12,7 +12,7 @@
  * D30: getSession uses an in-flight promise dedup map so concurrent first-calls
  * share one pending openDirectConnection call and produce exactly one session.
  *
- * US-008: each session creates a Y.UndoManager tracking [Y.Text, metaMap, flashMap]
+ * US-008: each session creates a Y.UndoManager tracking [Y.Text, flashMap]
  * via session.origin. session.undoOrigin is the placeholder origin for the future
  * V0-14 applyAgentUndo path; captureTransaction excludes it from the UM stack
  * to prevent undo-of-undo cycles (D25, D24, D21 defense-in-depth).
@@ -334,7 +334,7 @@ export interface AgentSessionIdentity {
  * (D32 STOP rule). Never call `session.dc.transact(fn)` or pass the shared
  * `AGENT_WRITE_ORIGIN` constant to per-session writes.
  *
- * `um` tracks [Y.Text, metaMap, flashMap] under `session.origin`; writes under
+ * `um` tracks [Y.Text, flashMap] under `session.origin`; writes under
  * `session.undoOrigin` (V0-14 undo path) are excluded via captureTransaction.
  */
 interface SessionRecord {
@@ -343,7 +343,7 @@ interface SessionRecord {
   origin: PairedWriteOrigin;
   /** Per-session undo write origin — V0-14 (US-009, D4). Paired so Observer A/B short-circuit. */
   undoOrigin: PairedWriteOrigin;
-  /** Per-session UndoManager scoped to [Y.Text, metaMap, flashMap] (US-008, D25). */
+  /** Per-session UndoManager scoped to [Y.Text, flashMap] (US-008, D25). */
   um: Y.UndoManager;
   agentId: string;
   docName: string;
