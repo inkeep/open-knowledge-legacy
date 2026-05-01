@@ -13,7 +13,7 @@
  *
  * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
  */
-import { type ProblemDetails, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
@@ -22,34 +22,19 @@ import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 
-// ── NDJSON event types from /api/local-op/auth/login ──────────────────────────
-
-interface DeviceVerificationEvent {
-  type: 'verification';
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-}
-
-interface DeviceCompleteEvent {
+// ── /api/local-op/auth/pat response shape ─────────────────────────────────────
+// PAT is a non-streaming endpoint: success returns the CLI's parsed
+// `{type:'complete', login, name, email}` line; failures route through
+// `errorResponse(...)` (RFC 9457 problem+json) and are handled at the
+// `!res.ok` branch in `handleSubmit`. Device-flow (verification + sign-in)
+// events live in the transport layer (`auth-transport.ts`), not here.
+interface PatCompleteEvent {
   type: 'complete';
   login: string;
   name?: string;
   email?: string;
   avatarUrl?: string;
 }
-
-/**
- * Mid-stream error event per US-005 streaming envelope (D36 c). Replaces the
- * pre-migration `{ type: 'error', message: string }` shape — title is sourced
- * from the typed `problem` payload.
- */
-interface DeviceErrorEvent {
-  type: 'error';
-  problem: ProblemDetails;
-}
-
-type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -322,9 +307,9 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
       const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
         // Narrow try/catch to JSON.parse only — event-processing errors
         // propagate instead of being silently swallowed.
-        let event: DeviceEvent;
+        let event: PatCompleteEvent;
         try {
-          event = JSON.parse(line) as DeviceEvent;
+          event = JSON.parse(line) as PatCompleteEvent;
         } catch {
           return 'continue';
         }
@@ -334,10 +319,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
             name: event.name,
             email: event.email,
           });
-          setLoading(false);
-          return 'terminal';
-        } else if (event.type === 'error') {
-          setError(event.problem?.title ?? 'Sign-in error');
           setLoading(false);
           return 'terminal';
         }

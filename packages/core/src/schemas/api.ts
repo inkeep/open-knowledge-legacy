@@ -589,6 +589,7 @@ export const CreatePageRequestSchema = z
   .object({
     path: z.string().min(1),
     ...agentIdentityFields,
+    summary: summaryField,
   })
   .loose() satisfies StandardSchemaV1;
 export type CreatePageRequest = z.infer<typeof CreatePageRequestSchema>;
@@ -691,6 +692,7 @@ export const RenamePathRequestSchema = z
     fromPath: z.string().min(1),
     toPath: z.string().min(1),
     ...agentIdentityFields,
+    summary: summaryField,
   })
   .loose() satisfies StandardSchemaV1;
 export type RenamePathRequest = z.infer<typeof RenamePathRequestSchema>;

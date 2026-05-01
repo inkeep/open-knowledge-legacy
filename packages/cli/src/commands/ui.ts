@@ -465,7 +465,8 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
  *
  * Beyond those three divergences, the wire shape, header set, schema
  * validation behavior (`safeParse` + hardcoded fallback on schema-validation
- * failure), and URN closed-enum discipline are identical to `errorResponse(...)`.
+ * failure), `headersSent` guard, and URN closed-enum discipline are identical
+ * to `errorResponse(...)`.
  */
 function emitProblem(
   res: ServerResponse,
@@ -475,6 +476,18 @@ function emitProblem(
   detail?: string,
 ): void {
   const instance = randomUUID();
+  // Defense-in-depth: mirror `errorResponse`'s `headersSent` guard. If the
+  // listener ever runs after a partial response (future code path), this
+  // suppresses the double-emit instead of crashing the `ok ui` process via
+  // `ERR_HTTP_HEADERS_SENT`. Loud via console.warn since CLI lacks Pino.
+  if (res.headersSent) {
+    console.warn('[ok ui] emitProblem called after headers sent — suppressed', {
+      type,
+      status,
+      instance,
+    });
+    return;
+  }
   const body: ProblemDetails = {
     type,
     title,

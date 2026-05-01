@@ -83,6 +83,13 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
       // CLI emits a single `{repos: [...]}` line; relay forwards as-is.
       // No streaming reader needed — read the whole body and parse.
       const data = lastJsonLine(await res.text());
+      // Surface mid-stream RFC 9457 streaming-error envelope so the UI
+      // shows the typed reason (rate limit, auth error) instead of a
+      // generic "Failed to fetch" when the server emitted a problem.
+      if (data && data.type === 'error' && data.problem && typeof data.problem === 'object') {
+        const p = data.problem as { title?: string; detail?: string };
+        return { ok: false, error: p.detail || p.title || 'Failed to fetch repositories' };
+      }
       if (!data || !Array.isArray(data.repos)) {
         return { ok: false, error: 'Failed to fetch repositories' };
       }

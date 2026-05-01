@@ -83,12 +83,28 @@ export function httpAuthTransport(): AuthTransport {
                 // Narrow try/catch to JSON.parse only — event-processing
                 // errors (e.g. push() throwing) propagate instead of being
                 // silently swallowed alongside malformed JSON lines.
-                let event: AuthEvent;
+                let parsed: unknown;
                 try {
-                  event = JSON.parse(line) as AuthEvent;
+                  parsed = JSON.parse(line);
                 } catch {
                   return 'continue'; // malformed JSON line
                 }
+                // Server wraps mid-stream errors in `StreamingProblemEvent`
+                // shape (`{type:'error', problem: ProblemDetails}`) per US-005
+                // / D36(c). The `AuthEvent` consumer union expects
+                // `{type:'error', message: string}`. Bridge at the transport
+                // boundary so consumers stay simple.
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { type?: unknown }).type === 'error' &&
+                  'problem' in parsed
+                ) {
+                  const p = (parsed as { problem: { title?: string; detail?: string } }).problem;
+                  push({ type: 'error', message: p?.detail || p?.title || 'Unknown error' });
+                  return 'terminal';
+                }
+                const event = parsed as AuthEvent;
                 push(event);
                 if (event.type === 'complete' || event.type === 'error') return 'terminal';
                 return 'continue';

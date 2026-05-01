@@ -88,13 +88,28 @@ export function httpCloneTransport(): CloneTransport {
                 // Narrow try/catch to JSON.parse only — push() failures
                 // propagate instead of being silently swallowed alongside
                 // malformed JSON lines.
-                let event: CloneEvent;
+                let parsed: unknown;
                 try {
-                  event = JSON.parse(line) as CloneEvent;
+                  parsed = JSON.parse(line);
                 } catch {
                   continue; // malformed NDJSON line
                 }
-                push(event);
+                // Server now wraps mid-stream errors in `StreamingProblemEvent`
+                // shape (`{type:'error', problem: ProblemDetails}`) per US-005
+                // / D36(c). The `CloneEvent` consumer union expects
+                // `{type:'error', message: string}`. Bridge the two shapes
+                // here at the transport boundary so consumers stay simple.
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  (parsed as { type?: unknown }).type === 'error' &&
+                  'problem' in parsed
+                ) {
+                  const p = (parsed as { problem: { title?: string; detail?: string } }).problem;
+                  push({ type: 'error', message: p?.detail || p?.title || 'Unknown error' });
+                  continue;
+                }
+                push(parsed as CloneEvent);
               }
               if (signal.aborted) break;
             }
