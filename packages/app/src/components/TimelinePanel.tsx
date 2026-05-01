@@ -229,7 +229,7 @@ function WipGroup({
       <button
         type="button"
         aria-expanded={expanded}
-        className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors text-left"
+        className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors text-left"
         onClick={() => setExpanded((e) => !e)}
       >
         {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
@@ -603,8 +603,8 @@ function EntryRow({
           aria-controls={expanded ? diffPanelId : undefined}
           data-testid="timeline-entry-expand"
           className={[
-            'group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            expanded ? 'bg-muted' : 'hover:bg-muted/50',
+            'group flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            expanded ? 'bg-muted' : 'hover:bg-muted/80',
           ].join(' ')}
           onClick={handleActivate}
           onKeyDown={(e) => {
@@ -889,7 +889,7 @@ export function TimelineContent({ docName, diffLayout, onDiffLayoutChange }: Tim
             aria-label="Loading timeline history"
           >
             {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
+              <div key={i} className="flex items-start gap-2.5 rounded-lg px-3 py-2.5">
                 <Skeleton className="size-3.5 rounded mt-0.5 shrink-0" />
                 <div className="flex-1 space-y-1.5">
                   <Skeleton className="h-3 w-28" />
