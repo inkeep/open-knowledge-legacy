@@ -82,8 +82,10 @@ interface CloneDialogProps {
    * does NOT redirect via `window.location.href` — the caller takes over
    * navigation. Used by the Electron Navigator to spawn a new editor window
    * at `dir` instead of navigating the launcher itself to the new dev port.
+   * `port` is present only on the HTTP transport (the IPC path skips the
+   * relay's port chain).
    */
-  onCloneComplete?: (info: { port?: number; dir?: string }) => void;
+  onCloneComplete?: (info: { port?: number; dir: string }) => void;
   /**
    * Transport for the clone subprocess. Defaults to the HTTP path (POST
    * /api/local-op/clone) so existing editor / web callers don't change.
@@ -227,12 +229,11 @@ export function CloneDialog({
           onOpenChange(false);
           setCloning(false);
           cancelRef.current = null;
+          const port = 'port' in event ? event.port : undefined;
           if (onCloneComplete) {
-            // Caller (e.g. Electron Navigator) takes over navigation.
-            onCloneComplete({ port: event.port, dir: event.dir });
-          } else if (typeof event.port === 'number') {
-            // Web fallback: redirect this page to the new server's port.
-            window.location.href = `http://localhost:${event.port}`;
+            onCloneComplete({ port, dir: event.dir });
+          } else if (port !== undefined) {
+            window.location.href = `http://localhost:${port}`;
           }
           return;
         } else if (event.type === 'error') {

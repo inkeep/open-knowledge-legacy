@@ -132,7 +132,12 @@ function createIpcEventStream<E extends { type: string }>(
       for (const w of waiters.splice(0)) w(null);
       if (myStreamId !== null) {
         invoke(cancelChannel, myStreamId).catch(() => {});
+        return;
       }
+      // IPC invoke hasn't resolved yet — chain cancel onto the result.
+      void startResultPromise.then((result) => {
+        if (result.ok) invoke(cancelChannel, result.streamId).catch(() => {});
+      });
     },
   };
 }

@@ -144,7 +144,7 @@ export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
  * Navigator window via IPC because it has no backing API server. See
  * `packages/desktop/src/shared/bridge-contract.ts` for canonical JSDoc.
  */
-type OkLocalOpAuthEvent =
+export type OkLocalOpAuthEvent =
   | {
       type: 'verification';
       user_code: string;
@@ -161,7 +161,7 @@ type OkLocalOpAuthEvent =
     }
   | { type: 'error'; message: string };
 
-type OkLocalOpCloneEvent =
+export type OkLocalOpCloneEvent =
   | { type: 'progress'; phase: string; pct: number }
   | { type: 'complete'; dir: string }
   | { type: 'error'; message: string };

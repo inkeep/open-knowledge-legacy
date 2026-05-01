@@ -15,7 +15,12 @@
  * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */
 
-import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
+import type {
+  OkDesktopConfig,
+  OkLocalOpAuthEvent,
+  OkLocalOpCloneEvent,
+  OkMenuAction,
+} from './bridge-contract.ts';
 import type { McpWiringEditorDetection } from './ipc-channels.ts';
 
 export interface EventChannels {
@@ -83,36 +88,9 @@ export interface EventChannels {
    * spawns a new editor window directly at `dir`.
    */
   'ok:local-op:auth:event': {
-    payload: { streamId: string; event: LocalOpAuthEvent };
+    payload: { streamId: string; event: OkLocalOpAuthEvent };
   };
   'ok:local-op:clone:event': {
-    payload: { streamId: string; event: LocalOpCloneEvent };
+    payload: { streamId: string; event: OkLocalOpCloneEvent };
   };
 }
-
-/** Auth event shape forwarded over IPC. Mirrors `AuthEvent` in `@inkeep/open-knowledge-server`. */
-type LocalOpAuthEvent =
-  | {
-      type: 'verification';
-      user_code: string;
-      verification_uri: string;
-      expires_in: number;
-    }
-  | {
-      type: 'complete';
-      host: string;
-      login: string;
-      name?: string;
-      email?: string;
-      avatarUrl?: string;
-    }
-  | { type: 'error'; message: string };
-
-/** Clone event shape forwarded over IPC. Mirrors `RawCloneEvent` in
- *  `@inkeep/open-knowledge-server` — the `complete` carries `dir` only;
- *  Electron main spawns a new editor window at that path directly,
- *  bypassing the HTTP relay's clone→ok-ui port chain. */
-type LocalOpCloneEvent =
-  | { type: 'progress'; phase: string; pct: number }
-  | { type: 'complete'; dir: string }
-  | { type: 'error'; message: string };

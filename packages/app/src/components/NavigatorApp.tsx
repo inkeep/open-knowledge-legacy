@@ -3,9 +3,8 @@
  * boots without a `lastOpenedProject`, OR when the user holds Option at
  * launch (D24 revised).
  *
- * Per spec §8.6 (D24 revised): three primary cards (Clone from GitHub,
- * Open folder on disk, Start fresh) above a Recent list. Every project
- * pick spawns a NEW editor window via `ok:project:open` IPC (D3 revised
+ * three primary cards (Clone from GitHub, Open folder on disk, Start fresh) above a Recent list.
+ *  Every project pick spawns a NEW editor window via `ok:project:open` IPC (D3 revised
  * — no switch-in-place in v0). Navigator window stays open.
  *
  * Web / CLI distribution never reaches this component — it only renders
@@ -203,12 +202,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           setAuthModalOpen(true);
         }}
         onCloneComplete={({ dir }) => {
-          // Navigator stays open; spawn the cloned project in a new editor
-          // window. The default `window.location.href` redirect would
-          // navigate the launcher itself away — wrong for the Electron
-          // multi-window flow. Server includes `dir` (absolute, expanded)
-          // in the `complete` event for exactly this caller path.
-          if (!dir) return;
+          // Navigator stays open; spawn the cloned project in a new editor window.
           void runWithErrorState(() => openProject(bridge, dir), 'Failed to open cloned project.');
         }}
       />
