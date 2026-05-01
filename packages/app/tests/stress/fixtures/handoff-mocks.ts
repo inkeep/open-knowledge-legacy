@@ -287,6 +287,24 @@ export async function installHandoffMocks(page: Page, cfg: HandoffMockConfig): P
       // biome-ignore lint/suspicious/noExplicitAny: test-only global attachment.
       (window as any).okDesktop = bridge;
     }
+
+    // ---- Cowork skill install-guard seed ----
+    // The Open-in-Agent dropdown's `claude-cowork` row routes through a lazy
+    // install gate (`ensureCoworkSkillInstalled`) on first click per skill
+    // version. If unset, web hosts POST `/api/install-skill` (real build) and
+    // Electron hosts call `okDesktop.skill.buildAndOpen()` (mock returns
+    // failure here). Either path short-circuits dispatch and the cell-4
+    // anchor-click assertion never runs. Seed the versioned guard so the
+    // gate returns `already-installed` and tests exercise the URL-dispatch
+    // path — mirrors the unit-test default in `useHandoffDispatch.test.ts`.
+    // The install gate itself is covered by unit tests, not this matrix.
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: matches production resolution in cowork-skill-install.ts.
+      const ver = (window as any).okDesktop?.appVersion ?? 'unknown';
+      window.localStorage.setItem(`ok:skill:cowork:installed:v${ver}`, '1');
+    } catch {
+      // localStorage unavailable (sandboxed) — gate falls through harmlessly.
+    }
   }, cfg);
 }
 
