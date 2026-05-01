@@ -4,7 +4,7 @@
  * side-effects of a click:
  *
  *   (1) `dispatchHandoff` — route the payload to the per-target URL primitive.
- *   (2) `recordHandoff`   — append one JSONL line to `~/.open-knowledge/stats.jsonl`
+ *   (2) `recordHandoff`   — append one JSONL line to `~/.ok/stats.jsonl`
  *                           (Electron-only in v0; web host no-op).
  *   (3) sonner toast       — success / failure + retry action.
  *

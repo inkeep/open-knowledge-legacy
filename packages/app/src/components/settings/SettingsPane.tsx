@@ -96,28 +96,6 @@ interface FieldDef {
 
 const SECTIONS: SectionDef[] = [
   {
-    id: 'content',
-    title: 'Content',
-    description: 'Where Open Knowledge looks for documents.',
-    fields: [
-      {
-        path: ['content', 'dir'],
-        label: 'Content directory',
-        description: 'Project-relative path containing your markdown files.',
-      },
-      {
-        path: ['content', 'include'],
-        label: 'Include patterns',
-        description: 'Glob patterns selecting which files are content. One per line.',
-      },
-      {
-        path: ['content', 'exclude'],
-        label: 'Exclude patterns',
-        description: 'Glob patterns to skip. One per line.',
-      },
-    ],
-  },
-  {
     id: 'server',
     title: 'Server',
     description: 'Local server bind and behavior.',
