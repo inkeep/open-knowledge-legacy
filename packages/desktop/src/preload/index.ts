@@ -23,6 +23,9 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
   OkDesktopBridge,
   OkDesktopConfig,
+  OkLocalOpAuthEvent,
+  OkLocalOpCloneEvent,
+  OkLocalOpStream,
   OkMcpWiringShowPayload,
   OkMenuAction,
   OkUpdateDownloadedInfo,
@@ -32,6 +35,126 @@ import type {
 import { createInvoker } from '../shared/ipc-invoke.ts';
 
 const invoke = createInvoker(ipcRenderer);
+
+/**
+ * Async-iterable stream over a streamId-keyed IPC event channel. The
+ * factory subscribes to `eventChannel` immediately so events that arrive
+ * before iteration starts are buffered. Iteration ends when a `complete`
+ * or `error` event arrives (or `cancel()` is called by the consumer).
+ *
+ * Pattern keeps the renderer surface simple — components consume via
+ * `for await (const event of stream.events)` without thinking about
+ * subscriptions or unsubscribes; preload owns the listener lifetime.
+ */
+function createIpcEventStream<E extends { type: string }>(
+  startResultPromise: Promise<{ ok: true; streamId: string } | { ok: false; error: string }>,
+  eventChannel: 'ok:local-op:auth:event' | 'ok:local-op:clone:event',
+  cancelChannel: 'ok:local-op:auth:cancel' | 'ok:local-op:clone:cancel',
+): OkLocalOpStream<E> {
+  const buffer: E[] = [];
+  const waiters: ((event: E | null) => void)[] = [];
+  let terminated = false;
+  let myStreamId: string | null = null;
+  let listenerAttached = false;
+
+  const push = (event: E): void => {
+    if (terminated) return;
+    if (waiters.length > 0) {
+      const next = waiters.shift();
+      next?.(event);
+    } else {
+      buffer.push(event);
+    }
+    if (event.type === 'complete' || event.type === 'error') {
+      terminated = true;
+      detach();
+      // Drain waiting consumers with `null` so iterators end.
+      for (const w of waiters.splice(0)) w(null);
+    }
+  };
+
+  const listener = (_event: IpcRendererEvent, payload: { streamId: string; event: E }): void => {
+    if (myStreamId === null || payload.streamId !== myStreamId) return;
+    push(payload.event);
+  };
+
+  const detach = (): void => {
+    if (listenerAttached) {
+      ipcRenderer.removeListener(eventChannel, listener);
+      listenerAttached = false;
+    }
+  };
+
+  // Attach the listener BEFORE awaiting the start invoke — events fired
+  // from main between the invoke resolving and the listener attaching
+  // would otherwise be lost. The streamId-match guard discards events
+  // for any other in-flight stream until we know our own.
+  ipcRenderer.on(eventChannel, listener);
+  listenerAttached = true;
+
+  void startResultPromise.then((result) => {
+    if (!result.ok) {
+      // Synthesize an error event so the iterator terminates with a clear
+      // signal. The shape mirrors the auth/clone error variants.
+      push({ type: 'error', message: result.error } as unknown as E);
+      return;
+    }
+    myStreamId = result.streamId;
+  });
+
+  const events: AsyncIterable<E> = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<E>> {
+          if (buffer.length > 0) {
+            const value = buffer.shift();
+            if (value === undefined) return { value: undefined, done: true };
+            return { value, done: false };
+          }
+          if (terminated) return { value: undefined, done: true };
+          return new Promise<IteratorResult<E>>((resolve) => {
+            waiters.push((event) => {
+              if (event === null) resolve({ value: undefined, done: true });
+              else resolve({ value: event, done: false });
+            });
+          });
+        },
+      };
+    },
+  };
+
+  return {
+    events,
+    cancel: () => {
+      if (terminated) return;
+      terminated = true;
+      detach();
+      for (const w of waiters.splice(0)) w(null);
+      if (myStreamId !== null) {
+        invoke(cancelChannel, myStreamId).catch(() => {});
+      }
+    },
+  };
+}
+
+function createLocalOpAuthStream(): OkLocalOpStream<OkLocalOpAuthEvent> {
+  return createIpcEventStream<OkLocalOpAuthEvent>(
+    invoke('ok:local-op:auth:start'),
+    'ok:local-op:auth:event',
+    'ok:local-op:auth:cancel',
+  );
+}
+
+function createLocalOpCloneStream(request: {
+  url: string;
+  dir: string;
+}): OkLocalOpStream<OkLocalOpCloneEvent> {
+  return createIpcEventStream<OkLocalOpCloneEvent>(
+    invoke('ok:local-op:clone:start', request),
+    'ok:local-op:clone:event',
+    'ok:local-op:clone:cancel',
+  );
+}
 
 /** Parse an `--ok-key=value` argv flag, returning the value or undefined. */
 function parseArg(name: string): string | undefined {
@@ -163,6 +286,15 @@ const bridge: OkDesktopBridge = {
     },
     confirm: (editorIds) => invoke('ok:mcp-wiring:confirm', { editorIds }),
     skip: () => invoke('ok:mcp-wiring:skip'),
+  },
+
+  localOp: {
+    auth: {
+      start: () => createLocalOpAuthStream(),
+    },
+    clone: {
+      start: (request) => createLocalOpCloneStream(request),
+    },
   },
 
   platform: process.platform as 'darwin' | 'win32' | 'linux',

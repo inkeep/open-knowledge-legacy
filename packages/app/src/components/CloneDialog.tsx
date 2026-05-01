@@ -11,6 +11,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { type CloneTransport, httpCloneTransport } from '@/lib/transports/clone-transport';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -30,28 +31,6 @@ interface RepoEntry {
 }
 
 type ClonePhase = 'receiving' | 'resolving' | 'checking' | 'init' | 'done' | string;
-
-interface CloneProgressEvent {
-  type: 'progress';
-  phase: ClonePhase;
-  pct: number;
-}
-
-interface CloneCompleteEvent {
-  type: 'complete';
-  port: number;
-  /** Absolute, tilde-expanded path to the cloned repo. Used by hosts that
-   *  spawn a separate window/process at the cloned dir (Electron Navigator)
-   *  instead of redirecting the current page to the new server's port. */
-  dir?: string;
-}
-
-interface CloneErrorEvent {
-  type: 'error';
-  message: string;
-}
-
-type CloneEvent = CloneProgressEvent | CloneCompleteEvent | CloneErrorEvent;
 
 function phaseLabel(phase: ClonePhase): string {
   switch (phase) {
@@ -104,10 +83,24 @@ interface CloneDialogProps {
    * navigation. Used by the Electron Navigator to spawn a new editor window
    * at `dir` instead of navigating the launcher itself to the new dev port.
    */
-  onCloneComplete?: (info: { port: number; dir?: string }) => void;
+  onCloneComplete?: (info: { port?: number; dir?: string }) => void;
+  /**
+   * Transport for the clone subprocess. Defaults to the HTTP path (POST
+   * /api/local-op/clone) so existing editor / web callers don't change.
+   * The Project Navigator passes an IPC transport because its window has
+   * no backing API server.
+   */
+  transport?: CloneTransport;
 }
 
-export function CloneDialog({ open, onOpenChange, onSignIn, onCloneComplete }: CloneDialogProps) {
+export function CloneDialog({
+  open,
+  onOpenChange,
+  onSignIn,
+  onCloneComplete,
+  transport,
+}: CloneDialogProps) {
+  const resolvedTransport = transport ?? httpCloneTransport();
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
@@ -115,7 +108,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn, onCloneComplete }: C
   const [repoFilter, setRepoFilter] = useState('');
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [cloning, setCloning] = useState(false);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
   // Check auth status when dialog opens. The server resolves host (defaults
@@ -207,93 +200,69 @@ export function CloneDialog({ open, onOpenChange, onSignIn, onCloneComplete }: C
       return;
     }
 
-    const ac = new AbortController();
-    setAbortController(ac);
     setCloning(true);
 
     const toastId = toast.loading('Starting clone…', { duration: Number.POSITIVE_INFINITY });
     toastIdRef.current = toastId;
 
+    const handle = resolvedTransport.start({
+      url: urlInput.trim(),
+      dir: localPath || '',
+    });
+    cancelRef.current = handle.cancel;
+
     try {
-      const res = await fetch('/api/local-op/clone', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlInput.trim(), dir: localPath || undefined }),
-        signal: ac.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        toast.error('Clone failed — check the URL and try again', { id: toastId });
-        setCloning(false);
-        setAbortController(null);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as CloneEvent;
-            if (event.type === 'progress') {
-              toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
-            } else if (event.type === 'complete') {
-              toast.success('Clone complete — opening project', { id: toastId });
-              onOpenChange(false);
-              setCloning(false);
-              setAbortController(null);
-              if (onCloneComplete) {
-                // Caller (e.g. Electron Navigator) takes over navigation.
-                onCloneComplete({ port: event.port, dir: event.dir });
-              } else {
-                // Web fallback: redirect this page to the new server's port.
-                window.location.href = `http://localhost:${event.port}`;
-              }
-              return;
-            } else if (event.type === 'error') {
-              toast.error(`Clone failed: ${event.message}`, { id: toastId });
-              setCloning(false);
-              setAbortController(null);
-              return;
-            }
-          } catch {
-            /* ignore malformed line */
+      // Manual iterator drive — React Compiler (BuildHIR) does not yet
+      // support `for await ... of` lowering.
+      const iter = handle.events[Symbol.asyncIterator]();
+      let sawTerminal = false;
+      let result = await iter.next();
+      while (!result.done) {
+        const event = result.value;
+        if (event.type === 'progress') {
+          toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
+        } else if (event.type === 'complete') {
+          sawTerminal = true;
+          toast.success('Clone complete — opening project', { id: toastId });
+          onOpenChange(false);
+          setCloning(false);
+          cancelRef.current = null;
+          if (onCloneComplete) {
+            // Caller (e.g. Electron Navigator) takes over navigation.
+            onCloneComplete({ port: event.port, dir: event.dir });
+          } else if (typeof event.port === 'number') {
+            // Web fallback: redirect this page to the new server's port.
+            window.location.href = `http://localhost:${event.port}`;
           }
+          return;
+        } else if (event.type === 'error') {
+          sawTerminal = true;
+          toast.error(`Clone failed: ${event.message}`, { id: toastId });
+          setCloning(false);
+          cancelRef.current = null;
+          return;
         }
+        result = await iter.next();
       }
-
-      // Stream ended without a terminal 'complete' or 'error' event. The
-      // server may have crashed or the response was truncated — surface it so
-      // the user knows the clone may be in an inconsistent state.
-      toast.error('Clone stream ended unexpectedly — check if the clone completed', {
-        id: toastId,
-      });
-      setCloning(false);
-      setAbortController(null);
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        toast.dismiss(toastIdRef.current ?? undefined);
-      } else {
-        toast.error('Clone failed — connection error', { id: toastId });
+      if (!sawTerminal) {
+        // Stream ended without a terminal 'complete' or 'error' event.
+        toast.error('Clone stream ended unexpectedly — check if the clone completed', {
+          id: toastId,
+        });
+        setCloning(false);
+        cancelRef.current = null;
       }
+    } catch {
+      toast.error('Clone failed — connection error', { id: toastId });
       setCloning(false);
-      setAbortController(null);
+      cancelRef.current = null;
     }
   }
 
   function handleCancel() {
-    abortController?.abort();
+    cancelRef.current?.();
+    cancelRef.current = null;
     setCloning(false);
-    setAbortController(null);
     toast.dismiss(toastIdRef.current ?? undefined);
   }
 

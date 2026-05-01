@@ -113,6 +113,24 @@ export {
   type LiveDerivedIndexOptions,
 } from './live-derived-index.ts';
 export {
+  type AuthEvent,
+  type CloneCompleteEvent,
+  type CloneErrorEvent,
+  type CloneEvent,
+  type CloneProgressEvent,
+  type DeviceCompleteEvent,
+  type DeviceErrorEvent,
+  type DeviceVerificationEvent,
+  type RawCloneEvent,
+  type RunCloneController,
+  type RunCloneOptions,
+  type RunDeviceFlowController,
+  type RunDeviceFlowOptions,
+  runCloneSubprocess,
+  runDeviceFlowSubprocess,
+  validateCloneInputs,
+} from './local-ops/index.ts';
+export {
   createTestLogger,
   getLogger,
   installTestLoggers,

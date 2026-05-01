@@ -20,6 +20,8 @@ import {
   resolveErrorMessage,
   runWithErrorStatePure as runWithErrorStatePureBase,
 } from '@/lib/error-state';
+import { ipcAuthTransport } from '@/lib/transports/auth-transport';
+import { ipcCloneTransport } from '@/lib/transports/clone-transport';
 import { AuthModal } from './AuthModal';
 import { CloneDialog } from './CloneDialog';
 import { GithubIcon } from './icons/github';
@@ -194,6 +196,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
       <CloneDialog
         open={cloneDialogOpen}
         onOpenChange={setCloneDialogOpen}
+        transport={ipcCloneTransport(bridge)}
         onSignIn={() => {
           setCloneDialogOpen(false);
           setReturnToCloneAfterAuth(true);
@@ -215,6 +218,7 @@ export function NavigatorApp({ bridge }: { bridge: OkDesktopBridge }) {
           setAuthModalOpen(next);
           if (!next) setReturnToCloneAfterAuth(false);
         }}
+        transport={ipcAuthTransport(bridge)}
         onSuccess={() => {
           setAuthModalOpen(false);
           if (returnToCloneAfterAuth) {

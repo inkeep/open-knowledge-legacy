@@ -140,6 +140,38 @@ export interface OkMcpWiringShowPayload {
 export type OkMcpWiringResult = { ok: true } | { ok: false; error: string };
 
 /**
+ * Pre-project local-op event shapes — auth + clone flows surfaced to the
+ * Navigator window via IPC because it has no backing API server. See
+ * `packages/desktop/src/shared/bridge-contract.ts` for canonical JSDoc.
+ */
+type OkLocalOpAuthEvent =
+  | {
+      type: 'verification';
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+    }
+  | {
+      type: 'complete';
+      host: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+    }
+  | { type: 'error'; message: string };
+
+type OkLocalOpCloneEvent =
+  | { type: 'progress'; phase: string; pct: number }
+  | { type: 'complete'; dir: string }
+  | { type: 'error'; message: string };
+
+interface OkLocalOpStream<E> {
+  readonly events: AsyncIterable<E>;
+  cancel(): void;
+}
+
+/**
  * Result shape for `bridge.debug?.keyringSmoke()` — mirrors
  * `KeyringSmokeResult` in `packages/desktop/src/utility/keyring-smoke.ts`
  * and `OkKeyringSmokeResult` in `packages/core/src/desktop-bridge.ts`.
@@ -283,6 +315,19 @@ export interface OkDesktopBridge {
     signalReady(): void;
     confirm(editorIds: readonly OkMcpWiringEditorId[]): Promise<OkMcpWiringResult>;
     skip(): Promise<OkMcpWiringResult>;
+  };
+  /**
+   * Pre-project local-op flows. Required by the Project Navigator window
+   * (no backing API server). See canonical JSDoc in
+   * `packages/desktop/src/shared/bridge-contract.ts`.
+   */
+  localOp: {
+    auth: {
+      start(): OkLocalOpStream<OkLocalOpAuthEvent>;
+    };
+    clone: {
+      start(request: { url: string; dir: string }): OkLocalOpStream<OkLocalOpCloneEvent>;
+    };
   };
   readonly platform: 'darwin' | 'win32' | 'linux';
   readonly appVersion: string;

@@ -67,4 +67,52 @@ export interface EventChannels {
   'ok:mcp-wiring:show': {
     payload: { detectedEditors: readonly McpWiringEditorDetection[] };
   };
+
+  /**
+   * Streaming events for the pre-project Navigator local-op flows. Pair
+   * with `ok:local-op:auth:start` / `ok:local-op:clone:start`. Events
+   * carry the `streamId` returned by the start call so multiple in-flight
+   * flows on the same channel can be disambiguated (currently we cap at
+   * one, but the streamId design lets future renderer code subscribe to
+   * specific flows).
+   *
+   * Auth events mirror the server-side `AuthEvent` discriminated union
+   * (`verification` | `complete` | `error`); clone events mirror the raw
+   * CLI shape (`progress` | `complete` with `dir` only | `error`) — the
+   * IPC path doesn't need the HTTP relay's port chaining because main
+   * spawns a new editor window directly at `dir`.
+   */
+  'ok:local-op:auth:event': {
+    payload: { streamId: string; event: LocalOpAuthEvent };
+  };
+  'ok:local-op:clone:event': {
+    payload: { streamId: string; event: LocalOpCloneEvent };
+  };
 }
+
+/** Auth event shape forwarded over IPC. Mirrors `AuthEvent` in `@inkeep/open-knowledge-server`. */
+type LocalOpAuthEvent =
+  | {
+      type: 'verification';
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+    }
+  | {
+      type: 'complete';
+      host: string;
+      login: string;
+      name?: string;
+      email?: string;
+      avatarUrl?: string;
+    }
+  | { type: 'error'; message: string };
+
+/** Clone event shape forwarded over IPC. Mirrors `RawCloneEvent` in
+ *  `@inkeep/open-knowledge-server` — the `complete` carries `dir` only;
+ *  Electron main spawns a new editor window at that path directly,
+ *  bypassing the HTTP relay's clone→ok-ui port chain. */
+type LocalOpCloneEvent =
+  | { type: 'progress'; phase: string; pct: number }
+  | { type: 'complete'; dir: string }
+  | { type: 'error'; message: string };
