@@ -25,4 +25,4 @@ Side-effect docs (backlink-rewrite cascades) remain anonymous for both agent-dri
 
 **Other behavior changes worth noting:**
 - `POST /api/rollback` 500 responses no longer echo the underlying error message; clients now see a generic `Failed to roll back document` string. Eliminates a path / internal-state leak channel for an unauthenticated body endpoint.
-- `ok init` adds `state.json` to the bootstrapped `.open-knowledge/.gitignore` alongside `sync-state.json` and `principal.json` — covers newly-added local-runtime state at `<contentDir>/.open-knowledge/state.json` (also emitted as a separate `init-gitignore-consolidation` changeset for the broader scaffold rework, but the `state.json` line specifically lands here).
+- `ok init` adds `state.json` to the bootstrapped `.ok/.gitignore` alongside `sync-state.json` and `principal.json` — covers newly-added local-runtime state at `<contentDir>/.ok/state.json` (also emitted as a separate `init-gitignore-consolidation` changeset for the broader scaffold rework, but the `state.json` line specifically lands here).
