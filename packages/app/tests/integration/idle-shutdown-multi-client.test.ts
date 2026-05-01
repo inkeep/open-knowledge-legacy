@@ -40,7 +40,7 @@ beforeAll(async () => {
     attachUiSibling: false,
     idleShutdownMs: IDLE_SHUTDOWN_MS,
   });
-  lockPath = resolve(contentDir, '.open-knowledge', 'server.lock');
+  lockPath = resolve(contentDir, '.ok', 'server.lock');
 });
 
 afterAll(async () => {
