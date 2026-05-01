@@ -264,7 +264,7 @@ const cmLru: string[] = [];
  * ACTIVITY_MOUNT_LIMIT MRU entries and calls setActivityMountList on
  * every change.
  *
- * FR3b — Activity-hidden observer CPU cap:
+ * Activity-hidden observer CPU cap:
  *   Cached docs NOT in this list have their HocuspocusProvider
  *   disconnected so peer CRDT updates stop arriving. Local Y.js observers
  *   still fire (Y.Doc-driven), preserving user-local edit UX. When a doc
@@ -806,13 +806,13 @@ function findEvictable(lru: string[], mountingDocName: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Activity-mount list + FR3b provider connect/disconnect
+// Activity-mount list + provider connect/disconnect
 // ---------------------------------------------------------------------------
 
 /**
  * Update the activity-mount list. Any cached editor whose docName was in
  * the previous list but is NOT in the new list has its HocuspocusProvider
- * disconnected (peer CRDT updates stop arriving — FR3b observer CPU cap).
+ * disconnected (peer CRDT updates stop arriving — observer CPU cap).
  * Any docName newly promoted from hidden → active has its provider
  * reconnected.
  *
@@ -830,7 +830,7 @@ export function setActivityMountList(docNames: readonly string[]): void {
 
   // Demotion — fired for docs that were active, now aren't. Emits
   // `ok/cache/disconnect` only on success, `ok/cache/disconnect-failed`
-  // on provider-destroyed state so FR3b (observer-CPU cap) signal is
+  // on provider-destroyed state so the observer-CPU-cap signal is
   // honest (review Major #12).
   for (const docName of prev) {
     if (next.has(docName)) continue;
@@ -852,7 +852,7 @@ export function setActivityMountList(docNames: readonly string[]): void {
   // success vs failure emission is mutually exclusive (review Pass-1
   // Minor #3): when the returned Promise rejects, only `connect-failed`
   // fires — not `connect` followed by `connect-failed` for the same
-  // activation. Consumers filtering by mark kind (FR3b observer-CPU cap
+  // activation. Consumers filtering by mark kind (observer-CPU-cap
   // dashboards) no longer over-count successes.
   for (const docName of next) {
     if (prev.has(docName)) continue;
@@ -925,7 +925,7 @@ function findProvider(docName: string): HocuspocusProvider | null {
  *     instances cannot outlive the Y.Doc they're bound to.
  *  2. Pool fallback for `findProvider` — the pool's `entries` map is stashed
  *     so `setActivityMountList` can disconnect providers for pool-resident-
- *     but-not-V2-cached docs (FR3b correctness under defer-mount + small
+ *     but-not-V2-cached docs (correctness under defer-mount + small
  *     `ACTIVITY_MOUNT_LIMIT`).
  *
  * The cache must be subscribed BEFORE the pool can fire any eviction

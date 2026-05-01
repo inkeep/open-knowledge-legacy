@@ -1477,6 +1477,81 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
   });
 });
 
+describe('subscribePoolEviction — onEvict propagation', () => {
+  beforeEach(() => __resetCacheForTests());
+  afterEach(() => __resetCacheForTests());
+
+  test('pool eviction destroys both TipTap and CM cache entries for the same doc', () => {
+    // Capture the eviction callback the cache registers with the pool, then
+    // fire it directly. Verifies pool→cache propagation: when the pool
+    // evicts a provider, both editor cache kinds for that docName must be
+    // torn down so editors cannot outlive the Y.Doc they're bound to.
+    let captured: ((docName: string) => void) | null = null;
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>(),
+      onEvict: (cb: (docName: string) => void) => {
+        captured = cb;
+        return () => {
+          captured = null;
+        };
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      const tip = makeTiptapHarness('doc-shared');
+      const cm = makeCmHarness('doc-shared');
+      mountTiptapEditor({
+        docName: tip.docName,
+        container: tip.container as unknown as HTMLElement,
+        factory: tip.factory as unknown as (el: HTMLElement) => ReturnType<typeof tip.factory>,
+      });
+      mountCmEditor({
+        docName: cm.docName,
+        container: cm.container as unknown as HTMLElement,
+        factory: cm.factory as unknown as (el: HTMLElement) => ReturnType<typeof cm.factory>,
+      });
+      expect(__peekTiptap('doc-shared')).toBeDefined();
+      expect(__peekCm('doc-shared')).toBeDefined();
+      expect(captured).not.toBeNull();
+
+      captured?.('doc-shared');
+
+      expect(__peekTiptap('doc-shared')).toBeUndefined();
+      expect(__peekCm('doc-shared')).toBeUndefined();
+      expect(tip.spies.destroyCalls).toBe(1);
+      expect(cm.spies.destroyCalls).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('eviction for unknown docName is a safe no-op (race-tolerant)', () => {
+    // Pool can race ahead of the V2 cache: a provider can be evicted from
+    // the pool before any editor was ever mounted for that doc, or after
+    // the cache already evicted on its own. Either way, the propagation
+    // callback must tolerate misses without throwing.
+    let captured: ((docName: string) => void) | null = null;
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>(),
+      onEvict: (cb: (docName: string) => void) => {
+        captured = cb;
+        return () => {
+          captured = null;
+        };
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      expect(captured).not.toBeNull();
+      expect(__peekTiptap('never-mounted')).toBeUndefined();
+      expect(__peekCm('never-mounted')).toBeUndefined();
+      expect(() => captured?.('never-mounted')).not.toThrow();
+    } finally {
+      unsubscribe();
+    }
+  });
+});
+
 describe('LRU eviction respects activity-mount list (never evicts active doc)', () => {
   beforeEach(() => __resetCacheForTests());
   afterEach(() => __resetCacheForTests());
