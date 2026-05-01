@@ -11,6 +11,11 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  type AuthQueryTransport,
+  httpAuthQueryTransport,
+} from '@/lib/transports/auth-query-transport';
+import { type CloneTransport, httpCloneTransport } from '@/lib/transports/clone-transport';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -30,24 +35,6 @@ interface RepoEntry {
 }
 
 type ClonePhase = 'receiving' | 'resolving' | 'checking' | 'init' | 'done' | string;
-
-interface CloneProgressEvent {
-  type: 'progress';
-  phase: ClonePhase;
-  pct: number;
-}
-
-interface CloneCompleteEvent {
-  type: 'complete';
-  port: number;
-}
-
-interface CloneErrorEvent {
-  type: 'error';
-  message: string;
-}
-
-type CloneEvent = CloneProgressEvent | CloneCompleteEvent | CloneErrorEvent;
 
 function phaseLabel(phase: ClonePhase): string {
   switch (phase) {
@@ -94,9 +81,45 @@ interface CloneDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called when "Sign in to GitHub" is clicked. */
   onSignIn?: () => void;
+  /**
+   * Called when the clone completes successfully. When provided, the dialog
+   * does NOT redirect via `window.location.href` — the caller takes over
+   * navigation. Used by the Electron Navigator to spawn a new editor window
+   * at `dir` instead of navigating the launcher itself to the new dev port.
+   *
+   * Shape is the flattened union of the two transport `complete` variants:
+   * HTTP relay emits `{port, dir}`; IPC main emits `{dir}` only. `dir` is
+   * always present (server-side guarantee, type-pinned by the drift catcher
+   * `local-op-types-drift.test.ts`); `port` is HTTP-only.
+   */
+  onCloneComplete?: (info: { port?: number; dir: string }) => void;
+  /**
+   * Transport for the clone subprocess. Defaults to the HTTP path (POST
+   * /api/local-op/clone) so existing editor / web callers don't change.
+   * The Project Navigator passes an IPC transport because its window has
+   * no backing API server.
+   */
+  transport?: CloneTransport;
+  /**
+   * Transport for the one-shot auth-status / repos queries. Defaults to
+   * the HTTP path (POST /api/local-op/auth/{status,repos}). Navigator
+   * passes an IPC transport — without it the queries 404 on the renderer
+   * dev server and the dialog persistently shows the Sign-in button even
+   * when the user is signed in.
+   */
+  authQueryTransport?: AuthQueryTransport;
 }
 
-export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) {
+export function CloneDialog({
+  open,
+  onOpenChange,
+  onSignIn,
+  onCloneComplete,
+  transport,
+  authQueryTransport,
+}: CloneDialogProps) {
+  const resolvedTransport = transport ?? httpCloneTransport();
+  const resolvedAuthQuery = authQueryTransport ?? httpAuthQueryTransport();
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
@@ -104,78 +127,50 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   const [repoFilter, setRepoFilter] = useState('');
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [cloning, setCloning] = useState(false);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
-  // Check auth status when dialog opens. The server resolves host (defaults
-  // to github.com today; will read from config/last-used when enterprise lands).
+  // Check auth status when the dialog opens. The transport defaults to the
+  // HTTP path; Navigator passes an IPC transport because its window has no
+  // backing API server (apiOrigin === '') — the HTTP fetch would 404 on the
+  // renderer dev server and the dialog would persistently show "Sign in".
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!open) return;
-    void fetch('/api/local-op/auth/status', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-      .then((r) => r.json())
-      .then((data: { authenticated?: boolean }) => {
-        setIsSignedIn(!!data.authenticated);
+    let cancelled = false;
+    void resolvedAuthQuery
+      .status()
+      .then((data) => {
+        if (!cancelled) setIsSignedIn(data.authenticated);
       })
-      .catch(() => setIsSignedIn(false));
+      .catch(() => {
+        if (!cancelled) setIsSignedIn(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
-  async function fetchRepos(signal: AbortSignal) {
-    setLoadingRepos(true);
-    // No try/finally — React Compiler doesn't yet lower TryStatement finalizers.
-    // All exit paths set repos + clear loading explicitly before returning.
-    let list: RepoEntry[] = [];
-    let aborted = false;
-    try {
-      const res = await fetch('/api/local-op/auth/repos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-        signal,
-      });
-      const reader = res.ok ? res.body?.getReader() : null;
-      if (reader) {
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          for (const line of buffer.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line) as { type?: string; repos?: RepoEntry[] };
-              if (event.repos) list.push(...event.repos);
-            } catch {
-              /* ignore malformed NDJSON line */
-            }
-          }
-          buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
-        }
-      }
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        aborted = true;
-      } else {
-        list = [];
-      }
-    }
-    // Skip state writes on abort — the effect already tore down and React
-    // would warn about a state update on an unmounted dialog.
-    if (aborted || signal.aborted) return;
-    setRepos(list);
-    setLoadingRepos(false);
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedAuthQuery is stable per render
   useEffect(() => {
     if (!isSignedIn || !open) return;
-    const ac = new AbortController();
-    void fetchRepos(ac.signal);
-    return () => ac.abort();
+    let cancelled = false;
+    setLoadingRepos(true);
+    void resolvedAuthQuery
+      .repos()
+      .then((result) => {
+        if (cancelled) return;
+        setRepos(result.ok ? result.repos : []);
+        setLoadingRepos(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRepos([]);
+        setLoadingRepos(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isSignedIn, open]);
 
   function handleUrlChange(value: string) {
@@ -196,88 +191,71 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
       return;
     }
 
-    const ac = new AbortController();
-    setAbortController(ac);
     setCloning(true);
 
     const toastId = toast.loading('Starting clone…', { duration: Number.POSITIVE_INFINITY });
     toastIdRef.current = toastId;
 
+    const handle = resolvedTransport.start({
+      url: urlInput.trim(),
+      dir: localPath || '',
+    });
+    cancelRef.current = handle.cancel;
+
     try {
-      const res = await fetch('/api/local-op/clone', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlInput.trim(), dir: localPath || undefined }),
-        signal: ac.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        toast.error('Clone failed — check the URL and try again', { id: toastId });
-        setCloning(false);
-        setAbortController(null);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as CloneEvent;
-            if (event.type === 'progress') {
-              toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
-            } else if (event.type === 'complete') {
-              toast.success('Clone complete — opening project', { id: toastId });
-              onOpenChange(false);
-              setCloning(false);
-              setAbortController(null);
-              // Redirect to the new server's port
-              window.location.href = `http://localhost:${event.port}`;
-              return;
-            } else if (event.type === 'error') {
-              toast.error(`Clone failed: ${event.message}`, { id: toastId });
-              setCloning(false);
-              setAbortController(null);
-              return;
-            }
-          } catch {
-            /* ignore malformed line */
+      // Manual iterator drive — React Compiler (BuildHIR) does not yet
+      // support `for await ... of` lowering.
+      const iter = handle.events[Symbol.asyncIterator]();
+      let sawTerminal = false;
+      let result = await iter.next();
+      while (!result.done) {
+        const event = result.value;
+        if (event.type === 'progress') {
+          toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
+        } else if (event.type === 'complete') {
+          sawTerminal = true;
+          toast.success('Clone complete — opening project', { id: toastId });
+          onOpenChange(false);
+          setCloning(false);
+          cancelRef.current = null;
+          const port = 'port' in event ? event.port : undefined;
+          if (onCloneComplete) {
+            onCloneComplete({ port, dir: event.dir });
+          } else if (port !== undefined) {
+            window.location.href = `http://localhost:${port}`;
           }
+          return;
+        } else if (event.type === 'error') {
+          sawTerminal = true;
+          toast.error(`Clone failed: ${event.message}`, { id: toastId });
+          setCloning(false);
+          cancelRef.current = null;
+          return;
         }
+        result = await iter.next();
       }
-
-      // Stream ended without a terminal 'complete' or 'error' event. The
-      // server may have crashed or the response was truncated — surface it so
-      // the user knows the clone may be in an inconsistent state.
-      toast.error('Clone stream ended unexpectedly — check if the clone completed', {
-        id: toastId,
-      });
-      setCloning(false);
-      setAbortController(null);
+      if (!sawTerminal) {
+        // Stream ended without a terminal 'complete' or 'error' event.
+        toast.error('Clone stream ended unexpectedly — check if the clone completed', {
+          id: toastId,
+        });
+        setCloning(false);
+        cancelRef.current = null;
+      }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        toast.dismiss(toastIdRef.current ?? undefined);
-      } else {
-        toast.error('Clone failed — connection error', { id: toastId });
-      }
+      // Log so non-transport exceptions (e.g. an `onCloneComplete` callback
+      // throwing) aren't lost behind the generic toast message.
+      console.error('[CloneDialog] clone iteration failed:', err);
+      toast.error('Clone failed — connection error', { id: toastId });
       setCloning(false);
-      setAbortController(null);
+      cancelRef.current = null;
     }
   }
 
   function handleCancel() {
-    abortController?.abort();
+    cancelRef.current?.();
+    cancelRef.current = null;
     setCloning(false);
-    setAbortController(null);
     toast.dismiss(toastIdRef.current ?? undefined);
   }
 

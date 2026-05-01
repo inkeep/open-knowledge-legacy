@@ -18,7 +18,11 @@ import type { ScaffoldPlan } from '@inkeep/open-knowledge-server';
 import type { BuildAndOpenResult } from '../main/ipc/install-skill.ts';
 import type { SeedApplyResult, SeedPlanResult } from '../main/ipc/seed.ts';
 import type { KeyringSmokeResult } from '../utility/keyring-smoke.ts';
-import type { OkDesktopConfig } from './bridge-contract.ts';
+import type {
+  OkDesktopConfig,
+  OkLocalOpAuthReposResponse,
+  OkLocalOpAuthStatusResponse,
+} from './bridge-contract.ts';
 
 /** Recent-project row as surfaced to the Navigator. */
 export interface RecentProject {
@@ -320,4 +324,44 @@ export interface RequestChannels {
    * SPEC 2026-04-24 Ship 1e / 1j (local-build simplification).
    */
   'ok:skill:build-and-open': { args: []; result: BuildAndOpenResult };
+
+  /**
+   * Pre-project local-op flows for the Navigator window (which has no
+   * backing API server). The HTTP path at /api/local-op/auth/login +
+   * /api/local-op/clone is unreachable from Navigator (`apiOrigin` is
+   * empty), so these IPC channels spawn the same CLI subprocess directly
+   * from the main process and stream events via `webContents.send`.
+   *
+   * Editor windows continue using the HTTP path — no regression. See
+   * `packages/server/src/local-ops/` for the shared subprocess runners.
+   *
+   * Lifetime: `start` returns a `streamId` that subsequent `:event` push
+   * messages and the `:cancel` invoker reference. Main tracks one in-flight
+   * flow per channel; concurrent starts return `error: 'busy'`.
+   */
+  'ok:local-op:auth:start': {
+    args: [];
+    result: { ok: true; streamId: string } | { ok: false; error: string };
+  };
+  'ok:local-op:auth:cancel': { args: [streamId: string]; result: undefined };
+  'ok:local-op:clone:start': {
+    args: [request: { url: string; dir: string }];
+    result: { ok: true; streamId: string } | { ok: false; error: string };
+  };
+  'ok:local-op:clone:cancel': { args: [streamId: string]; result: undefined };
+
+  /**
+   * One-shot auth queries — Navigator uses these in place of the HTTP
+   * `/api/local-op/auth/{status,repos}` endpoints. Bounded responses
+   * (status: one line; repos: bounded list) so no streaming surface
+   * needed.
+   */
+  'ok:local-op:auth:status': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthStatusResponse;
+  };
+  'ok:local-op:auth:repos': {
+    args: [request?: { host?: string }];
+    result: OkLocalOpAuthReposResponse;
+  };
 }
