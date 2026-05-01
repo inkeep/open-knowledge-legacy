@@ -483,7 +483,7 @@ function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormPro
           </SettingsSection>
         );
       })}
-      {scope === 'workspace' ? <SyncSection /> : null}
+      {scope === 'project' ? <SyncSection /> : null}
       <IntegrationsSection />
     </div>
   );
