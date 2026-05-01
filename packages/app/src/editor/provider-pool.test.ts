@@ -1025,6 +1025,7 @@ describe('ProviderPool server-instance-ID claim (US-001)', () => {
       if (!entry) throw new Error('expected entry');
       pool.setActive('doc1');
       entry.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
+      await pool.awaitMismatchSettled();
 
       const next = pool.open('doc2');
       if (!next) throw new Error('expected next entry');
@@ -1093,24 +1094,13 @@ describe("ProviderPool authenticationFailed handling (US-002 / 'server-instance-
 
     // Simulate the server's reject on the active doc's provider.
     e1.provider.emit('authenticationFailed', { reason: 'server-instance-mismatch' });
-    const recycled = await waitFor(() => {
-      const postE1 = pool.entries.get('doc1');
-      return (
-        pool.has('doc1') &&
-        !pool.has('doc2') &&
-        !pool.has('doc3') &&
-        postE1 !== undefined &&
-        postE1.provider !== originalProvider &&
-        pool.getActiveDocName() === 'doc1'
-      );
-    });
+    await pool.awaitMismatchSettled();
 
     // Active doc re-opens with a fresh provider (preserving activeDocName);
     // non-active docs are destroyed — the user navigating to them later
     // will get a fresh provider on next open(), which is exactly what we
     // want (no stale Y.Doc from the prior server incarnation ever merges
     // with fresh server state).
-    expect(recycled).toBe(true);
     expect(pool.has('doc1')).toBe(true);
     expect(pool.has('doc2')).toBe(false);
     expect(pool.has('doc3')).toBe(false);

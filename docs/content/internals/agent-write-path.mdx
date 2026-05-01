@@ -56,6 +56,20 @@ Paired-write origins (`AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORI
 
 Client-side keystroke protection is not needed on the bridge layer because the client observer does not write the derived CRDT under precedent #14.
 
+## Frontmatter write (CRDT-direct via `bindFrontmatterDoc`)
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. There is no separate `Y.Map('metadata')` for FM (a per-key map was the predecessor's design and was removed in the realtime-frontmatter-entries spec). Edits to *different* keys land at non-overlapping byte ranges and merge cleanly through Y.Text's character-level CRDT; same-key concurrent value edits collapse to last-writer-wins on the overlapping bytes.
+
+The browser property panel writes through `bindFrontmatterDoc(provider)` (in `@inkeep/open-knowledge-core/bridge`) — no HTTP round-trip. The binding exposes `patch(patch)` (JSON Merge Patch — `key: value` sets/creates, `key: null` deletes), `rename(oldKey, newKey)` (preserves source position so `title` → `titles` doesn't reorder), and `reorder(orderedKeys)` (drag-to-reorder commit). Each write parses the YAML region into a yaml@2 `Document`, edits at the `Pair` level, re-stringifies, and replaces the Y.Text byte range in one `doc.transact(fn, FORM_WRITE_ORIGIN)` block. `FORM_WRITE_ORIGIN` is non-paired (single-root writer — touches only `Y.Text`); Observer B fires normally and exits via the already-in-sync gate when the body half is unchanged.
+
+L1 validation runs at the binding boundary against `FrontmatterPatchSchema` and `FrontmatterValueSchema` (Zod) before any Y.Text mutation; on failure the binding returns `Result.err({ code: 'SCHEMA_INVALID', issues })` and leaves the doc untouched. The binding additionally enforces a 64 KB cap on the FM region and rejects the reserved key `'frontmatter'`.
+
+There is no L3 server-side validation hook. The Y.Text region IS the source of truth — including malformed bytes — so defense moves to (a) the binding's L1 commit gate against UI-driven malformed input and (b) the panel's last-valid render against transient invalid bytes from source-mode typing or disk drift. Disk persistence writes `ytext.toString()` verbatim; malformed YAML round-trips through disk unchanged.
+
+There is no MCP surface for frontmatter editing today. `edit_document` (`POST /api/agent-patch`) rejects FM-intersecting patches with HTTP 400; the redirect message tells callers to use `write_document` with `position: "replace"` and a payload that includes the new YAML block.
+
+**Telemetry.** Counter `ok.frontmatter.edit_surface_total` labels writes by source (`mcp-write`, `file-watcher`, `source-mode`) so adoption is queryable. Form writes do not emit a server-side counter — the originating client is responsible for any client-side span.
+
 ## Mode toggle (no merge)
 
 The WYSIWYG/source mode toggle is a UI visibility flip, not a serialize-and-merge operation. `EditorActivityPool` mounts both `TiptapEditor` and `SourceEditor` concurrently per active document and uses `display:none` to swap between them. Each editor stays bound to its Y type (`Y.XmlFragment('default')` for TipTap via `Collaboration`; `Y.Text('source')` for CodeMirror via `y-codemirror.next`) for the lifetime of the mount.

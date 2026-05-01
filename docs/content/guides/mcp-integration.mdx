@@ -64,8 +64,8 @@ Once the shim reaches `/mcp`, the running `ok start` process registers the full 
 | `get_config`                                  | Always    | Read the effective merged config (defaults → user → project)                              |
 | `set_config`                                  | Always    | Patch config fields on the agent-settable allowlist (auto-scope-routed)                      |
 | `set_folder_rule`                             | Always    | Transactional upsert of one or more `folders[]` rules                                        |
-| `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
-| `edit_document`                               | Connected | Find-and-replace on a document through the CRDT                                              |
+| `write_document`                              | Connected | Write content to a document through the CRDT (full document, including frontmatter)          |
+| `edit_document`                               | Connected | Find-and-replace on document **body** through the CRDT (FM edits are rejected — see below)   |
 | `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
 | `rename_folder`                               | Connected | Rename a folder and rewrite inbound links across every affected doc in one call              |
 | `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
@@ -79,6 +79,12 @@ All 22 docName-producing tools emit `previewUrl` in their result (single-doc too
 <Callout type="info">
 Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
+
+### Frontmatter writes
+
+Frontmatter lives in the YAML region of `Y.Text('source')` — the same CRDT text the body editor and source-mode editor bind to. Agents edit frontmatter through `write_document` (full-doc replace, including the `---\n…\n---` block). The browser-side property panel uses an in-process binding to manipulate the same region directly; agent and human edits land on the same Y.Text and merge through Y.js character-level CRDT.
+
+`edit_document` rejects FM-intersecting find/replace calls with HTTP 400 and a hint pointing at `write_document`. Body edits stay on `edit_document`; frontmatter edits route through `write_document`. Mixing the two in one batch — body edit via `edit_document`, FM rewrite via `write_document` — is the supported pattern.
 
 ### `summary` on write tools
 

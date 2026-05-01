@@ -40,8 +40,9 @@ export default {
     'docs/content/guides/open-in-agent-desktop.mdx': ['files'],
     'docs/content/guides/agent-activity-panel.mdx': ['files'],
     'docs/content/guides/install-claude-cowork.mdx': ['files'],
-    'docs/content/guides/assets-and-embeds.mdx': ['files'],
+    'docs/content/guides/properties.mdx': ['files'],
     'docs/content/guides/component-blocks.mdx': ['files'],
+    'docs/content/guides/assets-and-embeds.mdx': ['files'],
   },
   ignoreBinaries: ['printf'],
   workspaces: {
@@ -83,6 +84,12 @@ export default {
     'packages/server': {
       entry: ['src/**/*.test.ts'],
       project: 'src/**',
+      ignoreFiles: [
+        // Parked tool — registration commented out in src/mcp/tools/index.ts
+        // until a server-side CRDT path replaces the removed
+        // /api/frontmatter-patch transport.
+        'src/mcp/tools/frontmatter-patch.ts',
+      ],
     },
     'packages/cli': {
       entry: ['src/**/*.test.ts', 'scripts/*.ts', 'tests/**/*.ts'],

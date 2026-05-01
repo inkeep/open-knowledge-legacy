@@ -43,6 +43,7 @@ import {
   type HeadingEntry,
   type Principal,
   prependFrontmatter,
+  readFmMap,
   SYSTEM_DOC_NAME,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -214,6 +215,54 @@ function hintEmittedCounter(): ReturnType<ReturnType<typeof getMeter>['createCou
     });
   }
   return _hintEmittedCounter;
+}
+
+// Counter for `agent-patch` FM-intersecting calls. Bounded label set:
+// `result ∈ {'rejected','pre_deprecation_passthrough'}`. Today the handler
+// always rejects with 400 — the second label is reserved for a possible
+// passthrough mode during the deprecation window.
+let _agentPatchFmTouchCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
+  null;
+function agentPatchFmTouchCounter(): ReturnType<ReturnType<typeof getMeter>['createCounter']> {
+  if (!_agentPatchFmTouchCounter) {
+    _agentPatchFmTouchCounter = getMeter().createCounter(
+      'ok.frontmatter.agent_patch_fm_touch_total',
+      {
+        description:
+          'Count of agent-patch calls whose find string targets the frontmatter region. Measures incidence during the soft-deprecation window before agent-patch FM-intersecting calls are enforced as 400. Bounded label: result ∈ {rejected, pre_deprecation_passthrough}.',
+      },
+    );
+  }
+  return _agentPatchFmTouchCounter;
+}
+
+/**
+ * Heuristic FM-intersection check for `agent-patch` find strings. Pure
+ * function on the find string — runs before any doc state is read.
+ *
+ * Rejection signal:
+ *   - find contains `---` (FM/body separator — opening or closing fence)
+ *   - find matches `/^\s*[\w-]+:/` (yaml-style key-value at start)
+ *
+ * Catches the common case: agents that copy a YAML line verbatim into
+ * `find` to splice an FM property. The position-based check inside the
+ * transact block catches the rarer case where a non-yaml-shape find
+ * happens to land in the FM region (e.g., `find: 'draft'` matching
+ * `status: draft`). Together they cover both "find looks like FM" and
+ * "find lands in FM."
+ */
+function findLooksLikeFrontmatter(find: string): boolean {
+  // Line-anchored `---` (YAML document fence). Mid-string `---` (e.g. body
+  // text containing em-dash sequences or markdown thematic breaks embedded
+  // in larger find strings) flows to the position-based check below.
+  if (/(^|\n)---(\s|\n|$)/.test(find)) return true;
+  // YAML key-value shape — require an actual value (`\s+\S` after the
+  // colon) so prose like `Note:` / `IMPORTANT:` / `Warning:` (no value)
+  // is left to the position-based check, which rejects only when the find
+  // actually lands inside the FM region. Empty-value YAML keys like
+  // `draft:` similarly fall through to position-based rejection.
+  if (/^\s*[\w-]+:\s+\S/.test(find)) return true;
+  return false;
 }
 
 let _renameAttributionCounter: ReturnType<ReturnType<typeof getMeter>['createCounter']> | null =
@@ -1179,9 +1228,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const doc = hocuspocus.documents.get(docName);
       if (doc) {
-        const metaMap = doc.getMap('metadata');
-        const fm = metaMap.get('frontmatter');
-        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+        const map = readFmMap(doc.getText('source').toString());
+        if (Object.keys(map).length > 0) {
+          const cluster = typeof map.cluster === 'string' ? map.cluster : undefined;
+          const category = typeof map.category === 'string' ? map.category : undefined;
+          let tags: string[] | undefined;
+          if (Array.isArray(map.tags)) {
+            tags = map.tags.length > 0 ? map.tags : undefined;
+          } else if (typeof map.tags === 'string' && map.tags) {
+            tags = [map.tags];
+          }
+          return { cluster, category, tags };
+        }
       }
     } catch {
       /* fall through to disk */
@@ -2623,6 +2681,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
+      if (findLooksLikeFrontmatter(find)) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
+        return;
+      }
       const hasOffset = Object.hasOwn(body, 'offset');
       let offset: number | undefined;
       if (hasOffset) {
@@ -2659,6 +2726,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       let notFound = false;
       let staleTarget = false;
+      let fmIntersect = false;
       // setPresence lives INSIDE the try so the pairing with touchMode('idle')
       // in `finally` is atomic — any throw between setPresence and transact
       // (even future code added here) flips the badge back to idle rather
@@ -2682,12 +2750,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // (frontmatter + body) so agents can patch frontmatter fields
           // (e.g. `title:`, `cluster:`) the same way they patch body text.
           // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in Y.Map('metadata') and must be composed
-          // in for the search surface to reflect the document as the
-          // agent sees it on disk.
+          // frontmatter lives in the YAML region of `Y.Text('source')`
+          // (D8) and must be composed in for the search surface to
+          // reflect the document as the agent sees it on disk.
           const xmlFragment = session.dc.document.getXmlFragment('default');
-          const metaMap = session.dc.document.getMap('metadata');
-          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
+          const ytext = session.dc.document.getText('source');
+          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
           const currentBody = mdManager.serialize(
             yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
           );
@@ -2708,17 +2776,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             return;
           }
 
-          // Splice at the character level. The result is the authoritative
-          // post-patch full document — if the patch deletes the FM region,
-          // metaMap must be cleared accordingly. Route through explicit
-          // split-then-write so empty-FM is distinguishable from
-          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          // Position-based FM-intersection check. The string-shape
+          // heuristic above handles yaml-style find strings; this catches
+          // the residual class where a non-yaml find (e.g. a single word
+          // like `draft`) happens to first-match in the FM region.
+          // `pos < currentFm.length` is the necessary-and-sufficient
+          // signal — FM is contiguous at doc start, so any match starting
+          // before the FM-end byte overlaps the FM region.
+          if (pos < currentFm.length) {
+            fmIntersect = true;
+            return;
+          }
+
+          // Splice at the character level. Only body-region patches
+          // reach here, so this branch never modifies the FM.
+          // `applyAgentMarkdownWrite` reads the current FM from the
+          // YAML region of Y.Text and writes the canonical full
+          // document back, so a body-only payload here keeps the
+          // existing FM intact.
           const newFull =
             currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
-          if (newFm !== currentFm) {
-            metaMap.set('frontmatter', newFm);
-          }
+          // FM lives in the YAML region of Y.Text directly (D8); body-only
+          // payloads to applyAgentMarkdownWrite preserve the existing FM
+          // because the helper reads `existingFm` from Y.Text.
+          const { body: newBody } = stripFrontmatter(newFull);
           applyAgentMarkdownWrite(
             session.dc.document,
             newBody,
@@ -2736,10 +2817,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, session.origin);
-        if (!notFound && !staleTarget) {
+        if (!notFound && !staleTarget && !fmIntersect) {
           // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 so adoption rate reflects successful
-          // writes, not total attempts.
+          // denominator excludes 404/409 + FM-intersect 400 so adoption
+          // rate reflects successful writes, not total attempts.
           const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
           recordContributor(
             docName,
@@ -2766,6 +2847,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (notFound) {
         json(res, 404, { ok: false, error: 'Text not found in document' });
+        return;
+      }
+      if (fmIntersect) {
+        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+        json(res, 400, {
+          ok: false,
+          error:
+            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
+        });
         return;
       }
 
@@ -3655,7 +3745,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
+      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
+      // body parse only needs the body half — `frontmatter` is no longer
+      // mirrored into a separate metaMap slot.
+      const { body: mdBody } = stripFrontmatter(markdown);
       const rollbackParseOpts = options.resolveEmbed
         ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
         : undefined;
@@ -3667,17 +3760,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(document, xmlFragment, pmNode, meta);
 
+        // Y.Text receives the full markdown (FM + body) verbatim — the
+        // YAML region IS the FM source of truth (D8/D26). No separate
+        // metadata-map mirror.
         const ytext = document.getText('source');
         const currentText = ytext.toString();
         if (currentText !== markdown) {
           ytext.delete(0, currentText.length);
           ytext.insert(0, markdown);
         }
-
-        // Update metadata map with restored frontmatter so persistence
-        // serializes the correct frontmatter on next L1 flush.
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
       // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`

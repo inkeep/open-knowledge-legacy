@@ -11,6 +11,7 @@ import {
   createBasenameIndex,
   type Principal,
   prependFrontmatter,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { resolveConfigPath } from '@inkeep/open-knowledge-core/server';
 import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -645,10 +646,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     const xmlFragment = document.getXmlFragment('default');
     const json = yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON();
     const body = mdManager.serialize(json);
-    const metaMap = document.getMap('metadata');
-    const fm = metaMap.get('frontmatter');
-    const frontmatter = typeof fm === 'string' ? fm : '';
-    return prependFrontmatter(frontmatter, body);
+    // FM lives in the YAML region of `Y.Text('source')` (D8) — strip + prepend.
+    const fm = stripFrontmatter(document.getText('source').toString()).frontmatter;
+    return prependFrontmatter(fm, body);
   }
 
   /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */

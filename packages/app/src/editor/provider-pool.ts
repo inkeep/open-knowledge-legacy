@@ -818,6 +818,14 @@ export class ProviderPool {
   // the gate can await it across event-loop turns.
   private onBranchMismatch: (() => void) | null = null;
   private branchMismatchInFlight: Promise<void> | null = null;
+  /**
+   * Resolves when the in-flight `server-instance-mismatch` recycle chain
+   * (`handleServerInstanceMismatch`'s `Promise.allSettled` over `clearData`
+   * + the trailing `recycleAllEntries`) has settled. `null` between
+   * recycles. Mirrors `branchMismatchInFlight`. Tests await
+   * `awaitMismatchSettled()` instead of polling on real time.
+   */
+  private mismatchInFlight: Promise<void> | null = null;
   setOnBranchMismatch(cb: (() => Promise<void>) | null): void {
     if (cb === null) {
       this.onBranchMismatch = null;
@@ -1311,74 +1319,91 @@ export class ProviderPool {
       });
     }
 
-    void Promise.allSettled(clears.map((c) => c.promise)).then((results) => {
-      const failed: string[] = [];
-      const cleared: string[] = [];
-      let sawClearTimeout = false;
-      results.forEach((result, i) => {
-        const row = clears[i];
-        if (!row) return;
-        const docName = row.docName;
-        if (result.status === 'rejected') {
-          failed.push(docName);
-          const isClearTimeout = result.reason instanceof ClientPersistenceClearTimeoutError;
-          if (isClearTimeout) {
-            sawClearTimeout = true;
-          }
-          if (isClearTimeout) {
-            this.emitStructuredClientRecoveryEvent({
-              event: 'ok-client-cache-clear-failed',
-              ...this.recoveryTelemetryBase(docName),
-              failureKind: 'timeout',
-            });
+    const inflight: Promise<void> = Promise.allSettled(clears.map((c) => c.promise))
+      .then((results) => {
+        const failed: string[] = [];
+        const cleared: string[] = [];
+        let sawClearTimeout = false;
+        results.forEach((result, i) => {
+          const row = clears[i];
+          if (!row) return;
+          const docName = row.docName;
+          if (result.status === 'rejected') {
+            failed.push(docName);
+            const isClearTimeout = result.reason instanceof ClientPersistenceClearTimeoutError;
+            if (isClearTimeout) {
+              sawClearTimeout = true;
+            }
+            if (isClearTimeout) {
+              this.emitStructuredClientRecoveryEvent({
+                event: 'ok-client-cache-clear-failed',
+                ...this.recoveryTelemetryBase(docName),
+                failureKind: 'timeout',
+              });
+            } else {
+              const errorName = result.reason instanceof Error ? result.reason.name : 'unknown';
+              this.emitStructuredClientRecoveryEvent({
+                event: 'ok-client-cache-clear-failed',
+                ...this.recoveryTelemetryBase(docName),
+                failureKind: 'rejected',
+                errorName,
+                errorMessage:
+                  result.reason instanceof Error ? result.reason.message : String(result.reason),
+              });
+            }
           } else {
-            const errorName = result.reason instanceof Error ? result.reason.name : 'unknown';
-            this.emitStructuredClientRecoveryEvent({
-              event: 'ok-client-cache-clear-failed',
-              ...this.recoveryTelemetryBase(docName),
-              failureKind: 'rejected',
-              errorName,
-              errorMessage:
-                result.reason instanceof Error ? result.reason.message : String(result.reason),
-            });
+            cleared.push(docName);
           }
-        } else {
-          cleared.push(docName);
+        });
+        const reconnectDocNames = cleared.filter((docName) => docName === recoveryActiveDocName);
+        if (failed.length > 0) {
+          const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
+            ? 'clear-data-timeout'
+            : 'clear-data-failed';
+          // Per-doc recycle. An all-or-none gate would re-open the
+          // duplication class for the cleared docs: their providers would
+          // reconnect after the stale claim has been cleared, then Yjs sync
+          // would run against the still-pre-restart Y.Doc and additively
+          // merge with post-restart server state — exactly the bug class clearData was
+          // supposed to prevent. Recycle the cleared entries (their IDB
+          // is empty, their fresh providers will sync cleanly) and leave
+          // the failed entries inert. The failed entries' un-cleared
+          // IDBs will surface the same mismatch on the next provider
+          // reconnect cycle; they need user-visible recovery (close the
+          // blocking tab/DevTools, then reload).
+          console.warn(
+            JSON.stringify({
+              event: 'ok-mismatch-recycle-partial-clears-failed',
+              failedDocs: failed,
+              clearedDocs: cleared,
+            }),
+          );
+          this.enterServerRestartReconnect(reconnectDocNames, failed, startedAt, failureReason);
+          for (const docName of cleared) {
+            this.recycleDisconnectedEntry(docName);
+          }
+          return;
+        }
+        // `failureReason` is only read when `failedDocNames` is non-empty; this branch is all clears OK.
+        this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, 'clear-data-failed');
+        this.recycleAllEntries();
+      })
+      .finally(() => {
+        if (this.mismatchInFlight === inflight) {
+          this.mismatchInFlight = null;
         }
       });
-      const reconnectDocNames = cleared.filter((docName) => docName === recoveryActiveDocName);
-      if (failed.length > 0) {
-        const failureReason: 'clear-data-failed' | 'clear-data-timeout' = sawClearTimeout
-          ? 'clear-data-timeout'
-          : 'clear-data-failed';
-        // Per-doc recycle. An all-or-none gate would re-open the
-        // duplication class for the cleared docs: their providers would
-        // reconnect after the stale claim has been cleared, then Yjs sync
-        // would run against the still-pre-restart Y.Doc and additively
-        // merge with post-restart server state — exactly the bug class clearData was
-        // supposed to prevent. Recycle the cleared entries (their IDB
-        // is empty, their fresh providers will sync cleanly) and leave
-        // the failed entries inert. The failed entries' un-cleared
-        // IDBs will surface the same mismatch on the next provider
-        // reconnect cycle; they need user-visible recovery (close the
-        // blocking tab/DevTools, then reload).
-        console.warn(
-          JSON.stringify({
-            event: 'ok-mismatch-recycle-partial-clears-failed',
-            failedDocs: failed,
-            clearedDocs: cleared,
-          }),
-        );
-        this.enterServerRestartReconnect(reconnectDocNames, failed, startedAt, failureReason);
-        for (const docName of cleared) {
-          this.recycleDisconnectedEntry(docName);
-        }
-        return;
-      }
-      // `failureReason` is only read when `failedDocNames` is non-empty; this branch is all clears OK.
-      this.enterServerRestartReconnect(reconnectDocNames, [], startedAt, 'clear-data-failed');
-      this.recycleAllEntries();
-    });
+    this.mismatchInFlight = inflight;
+  }
+
+  /**
+   * Resolve when the current `server-instance-mismatch` recycle (clearData +
+   * `recycleAllEntries`) has settled. Resolves immediately when no recycle is
+   * in flight. Used by tests to wait deterministically; production code
+   * fire-and-forgets.
+   */
+  awaitMismatchSettled(): Promise<void> {
+    return this.mismatchInFlight ?? Promise.resolve();
   }
 
   /**

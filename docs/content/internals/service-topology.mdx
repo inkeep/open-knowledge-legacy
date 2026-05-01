@@ -62,7 +62,7 @@ Three layers, each with its own cadence and responsibility.
 
 The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to disk.
 
-- Y.Doc serialized to markdown (frontmatter preserved via Y.Map cache)
+- Y.Doc serialized to markdown — body composed from `Y.XmlFragment`'s ProseMirror serialization; frontmatter read from the YAML region of `Y.Text('source')` directly via `stripFrontmatter(ytext.toString()).frontmatter`. The disk write is `prependFrontmatter(rawFM, body)`, so user-authored YAML formatting (indentation, scalar styles, comments, blank lines) round-trips losslessly
 - Atomic write: temp file then rename (symlinks preserved -- writes target the canonical path)
 - Write hash registered in writeTracker for feedback prevention
 - Symlink-escape check refuses writes that resolve outside `contentDir`
