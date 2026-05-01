@@ -152,7 +152,7 @@ This means switching branches in git and switching branches in the editor are th
 | UI port         | 5173 (same as collab)                                 | 3000 by default on `ok ui` (or `PORT` env / `--port`)                                  |
 | Git integration | No shadow repo, no HEAD watcher                       | Full shadow repo + HEAD watcher                                                        |
 | File watcher    | Simplified: create/update only                        | Full: create/update/delete/rename/conflict                                             |
-| Content filter  | Basic .md filtering                                   | Full gitignore + config patterns                                                       |
+| Content filter  | Basic .md filtering                                   | Full `.gitignore` + `.okignore` (root + nested)                                        |
 | Test routes     | Enabled (`/api/test-reset`)                           | Disabled by default                                                                    |
 | Auto-shutdown   | None                                                  | 30-min idle-shutdown on `ok start`; 12h safety-net on `ok ui`                          |
 

@@ -52,7 +52,7 @@ To opt out of both `.ok/` scaffolding and the parent-repo auto-`git init`, pass 
 
 ## `init`
 
-Scaffold the `.ok/` directory and register the MCP server in editor config files.
+Scaffold the `.ok/` directory plus a project-root `.okignore`, and register the MCP server in editor config files.
 
 ```bash
 npx @inkeep/open-knowledge init [options]
@@ -242,7 +242,7 @@ Show which files the content filter will track, without starting the server.
 npx @inkeep/open-knowledge preview
 ```
 
-Prints the file count, applied include/exclude patterns, and a sample of matched paths.
+Prints the file count, applied `.gitignore` and `.okignore` patterns, and a sample of matched paths.
 
 ## `config`
 
