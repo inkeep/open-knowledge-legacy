@@ -42,7 +42,7 @@ export const DESCRIPTION = [
   '- `docName` — Document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '',
   '**Notes:**',
-  '- Inbound wiki-links to the deleted doc are NOT rewritten — they become redlinks. Use `get_backlinks` first if you want to rewrite or remove referrers.',
+  '- Inbound wiki-links to the deleted doc become dead links (redlinks) — they are NOT rewritten. Call `get_backlinks({ docName: "your-doc" })` BEFORE deleting to see which docs link here, then update or remove those references first.',
   '- Deletion is irreversible from this tool. Use `save_version` beforehand if you may need to roll back.',
   '- The structured response includes `previousPreviewUrl` (when a preview source resolves) so agents can close any stale preview tab pointing at the deleted doc.',
   '',

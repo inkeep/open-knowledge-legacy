@@ -2,8 +2,9 @@
  * MCP tool registry.
  *
  * Aggregates workflow tools (ingest, research, consolidate),
- * document tools (write_document, edit_document, rename_document,
- * undo_agent_edit, redo_agent_edit, list_documents), link-graph tools
+ * document tools (write_document, edit_document, delete_document,
+ * rename_document, undo_agent_edit, redo_agent_edit, list_documents),
+ * link-graph tools
  * (get_backlinks, get_forward_links, get_orphans, get_hubs, get_dead_links),
  * and enriched tools
  * (read_document, search) into a single `registerAllTools` function that

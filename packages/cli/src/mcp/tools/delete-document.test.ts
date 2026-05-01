@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { type Config, ConfigSchema } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import { type DeleteDocumentDeps, register } from './delete-document.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, type ServerInstance } from './shared.ts';
 
@@ -168,6 +169,65 @@ describe('delete_document MCP tool', () => {
       ok: false,
       error: 'file does not exist',
     });
+  });
+
+  test('forwards identity fields in the POST body when identityRef is provided', async () => {
+    const { server, registrations } = createCapturingServer();
+    const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ input, init });
+      return new Response(JSON.stringify({ ok: true, deletedDocNames: ['page'] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const deps: DeleteDocumentDeps = {
+      ...makeDeps('http://localhost:4321'),
+      identityRef: {
+        current: {
+          connectionId: 'conn-1',
+          displayName: 'TestAgent',
+          clientInfo: { name: 'claude-code', version: '1.0.0' },
+          colorSeed: '42',
+        } as AgentIdentity,
+      },
+    };
+
+    register(server, deps);
+    const tool = getRegisteredTool(registrations, 'delete_document');
+
+    await tool.handler({ docName: 'page' });
+
+    const body = JSON.parse(String(fetchCalls[0]?.init?.body));
+    expect(body).toMatchObject({
+      kind: 'file',
+      path: 'page',
+      agentId: 'conn-1',
+      agentName: 'TestAgent',
+      clientName: 'claude-code',
+      colorSeed: '42',
+    });
+  });
+
+  test('falls back to "Delete failed" when error response omits the error field', async () => {
+    const { server, registrations } = createCapturingServer();
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ ok: false }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'delete_document');
+
+    const result = await tool.handler({ docName: 'page' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('Error: Delete failed');
+    expect(result.structuredContent).toEqual({ ok: false, error: 'Delete failed' });
   });
 
   test('uses the shared Hocuspocus-not-running error when no server URL is available', async () => {
