@@ -19,7 +19,7 @@ A file is indexed when:
 
 ## .okignore
 
-Drop a `.okignore` next to your `.gitignore` at the project root. It uses gitignore syntax (parsed by the [`ignore`](https://www.npmjs.com/package/ignore) npm library — the same engine `.gitignore` uses).
+Drop a `.okignore` next to your `.gitignore` at the project root. It uses gitignore syntax, parsed by the [`ignore`](https://www.npmjs.com/package/ignore) npm library — a JavaScript implementation of the gitignore pattern spec (Git itself uses a separate C implementation; the spec is shared but the engines are not).
 
 ```text title=".okignore"
 # Exclude drafts from the document index
@@ -101,7 +101,7 @@ content:
   dir: .
 ```
 
-`content.include` and `content.exclude` are no longer config keys. If they appear in your `config.yml`, OK rejects the file with a source-located error directing you to move the patterns to `.okignore`.
+`content.include` and `content.exclude` are no longer config keys. If they appear in your `config.yml`, OK rejects the file with a source-located error. The error is per-key: `content.exclude` patterns can be 1:1 migrated to `.okignore`; `content.include` patterns cannot — `.okignore` is exclude-only, so an include whitelist needs to be expressed differently (use `content.dir` to scope to a subdirectory; rely on the upstream `.md`/`.mdx` extension gate; or invert specific include patterns into exclude rules for everything else).
 
 ### Migrating from content.include / content.exclude
 

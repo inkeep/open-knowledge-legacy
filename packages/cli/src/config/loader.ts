@@ -127,13 +127,19 @@ const REMOVED_CONTENT_KEYS = ['include', 'exclude'] as const;
  * alternative for the common include case.
  */
 function redirectForKey(key: 'include' | 'exclude'): string {
+  const stripHint =
+    'Run `ok config migrate` to strip the obsolete key from config.yml automatically, or remove it by hand.';
   if (key === 'exclude') {
-    return 'Move these patterns to .okignore at the project root (gitignore syntax, 1:1 migration).';
+    return [
+      'Move these patterns to .okignore at the project root (gitignore syntax, 1:1 migration).',
+      stripHint,
+    ].join(' ');
   }
   return [
     'content.include has been removed.',
     'For subdirectory scoping, set content.dir in .ok/config.yml instead.',
     'For pattern-based filtering, use .okignore (gitignore syntax — exclude-only; do not copy include patterns directly).',
+    stripHint,
   ].join(' ');
 }
 
