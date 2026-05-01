@@ -1138,7 +1138,7 @@ function bootPrimaryInstance(): void {
 
     // Fire-and-forget user-global Agent Skill install per SPEC 2026-04-22
     // (FR13 / D21). Runs on every launch — idempotent via the sidecar at
-    // `~/.open-knowledge/skill-installed-version`, so the no-op path is
+    // `~/.ok/skill-installed-version`, so the no-op path is
     // ~50 ms when current. Never awaited so window rendering + menu are
     // unblocked. Failures log to main-process console and never surface to
     // the user.

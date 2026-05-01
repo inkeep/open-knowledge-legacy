@@ -83,9 +83,9 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     // (the on-disk form) but fire the deep-link with `doc=target` (the
     // wire form) and assert the renderer hash matches the wire form.
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-'));
-    mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
-      join(projectDir, '.open-knowledge', 'config.yml'),
+      join(projectDir, '.ok', 'config.yml'),
       "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
     );
     writeFileSync(join(projectDir, 'target.md'), '# Target Doc\n\nDeep-link smoke content.\n');
@@ -133,9 +133,9 @@ test.describe('deep-link warm-start smoke (M4 US-009 / AC7)', () => {
     // break encodeURIComponent round-tripping through the renderer's
     // hash-route listener.
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m4-deep-link-nested-'));
-    mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
-      join(projectDir, '.open-knowledge', 'config.yml'),
+      join(projectDir, '.ok', 'config.yml'),
       "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
     );
     mkdirSync(join(projectDir, 'notes'), { recursive: true });

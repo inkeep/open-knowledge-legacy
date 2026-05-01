@@ -13,7 +13,7 @@
  *     server, nothing is torn down on close. `ProjectContext.ownsServer ===
  *     false` gates every lifecycle action.
  *
- * Attach trigger: `<contentDir>/.open-knowledge/server.lock` references a
+ * Attach trigger: `<contentDir>/.ok/server.lock` references a
  * live same-host pid with `port > 0`. Stale locks flow through `runClean`
  * first, then spawn-mode proceeds.
  *
@@ -458,7 +458,7 @@ export class WindowManager {
     }
     const projectName = basename(projectPath);
 
-    const lockDir = resolve(projectPath, '.open-knowledge');
+    const lockDir = resolve(projectPath, '.ok');
 
     // Attach branch — if a live same-host server is already listening on
     // this contentDir (CLI sibling, another Electron instance that we
