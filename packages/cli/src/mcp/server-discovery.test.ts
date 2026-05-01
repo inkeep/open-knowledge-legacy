@@ -478,7 +478,7 @@ describe('server-discovery', () => {
 
     beforeEach(async () => {
       tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-ensure-'));
-      lockDir = resolve(tmpDir, '.open-knowledge');
+      lockDir = resolve(tmpDir, '.ok');
     });
 
     afterEach(async () => {

@@ -8,7 +8,7 @@ let testDir: string;
 let fakeHome: string;
 
 // Stub node:os.homedir() before importing the loader so Layer 1 (user-global
-// config) doesn't read the real `~/.open-knowledge/config.yml` and pollute
+// config) doesn't read the real `~/.ok/config.yml` and pollute
 // every test that asserts on `sources`. Bun caches the resolved homedir on
 // first call, so mutating `process.env.HOME` in beforeEach is too late.
 await mock.module('node:os', () => {

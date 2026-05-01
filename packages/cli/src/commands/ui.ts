@@ -154,7 +154,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // broken links from package-manager swaps; eager traversal makes UI boot
   // fail before it has served a single request.
   //
-  // `dotfiles: false` still keeps `.open-knowledge/` out of reach.
+  // `dotfiles: false` still keeps `.ok/` out of reach.
   // `extensions: []` disables sirv's default `['html', 'htm']` fallback —
   // without this, a request to `/docs/evil` transparently resolves
   // `docs/evil.html` and serves it as `text/html`, bypassing the

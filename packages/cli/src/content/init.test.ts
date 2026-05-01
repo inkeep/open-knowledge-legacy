@@ -20,7 +20,7 @@ describe('initContent', () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('creates config-only .open-knowledge/ scaffold from scratch', () => {
+  it('creates config-only .ok/ scaffold from scratch', () => {
     const result = initContent(testDir);
 
     const okDir = join(testDir, OK_DIR);
@@ -29,7 +29,7 @@ describe('initContent', () => {
     expect(existsSync(join(okDir, '.gitignore'))).toBe(true);
     expect(existsSync(join(okDir, 'config.yml'))).toBe(true);
 
-    // Per SPEC 2026-04-22 (FR2 / NG1): the internal .open-knowledge/AGENTS.md
+    // Per SPEC 2026-04-22 (FR2 / NG1): the internal .ok/AGENTS.md
     // README is no longer scaffolded — behavioral guidance ships via the
     // user-global Agent Skill + MCP instructions + per-tool descriptions.
     expect(existsSync(join(okDir, 'AGENTS.md'))).toBe(false);
@@ -143,7 +143,7 @@ describe('initContent', () => {
 
   it('appends missing scaffold entries to a stale .gitignore (upgrade path)', () => {
     // Simulate a project that ran `ok init` before the consolidation —
-    // its .open-knowledge/.gitignore lacks principal.json + last-spawn-error.log.
+    // its .ok/.gitignore lacks principal.json + last-spawn-error.log.
     const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
     const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
@@ -202,10 +202,10 @@ describe('initContent', () => {
   });
 });
 
-// Drift guard: the committed `.open-knowledge/.gitignore` in this repo MUST stay
+// Drift guard: the committed `.ok/.gitignore` in this repo MUST stay
 // in sync with what `ok init` writes. The PR that consolidated ignores fixed a
 // prior drift between these two surfaces; this test prevents the next drift.
-describe('committed .open-knowledge/.gitignore matches scaffold output', () => {
+describe('committed .ok/.gitignore matches scaffold output', () => {
   it('matches OK_GITIGNORE_CONTENT byte-for-byte', () => {
     const tmp = resolve(
       tmpdir(),
@@ -220,15 +220,15 @@ describe('committed .open-knowledge/.gitignore matches scaffold output', () => {
       // to the repo root. Avoid hard-coded relative paths that break when the
       // test file moves.
       let dir = dirname(import.meta.path);
-      while (dir !== '/' && !existsSync(join(dir, '.open-knowledge', '.gitignore'))) {
+      while (dir !== '/' && !existsSync(join(dir, '.ok', '.gitignore'))) {
         dir = dirname(dir);
       }
       if (dir === '/') {
         throw new Error(
-          `drift-guard: could not locate .open-knowledge/.gitignore by walking up from ${import.meta.path}`,
+          `drift-guard: could not locate .ok/.gitignore by walking up from ${import.meta.path}`,
         );
       }
-      const committedPath = join(dir, '.open-knowledge', '.gitignore');
+      const committedPath = join(dir, '.ok', '.gitignore');
       const committed = readFileSync(committedPath, 'utf-8');
 
       expect(committed).toBe(scaffolded);

@@ -190,7 +190,7 @@ function ensureGitignoreEntries(
 }
 
 /**
- * Single source of truth for `.open-knowledge/.gitignore`.
+ * Single source of truth for `.ok/.gitignore`.
  *
  * Every per-machine OK runtime path lives here so the project root
  * `.gitignore` stays free of OK-internal entries. No `ok` command writes
@@ -225,7 +225,7 @@ export function initContent(projectDir: string): {
   const updated: string[] = [];
   const skipped: string[] = [];
 
-  // Create .open-knowledge/ itself + the cache/ subdir. No scaffold content dirs —
+  // Create .ok/ itself + the cache/ subdir. No scaffold content dirs —
   // content lives wherever config.content.dir points (project root by default).
   mkdirSync(okDir, { recursive: true });
   mkdirSync(join(okDir, CACHE_DIR), { recursive: true });

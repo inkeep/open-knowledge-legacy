@@ -74,7 +74,7 @@ class KeyringBackend implements TokenStore {
 }
 
 // ---------------------------------------------------------------------------
-// File backend (~/.open-knowledge/auth.yml, chmod 0600)
+// File backend (~/.ok/auth.yml, chmod 0600)
 // ---------------------------------------------------------------------------
 
 export class FileBackend implements TokenStore {
@@ -82,7 +82,7 @@ export class FileBackend implements TokenStore {
   private readonly authFile: string;
 
   constructor(authFile?: string) {
-    this.authFile = authFile ?? join(homedir(), '.open-knowledge', 'auth.yml');
+    this.authFile = authFile ?? join(homedir(), '.ok', 'auth.yml');
   }
 
   private read(): Record<string, TokenEntry> {
@@ -139,7 +139,7 @@ export class FileBackend implements TokenStore {
 
 /**
  * Create a TokenStore, preferring the OS keychain (via @napi-rs/keyring) and
- * falling back to a plaintext YAML file at ~/.open-knowledge/auth.yml when the
+ * falling back to a plaintext YAML file at ~/.ok/auth.yml when the
  * native module cannot be loaded.
  *
  * Logs the active backend at INFO level once.
@@ -152,7 +152,7 @@ export async function createTokenStore(authFile?: string): Promise<TokenStore> {
     process.stderr.write('[auth] token storage: OS keychain\n');
     return new KeyringBackend();
   } catch {
-    process.stderr.write('[auth] token storage: file (~/.open-knowledge/auth.yml)\n');
+    process.stderr.write('[auth] token storage: file (~/.ok/auth.yml)\n');
     return new FileBackend(authFile);
   }
 }

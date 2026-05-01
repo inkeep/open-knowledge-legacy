@@ -27,7 +27,7 @@ export const DESCRIPTION = [
   '- Finding all articles mentioning a topic',
   '- Locating a specific term across the wiki before deciding which file to read',
   '',
-  '**When the project has `.open-knowledge/`**, strongly prefer this over your native `Grep` for wiki search — results include article metadata so you can skip irrelevant matches without extra reads. In projects without `.open-knowledge/`, use native `Grep` as usual.',
+  '**When the project has `.ok/`**, strongly prefer this over your native `Grep` for wiki search — results include article metadata so you can skip irrelevant matches without extra reads. In projects without `.ok/`, use native `Grep` as usual.',
   '',
   '**Parameters:**',
   '- `query` — Literal text to search for (fixed-string match, no regex)',

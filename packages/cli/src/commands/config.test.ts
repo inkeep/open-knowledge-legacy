@@ -49,14 +49,14 @@ describe('runValidate', () => {
       loadConfigFn: () =>
         ({
           config: {} as never,
-          sources: ['/home/test/.open-knowledge/config.yml'],
+          sources: ['/home/test/.ok/config.yml'],
         }) as never,
       log: (msg) => stderr.push(msg),
       error: (msg) => stderr.push(msg),
     });
     expect(outcome.ok).toBe(true);
     expect(stderr.some((m) => m.includes('✓ Configuration valid'))).toBe(true);
-    expect(stderr.some((m) => m.includes('/home/test/.open-knowledge/config.yml'))).toBe(true);
+    expect(stderr.some((m) => m.includes('/home/test/.ok/config.yml'))).toBe(true);
     expect(stdout).toEqual([]);
   });
 
@@ -74,7 +74,7 @@ describe('runValidate', () => {
     const stderr: string[] = [];
     const outcome = runValidate({
       loadConfigFn: () => {
-        throw new Error('Invalid configuration at /tmp/.open-knowledge/config.yml:7:18\n  ...');
+        throw new Error('Invalid configuration at /tmp/.ok/config.yml:7:18\n  ...');
       },
       error: (msg) => stderr.push(msg),
     });

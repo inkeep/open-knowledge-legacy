@@ -701,7 +701,7 @@ describe('bootStartServer — ensureProjectGit wiring (US-004)', () => {
 
     expect(booted.didGitInit).toBe(false);
     // `.git/` may exist as a side effect of initShadowRepo's recursive mkdir
-    // (creating `.git/open-knowledge/` implicitly creates the `.git/` parent).
+    // (creating `.git/ok/` implicitly creates the `.git/` parent).
     // The discriminator is `.git/HEAD` — ensureProjectGit's responsibility.
     expect(existsSync(join(tmpDir, '.git/HEAD'))).toBe(false);
   });

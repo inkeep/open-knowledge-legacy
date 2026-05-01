@@ -2,7 +2,7 @@
  * `open-knowledge init` — one-shot terminal setup command.
  *
  * Does two things:
- *   1. Scaffolds `.open-knowledge/` in the current directory via initContent()
+ *   1. Scaffolds `.ok/` in the current directory via initContent()
  *      (same logic the MCP server's init flow used to call — now factored out).
  *   2. Writes Open Knowledge MCP server entries into every detected editor's
  *      config file. The CLI owns the `open-knowledge` / `open-knowledge-ui`
@@ -546,7 +546,7 @@ export interface UserMcpConfigsOptions {
  * Specifically does NOT run:
  *   - `ensureProjectGit` — would `git init` wherever `cwd` is (packaged Electron
  *     apps have `process.cwd() === '/'` by default)
- *   - `initContent` — scaffolds `.open-knowledge/` in a project
+ *   - `initContent` — scaffolds `.ok/` in a project
  *   - `scaffoldLaunchJson` — writes `.claude/launch.json`
  *   - `upsertRootInstructions` — mutates `AGENTS.md` / `CLAUDE.md`
  *   - `collectLegacyProjectConfig` — scans for `.mcp.json` / `.cursor/mcp.json`
@@ -645,7 +645,7 @@ export async function runInit(options: InitCommandOptions = {}): Promise<InitCom
   // Propagates `ProjectGitInitError` on git-missing — caller exits non-zero.
   const gitResult = await ensureProjectGit(cwd);
 
-  // 1. Scaffold .open-knowledge/
+  // 1. Scaffold .ok/
   let contentResult: ReturnType<typeof initContent>;
   try {
     contentResult = initContent(cwd);

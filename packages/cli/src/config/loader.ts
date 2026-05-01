@@ -2,7 +2,7 @@
  * Hierarchical YAML config loader.
  *
  * Priority (lowest → highest):
- *   Zod defaults → ~/.open-knowledge/config.yml → ./.open-knowledge/config.yml
+ *   Zod defaults → ~/.ok/config.yml → ./.ok/config.yml
  *
  * ENV and CLI flag overrides are applied in cli.ts after loading.
  *
@@ -12,7 +12,7 @@
  * Errors are emitted with source positions via yaml@2's `parseDocument`
  * (FR-27 / D36) — `file:line:col` plus a code-snippet with caret marker.
  *
- * The user-global file (`~/.open-knowledge/config.yml`) is read via
+ * The user-global file (`~/.ok/config.yml`) is read via
  * `readConfigSafely` (FR-35 / D57) — invalid files are sidelined to
  * `<path>.invalid-<ISO-timestamp>` and replaced with schema defaults so
  * OK can still boot. The project file errors loud (throws) — project
@@ -283,7 +283,7 @@ interface CreateProjectConfigResolverOptions {
 
 /**
  * Create a lazy per-cwd config resolver for long-lived MCP sessions. Each cwd
- * re-loads its own `.open-knowledge/config.yml` (plus user config) and applies
+ * re-loads its own `.ok/config.yml` (plus user config) and applies
  * the same process-level env overrides as the CLI bootstrap path.
  */
 export function createProjectConfigResolver(

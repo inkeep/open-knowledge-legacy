@@ -3,7 +3,7 @@
  *
  * Prints the same Content block that `init` writes after scaffolding, but
  * without side effects. Works pre-init (loads schema defaults), post-init
- * (loads `.open-knowledge/config.yml`), and after config edits — re-running
+ * (loads `.ok/config.yml`), and after config edits — re-running
  * is the cheap way to verify an `include`/`exclude` change before restarting
  * the server.
  */

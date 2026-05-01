@@ -91,7 +91,7 @@ describe('runSeed — no-op', () => {
 });
 
 describe('runSeed — prerequisite', () => {
-  test('exits 1 when .open-knowledge/ is absent', async () => {
+  test('exits 1 when .ok/ is absent', async () => {
     const result = await runSeed({ cwd: testDir });
     expect(result.status).toBe('prerequisite-missing');
     expect(result.exitCode).toBe(1);
