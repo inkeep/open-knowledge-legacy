@@ -100,7 +100,7 @@ function createMockBinding(patchImpl: (patch: ConfigPatch) => ConfigBindingPatch
 
 describe('runCommit — success path', () => {
   test('builds deep-partial patch from name + value, calls binding.patch, returns true', () => {
-    const { form, clearErrors } = createMockForm(() => 100);
+    const { form, clearErrors, getValues } = createMockForm(() => 100);
     const { binding, patch } = createMockBinding(() => ({
       ok: true,
       effective: { mcp: { tools: { search: { maxResults: 100 } } } } as unknown as Config,
@@ -110,6 +110,11 @@ describe('runCommit — success path', () => {
     const result = runCommit(form, binding, 'mcp.tools.search.maxResults');
 
     expect(result).toBe(true);
+    // Asserting the field-name argument guards against a refactor where
+    // form.getValues() is called with no argument — which in production
+    // would return the entire form state and produce a malformed patch
+    // (entire Config nested under `mcp.tools.search.maxResults`).
+    expect(getValues).toHaveBeenCalledWith('mcp.tools.search.maxResults');
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0]?.[0]).toEqual({
       mcp: { tools: { search: { maxResults: 100 } } },
@@ -178,7 +183,7 @@ describe('runCommit — success path', () => {
 
 describe('runCommit — failure path', () => {
   test('mirrors path-matched SCHEMA_INVALID issue into form.setError, returns false', () => {
-    const { form, setError, clearErrors } = createMockForm(() => 'fast');
+    const { form, setError, clearErrors, resetField } = createMockForm(() => 'fast');
     const error: ConfigValidationError = {
       code: 'SCHEMA_INVALID',
       issues: [
@@ -202,10 +207,16 @@ describe('runCommit — failure path', () => {
       message: 'Expected number, received string',
     });
     expect(clearErrors).not.toHaveBeenCalled();
+    // resetField MUST stay inside the success branch — if it leaked to
+    // the failure path, committed-but-invalid fields would lose their
+    // dirty status and the next external update under
+    // `keepDirtyValues: true` would skip them, silently reverting the
+    // user's edit.
+    expect(resetField).not.toHaveBeenCalled();
   });
 
   test('falls back to humanFormat when no SCHEMA_INVALID issue path matches the field name', () => {
-    const { form, setError } = createMockForm(() => 'localhost');
+    const { form, setError, resetField } = createMockForm(() => 'localhost');
     // Generic WRITE_ERROR (no path-keyed issues) — humanFormat fallback
     // must produce a non-empty message.
     const error: ConfigValidationError = {
@@ -221,6 +232,7 @@ describe('runCommit — failure path', () => {
     const errArg = setError.mock.calls[0]?.[1] as { message?: string } | undefined;
     expect(errArg?.message).toBeDefined();
     expect(errArg?.message).toContain('EACCES');
+    expect(resetField).not.toHaveBeenCalled();
   });
 });
 

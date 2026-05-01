@@ -478,6 +478,10 @@ interface SettingsFieldProps {
 }
 
 function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldProps) {
+  // 'use no memo' — the FormField inline render-prop below destructures
+  // `ctl` (a ControllerRenderProps with a `ref` field), which the React
+  // Compiler heuristic flags as ref-access during render. Same rationale
+  // as FieldControlBody / control bodies.
   'use no memo';
   const form = useFormContext<Config>();
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
@@ -668,9 +672,16 @@ function FieldControlBody({
   }
   if (typeTag === 'enum' && enumOptions && enumOptions.length > 0) {
     if (field.control === 'enum-toggle' || enumOptions.length <= 4) {
+      // Slot.Root forwards `id` onto its child; ToggleGroup root renders a
+      // <div>, which is not a labelable element — `<label htmlFor>` on a
+      // div doesn't focus its descendants on click. Pluck the id and put
+      // it on the first ToggleGroupItem (a <button>) so label-click moves
+      // focus into the group. aria-describedby/aria-invalid stay on the
+      // wrapper since they describe the group as a whole.
+      const { id: forwardedId, ...wrapperSlotProps } = slotForwarded;
       return (
         <ToggleGroup
-          {...slotForwarded}
+          {...wrapperSlotProps}
           type="single"
           value={typeof ctl.value === 'string' ? ctl.value : ''}
           ref={ctl.ref}
@@ -686,8 +697,13 @@ function FieldControlBody({
           className="bg-muted dark:bg-background p-0.5 rounded-lg"
           aria-label={field.label}
         >
-          {enumOptions.map((opt) => (
-            <ToggleGroupItem key={opt} value={opt} className="text-xs capitalize">
+          {enumOptions.map((opt, idx) => (
+            <ToggleGroupItem
+              key={opt}
+              value={opt}
+              id={idx === 0 ? forwardedId : undefined}
+              className="text-xs capitalize"
+            >
               {opt}
             </ToggleGroupItem>
           ))}
@@ -840,7 +856,7 @@ function StringArrayControlBody({
     <textarea
       {...slotForwarded}
       value={pendingText}
-      ref={ctl.ref as unknown as React.Ref<HTMLTextAreaElement>}
+      ref={ctl.ref}
       onChange={(e) => setPendingText(e.target.value)}
       onBlur={() => {
         ctl.onBlur();
