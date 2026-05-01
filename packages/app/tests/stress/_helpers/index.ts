@@ -1,13 +1,3 @@
-/**
- * Barrel re-export for `_helpers/` (D-Q11 LOCKED).
- *
- * Consumers MUST import from `./_helpers` (which resolves here). Importing
- * directly from an inner file (`./_helpers/sidebar`, `./_helpers/provider`,
- * ...) is banned by the STOP rule in
- * `packages/app/tests/integration/e2e-stop-rules.test.ts` (US-010). The
- * indirection insulates consumers from domain-grouping churn — helpers can
- * move files without touching any e2e test's imports.
- */
 
 export { simulateCopyAndRead, simulateCutAndRead } from './clipboard.ts';
 export { selectAllAndWaitForSelection, waitForPmSelectionInNode } from './editor-state.ts';

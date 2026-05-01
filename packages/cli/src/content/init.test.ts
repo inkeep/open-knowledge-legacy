@@ -34,14 +34,8 @@ describe('initContent', () => {
     expect(existsSync(join(okDir, '.gitignore'))).toBe(true);
     expect(existsSync(join(okDir, 'config.yml'))).toBe(true);
 
-    // Per SPEC 2026-04-22 (FR2 / NG1): the internal .ok/AGENTS.md
-    // README is no longer scaffolded — behavioral guidance ships via the
-    // user-global Agent Skill + MCP instructions + per-tool descriptions.
     expect(existsSync(join(okDir, 'AGENTS.md'))).toBe(false);
 
-    // Content subdirs are NOT scaffolded per V0-24.2 catalog teardown —
-    // wiki content lives wherever `content.dir` points (project root by default),
-    // not in opinionated subfolders.
     expect(existsSync(join(okDir, 'articles'))).toBe(false);
     expect(existsSync(join(okDir, 'external-sources'))).toBe(false);
     expect(existsSync(join(okDir, 'research'))).toBe(false);
@@ -51,17 +45,13 @@ describe('initContent', () => {
   });
 
   it('is idempotent — does not clobber existing files', () => {
-    // First init
     initContent(testDir);
 
-    // Write custom content to config.yml
     const configPath = join(testDir, OK_DIR, 'config.yml');
     writeFileSync(configPath, 'custom content');
 
-    // Second init
     const result = initContent(testDir);
 
-    // Custom content should be preserved
     expect(readFileSync(configPath, 'utf-8')).toBe('custom content');
     expect(result.skipped.length).toBeGreaterThan(0);
   });
@@ -71,9 +61,6 @@ describe('initContent', () => {
 
     const okDir = join(testDir, OK_DIR);
 
-    // .gitignore is the single source of truth for OK-internal ignores —
-    // every per-machine runtime path lives here so the project root
-    // .gitignore stays free of OK-internal entries.
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
     expect(gitignore).toContain('server.lock');
@@ -82,14 +69,10 @@ describe('initContent', () => {
     expect(gitignore).toContain('principal.json');
     expect(gitignore).toContain('last-spawn-error.log');
 
-    // config.yml is the fully-commented starter — every section header
-    // present, every key commented out so the file parses to a no-op.
     const configYml = readFileSync(join(okDir, 'config.yml'), 'utf-8');
     expect(configYml).toContain('Open Knowledge — project configuration');
     expect(configYml).toContain('# content:');
     expect(configYml).toContain('# appearance:');
-    // No uncommented top-level keys — every non-empty, non-comment line
-    // would mean we accidentally shipped an active override.
     const activeLines = configYml
       .split('\n')
       .map((l) => l.trim())
@@ -101,38 +84,24 @@ describe('initContent', () => {
     initContent(testDir);
     const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
     const firstLine = configYml.split('\n')[0];
-    // AC #6: line 1 matches the FR-17 contract — `@latest` of the npm
-    // package + the schema-major path + the project per-scope file.
-    // Schema versioning is independent of package version: additive
-    // schema changes reach existing users automatically; breaking changes
-    // bump the `v<N>` directory.
     expect(firstLine).toMatch(
       /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.project\.schema\.json$/,
     );
-    // Existing # Open Knowledge — project configuration header is preserved
-    // immediately below the magic comment.
     expect(configYml.split('\n')[1]).toBe('# Open Knowledge — project configuration');
-    // Existing schema-reference prose comment is preserved (human-readable
-    // hint for editors without an LSP — both directives coexist).
     expect(configYml).toContain('# Schema reference: packages/cli/src/config/schema.ts');
   });
 
   it('config.yml scaffold includes Karpathy starter + picomatch nuance doc (US-006 / QA-009)', () => {
     initContent(testDir);
     const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
-    // Folders block documented
     expect(configYml).toContain('Folders:');
     expect(configYml).toContain('# folders:');
-    // Karpathy three-layer starter (matches `ok seed` output — US-006 rewrite)
     expect(configYml).toContain("#   - match: 'external-sources/**'");
     expect(configYml).toContain("#   - match: 'research/**'");
     expect(configYml).toContain("#   - match: 'articles/**'");
-    // Points at `ok seed` as the command that writes this structure for real
     expect(configYml).toContain('ok seed');
-    // Picomatch globstar nuance explicitly flagged
     expect(configYml).toMatch(/foo-\*\*/);
     expect(configYml).toMatch(/foo-\*\/\*\*/);
-    // Last-match-wins ordering documented
     expect(configYml).toMatch(/LATER rules.*override/i);
   });
 
@@ -146,8 +115,6 @@ describe('initContent', () => {
   });
 
   it('appends missing scaffold entries to a stale .gitignore (upgrade path)', () => {
-    // Simulate a project that ran `ok init` before the consolidation —
-    // its .ok/.gitignore lacks principal.json + last-spawn-error.log.
     const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
     const stale = `cache/\nserver.lock\nui.lock\nsync-state.json\n`;
@@ -155,16 +122,10 @@ describe('initContent', () => {
 
     const result = initContent(testDir);
 
-    // Byte-exact: any regression that re-wrote the full scaffold would
-    // duplicate the four pre-existing entries, and substring-only assertions
-    // wouldn't catch it. The contract under test is "append only what's
-    // missing" — pin every byte.
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(after).toBe(
       `cache/\nserver.lock\nui.lock\nsync-state.json\nprincipal.json\nstate.json\nlast-spawn-error.log\n`,
     );
-    // The merge path classifies as 'updated', not 'created' — surfaces a
-    // distinct banner at the CLI ('Updated: .gitignore' vs 'Created: ...').
     expect(result.updated).toContain('.gitignore');
     expect(result.created).not.toContain('.gitignore');
   });
@@ -178,9 +139,7 @@ describe('initContent', () => {
     initContent(testDir);
 
     const after = readFileSync(join(okDir, '.gitignore'), 'utf-8');
-    // User customization preserved
     expect(after).toContain('my-custom-ignore.tmp');
-    // Scaffold entries appended
     expect(after).toContain('principal.json');
     expect(after).toContain('last-spawn-error.log');
   });
@@ -191,7 +150,6 @@ describe('initContent', () => {
     initContent(testDir);
 
     const gitignore = readFileSync(join(testDir, OK_DIR, '.gitignore'), 'utf-8');
-    // Each scaffold entry should appear exactly once
     for (const entry of [
       'cache/',
       'server.lock',
@@ -206,9 +164,6 @@ describe('initContent', () => {
   });
 });
 
-// Drift guard: the committed `.ok/.gitignore` in this repo MUST stay
-// in sync with what `ok init` writes. The PR that consolidated ignores fixed a
-// prior drift between these two surfaces; this test prevents the next drift.
 describe('committed .ok/.gitignore matches scaffold output', () => {
   it('matches OK_GITIGNORE_CONTENT byte-for-byte', () => {
     const tmp = resolve(
@@ -220,9 +175,6 @@ describe('committed .ok/.gitignore matches scaffold output', () => {
       initContent(tmp);
       const scaffolded = readFileSync(join(tmp, OK_DIR, '.gitignore'), 'utf-8');
 
-      // Walk up from this test file (which lives in packages/cli/src/content/)
-      // to the repo root. Avoid hard-coded relative paths that break when the
-      // test file moves.
       let dir = dirname(import.meta.path);
       while (dir !== '/' && !existsSync(join(dir, '.ok', '.gitignore'))) {
         dir = dirname(dir);
@@ -242,9 +194,6 @@ describe('committed .ok/.gitignore matches scaffold output', () => {
   });
 });
 
-// Drift guard: the committed project-root `.okignore` in this repo MUST stay
-// in sync with `OK_OKIGNORE_TEMPLATE`. Same pattern as the .gitignore drift
-// guard above — `ok init` is the writer; the committed file is the dogfood.
 describe('committed .okignore matches scaffold output', () => {
   it('matches OK_OKIGNORE_TEMPLATE byte-for-byte', () => {
     const tmp = resolve(
@@ -282,9 +231,6 @@ describe('packageVersionMajorMinor', () => {
   });
 
   it('drops prerelease suffixes from the minor segment (split-on-dot only consumes the first two)', () => {
-    // npm publish typically strips prerelease suffixes from the URL path; we
-    // pass the raw split result through. Acceptable since unpkg resolves the
-    // `@<MAJOR.MINOR>` selector against the latest matching published version.
     expect(packageVersionMajorMinor('1.2.0-rc.1')).toBe('1.2');
   });
 
@@ -295,8 +241,6 @@ describe('packageVersionMajorMinor', () => {
 
 describe('buildConfigYmlContent', () => {
   it('templates the magic comment with @latest + schema-major path', () => {
-    // Schema versioning is independent of the package version — the URL
-    // pins to `@latest` of the npm package + the schema-major directory.
     const out = buildConfigYmlContent('3.5.0');
     expect(out.split('\n')[0]).toMatch(
       /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.project\.schema\.json$/,

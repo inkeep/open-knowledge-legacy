@@ -64,8 +64,6 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
     });
 
     expect(result?.source).toBe('electron-protocol');
-    // realpath flattens symlinks; on macOS `/tmp` is a symlink to `/private/tmp`.
-    // Accept either the raw tmpDir OR its realpath-resolved form.
     expect(result?.url).toMatch(/^openknowledge:\/\/open\?project=.+&doc=docs%2Fa$/);
   });
 
@@ -87,8 +85,6 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
       lockDir,
       contentDir: tmpDir,
     });
-    // `/` in docName is encoded as `%2F` (encodeURIComponent of the whole
-    // string — distinct from the http-hash-path encoding that keeps `/`).
     expect(result?.url).toContain('doc=sub%2FMy%20Doc.md');
   });
 
@@ -119,7 +115,6 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
     process.env.OK_ELECTRON_PROTOCOL_HOST = '1';
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateUiLockPort(lockDir, 5173);
-    // No contentDir in ctx → Electron branch cannot compute realpath.
     const result = resolvePreviewUrl('docs/a', {
       config: BASE_CONFIG,
       lockDir,
@@ -139,17 +134,6 @@ describe('resolvePreviewUrl — electron-protocol branch (M4 AC8)', () => {
   });
 
   test('attach-mode contract: desktop attach to running CLI emits http://, not openknowledge://', () => {
-    // QA-056 regression pin. When the desktop app attaches to an already-
-    // running `ok start` CLI (window-manager attach-mode branch), it does
-    // NOT fork a utility — so OK_ELECTRON_PROTOCOL_HOST=1 never lands in
-    // the CLI's utility env. The MCP server runs in the CLI's process and
-    // resolvePreviewUrl sees no env var → emits http://localhost/... via the
-    // `lock` source. This matches the SPEC §3 NG contract: CLI/bunx consumers
-    // always get http URLs, never the openknowledge:// scheme. Document this
-    // explicitly so a future change to attach-mode can't silently flip the
-    // contract without a failing test.
-    // Precondition: env var is NOT set (attach mode is env-less from the
-    // CLI's perspective — desktop never forked it).
     expect(process.env.OK_ELECTRON_PROTOCOL_HOST).toBeUndefined();
 
     acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
@@ -233,8 +217,6 @@ describe('resolvePreviewUrl — malformed sources', () => {
   });
 
   test('invalid config URL → null (no fallback)', () => {
-    // We deliberately bypass schema validation to simulate a runtime-corrupted
-    // config (e.g., user hand-edited the parsed object).
     const config = { ...BASE_CONFIG, preview: { baseUrl: 'not a url' } } as Config;
 
     const result = resolvePreviewUrl('docs/a', { config, lockDir });
@@ -282,7 +264,6 @@ describe('resolvePreviewUrl — docName encoding', () => {
 });
 
 describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
-  // Mirror of packages/app/src/lib/doc-hash.ts:7-20 (docNameFromHash).
   function docNameFromHash(hash: string): string | null {
     if (!hash.startsWith('#/')) return null;
     const rest = hash.slice(2);
@@ -309,7 +290,6 @@ describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
     const result = resolvePreviewUrl(docName, { config: BASE_CONFIG, lockDir });
     expect(result).not.toBeNull();
-    // Extract the hash portion `#/...` from the full URL.
     const hashIdx = result?.url.indexOf('#') ?? -1;
     expect(hashIdx).toBeGreaterThan(-1);
     const hash = result?.url.slice(hashIdx);
@@ -318,9 +298,6 @@ describe('resolvePreviewUrl — round-trip via docNameFromHash', () => {
   });
 
   test('trailing slash docName: decoder is lossy but safe', () => {
-    // Trailing slashes produce empty trailing segments. The decoder joins
-    // back with '/' and the trailing empty segment survives. Verify round-trip
-    // holds for this edge case too.
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://x.example';
     const result = resolvePreviewUrl('trail/', { config: BASE_CONFIG, lockDir });
     const hash = result?.url.slice(result.url.indexOf('#'));

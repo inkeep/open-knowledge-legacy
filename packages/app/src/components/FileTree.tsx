@@ -19,9 +19,7 @@ import {
   Trash2,
   UnfoldVertical,
 } from 'lucide-react';
-// @ts-expect-error -- no types
 import { __iconNode as botIcon } from 'lucide-react/dist/esm/icons/bot';
-// @ts-expect-error -- no types
 import { __iconNode as link2Icon } from 'lucide-react/dist/esm/icons/link-2';
 import { useTheme } from 'next-themes';
 import {
@@ -114,7 +112,6 @@ type IconNode = [string, Record<string, string>][];
 function iconNodeToSvg(iconNode: IconNode): string {
   return (
     iconNode
-      // remove React key
       .map(([tag, { key, ...attrs }]) => {
         const attrString = Object.entries(attrs)
           .map(([k, v]) => `${k}="${v}"`)
@@ -135,10 +132,6 @@ const FILE_TREE_DECORATION_SPRITE_SHEET = `<svg data-icon-sprite aria-hidden="tr
   ${createLucideSpriteSymbol(AGENT_DECORATION_ICON_ID, botIcon)}
 </svg>`;
 
-// Pierre's per-extension icon color (specificity 0,1,0 on the inner [data-icon-token]
-// element) wins over the inherited selected-fg color from the parent row, so the
-// markdown icon stays gray when its row is selected. Re-target the inner element on
-// selection so it picks up --trees-selected-fg.
 const FILE_TREE_UNSAFE_CSS = `
   [data-item-selected='true'] [data-icon-token='markdown'] {
     color: var(--trees-selected-fg);
@@ -207,26 +200,12 @@ interface PendingCreate {
   renamePath: string;
 }
 
-/**
- * Platform-specific label for the file-manager reveal action. Mirrors VS Code's copy.
- * Linux verb asymmetry (Open vs Reveal) is intentional — no stable Linux file-manager
- * brand to "Reveal in"; a normalizing fix to "Reveal in Files" would be incorrect on
- * most distros.
- */
 function revealInFileManagerLabel(platform: 'darwin' | 'win32' | 'linux'): string {
   if (platform === 'darwin') return 'Reveal in Finder';
   if (platform === 'win32') return 'Reveal in File Explorer';
   return 'Open Containing Folder';
 }
 
-/**
- * File-tree menu row that opens the OS file manager with the target file/folder
- * selected. Hidden entirely on the web variant (no useful no-op without a host
- * filesystem) — the disabled-with-hint pattern used by `OpenInAgentContextSubmenu`
- * doesn't apply here because reveal has no cross-host fallback. When present but
- * the workspace metadata hasn't resolved yet, renders disabled with a "No workspace"
- * affordance mirroring the handoff submenu's pattern.
- */
 function RevealInFileManagerMenuItem({
   item,
   workspace,
@@ -455,10 +434,6 @@ export interface FileTreeHandle {
   collapseAll(): void;
 }
 
-/**
- * Must be mounted inside a `SidebarProvider` — `useSidebar()` throws otherwise.
- * Today only `FileSidebar` mounts it, which is always inside the provider.
- */
 export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument, closeAndClearForRename, prewarm } =
     useDocumentContext();
@@ -571,7 +546,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const folderTreePaths = collectTreeFolderPathsFromDocuments(documents);
   const folderTreePathsRef = useRef(folderTreePaths);
 
-  // Keep parents visible without forcing the selected folder itself open.
   const activeAncestorTreePaths = selectedFolderPath
     ? computeTreeAncestorPaths(folderPathToTreeDirectoryPath(selectedFolderPath)).slice(0, -1)
     : computeTreeAncestorPaths(activeTreePath ?? activeNavigationPath);
@@ -703,13 +677,6 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     const currentActiveDocName = activeDocNameRef.current;
     const nextActiveDocName = remapActiveDocName(currentActiveDocName, renamed);
 
-    // Wipe IDB for BOTH ends of every rename pair before any new provider
-    // opens. The `to` clear catches the move-back-to-previous-folder case
-    // where the destination docName already had IDB rows from an earlier
-    // session — opening into that stale IDB would hydrate the new Y.Doc
-    // with prior-session content (foreign clientID, no shared ancestor
-    // with the server's freshly-loaded Y.Doc), and the union-merge would
-    // append the stale content to the post-rename body.
     await Promise.all(
       renamed.flatMap((entry) => [
         closeAndClearForRename(entry.fromDocName),
@@ -938,21 +905,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       if (!selected) return;
       const appPath = treePathToAppPath(selected);
       const isFolder = selected.endsWith('/');
-      // Don't navigate to a doc the rest of the app doesn't know about yet.
-      // @pierre/trees fires onSelectionChange synchronously when an inline
-      // rename commits — the renamed item's path updates in the tree model
-      // and the selection follows BEFORE onRename fires our `handleTreeRename`
-      // and BEFORE applyRenamedDocuments updates `documents`. Without this
-      // guard, the selection-driven navigation opens a HocuspocusProvider
-      // for the new docName before the file exists at the new path on disk,
-      // which produces an empty server-side Y.Doc that the persistence layer
-      // then writes back to disk as an empty file (data-loss bug). Navigation
-      // for legitimately-renamed docs is handled in applyRenamedDocuments
-      // after the API succeeds, so dropping this transient event is safe.
       if (!isFolder && !documentsRef.current.some((d) => d.docName === appPath)) {
-        // Visible at debug level for diagnosis if `documents` is ever stale
-        // for a non-rename reason — keeps the rename hot path silent without
-        // discarding the signal entirely.
         console.debug('[FileTree] Dropped selection for unknown docName:', appPath);
         return;
       }

@@ -71,7 +71,6 @@ describe('getLeafFieldMeta', () => {
   });
 
   test('returns undefined for a non-leaf intermediate (object container without registered metadata)', () => {
-    // `mcp.tools` is a container; its inner shape carries no fieldRegistry entry.
     const meta = getLeafFieldMeta(ConfigSchema, ['mcp', 'tools']);
     expect(meta).toBeUndefined();
   });

@@ -1,17 +1,7 @@
-/**
- * HEAD watcher — detects coordinated git operations (pull, checkout, merge, rebase).
- *
- * Watches .git/HEAD, MERGE_HEAD, ORIG_HEAD, and index.lock for changes.
- * Emits BatchBegin when activity starts and BatchEnd after a quiet window.
- *
- * BatchEnd includes headMoved (whether HEAD SHA changed) and old/new SHAs.
- * A timeout cap prevents indefinite batching (e.g., long rebase).
- */
 
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
 
@@ -34,31 +24,22 @@ type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
-  /** Current known branch name (or 'detached-<sha12>'). */
   getLastKnownBranch: () => string | null;
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
 
 const QUIET_WINDOW_MS = 100;
 const BATCH_TIMEOUT_MS = 30_000;
 
-/** Files within .git/ that signal coordinated operations. */
 const WATCHED_FILES = new Set(['HEAD', 'MERGE_HEAD', 'ORIG_HEAD', 'index.lock']);
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Resolve the actual .git directory.
- * In worktrees, .git is a file containing "gitdir: /path/to/real/gitdir".
- */
 export function resolveGitDir(projectRoot: string): string | null {
   const gitPath = resolve(projectRoot, '.git');
   try {
     const stat = statSync(gitPath);
     if (stat.isDirectory()) return gitPath;
     if (stat.isFile()) {
-      // Worktree: .git is a pointer file
       const content = readFileSync(gitPath, 'utf-8').trim();
       const match = content.match(/^gitdir:\s*(.+)$/);
       if (match) {
@@ -67,54 +48,40 @@ export function resolveGitDir(projectRoot: string): string | null {
       }
     }
   } catch {
-    // No .git
   }
   return null;
 }
 
-/** Read current HEAD SHA, or null if unreadable. */
 function readHeadSha(gitDir: string): string | null {
   try {
     const headContent = readFileSync(resolve(gitDir, 'HEAD'), 'utf-8').trim();
-    // HEAD may be a ref (ref: refs/heads/main) or a detached SHA
     if (headContent.startsWith('ref: ')) {
       const refPath = resolve(gitDir, headContent.slice(5));
       try {
         return readFileSync(refPath, 'utf-8').trim();
       } catch {
-        // Ref file may not exist (empty repo)
-        // Try packed-refs
         try {
           const packed = readFileSync(resolve(gitDir, 'packed-refs'), 'utf-8');
           const refName = headContent.slice(5);
           const line = packed.split('\n').find((l) => l.endsWith(` ${refName}`));
           if (line) return line.split(' ')[0];
         } catch {
-          // No packed-refs
         }
         return null;
       }
     }
-    // Detached HEAD — the content is the SHA
     return headContent.length >= 40 ? headContent.slice(0, 40) : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Read the branch name from .git/HEAD.
- *
- * Returns the branch name (e.g. "main") for a symref,
- * "detached-<sha12>" for a raw SHA, or null if unreadable.
- */
 export function readBranchFromHead(gitDir: string): string | null {
   try {
     const headContent = readFileSync(resolve(gitDir, 'HEAD'), 'utf-8').trim();
     if (headContent.startsWith('ref: refs/heads/')) {
       return headContent.slice('ref: refs/heads/'.length);
     }
-    // Detached HEAD — raw SHA
     if (headContent.length >= 40) {
       return `detached-${headContent.slice(0, 12)}`;
     }
@@ -124,15 +91,7 @@ export function readBranchFromHead(gitDir: string): string | null {
   }
 }
 
-// ─── Watcher ─────────────────────────────────────────────────────────────────
 
-/**
- * Start watching .git/ for coordinated operations.
- *
- * Returns a handle to stop watching. If `.git/` cannot be resolved (e.g. the
- * project is uninitialized and `ensureProjectGit` has not yet run), returns a
- * no-op handle so callers don't have to special-case the missing state.
- */
 export async function startHeadWatcher(
   projectRoot: string,
   onBatchBegin: OnBatchBegin,
@@ -140,7 +99,6 @@ export async function startHeadWatcher(
 ): Promise<HeadWatcherHandle> {
   const resolvedGitDir = resolveGitDir(projectRoot);
   if (!resolvedGitDir) {
-    // No .git/ to watch — skip attachment without erroring
     return { unsubscribe: async () => {}, getLastKnownBranch: () => null };
   }
   const gitDir: string = resolvedGitDir;
@@ -152,7 +110,6 @@ export async function startHeadWatcher(
   let lastKnownBranch: string | null = null;
 
   async function emitBatchEnd(timeout: boolean): Promise<void> {
-    // Wait for onBatchBegin to finish before proceeding
     if (beginInFlight) await beginInFlight;
     if (!inBatch) return;
 
@@ -169,7 +126,6 @@ export async function startHeadWatcher(
     const headMoved = oldHead !== newHead;
     const newBranch = readBranchFromHead(gitDir);
 
-    // Classify batch kind
     let batchKind: BatchKind;
     if (newBranch?.startsWith('detached-')) {
       batchKind = 'detached-head';
@@ -194,8 +150,6 @@ export async function startHeadWatcher(
     } catch (e) {
       console.error('[head-watcher] onBatchEnd callback failed:', e);
     } finally {
-      // Set inBatch = false AFTER the async callback completes
-      // so new file events stay buffered during branch-switch orchestration
       inBatch = false;
       oldHead = newHead;
       lastKnownBranch = newBranch;
@@ -227,7 +181,6 @@ export async function startHeadWatcher(
       await beginPromise;
       beginInFlight = null;
 
-      // Start timeout cap only after begin completes
       timeoutTimer = setTimeout(() => {
         timeoutTimer = null;
         void emitBatchEnd(true);
@@ -264,11 +217,6 @@ export async function startHeadWatcher(
     });
     unsubscribeFn = () => subscription.unsubscribe();
   } catch (err) {
-    // parcel.subscribe() can fail on rarer scenarios: permission errors,
-    // inotify watcher-limit exhaustion, EACCES on the .git directory, etc.
-    // Throw to align with the import-failure path above — the caller's
-    // catch in server-factory.ts pushes 'head-watcher' to degraded so
-    // consumers can detect the subsystem is non-functional.
     throw new Error(
       `@parcel/watcher subscribe failed for HEAD watching: ${
         err instanceof Error ? err.message : err
@@ -276,8 +224,6 @@ export async function startHeadWatcher(
     );
   }
 
-  // Read initial state AFTER subscription is active to avoid missing
-  // events that occur between the read and subscribe() completing.
   oldHead = readHeadSha(gitDir);
   lastKnownBranch = readBranchFromHead(gitDir);
 

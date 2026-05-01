@@ -8,10 +8,6 @@ import { reposCommand } from './repos.ts';
 import { signoutCommand } from './signout.ts';
 import { statusCommand } from './status.ts';
 
-/**
- * Build the `auth` command group.
- * Subcommands: login, status, repos, signout, pat, git-credential
- */
 export function authCommand(getConfig?: () => Config): Command {
   const cmd = new Command('auth');
   cmd.description('GitHub authentication management');

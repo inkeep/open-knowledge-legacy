@@ -11,7 +11,6 @@ describe('normalizeSummary — classification', () => {
   });
 
   test('whitespace-only string → absent (blank bullet would add zero signal)', () => {
-    // Single spaces, multiple spaces, tabs, newlines, and a mix.
     expect(normalizeSummary(' ')).toEqual({ kind: 'absent' });
     expect(normalizeSummary('     ')).toEqual({ kind: 'absent' });
     expect(normalizeSummary('\t')).toEqual({ kind: 'absent' });
@@ -19,7 +18,6 @@ describe('normalizeSummary — classification', () => {
   });
 
   test('non-whitespace-only string with surrounding whitespace → value (preserved verbatim, no trim)', () => {
-    // Intentional padding stays — only entirely-whitespace short-circuits.
     expect(normalizeSummary('  hi  ')).toEqual({ kind: 'value', value: '  hi  ' });
   });
 
@@ -55,7 +53,6 @@ describe('normalizeSummary — valid strings', () => {
     expect(s.length).toBe(MAX_SUMMARY_LENGTH);
     const result = normalizeSummary(s);
     expect(result).toEqual({ kind: 'value', value: s });
-    // Explicit: truncatedFrom must NOT be present
     if (result.kind === 'value') {
       expect(result.truncatedFrom).toBeUndefined();
     }
@@ -85,7 +82,6 @@ describe('normalizeSummary — valid strings', () => {
     const s = 'x'.repeat(100);
     const result = normalizeSummary(s);
     if (result.kind === 'value') {
-      // last char is the ellipsis codepoint (U+2026), not '.'
       expect(result.value.endsWith('…')).toBe(true);
       expect(result.value.endsWith('...')).toBe(false);
       expect(result.value.charCodeAt(result.value.length - 1)).toBe(0x2026);
@@ -93,10 +89,6 @@ describe('normalizeSummary — valid strings', () => {
   });
 
   test('long string with surrogate-pair emoji is truncated by code-unit length', () => {
-    // JS .length counts code units, not codepoints — the cap operates on raw
-    // .length so consumers get a consistent byte-budget for the git-commit
-    // body. A supplementary-plane emoji (🔥 = 2 code units) near the slice
-    // boundary can be split; callers accept that in exchange for a simple cap.
     const s = `${'a'.repeat(78)}🔥 reference`; // 78 + 2 + " reference" = 90 code units
     const result = normalizeSummary(s);
     if (result.kind === 'value') {

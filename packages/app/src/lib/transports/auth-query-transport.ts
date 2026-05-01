@@ -1,17 +1,3 @@
-/**
- * Transport abstraction for one-shot auth queries — `auth status` (is the
- * user signed in?) and `auth repos` (list of accessible repositories).
- *
- * Two implementations:
- *   - `httpAuthQueryTransport` — wraps `fetch('/api/local-op/auth/...')`.
- *     Default for editor windows + web distribution.
- *   - `ipcAuthQueryTransport` — wraps `bridge.localOp.authStatus()` /
- *     `.authRepos()`. Used by the Project Navigator window where there
- *     is no backing API server (apiOrigin is empty).
- *
- * Bounded responses on both methods (status: one line; repos: bounded
- * list), so no streaming surface is needed.
- */
 
 import type {
   OkDesktopBridge,
@@ -32,11 +18,6 @@ async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
-/**
- * Pull the last parseable JSON line out of an NDJSON-ish body. The HTTP
- * relays for status / repos emit one structured line; older builds may
- * prefix with non-JSON log output.
- */
 function lastJsonLine(text: string): Record<string, unknown> | null {
   const lines = text.split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -46,13 +27,11 @@ function lastJsonLine(text: string): Record<string, unknown> | null {
       const v = JSON.parse(line);
       if (v && typeof v === 'object') return v as Record<string, unknown>;
     } catch {
-      /* skip non-JSON */
     }
   }
   return null;
 }
 
-/** HTTP transport — wraps the `/api/local-op/auth/{status,repos}` endpoints. */
 export function httpAuthQueryTransport(): AuthQueryTransport {
   return {
     async status(request) {
@@ -80,8 +59,6 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
       const host = request?.host ?? 'github.com';
       const res = await postJson('/api/local-op/auth/repos', request);
       if (!res.ok) return { ok: false, error: 'Failed to fetch repositories' };
-      // CLI emits a single `{repos: [...]}` line; relay forwards as-is.
-      // No streaming reader needed — read the whole body and parse.
       const data = lastJsonLine(await res.text());
       if (!data || !Array.isArray(data.repos)) {
         return { ok: false, error: 'Failed to fetch repositories' };
@@ -102,7 +79,6 @@ export function httpAuthQueryTransport(): AuthQueryTransport {
   };
 }
 
-/** IPC transport — wraps `bridge.localOp.{authStatus,authRepos}` directly. */
 export function ipcAuthQueryTransport(bridge: OkDesktopBridge): AuthQueryTransport {
   return {
     status: (request) => bridge.localOp.authStatus(request),

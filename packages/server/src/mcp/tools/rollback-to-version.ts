@@ -1,10 +1,3 @@
-/**
- * `rollback_to_version` MCP tool — restore a document to a historical version.
- *
- * Reads historical content from the shadow repo and applies it to the live
- * Y.Doc via POST /api/rollback, creating a new CRDT transaction (append-only).
- * All connected editors see the restored content.
- */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
@@ -37,10 +30,6 @@ export interface RollbackToVersionDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
-  /** Same identity passthrough pattern as write-document (D15). Without this,
-   *  MCP-driven rollback posts no agentId → the server-side D22 guard skips
-   *  attribution. UI-driven rollback (EditorPane.tsx:155) intentionally stays
-   *  anonymous; MCP-driven rollback participates via this passthrough. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -75,7 +64,6 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
       if (!normalized.ok) return textResult(normalized.error, true);
       const docName = normalized.docName;
 
-      // First, verify the version exists and show what we're restoring
       const versionResult = await httpGet(
         url,
         `/api/history/${args.commitSha}?docName=${encodeURIComponent(docName)}`,
@@ -84,7 +72,6 @@ export function register(server: ServerInstance, deps: RollbackToVersionDeps): v
         return textResult(`Error: ${versionResult.error ?? 'Version not found'}`, true);
       }
 
-      // Perform the rollback
       const identity = deps.identityRef?.current;
       const result = await httpPost(url, '/api/rollback', {
         docName,

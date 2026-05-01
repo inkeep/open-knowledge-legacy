@@ -21,16 +21,6 @@ import { docNameFromHash } from '@/lib/doc-hash';
 import { mark, ProfilerBoundary } from '@/lib/perf';
 import { isSettingsShortcut, SETTINGS_OPEN_HASH } from '@/lib/use-settings-route';
 
-/** Hash is the source of truth for navigation; all navigation sets the hash;
- *  this handler is the single place that resolves the active navigation target
- *  and calls openTargetTransition(). The transition wrapper keeps a previously-
- *  revealed doc visible while the next entry suspends on syncPromise (fast/warm
- *  path, SPEC G2); on cold paths `openTargetTransition` drops the transition
- *  and lets `<Suspense fallback={<EditorSkeleton />}>` paint immediately. Agent-
- *  driven nav via SystemDocSubscriber flows through `window.location.hash`, so
- *  it inherits the same UX without a separate code path (SPEC §F7). Target
- *  resolution (doc / folder-index / folder / missing) lives in
- *  resolveNavigationTarget (PR #175). */
 function NavigationHandler() {
   const { clearTarget } = useDocumentContext();
   const { openTargetTransition } = useDocumentTransition();
@@ -64,13 +54,6 @@ function NavigationHandler() {
   return null;
 }
 
-/**
- * Mounts `InstallInClaudeDesktopDialog` at the App root and opens it when
- * `window.location.hash === '#install-claude-desktop'`. This is the minimum
- * viable trigger for Ship 1e — docs and future in-app CTAs link to the hash.
- * The hash clears when the dialog closes so it reopens only if the user
- * navigates back to the URL fragment. SPEC 2026-04-24 FR9-FR13.
- */
 const INSTALL_DIALOG_HASH = '#install-claude-desktop';
 function InstallInClaudeDesktopTrigger() {
   const [open, setOpen] = useState(
@@ -88,8 +71,6 @@ function InstallInClaudeDesktopTrigger() {
   function handleOpenChange(next: boolean) {
     setOpen(next);
     if (!next && window.location.hash === INSTALL_DIALOG_HASH) {
-      // Clear the fragment so closing doesn't instantly re-open on refresh.
-      // Uses history.replaceState to avoid adding a history entry.
       const { pathname, search } = window.location;
       window.history.replaceState(null, '', `${pathname}${search}`);
     }
@@ -98,18 +79,6 @@ function InstallInClaudeDesktopTrigger() {
   return <InstallInClaudeDesktopDialog open={open} onOpenChange={handleOpenChange} />;
 }
 
-/**
- * Cmd-, / Ctrl-, opens the Settings pane (US-010 / FR-1 / D54). Sibling to
- * `NewItemShortcutHandler` — global keydown listener at App scope, suppresses
- * inside text inputs (`isSettingsShortcut`), routes to the canonical hash so
- * `useSettingsRoute` (mounted by EditorArea) reacts and renders SettingsPane.
- *
- * Browser-mode-only in practice: Electron's menu accelerator (`CmdOrCtrl+,`
- * on the App / File menu Settings… item) captures the keypress before it
- * reaches the renderer, so this handler firing inside Electron is a no-op
- * because the menu's executeJavaScript already set the same hash. Both code
- * paths produce identical end state.
- */
 function SettingsShortcutHandler() {
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -145,8 +114,6 @@ function NewItemShortcutHandler() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // KeyboardEvent.target is EventTarget|null — widen to the duck-typed
-      // ShortcutEventLike shape used by the pure predicate.
       const target = e.target as { tagName?: string; isContentEditable?: boolean } | null;
       if (
         isNewItemShortcut({
@@ -177,12 +144,6 @@ function NewItemShortcutHandler() {
 }
 
 export function App() {
-  // Electron-only Cmd+K palette for project-level commands (open folder,
-  // switch project via the Navigator, install for Claude Desktop, switch
-  // to a recent project, open in agent). Gated on `window.okDesktop` so
-  // the web/CLI distribution never mounts the handler — zero footprint
-  // outside Electron. Mounted at the App root so Cmd+K works regardless
-  // of which surface has focus (editor, sidebar, timeline, etc.).
   const desktopBridge = typeof window !== 'undefined' ? (window.okDesktop ?? null) : null;
 
   return (

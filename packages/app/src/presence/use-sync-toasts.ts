@@ -4,10 +4,6 @@ import type { SyncStatus } from './use-sync-status';
 
 const TOAST_ID = 'sync-status';
 
-/**
- * Fires toasts on sync-status transitions: warning on disconnect, success on reconnect.
- * Silent on the happy path (connecting → connected → synced).
- */
 export function useSyncToasts(status: SyncStatus, activeDocName: string | null) {
   const hasConnectedRef = useRef(false);
   const wasDisconnectedRef = useRef(false);

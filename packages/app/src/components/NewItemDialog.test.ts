@@ -1,14 +1,3 @@
-/**
- * Pure-function unit tests for NewItemDialog helpers.
- *
- * These exercise the client-side validation, `.md` auto-append behavior,
- * path composition for both `kind='file'` and `kind='folder'`, and the
- * Cmd/Ctrl+Alt+N keydown predicate used by App.tsx's NewItemShortcutHandler.
- *
- * Covers QA-007 (shortcut focus-guard), QA-009 (client validation),
- * QA-017 (.md auto-append), QA-018 (folder name required), and the
- * path-composition pieces feeding QA-001/002/003/012.
- */
 
 import { describe, expect, test } from 'bun:test';
 
@@ -63,7 +52,6 @@ describe('ensureMdExtension', () => {
     expect(ensureMdExtension('foo.md')).toBe('foo.md');
   });
   test('preserves an already-qualified extension like .md.md', () => {
-    // Users typing `foo.md.md` is their choice — we don't strip.
     expect(ensureMdExtension('foo.md.md')).toBe('foo.md.md');
   });
 });
@@ -111,10 +99,6 @@ describe('composeNewItemPath — kind=file', () => {
   });
 
   test('typed-in extension wins over fileExtension state (Finder-like)', () => {
-    // If the user types `foo.mdx` in the name field, that's the authoritative
-    // signal — regardless of whatever the extension picker's visible state is.
-    // The picker should visually sync to .mdx on the next render; this test
-    // pins the compose-time behavior.
     expect(
       composeNewItemPath({
         kind: 'file',

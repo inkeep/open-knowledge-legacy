@@ -21,31 +21,14 @@ import {
   wrapperPathInBundle,
 } from './cli-install.ts';
 
-/**
- * Pure-function + runtime-layer coverage.
- *
- * The pure pieces (isTranslocated / wrapperPathInBundle / getInstallStatus)
- * need no `electron` import and no real filesystem. Runtime wrappers
- * (`installCli` / `uninstallCli`) run with injected `dialog` + `runAsAdmin`
- * + `fs` stubs so this file still doesn't touch `osascript` or the real
- * `node:fs` — the unsigned-DMG smoke is the end-to-end verification layer.
- */
 
 const INSTALLED_EXE = '/Applications/Open Knowledge.app/Contents/MacOS/Open Knowledge';
 const INSTALLED_TARGET = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
 
-// ENOENT error shaped like Node's fs throws it, so the classifier's
-// `.code === 'ENOENT'` check fires on the "never installed" path.
 const ENOENT: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), {
   code: 'ENOENT',
 });
 
-/**
- * Build an `FsOps` stub from simple maps of each symlink path's behavior.
- * Anything not named in `readlink` throws ENOENT (matches real fs semantics
- * when the path doesn't exist). Anything not named in `exists` returns true
- * (covers the happy path where the symlink target is present on disk).
- */
 function stubFs(opts: {
   readlink?: Record<string, string | Error>;
   exists?: Record<string, boolean>;
@@ -99,8 +82,6 @@ describe('wrapperPathInBundle', () => {
   });
 
   test('resolves wrapper path when bundle contains spaces', () => {
-    // Spec path contains `Open Knowledge.app`; guards against regex
-    // greediness on the space.
     expect(wrapperPathInBundle(INSTALLED_EXE)).toContain('/Open Knowledge.app/');
   });
 
@@ -154,7 +135,6 @@ describe('getInstallStatus', () => {
     const fs = stubFs({
       readlink: {
         '/usr/local/bin/ok': INSTALLED_TARGET,
-        // open-knowledge omitted → ENOENT from the stub
       },
     });
     expect(getInstallStatus(INSTALLED_EXE, fs)).toBe('broken');
@@ -173,8 +153,6 @@ describe('getInstallStatus', () => {
   });
 
   test('inspects both canonical symlink paths', () => {
-    // Belt-and-suspenders — if SYMLINK_PATHS is ever reordered or extended,
-    // this test surfaces the impact on consumers of the classifier.
     expect(SYMLINK_PATHS).toEqual(['/usr/local/bin/ok', '/usr/local/bin/open-knowledge']);
   });
 });
@@ -265,9 +243,6 @@ describe('buildAdminFailureError', () => {
   });
 
   test('is a real class, not an `as` cast — instanceof narrows correctly', () => {
-    // Plain `Error` must NOT match the narrowing path that reads `.reason`.
-    // If this slipped to `true`, the install-failure dialog would read
-    // `.reason = undefined` and mis-classify plain errors as shell-error.
     const plain = new Error('boom');
     expect(plain instanceof AdminFailureError).toBe(false);
     const classified = buildAdminFailureError('spawn-error', 'boom');
@@ -286,8 +261,6 @@ describe('buildAdminAppleScript', () => {
   test('escapes embedded double quotes in shellCmd', () => {
     const script = buildAdminAppleScript('echo "hi"', 'Prompt');
     expect(script).toContain('do shell script "echo \\"hi\\""');
-    // The un-escaped `"hi"` must not appear verbatim in the cmd slot —
-    // that would close the outer AppleScript literal early.
     expect(script).not.toContain('do shell script "echo "hi""');
   });
 
@@ -301,22 +274,14 @@ describe('buildAdminAppleScript', () => {
   });
 
   test('escapes embedded backslashes before double-quotes (total-contract invariant)', () => {
-    // Backslash-first escape ordering: a `\` inside `shellCmd` becomes `\\`
-    // BEFORE the `"` → `\"` pass runs, so the literal stays unambiguous.
-    // Reversed order would corrupt `a\` to `a\\` then `a\\"` on quote-add.
     const script = buildAdminAppleScript('ls /Users/Bob\\Mac/app', 'Needs admin');
     expect(script).toContain('do shell script "ls /Users/Bob\\\\Mac/app"');
   });
 
   test('escapes embedded newlines so multi-line prompt/shell inputs stay on one AppleScript literal (PR #289 review)', () => {
-    // AppleScript string literals can't span raw newlines — a `\n` in the
-    // input would close the current literal and leave dangling text. The
-    // escape converts to the AppleScript `\n` sequence, which the runtime
-    // decodes back to a literal newline when executing the shell command.
     const script = buildAdminAppleScript('echo a\nb', 'line1\nline2');
     expect(script).toContain('do shell script "echo a\\nb"');
     expect(script).toContain('with prompt "line1\\nline2"');
-    // Belt and suspenders — no raw newline anywhere in the output.
     expect(script).not.toContain('\n');
   });
 });
@@ -334,54 +299,24 @@ describe('buildInstallShellCmd', () => {
 
   test('rm -f precedes each ln -s so the replace case is handled', () => {
     const cmd = buildInstallShellCmd(INSTALLED_TARGET);
-    // `rm -f '…/ok'` MUST come before `ln -s … '…/ok'` in the chain.
     expect(cmd.indexOf(`rm -f '/usr/local/bin/ok'`)).toBeLessThan(
       cmd.indexOf(`ln -s '${INSTALLED_TARGET}' '/usr/local/bin/ok'`),
     );
   });
 
   test('target paths containing apostrophes are POSIX-escaped — no shell injection', () => {
-    // macOS users can rename `.app` bundles freely AND user account names can
-    // contain apostrophes (e.g. `/Users/Bob's Mac/Applications/...`). Without
-    // escaping, an apostrophe inside `target` closes the single-quote literal
-    // early — anything after is evaluated as bash. Since the result feeds
-    // `osascript ... do shell script "..." with administrator privileges`
-    // (root execution), this is a real privilege-escalation surface even
-    // though the user must consent at the admin prompt.
-    //
-    // Attacker payload: an apostrophe inside the bundle path that, without
-    // escaping, would close the `'...'` literal and inject `; touch ...; echo`
-    // as separate shell commands. POSIX-correct escaping replaces each `'`
-    // with `'\''` (close, literal apostrophe, reopen) so the shell parses
-    // the entire payload as ONE quoted string argument to `ln -s` / `rm -f`.
     const malicious =
       "/Users/foo/Downloads/My'; touch /tmp/pwned; echo '.app/Contents/Resources/cli/bin/ok.sh";
     const cmd = buildInstallShellCmd(malicious);
 
-    // Behavioral assertion: the cmd, when fed to a shell, MUST run exactly
-    // 5 statements separated by `&&` — `mkdir`, `rm -f ok`, `ln -s`,
-    // `rm -f open-knowledge`, `ln -s`. Any unescaped `;` from the payload
-    // would inject extra statements between the legitimate ones. We split on
-    // unquoted top-level operators and count.
     expect(countTopLevelStatements(cmd)).toBe(5);
 
-    // Structural assertion: the escaped substring must appear surrounding
-    // every embedded apostrophe via the POSIX `'\''` close-escape-reopen
-    // pattern. If a future refactor swaps escape strategies (e.g. shell-
-    // quote pkg), this test fails — at which point a maintainer must verify
-    // the new strategy is also POSIX-compliant.
     expect(cmd).toContain(`Downloads/My'\\''; touch /tmp/pwned; echo '\\''.app`);
 
-    // Negative assertion against the most obvious naive-escape regression
-    // (e.g., re-enabling unsafe template-literal interpolation). The
-    // unescaped `My'; touch` shape — apostrophe followed by `;` outside
-    // any escape — is exactly the byte sequence that closes `'` and starts
-    // a new statement. Asserting its absence makes a regression load-bearing.
     expect(cmd).not.toMatch(/(?<!\\)My';\s*touch/);
   });
 
   test('plain bundle paths without apostrophes are emitted byte-identically (no over-escape)', () => {
-    // Defense-in-depth — POSIX-safe escaping must not corrupt clean inputs.
     const clean = '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh';
     const cmd = buildInstallShellCmd(clean);
     expect(cmd).toContain(`'${clean}'`);
@@ -389,13 +324,6 @@ describe('buildInstallShellCmd', () => {
   });
 });
 
-/**
- * Count top-level shell statements separated by `&&` outside any quoted
- * region. Used by the shell-injection regression tests to verify the
- * payload is one argument, not several. A single-quoted region in POSIX
- * shell cannot contain `'` — a literal apostrophe must close the quote,
- * escape, and reopen — so `'` toggles in/out of quote state.
- */
 function countTopLevelStatements(cmd: string): number {
   let inQuote = false;
   let count = 1;
@@ -424,30 +352,13 @@ describe('buildUninstallShellCmd', () => {
   });
 
   test('POSIX-escapes apostrophes in arbitrary paths (shell-injection guard)', () => {
-    // Defense-in-depth — uninstallCli filters via classifySymlinkState before
-    // calling here, so the input list shouldn't contain hostile paths in
-    // practice. But the function is exported and a future caller might pass
-    // raw user-controlled paths; keep escaping symmetric with install.
     const malicious = "/usr/local/bin/foo'; rm -rf /tmp/oops; echo '";
     const cmd = buildUninstallShellCmd([malicious]);
-    // Behavioral: exactly ONE statement (the rm -f). The injection's `;`
-    // would split into multiple statements without escaping.
     expect(countTopLevelStatements(cmd)).toBe(1);
-    // Each `'` in the input was replaced with the POSIX `'\''` close-escape-
-    // reopen sequence, leaving the original `;` chars inside the quoted region.
     expect(cmd).toContain(`bin/foo'\\''; rm -rf /tmp/oops; echo '\\''`);
   });
 });
 
-/**
- * Test harness for the runtime install/uninstall functions.
- *
- * Builds a DI stub that records every `dialog.showMessageBox` call and
- * scripts the returned `response` via a queue — so a test can say "first
- * prompt: Replace; second prompt: Cancel" and assert on the transcript
- * afterward. `runAsAdmin` is a recorded spy that either resolves or
- * rejects based on the `adminOutcome` flag.
- */
 interface DialogCall {
   type?: string;
   message: string;
@@ -458,19 +369,9 @@ interface DialogCall {
 function makeDeps(opts: {
   executablePath?: string;
   fs?: FsOps;
-  /** Queue of `response` numbers returned by successive showMessageBox calls.
-   *  Missing entries default to 0 (Cancel). */
   responses?: number[];
-  /** Whether runAsAdmin resolves (success) or rejects, and how it rejects.
-   *  - 'ok' → resolves
-   *  - 'cancel' → rejects with reason='user-cancel' (Touch ID dismiss)
-   *  - 'spawn-error' → rejects with reason='spawn-error' (osascript ENOENT)
-   *  - 'shell-error' → rejects with reason='shell-error' (mid-flow shell fail) */
   adminOutcome?: 'ok' | 'cancel' | 'spawn-error' | 'shell-error';
-  /** Stderr to surface in the AdminFailureError on `shell-error` / `spawn-error`. */
   adminStderr?: string;
-  /** When true, no runAsAdmin stub is installed — lets the test observe whether
-   *  the runtime ever reached the admin-prompt stage. */
   omitRunAsAdmin?: boolean;
 }): {
   deps: CliInstallDeps;
@@ -553,7 +454,6 @@ describe('installCli', () => {
     const fs = stubFs({
       readlink: { '/usr/local/bin/ok': EINVAL },
     });
-    // responses[0] = 0 (Cancel) on the collision dialog for /usr/local/bin/ok
     const { deps, dialogCalls, adminCalls } = makeDeps({ fs, responses: [0] });
     await installCli(deps);
     expect(dialogCalls).toHaveLength(1);
@@ -576,16 +476,11 @@ describe('installCli', () => {
     const fs = stubFs({}); // both paths ENOENT → no collision prompt
     const { deps, dialogCalls, adminCalls } = makeDeps({ fs, adminOutcome: 'cancel' });
     await installCli(deps);
-    // Admin prompt WAS invoked once even though it was cancelled.
     expect(adminCalls).toHaveLength(1);
     expect(adminCalls[0].shellCmd).toContain('mkdir -p /usr/local/bin');
-    // Admin prompt names the concrete symlink paths so the user sees
-    // what root will create, not a generic "install" phrasing.
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
     expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
-    // One dialog — the manual-install fallback (no pre-admin collision
-    // prompt because both paths are absent).
     expect(dialogCalls).toHaveLength(1);
     expect(dialogCalls[0].type).toBe('info');
     expect(dialogCalls[0].message).toBe('Installation cancelled.');
@@ -644,8 +539,6 @@ describe('installCli', () => {
     expect(dialogCalls).toHaveLength(1);
     expect(dialogCalls[0].type).toBe('info');
     expect(dialogCalls[0].message).toBe('Installation cancelled.');
-    // No "could not start" / "returned an error" wording — that's reserved
-    // for spawn / shell errors per the new branching.
     expect(dialogCalls[0].detail).not.toContain('could not start');
     expect(dialogCalls[0].detail).not.toContain('returned an error');
   });
@@ -659,7 +552,6 @@ describe('installCli', () => {
     });
     const { deps, dialogCalls, adminCalls } = makeDeps({ fs, adminOutcome: 'ok' });
     await installCli(deps);
-    // No collision dialogs — only the final success dialog.
     expect(dialogCalls).toHaveLength(1);
     expect(dialogCalls[0].message).toBe('Command-Line Tools installed.');
     expect(adminCalls).toHaveLength(1);
@@ -687,7 +579,6 @@ describe('uninstallCli', () => {
     await uninstallCli(deps);
     expect(adminCalls).toHaveLength(1);
     expect(adminCalls[0].shellCmd).toBe(`rm -f '/usr/local/bin/ok'`);
-    // The foreign open-knowledge path does NOT appear in the rm command.
     expect(adminCalls[0].shellCmd).not.toContain('/usr/local/bin/open-knowledge');
   });
 
@@ -700,7 +591,6 @@ describe('uninstallCli', () => {
     });
     const { deps, dialogCalls, adminCalls } = makeDeps({ fs, adminOutcome: 'cancel' });
     await uninstallCli(deps);
-    // Admin was invoked, but no success dialog surfaced (silent return).
     expect(adminCalls).toHaveLength(1);
     expect(dialogCalls).toHaveLength(0);
   });
@@ -771,20 +661,12 @@ describe('uninstallCli', () => {
     });
     const { deps, adminCalls } = makeDeps({ fs, adminOutcome: 'ok' });
     await uninstallCli(deps);
-    // Symmetric with install — user sees what root will delete, not a
-    // generic "Open Knowledge needs permission" string.
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/ok');
     expect(adminCalls[0].promptCopy).toContain('/usr/local/bin/open-knowledge');
     expect(adminCalls[0].promptCopy).toMatch(/administrator/i);
   });
 });
 
-/**
- * `createBrokenSymlinkRepairHandler` — factored out of `main/index.ts`
- * so the privilege-escalation-adjacent launch-time prompt has
- * deterministic unit coverage. Each guard is exercised via injected
- * deps; no Electron runtime, no real fs, no `osascript` spawn.
- */
 describe('createBrokenSymlinkRepairHandler', () => {
   interface StubDeps {
     deps: BrokenSymlinkRepairDeps;
@@ -798,12 +680,7 @@ describe('createBrokenSymlinkRepairHandler', () => {
       platform?: NodeJS.Platform | string;
       isPackaged?: boolean;
       status?: CliInstallStatus;
-      /** Response to the repair dialog — 0 = Skip, 1 = Repair. Defaults to 0. */
       response?: number;
-      /** Per-bundle dismissal-token plumbing. When any of these is
-       *  provided, the dismissal-gate branches light up; otherwise the
-       *  factory omits the keys so the gate behaves as if the caller
-       *  didn't plumb it. */
       appVersion?: string;
       getDismissedToken?: () => string | null;
       setDismissedToken?: (token: string) => void;
@@ -859,7 +736,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     const { deps, dialogCalls, installCalls } = makeRepairDeps({ platform: 'win32' });
     const handler = createBrokenSymlinkRepairHandler(deps);
     await handler();
-    // Must short-circuit BEFORE firing any dialog — non-darwin gate.
     expect(dialogCalls).toHaveLength(0);
     expect(installCalls).toHaveLength(0);
   });
@@ -868,10 +744,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     const { deps, dialogCalls, installCalls } = makeRepairDeps({ isPackaged: false });
     const handler = createBrokenSymlinkRepairHandler(deps);
     await handler();
-    // Dev mode MUST NOT fire the repair — `app.getPath('exe')` resolves to
-    // the electron dev binary, so a prior DMG's symlinks would always
-    // classify 'broken' against it and the Repair branch would install
-    // dev-path symlinks into the user's /usr/local/bin.
     expect(dialogCalls).toHaveLength(0);
     expect(installCalls).toHaveLength(0);
   });
@@ -917,8 +789,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(stub.installCalls).toHaveLength(1);
     expect(stub.installCalls[0].executablePath).toBe(INSTALLED_EXE);
     expect(stub.installCalls[0].dialog).toBe(stub.deps.dialog);
-    // Menu refresh MUST fire — the label needs to flip from
-    // "Install Command-Line Tools…" to "Uninstall Command-Line Tools".
     expect(stub.refreshCalls).toBe(1);
   });
 
@@ -943,8 +813,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
       getStatus: () => 'broken',
     };
     await createBrokenSymlinkRepairHandler(deps)();
-    // Refresh must run AFTER install resolves — otherwise the menu label
-    // is rebuilt against the pre-install (still-broken) status.
     expect(order).toEqual(['install', 'refresh']);
   });
 
@@ -952,9 +820,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     const stub = makeRepairDeps({ status: 'broken', response: 0 });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
-    // Probe the actual dialog options payload by intercepting showMessageBox.
-    // The makeRepairDeps stub above only captures `type / message / detail /
-    // buttons`, so wire a dedicated probe here for cancelId / defaultId.
     const captured: Parameters<Dialog['showMessageBox']>[0][] = [];
     const probingDeps: BrokenSymlinkRepairDeps = {
       ...stub.deps,
@@ -968,23 +833,13 @@ describe('createBrokenSymlinkRepairHandler', () => {
     await createBrokenSymlinkRepairHandler(probingDeps)();
     expect(captured).toHaveLength(1);
     expect(captured[0].cancelId).toBe(0);
-    // defaultId: 0 means Enter-activate lands on Skip (no-op). If this
-    // flipped back to 1, a reflexive Enter on the startup modal would
-    // trigger the osascript admin password prompt.
     expect(captured[0].defaultId).toBe(0);
   });
 
   test('falls back to production getInstallStatus when getStatus dep is omitted', async () => {
-    // When the factory isn't handed a `getStatus`, it defaults to
-    // `getInstallStatus` from this module. Without a packaged macOS
-    // fixture present, that path will return 'not-installed' (both
-    // symlinks ENOENT on the test machine OR 'broken' if a prior DMG
-    // install remains). Either way, no dialog should fire from a
-    // non-darwin / non-packaged test run — we gate BEFORE getStatus.
     const dialogCalls: DialogCall[] = [];
     const deps: BrokenSymlinkRepairDeps = {
       executablePath: INSTALLED_EXE,
-      // Force the short-circuit on !isPackaged so we never reach getStatus.
       platform: 'darwin',
       isPackaged: false,
       dialog: {
@@ -1004,14 +859,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     expect(dialogCalls).toHaveLength(0);
   });
 
-  /**
-   * Per-bundle dismissal token. The token shape is
-   * `<appVersion>:<executablePath>` — auto-update OR app-move invalidates
-   * any prior dismissal, the modal fires once on the new bundle, Skip
-   * persists the token for the rest of that bundle's life. Without these
-   * tests, a refactor that broke the short-circuit would silently re-nag
-   * users who had already dismissed on the current bundle.
-   */
   test('short-circuits when dismissed token matches current token', async () => {
     const currentToken = `0.1.0:${INSTALLED_EXE}`;
     const stub = makeRepairDeps({
@@ -1022,16 +869,12 @@ describe('createBrokenSymlinkRepairHandler', () => {
     });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
-    // No dialog, no install, no menu refresh — the user's prior dismissal
-    // stands for this bundle.
     expect(stub.dialogCalls).toHaveLength(0);
     expect(stub.installCalls).toHaveLength(0);
     expect(stub.refreshCalls).toBe(0);
   });
 
   test('dismissed token mismatch (different version) still fires dialog', async () => {
-    // Auto-update from 0.1.0 → 0.1.1 shifts the token; the prior dismissal
-    // should not suppress the new bundle's prompt.
     const staleToken = `0.1.0:${INSTALLED_EXE}`;
     const stub = makeRepairDeps({
       status: 'broken',
@@ -1041,7 +884,6 @@ describe('createBrokenSymlinkRepairHandler', () => {
     });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
-    // Dialog DID fire — token shift invalidated the prior Skip.
     expect(stub.dialogCalls).toHaveLength(1);
   });
 
@@ -1058,19 +900,12 @@ describe('createBrokenSymlinkRepairHandler', () => {
     });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
-    // Skip persists the token so subsequent boots short-circuit until the
-    // bundle path or version changes. Shape is `<appVersion>:<execPath>`.
     expect(savedToken).toBe(`0.1.0:${INSTALLED_EXE}`);
     expect(stub.installCalls).toHaveLength(0);
     expect(stub.refreshCalls).toBe(0);
   });
 
   test('Repair (response=1) does NOT persist dismissal token', async () => {
-    // The Repair branch installs the symlinks and refreshes the menu. It
-    // must not write a dismissal token — the bundle is now healthy, so the
-    // status will be 'installed' next boot and the gate never reaches this
-    // branch anyway. Persisting would be wasted I/O and semantically wrong
-    // (dismissal ≠ repair).
     let savedToken: string | null = null;
     const stub = makeRepairDeps({
       status: 'broken',
@@ -1089,16 +924,10 @@ describe('createBrokenSymlinkRepairHandler', () => {
   });
 
   test('dismissal plumbing absent → prompt fires per-boot (back-compat)', async () => {
-    // When appVersion / getDismissedToken / setDismissedToken are not
-    // plumbed (the simpler callers, existing test shape), the gate is
-    // inert — the modal fires on every broken-status boot. This is the
-    // prior behavior and must stay back-compatible.
     const stub = makeRepairDeps({ status: 'broken', response: 0 });
     const handler = createBrokenSymlinkRepairHandler(stub.deps);
     await handler();
     expect(stub.dialogCalls).toHaveLength(1);
-    // Calling a second time still fires — no in-memory memoization at the
-    // handler level; persistence is entirely the caller's responsibility.
     await handler();
     expect(stub.dialogCalls).toHaveLength(2);
   });

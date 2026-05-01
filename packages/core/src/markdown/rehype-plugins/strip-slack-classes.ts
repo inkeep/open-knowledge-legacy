@@ -1,12 +1,3 @@
-/**
- * rehype plugin: strip Slack clipboard CSS-class noise.
- *
- * Slack's compose-area and message copy operations produce HTML with
- * `c-message_kit__*` / `c-message__*` / `c-compose-*` class prefixes
- * that carry no semantic meaning outside Slack. We drop those classes
- * (keep inner text) and drop timestamp spans (`.c-timestamp`) which
- * are metadata, not content.
- */
 
 import type { Element, ElementContent, Root } from 'hast';
 import type { Plugin } from 'unified';

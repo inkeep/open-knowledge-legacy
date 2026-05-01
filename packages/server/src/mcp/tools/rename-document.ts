@@ -1,9 +1,3 @@
-/**
- * `rename_document` MCP tool — managed page rename via the server API.
- *
- * Calls POST /api/rename-path with kind: 'file'. Renames the target document
- * and rewrites inbound wiki-links plus supported internal inline Markdown links.
- */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { type PreviewUrlSource, resolvePreviewUrlForTool } from './preview-url.ts';
@@ -35,24 +29,15 @@ interface RenameDocumentSuccess {
   ok: true;
   renamed: RenameDocumentMapping[];
   rewrittenDocs: RenameDocumentRewrittenDoc[];
-  /** Preview URL for the NEW (renamed-to) docName. Null when UI is down. */
   previewUrl: string | null;
-  /** Source of the previewUrl resolver (env / lock / config). Omitted when previewUrl is null. */
   previewUrlSource?: PreviewUrlSource;
-  /** Preview URL that used to resolve to the now-renamed doc. Present only when the helper resolves. */
   previousPreviewUrl?: string;
-  /** Stored summary + original length when truncation fired + truncation hint.
-   *  Absent when no agent-provided or default summary was recorded (e.g., UI-driven path).
-   *  `truncatedFrom` + `hint` are only present when the agent-provided summary
-   *  was truncated — server-generated defaults that overflow the cap suppress
-   *  both fields so the response does not misattribute truncation to the caller. */
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
 interface RenameDocumentError {
   ok: false;
   error: string;
-  /** Server-supplied structured collision list when 409 is a rename-map collision. */
   colliding?: RenameCollisionPair[];
 }
 
@@ -102,9 +87,6 @@ export interface RenameDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: ConfigOrResolver;
   resolveCwd: (explicit?: string) => Promise<string>;
-  /** Same identity passthrough pattern as write-document (D15). Without this,
-   *  MCP-driven renames post no agentId → the server-side D22 guard skips
-   *  attribution, so summaries would have no contributor entry to live on. */
   identityRef?: { current: AgentIdentity };
 }
 
@@ -172,9 +154,6 @@ export function register(server: ServerInstance, deps: RenameDocumentDeps): void
           ? 'No inbound links required updates.'
           : `Rewrote ${rewrittenDocs.length} ${pluralize(rewrittenDocs.length, 'document')}.`;
 
-      // previewUrl points at the NEW docName (the renamed-to target) per FR-2.1;
-      // previousPreviewUrl is supplementary for agents that want to close/refocus
-      // the pre-rename tab.
       const previewDeps = { config: deps.config, resolveCwd: deps.resolveCwd };
       const newPreview = await resolvePreviewUrlForTool(normalizedNewDoc.docName, previewDeps, cwd);
       const oldPreview = await resolvePreviewUrlForTool(normalizedDoc.docName, previewDeps, cwd);

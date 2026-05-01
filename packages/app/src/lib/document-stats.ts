@@ -12,10 +12,8 @@ export const EMPTY_STATS: DocumentStats = {
   tokens: 0,
 };
 
-/** CJK / Thai / Khmer etc. have no whitespace word boundaries — detect and route to Intl.Segmenter. */
 const NON_SPACE_SCRIPT_RE = /[　-〿぀-ゟ゠-ヿ㐀-䶿一-鿿豈-﫿＀-￯฀-๿ក-៿]/;
 
-/** Tokens like `#`, `>`, `---` are pure markdown syntax — exclude them from word count. */
 const WORD_LIKE_RE = /[\p{L}\p{N}]/u;
 
 function countWordsByWhitespace(text: string): number {
@@ -39,25 +37,11 @@ function countWordsBySegmenter(text: string): number {
   return count;
 }
 
-/**
- * Rough token estimate. ~4 chars/token is the average for English under
- * cl100k_base / o200k_base BPE; CJK tokenizes much denser (each ideograph is
- * typically 1–2 tokens), so any document containing CJK / Thai / Khmer drops
- * to ~1.5 chars/token. Mixed-script docs pick the denser ratio globally —
- * coarse but matches the existing word-counting branch.
- */
 function estimateTokens(text: string): number {
   const ratio = NON_SPACE_SCRIPT_RE.test(text) ? 1.5 : 4;
   return Math.ceil(text.length / ratio);
 }
 
-/**
- * Compute body-only stats (words, chars, tokens) from raw markdown text.
- *
- * Frontmatter is excluded so counts match a writer's intuition ("how long is
- * my article?"). Handles CJK / Thai / Khmer via Intl.Segmenter when the input
- * contains non-space-separated scripts.
- */
 export function computeBodyStats(fullText: string): DocumentStats {
   if (!fullText) return { words: 0, chars: 0, tokens: 0 };
   const { body } = stripFrontmatter(fullText);

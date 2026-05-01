@@ -2,14 +2,6 @@ import type { Readable, Writable } from 'node:stream';
 import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
 
-/**
- * Core git credential-helper get logic.
- *
- * Reads key=value pairs from `input` until blank line or EOF, looks up
- * credentials in `tokenStore` by hostname, and writes the result to `output`.
- *
- * Returns 0 on success, 1 if no credentials found.
- */
 export async function handleCredentialGet(
   input: Readable,
   output: Writable,
@@ -24,10 +16,6 @@ export async function handleCredentialGet(
   const entry = await tokenStore.get(host);
   if (entry == null) return 1;
 
-  // Git's credential protocol is newline-delimited `key=value`. If `login` or
-  // `token` contained CR/LF (e.g. via a crafted OAuth profile flowing through
-  // TokenEntry), an unsanitized write would inject arbitrary protocol fields
-  // such as `\nurl=http://evil\npassword=stolen`. Strip them before writing.
   const safeLine = (s: string) => s.replace(/[\r\n]/g, '');
   output.write(`username=${safeLine(entry.login)}\npassword=${safeLine(entry.token)}\n`);
   return 0;
@@ -54,10 +42,6 @@ function readAll(stream: Readable): Promise<string> {
   });
 }
 
-/**
- * Build the `auth git-credential` sub-command.
- * Registered under the `auth` command group.
- */
 export function gitCredentialCommand(getTokenStore: () => Promise<TokenStore>): Command {
   const cmd = new Command('git-credential');
   cmd.description('Git credential helper (git credential-helper protocol)');

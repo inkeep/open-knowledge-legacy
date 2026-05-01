@@ -1,16 +1,3 @@
-/**
- * Tests for agent-write frontmatter handling under the Y.Text-direct model
- * (D8 — `Y.Map('metadata')` is no longer a CRDT root for FM data; the YAML
- * region of `Y.Text('source')` IS the source of truth).
- *
- * Covers:
- *   1. write_document with payload FM updates the YAML region of Y.Text.
- *   2. write_document with body-only payload preserves existing FM.
- *   3. append/prepend never duplicate or stomp FM.
- *   4. agent-patch refuses spliced edits to the FM region.
- *   5. body-only agent-patch continues to work.
- *   6. agent-undo reverts the FM region in lock-step with body changes.
- */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -103,7 +90,6 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
     try {
       const session = await sessionManager.getSession('test-doc');
 
-      // Seed existing FM.
       session.dc.document.transact(() => {
         applyAgentMarkdownWrite(
           session.dc.document,
@@ -124,7 +110,6 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
 
       expect(response.status).toBe(200);
 
-      // YAML region in Y.Text reflects the new FM.
       expect(fmMap(session.dc.document)).toEqual({
         title: 'New Title',
         cluster: 'research',
@@ -524,7 +509,6 @@ describe('agent-undo round-trip across FM-touching writes', () => {
       const session = await sessionManager.getSession('doc-fm-undo.md');
       const document = session.dc.document;
 
-      // Frame 1: seed FM + body under session.origin so the UM tracks it.
       document.transact(() => {
         applyAgentMarkdownWrite(
           document,
@@ -534,7 +518,6 @@ describe('agent-undo round-trip across FM-touching writes', () => {
       }, session.origin);
       session.um.stopCapturing();
 
-      // Frame 2: touch FM (title) only.
       document.transact(() => {
         applyAgentMarkdownWrite(
           document,
@@ -545,8 +528,6 @@ describe('agent-undo round-trip across FM-touching writes', () => {
 
       expect(fmMap(document)).toEqual({ title: 'Updated', status: 'draft' });
 
-      // Undo: Y.Text reverts the byte range modified in Frame 2 — bringing
-      // the FM region back to the Frame 1 state.
       const undone = applyAgentUndo(session, 'last');
       expect(undone).toBe(true);
       expect(fmMap(document)).toEqual({ title: 'Original', status: 'draft' });

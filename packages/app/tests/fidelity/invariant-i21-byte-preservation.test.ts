@@ -1,26 +1,3 @@
-/**
- * Invariant I21 — Byte preservation for OK→OK clipboard round-trip via
- * text/plain markdown (modulo NG1-NG11 storage normalizations).
- *
- * The dispatcher reorder (D5/D13) routes OK→OK paste through `mdManager.parse`
- * on text/plain bytes — same path as a disk save round-trip. This invariant
- * locks the byte-preservation property for the canonical descriptor source
- * forms the spec's BUG classes called out:
- *
- *   • `<img src="…" />` (single-line lowercase JSX) — fix for the silent
- *     `<img>` → `![](src)` flip (BUG class 1).
- *   • `<Callout type="…">…</Callout>` block form — fix for the conspicuous
- *     `<pre><code>…` codeBlock degradation (BUG class 2).
- *   • `<details><summary>…</summary>…</details>` — HtmlDetailsAccordion
- *     compat path (BUG class 3, post-rebuild).
- *   • `<u>foo</u>` raw HTML inline (BUG class 4).
- *
- * Carve-outs per D14 (canonical NG numbering from CLAUDE.md "Markdown
- * pipeline" §"Irreducible gaps"): NG1 (blank-line counts), NG3 (math /
- * footnotes / alerts), NG9 (PUA sentinels), NG10 (doc-start `---`→`***`),
- * NG11 (ensureNonEmptyDoc synthesis). The fixtures below avoid these
- * normalizations to keep the byte-equality assertion strict.
- */
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';

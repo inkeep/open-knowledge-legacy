@@ -1,17 +1,3 @@
-/**
- * ProjectSwitcher unit tests — mirrors the pattern established in
- * `NavigatorApp.test.ts`: test the extracted pure helpers + the module's
- * bridge-contract consumption without mounting React. Repo convention (see
- * `EditorActivityPool.test.ts`) is no @testing-library/react; full DOM
- * interaction is exercised by Playwright in M2.
- *
- * Coverage surface:
- *   - `runWithToast` success path (no toast fired, no error surfaced)
- *   - `runWithToast` rejection path (toast.error called with resolved message)
- *   - `runWithToast` non-Error rejection falls back to the provided fallback
- *   - setError(null) clear-at-start does NOT surface as a toast
- *   - Source-level regression guards on the "Switch Project…" affordance
- */
 import { describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -67,9 +53,6 @@ describe('runWithToast (IPC rejection → toast feedback)', () => {
   });
 
   test('success path fires NO toast even on the internal setError(null) clear', async () => {
-    // Regression guard — runWithErrorStatePure calls setError(null) first to
-    // clear stale state; our adapter must filter the null out rather than
-    // passing it to toast.error(null).
     const { runWithToast } = await import('./ProjectSwitcher');
     const toastApi = { error: mock(() => {}) };
     await runWithToast(() => Promise.resolve(), 'Failed to open.', toastApi);
@@ -77,9 +60,6 @@ describe('runWithToast (IPC rejection → toast feedback)', () => {
   });
 
   test('falls back to module sonner toast when toastApi is omitted', async () => {
-    // Smoke — calling runWithToast without the test double must not throw.
-    // The default branch uses `toast` from the `sonner` module; we rely on
-    // sonner's no-op-when-no-Toaster-mounted behavior in bun test.
     const { runWithToast } = await import('./ProjectSwitcher');
     await expect(runWithToast(() => Promise.resolve(), 'fallback')).resolves.toBeUndefined();
   });
@@ -99,10 +79,6 @@ describe('Switch Project affordance (source-level guards)', () => {
   });
 
   test('Switch Project item: onSelect routes through onSwitchProject which calls bridge.navigator.open()', () => {
-    // Anchored on the exact opening tag carrying our testid, so a refactor
-    // that crossed onSelect onto a sibling DropdownMenuItem would fail the
-    // first assertion below rather than silently passing because
-    // `bridge.navigator.open()` exists somewhere in the file.
     const tagRe = /<DropdownMenuItem\b[^>]*data-testid="project-switcher-switch-project"[^>]*>/;
     const tag = src.match(tagRe)?.[0];
     expect(
@@ -111,9 +87,6 @@ describe('Switch Project affordance (source-level guards)', () => {
     ).toBeTruthy();
     expect(tag).toContain('onSelect={onSwitchProject}');
 
-    // The onSwitchProject handler body must call bridge.navigator.open().
-    // Lazy [\s\S]*? matches up to the first `};` — the function close —
-    // because the body has no nested `}` characters.
     const handlerRe = /const onSwitchProject = \(\) => \{[\s\S]*?\};/;
     const handler = src.match(handlerRe)?.[0];
     expect(handler, 'onSwitchProject handler definition not found').toBeTruthy();

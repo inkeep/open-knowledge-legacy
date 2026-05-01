@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { containsConflictMarkers, reconcile, splitMarkdownBlocks } from './reconciliation';
 
-// ─── splitMarkdownBlocks ─────────────────────────────────────────────────────
 
 describe('splitMarkdownBlocks', () => {
   test('splits on blank lines', () => {
@@ -24,7 +23,6 @@ describe('splitMarkdownBlocks', () => {
   });
 });
 
-// ─── containsConflictMarkers ─────────────────────────────────────────────────
 
 describe('containsConflictMarkers', () => {
   test('detects merge-style markers (<<<<<<< HEAD)', () => {
@@ -50,7 +48,6 @@ describe('containsConflictMarkers', () => {
   });
 
   test('does not match ======= inside a word', () => {
-    // The marker must be the entire line (^={7}$)
     const content = 'some ======= inline text\n';
     expect(containsConflictMarkers(content)).toBe(false);
   });
@@ -61,7 +58,6 @@ describe('containsConflictMarkers', () => {
   });
 });
 
-// ─── reconcile outcomes ──────────────────────────────────────────────────────
 
 describe('reconcile', () => {
   const docName = 'test-doc';
@@ -140,7 +136,6 @@ describe('reconcile', () => {
       expect(result.conflicts[0].base).toBe('Shared paragraph.');
       expect(result.conflicts[0].ours).toBe('Our version of shared.');
       expect(result.conflicts[0].theirs).toBe('Their version of shared.');
-      // Merged output preserves ours
       const blocks = splitMarkdownBlocks(result.newContent);
       expect(blocks).toContain('Our version of shared.');
     }
@@ -154,11 +149,9 @@ describe('reconcile', () => {
     const result = reconcile({ docName, base, ours, theirs });
     expect(result.kind).toBe('conflicts');
     if (result.kind === 'conflicts') {
-      // Block C is the conflict (both changed it)
       expect(result.conflicts).toHaveLength(1);
       expect(result.conflicts[0].base).toBe('Block C.');
 
-      // Block A (only ours) and Block B (only theirs) merge cleanly
       const blocks = splitMarkdownBlocks(result.newContent);
       expect(blocks).toContain('Block A edited by us.');
       expect(blocks).toContain('Block B edited by them.');

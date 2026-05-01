@@ -1,14 +1,3 @@
-/**
- * Network-layer sync control for deterministic CRDT race testing (FR-16).
- *
- * Provides a WebSocket wrapper that supports pause/resume of inbound message
- * delivery. When paused, inbound messages are queued and delivered FIFO on
- * resume. Outbound is always passthrough.
- *
- * Minimal surface for v1: pauseInbound/resumeInbound only.
- * Future extensions (delaySync, dropInbound, inspectSyncQueue) land when a
- * concrete test motivates them.
- */
 
 type MessageCallback = (event: MessageEvent) => void;
 
@@ -22,7 +11,6 @@ export class ControllableWebSocket {
   constructor(url: string | URL, protocols?: string | string[]) {
     this.inner = new WebSocket(url, protocols);
 
-    // Intercept all inbound messages from the real WebSocket
     this.inner.onmessage = (event: MessageEvent) => {
       this.handleInbound(event);
     };
@@ -37,9 +25,7 @@ export class ControllableWebSocket {
   }
 
   private deliverMessage(event: MessageEvent): void {
-    // Deliver to onmessage handler
     this.onMessageHandler?.(event);
-    // Deliver to all addEventListener('message', ...) handlers
     for (const listener of this.addedMessageListeners) {
       listener(event);
     }
@@ -57,7 +43,6 @@ export class ControllableWebSocket {
     }
   }
 
-  // ─── WebSocket interface passthrough ───
 
   get url(): string {
     return this.inner.url;
@@ -123,7 +108,6 @@ export class ControllableWebSocket {
     options?: boolean | AddEventListenerOptions,
   ): void {
     if (type === 'message') {
-      // Track message listeners so we can replay queued messages through them
       const cb: MessageCallback =
         typeof listener === 'function'
           ? (listener as MessageCallback)
@@ -154,7 +138,6 @@ export class ControllableWebSocket {
     return this.inner.dispatchEvent(event);
   }
 
-  // WebSocket constants
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
   static readonly CLOSING = 2;

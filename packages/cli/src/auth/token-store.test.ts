@@ -3,11 +3,6 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Mutable mock state shared with the mocked `@napi-rs/keyring`. Each test
-// resets this via `resetKeyringMockState()` in beforeEach. The mock's `Entry`
-// export is a getter so we can simulate both failure branches of
-// `createTokenStore`'s probe: module-evaluation failure (throwOnImport) and
-// constructor failure (throwOnConstruct).
 interface KeyringCall {
   service: string;
   account: string;
@@ -71,9 +66,6 @@ mock.module('@napi-rs/keyring', () => ({ Entry: MockKeyringEntry }));
 
 import { FileBackend } from './token-store.ts';
 
-// ---------------------------------------------------------------------------
-// File backend — tested directly with a tmp directory
-// ---------------------------------------------------------------------------
 
 describe('FileBackend', () => {
   let tmpDir: string;
@@ -147,12 +139,9 @@ describe('FileBackend', () => {
   test('auth.yml file has mode 0600', async () => {
     await store.set('github.com', 'alice', 'gho_abc123');
     const stat = Bun.file(authFile);
-    // The file should exist
     expect(await stat.exists()).toBe(true);
-    // Verify mode via Node fs stat
     const { statSync } = await import('node:fs');
     const mode = statSync(authFile).mode & 0o777;
-    // 0600 on Unix; Windows may return different value
     if (process.platform !== 'win32') {
       expect(mode).toBe(0o600);
     }
@@ -162,10 +151,8 @@ describe('FileBackend', () => {
     await store.set('github.com', 'alice', 'gho_abc123');
     await store.set('gitlab.com', 'bob', 'glpat_xyz');
     const raw = readFileSync(authFile, 'utf-8');
-    // Should contain both hostnames as YAML keys
     expect(raw).toContain('github.com');
     expect(raw).toContain('gitlab.com');
-    // Token values present
     expect(raw).toContain('gho_abc123');
     expect(raw).toContain('glpat_xyz');
   });
@@ -189,9 +176,6 @@ describe('FileBackend', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createTokenStore — integration smoke test
-// ---------------------------------------------------------------------------
 
 describe('createTokenStore', () => {
   beforeEach(resetKeyringMockState);
@@ -208,17 +192,6 @@ describe('createTokenStore', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// KeyringBackend upsert semantics (US-001 / AC1 / G5)
-//
-// Reachability-tested via `createTokenStore` + mock.module rather than
-// importing KeyringBackend directly, to avoid widening token-store.ts's
-// public surface (SPEC §9 SCOPE).
-//
-// Negative control (documented, not implemented): a broken `set()` impl that
-// replaced `entry.setPassword(...)` with `entry.deletePassword(); entry.setPassword(...)`
-// would fail the "never calls deletePassword during refresh" assertion below.
-// ---------------------------------------------------------------------------
 
 describe('KeyringBackend upsert semantics', () => {
   let tmpDir: string;
@@ -286,9 +259,6 @@ describe('KeyringBackend upsert semantics', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createTokenStore fallback to FileBackend (US-002 / AC3 / G6)
-// ---------------------------------------------------------------------------
 
 describe('createTokenStore fallback to FileBackend', () => {
   let tmpDir: string;

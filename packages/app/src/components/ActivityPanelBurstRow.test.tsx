@@ -1,7 +1,3 @@
-/**
- * ActivityPanelBurstRow unit tests — static HTML shape via renderToString.
- * Lazy-diff-load behavior (click → fetch → render) is exercised in Playwright.
- */
 import { describe, expect, test } from 'bun:test';
 import { renderToString } from 'react-dom/server';
 import { ActivityPanelBurstRow } from './ActivityPanelBurstRow';
@@ -19,7 +15,6 @@ describe('ActivityPanelBurstRow (static render)', () => {
     expect(stripped).toContain('+7');
     expect(stripped).toContain('−3');
     expect(html).toContain('s ago');
-    // Collapsed by default — diff body should NOT be present yet.
     expect(html).not.toContain('Loading diff');
     expect(html).not.toContain('activity-panel-diff');
   });
@@ -37,8 +32,6 @@ describe('ActivityPanelBurstRow (static render)', () => {
         fetchBurstDiff={async () => ''}
       />,
     );
-    // 3h ago → relative "m ago" / "h ago" logic. We accept either the hour
-    // formatting or colon-separated absolute time.
     expect(html.includes('h ago') || /\d\d:\d\d/.test(html)).toBe(true);
   });
 

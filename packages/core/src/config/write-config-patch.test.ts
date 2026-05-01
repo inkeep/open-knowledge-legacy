@@ -47,9 +47,6 @@ describe('writeConfigPatch — project scope', () => {
     expect(result.appliedPaths).toContain('content.dir');
     expect(existsSync(projectConfigPath())).toBe(true);
     const onDisk = readFileSync(projectConfigPath(), 'utf-8');
-    // Lazy first-write writes the magic-comment header pointing at the
-    // project per-scope schema under the schema-major path (autocomplete
-    // only suggests project fields here).
     expect(onDisk).toMatch(
       /^# yaml-language-server: \$schema=https:\/\/unpkg\.com\/@inkeep\/open-knowledge@latest\/dist\/schemas\/v\d+\/config\.project\.schema\.json/,
     );
@@ -65,7 +62,6 @@ describe('writeConfigPatch — project scope', () => {
       patch: { content: { dir: '.' } },
     });
     const stats = statSync(projectConfigPath());
-    // mode bits include the file-type bits; mask to permission-only
     const mode = stats.mode & 0o777;
     expect(mode).toBe(0o644);
   });
@@ -110,14 +106,12 @@ mcp:
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
-      // biome-ignore lint/suspicious/noExplicitAny: testing null-as-clear semantics
       patch: { mcp: { autoStart: null as any } },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected success');
     const onDisk = readFileSync(projectConfigPath(), 'utf-8');
     expect(onDisk).not.toContain('autoStart:');
-    // search.maxResults still there — patch only touched mcp.autoStart
     expect(onDisk).toContain('maxResults: 100');
   });
 });
@@ -126,7 +120,6 @@ describe('writeConfigPatch — user scope', () => {
   test('lazy first-write of ~/.ok/config.yml creates parent dir', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ok-write-config-patch-home-'));
     try {
-      // Pre-condition: ~/.ok does NOT exist
       expect(existsSync(join(home, '.ok'))).toBe(false);
 
       const result = await writeConfigPatch({
@@ -145,10 +138,8 @@ describe('writeConfigPatch — user scope', () => {
 
       const onDisk = readFileSync(filePath, 'utf-8');
       expect(onDisk).toContain('theme: dark');
-      // Magic-comment header present
       expect(onDisk).toMatch(/^# yaml-language-server: \$schema=/);
 
-      // loadConfig (round-trip) should resolve to a Config with appearance.theme = 'dark'
       expect(result.effective.appearance?.theme).toBe('dark');
     } finally {
       if (existsSync(home)) rmSync(home, { recursive: true, force: true });
@@ -162,7 +153,6 @@ describe('writeConfigPatch — validation failures', () => {
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
-      // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { theme: 42 as any } },
     });
     expect(result.ok).toBe(false);
@@ -181,7 +171,6 @@ describe('writeConfigPatch — validation failures', () => {
     const result = await writeConfigPatch({
       cwd: testDir,
       scope: 'project',
-      // biome-ignore lint/suspicious/noExplicitAny: deliberately malformed for the test
       patch: { appearance: { editorModeDefault: 'vim' as any } },
     });
     expect(result.ok).toBe(false);
@@ -193,7 +182,6 @@ describe('writeConfigPatch — validation failures', () => {
 
   test('YAML with malformed syntax → YAML_PARSE; no fs write', async () => {
     mkdirSync(join(testDir, '.ok'), { recursive: true });
-    // Tab character at start of a key value triggers a YAML parse error
     writeFileSync(
       projectConfigPath(),
       '\tnot: valid\n: : :\n  - broken\n - "unterminated',
@@ -214,9 +202,6 @@ describe('writeConfigPatch — validation failures', () => {
 
 describe('writeConfigPatch — defaults preserved on round-trip with stale fields', () => {
   test('config with dropped sync.* field loads via loose-mode and preserves the line on round-trip', async () => {
-    // With z.looseObject + the schema cleanup, stale fields like
-    // sync.pushIntervalSeconds round-trip cleanly even though they're no
-    // longer in the schema.
     mkdirSync(join(testDir, '.ok'), { recursive: true });
     const original = `sync:
   pushIntervalSeconds: 30
@@ -250,11 +235,9 @@ describe('writeConfigPatch — Result type narrowing', () => {
       patch: { content: { dir: '.' } },
     });
     if (result.ok) {
-      // appliedPaths is on the success branch
       expect(Array.isArray(result.appliedPaths)).toBe(true);
       expect(result.path).toBe(projectConfigPath());
     } else {
-      // error is on the failure branch
       expect(result.error).toBeDefined();
     }
   });

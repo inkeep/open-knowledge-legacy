@@ -1,10 +1,3 @@
-/**
- * `list_documents` MCP tool — list available documents from Hocuspocus.
- *
- * Calls GET /api/documents (from the parallel document-list-api spec).
- * Returns the document list as JSON text plus structuredContent with per-row
- * previewUrl (FR-2.2) and a top-level `ui` block (FR-2.6).
- */
 import { z } from 'zod';
 import { buildListResolver, type PreviewUrlDeps } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';

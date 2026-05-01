@@ -31,7 +31,6 @@ export function DeleteConfirmationDialog({
     <DialogContent>
       <DialogTitle>{customTitle ?? `Delete ${itemName}`}</DialogTitle>
       <DialogDescription
-        // respect \n in message
         className="whitespace-pre-wrap"
       >
         {customDescription ??

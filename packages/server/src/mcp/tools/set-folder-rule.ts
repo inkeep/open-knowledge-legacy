@@ -1,22 +1,3 @@
-/**
- * `set_folder_rule` MCP tool — fs-direct upsert into `folders[]`.
- *
- * Thin wrapper around `applyFolderRulesUpsert` from
- * `@inkeep/open-knowledge-core`. Always-array shape (even N=1): agents pass
- * `{rules: [{...}]}` for one rule and `{rules: [{...}, {...}]}` for multiple.
- * The same primitive backs the future right-click-folder UX for batch +
- * single-rule edits.
- *
- * Transactional all-or-nothing: validation runs against the merged config;
- * if any rule fails, NO writes happen — `writeConfigPatch`'s atomic
- * tmp+rename + Zod safeParse give transactional semantics for free.
- *
- * Removal goes through `set_config({patch: {folders: [<filtered>]}})` —
- * read-modify-write is fine for the rare removal case.
- *
- * Works without a running OK server (resolves cwd via
- * `resolveProjectConfigContext`, NOT `resolveProjectServerContext`).
- */
 
 import {
   ConfigValidationErrorSchema,
@@ -52,12 +33,6 @@ export const DESCRIPTION = [
 interface SetFolderRuleDeps {
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  /**
-   * Test-only: overrides `os.homedir()` for any user-scope write target.
-   * Production callers omit this. (set_folder_rule writes project by
-   * default, but the deps surface stays consistent across the three
-   * config tools.)
-   */
   homedirOverride?: string;
 }
 
@@ -160,9 +135,6 @@ export function register(server: ServerInstance, deps: SetFolderRuleDeps): void 
           applied: result.appliedPaths,
           scope: 'project' as const,
           path: result.path,
-          // Mirror set_config's shape: agents inspect the merged effective
-          // config (here, the post-upsert `folders[]` array among other
-          // fields) without a follow-up get_config roundtrip.
           current: result.effective as unknown as Record<string, unknown>,
         },
       };

@@ -1,17 +1,3 @@
-/**
- * Utility-process keyring smoke — proves that `@napi-rs/keyring` loads and
- * round-trips setPassword/getPassword/deletePassword under the packaged
- * hardened-runtime environment (SPEC M5 G7 / AC2).
- *
- * Pure factory with injectable deps so Bun tests can simulate load-failure,
- * constructor-failure, and read-mismatch without touching the real native
- * binding (Bun's ABI is not Electron's Node-ABI).
- *
- * Key isolation (SPEC D-M5-1): uses service='open-knowledge-smoke',
- * account='test-user' — distinct from the real auth substrate's
- * service='open-knowledge', account=<host>. Collision-free by construction
- * even if cleanup fails mid-run.
- */
 
 const SMOKE_SERVICE = 'open-knowledge-smoke';
 const SMOKE_ACCOUNT = 'test-user';
@@ -78,7 +64,6 @@ export async function runKeyringSmoke(deps: RunKeyringSmokeDeps = {}): Promise<K
       try {
         entry.deletePassword();
       } catch {
-        // best-effort cleanup
       }
     }
   }

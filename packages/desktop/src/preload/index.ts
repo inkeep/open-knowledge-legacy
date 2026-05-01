@@ -1,23 +1,3 @@
-/**
- * Desktop preload bridge — exposes `window.okDesktop` to the renderer.
- *
- * Runs in Electron's preload context (Node + DOM available, but isolated
- * from the renderer's JavaScript world via `contextIsolation: true`). Adds
- * a single `okDesktop` global on `window` that the renderer can use to:
- *
- *   - read the project's collab URL + apiOrigin synchronously at startup
- *   - subscribe to project-switch + menu-action events from main
- *   - invoke main-process IPC handlers (folder picker, shell, clipboard)
- *
- * Per electron/electron#33328, subscription methods MUST track the wrapped-
- * listener reference for `removeListener` to actually detach. Returning an
- * unsubscribe closure that closes over the wrapper is the canonical pattern.
- *
- * Per electron/electron#25516, `contextBridge.exposeInMainWorld` evaluates
- * accessors at exposure time, not access time — every value we put on the
- * bridge object is captured immediately. Plain values + methods only; no
- * getters / setters.
- */
 
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from 'electron';
 import type {
@@ -36,16 +16,6 @@ import { createInvoker } from '../shared/ipc-invoke.ts';
 
 const invoke = createInvoker(ipcRenderer);
 
-/**
- * Async-iterable stream over a streamId-keyed IPC event channel. The
- * factory subscribes to `eventChannel` immediately so events that arrive
- * before iteration starts are buffered. Iteration ends when a `complete`
- * or `error` event arrives (or `cancel()` is called by the consumer).
- *
- * Pattern keeps the renderer surface simple — components consume via
- * `for await (const event of stream.events)` without thinking about
- * subscriptions or unsubscribes; preload owns the listener lifetime.
- */
 function createIpcEventStream<E extends { type: string }>(
   startResultPromise: Promise<{ ok: true; streamId: string } | { ok: false; error: string }>,
   eventChannel: 'ok:local-op:auth:event' | 'ok:local-op:clone:event',
@@ -68,7 +38,6 @@ function createIpcEventStream<E extends { type: string }>(
     if (event.type === 'complete' || event.type === 'error') {
       terminated = true;
       detach();
-      // Drain waiting consumers with `null` so iterators end.
       for (const w of waiters.splice(0)) w(null);
     }
   };
@@ -85,28 +54,18 @@ function createIpcEventStream<E extends { type: string }>(
     }
   };
 
-  // Attach the listener BEFORE awaiting the start invoke — events fired
-  // from main between the invoke resolving and the listener attaching
-  // would otherwise be lost. The streamId-match guard discards events
-  // for any other in-flight stream until we know our own.
   ipcRenderer.on(eventChannel, listener);
   listenerAttached = true;
 
   startResultPromise
     .then((result) => {
       if (!result.ok) {
-        // Synthesize an error event so the iterator terminates with a clear
-        // signal. The shape mirrors the auth/clone error variants.
         push({ type: 'error', message: result.error } as unknown as E);
         return;
       }
       myStreamId = result.streamId;
     })
     .catch((err: unknown) => {
-      // IPC invoke itself rejected (e.g. handler threw before returning,
-      // channel not registered). Without this catch the consumer's
-      // `await iter.next()` hangs permanently — `myStreamId` never gets
-      // set, no terminal event is ever pushed.
       const message = err instanceof Error ? err.message : String(err);
       push({ type: 'error', message: `IPC error: ${message}` } as unknown as E);
     });
@@ -143,7 +102,6 @@ function createIpcEventStream<E extends { type: string }>(
         invoke(cancelChannel, myStreamId).catch(() => {});
         return;
       }
-      // IPC invoke hasn't resolved yet — chain cancel onto the result.
       void startResultPromise.then((result) => {
         if (result.ok) invoke(cancelChannel, result.streamId).catch(() => {});
       });
@@ -170,14 +128,12 @@ function createLocalOpCloneStream(request: {
   );
 }
 
-/** Parse an `--ok-key=value` argv flag, returning the value or undefined. */
 function parseArg(name: string): string | undefined {
   const prefix = `--ok-${name}=`;
   const arg = process.argv.find((a) => a.startsWith(prefix));
   return arg?.slice(prefix.length);
 }
 
-/** Read window-bound config from preload's `process.argv` (injected by main via `additionalArguments`). */
 function readConfigFromArgv(): OkDesktopConfig {
   const collabUrl = parseArg('collab-url') ?? '';
   const apiOrigin = parseArg('api-origin') ?? '';
@@ -198,8 +154,6 @@ const bridge: OkDesktopBridge = {
   config: readConfigFromArgv(),
 
   onProjectSwitched(cb: (next: OkDesktopConfig) => void) {
-    // Wrapper is what gets registered + later removed (electron/electron#33328).
-    // Channel name is the canonical form declared in shared/ipc-events.ts's EventChannels map.
     const listener = (_event: IpcRendererEvent, next: OkDesktopConfig) => cb(next);
     ipcRenderer.on('ok:project:switched', listener);
     return () => ipcRenderer.removeListener('ok:project:switched', listener);
@@ -292,10 +246,6 @@ const bridge: OkDesktopBridge = {
       return () => ipcRenderer.removeListener('ok:mcp-wiring:show', listener);
     },
     signalReady: () => {
-      // Fire-and-forget: render doesn't need the resolved result. We invoke
-      // (not send) so it composes through the typed `createInvoker`
-      // wrapper and clears D19 enforcement. Any rejection is swallowed —
-      // a missing handler during teardown is expected, not a programmer error.
       invoke('ok:mcp-wiring:renderer-ready').catch(() => {});
     },
     confirm: (editorIds) => invoke('ok:mcp-wiring:confirm', { editorIds }),
@@ -317,10 +267,6 @@ const bridge: OkDesktopBridge = {
   appVersion: parseArg('app-version') ?? '0.0.0',
 };
 
-// Debug namespace — populated ONLY when main decided the runtime gate is
-// open (SPEC D-M5-8). When the flag is absent, `bridge.debug` stays
-// undefined so a typo in renderer code calling the method surfaces at
-// TypeScript compile time.
 if (parseArg('debug-keyring-smoke') === '1') {
   bridge.debug = {
     keyringSmoke: () => invoke('ok:debug:keyring-smoke'),

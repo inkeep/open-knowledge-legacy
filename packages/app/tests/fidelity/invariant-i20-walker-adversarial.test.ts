@@ -1,25 +1,3 @@
-/**
- * Invariant I20 — Live-DOM walker adversarial-attribute corpus.
- *
- * The walker emits cross-app text/html by inlining computed styles from the
- * live editor DOM. This invariant adversarially fuzzes the pure helpers
- * (`buildInlineStyleFrom`, `stripBlocklistedClasses`) to confirm:
- *
- *   1. Allowlist completeness: only properties IN `STYLE_ALLOWLIST` ever
- *      appear in the inline style output, regardless of what computed styles
- *      a malicious / pathological live DOM would expose.
- *   2. Class blocklist completeness: blocklisted classes never survive
- *      `stripBlocklistedClasses`, even when interleaved with adversarial
- *      whitespace.
- *   3. No malicious style smuggling: properties not in the allowlist —
- *      including `expression(…)` (legacy IE), URL-bound `@import`, vendor
- *      prefixes, transform / animation, javascript: URLs in
- *      background-image — all stay out of the output.
- *
- * The walker's full DOM behavior (cloneNode parallelism, view.nodeDOM
- * lookup, fallback palette) is exercised in Playwright; the pure helpers
- * are the only deterministic bun-test target.
- */
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
@@ -84,13 +62,6 @@ describe('I20 — buildInlineStyleFrom rejects every malicious property', () => 
   });
 
   test('allowlisted property carrying a malicious value is emitted but not interpreted (HTML-escape responsibility downstream)', () => {
-    // The walker inlines the value verbatim; downstream HTML serialization
-    // / sanitizer-proxy is responsible for entity-encoding `<`, `"`, etc.
-    // What we assert here is that the property STRUCTURE is preserved (i.e.,
-    // the walker does not mangle the value or silently drop the allowlisted
-    // property). Smuggled `;` chains still appear as part of the value
-    // string — destinations that re-parse the inline style must use a real
-    // CSS parser, never naive split.
     const styles = fakeStyles({ color: 'red; background: url(javascript:alert(1))' });
     const out = buildInlineStyleFrom(styles);
     expect(out).toContain('color:');
@@ -116,11 +87,9 @@ describe('I20 — buildInlineStyleFrom rejects every malicious property', () => 
   test.each(
     MALICIOUS_VALUES,
   )('attribute value %s only appears via an allowlisted property carrier', (value) => {
-    // Values land inside an allowlisted property — never as a bare expression.
     const styles = fakeStyles({ color: value });
     const out = buildInlineStyleFrom(styles);
     expect(out).toContain('color:');
-    // The full output is one `prop: value;` pair — no orphan expression.
     expect(out.startsWith('color:')).toBe(true);
   });
 });
@@ -144,7 +113,6 @@ describe('I20 — stripBlocklistedClasses rejects every blocklisted class', () =
         (classes) => {
           const result = stripBlocklistedClasses(classes.join(' '));
           if (result === null) {
-            // Every class was blocklisted — the result is null (correct).
             return;
           }
           for (const cls of CLASS_BLOCKLIST) {

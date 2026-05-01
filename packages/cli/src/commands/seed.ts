@@ -1,13 +1,3 @@
-/**
- * `ok seed` — scaffold the Karpathy three-layer knowledge-base structure.
- *
- * Creates `external-sources/`, `research/`, `articles/`, an optional
- * `log.md`, and populates `config.yml` `folders:` entries with per-folder
- * descriptions that surface as agent guidance via `exec("ls <folder>")`.
- *
- * Replaces the former `init-content` MCP tool with a deterministic CLI.
- * See `specs/2026-04-23-ok-seed-scaffold/SPEC.md`.
- */
 
 import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -22,34 +12,19 @@ import { accent, dim, error as errorColor, info, success, warning } from '../ui/
 
 interface SeedCommandOptions {
   cwd?: string;
-  /**
-   * Subfolder (relative to `cwd`) where the knowledge-base starter pack is
-   * scaffolded. `.` / `''` scaffolds at the project root (historical behavior).
-   * When omitted and stdin is a TTY, the user is prompted interactively.
-   */
   root?: string;
-  /** Skip the Y/n confirmation prompt. */
   yes?: boolean;
-  /** Print the plan and exit without writing. */
   dryRun?: boolean;
-  /** Test-only: override stdin for confirmation. */
   confirmStream?: NodeJS.ReadableStream;
 }
 
 interface SeedCommandResult {
-  /** 'applied' (writes happened) | 'dry-run' | 'no-op' (already seeded) | 'cancelled' | 'prerequisite-missing' | 'failed' */
   status: 'applied' | 'dry-run' | 'no-op' | 'cancelled' | 'prerequisite-missing' | 'failed';
   message: string;
   plan?: ScaffoldPlan;
-  /** Non-zero on prerequisite-missing or failed. */
   exitCode: number;
 }
 
-/**
- * Programmatic entry point. Thin wrapper around planSeed + applySeed that
- * owns confirmation prompting and output formatting. Called by both the
- * Commander action and integration tests.
- */
 export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedCommandResult> {
   const cwd = resolve(opts.cwd ?? process.cwd());
 
@@ -104,8 +79,6 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
     }
   }
 
-  // applySeed reads absolute paths from plan.created/configEdits directly, so
-  // it needs only projectDir — rootDir is already baked into the plan entries.
   const applyResult = await applySeed(plan, { projectDir: cwd });
 
   if (applyResult.errors.length > 0) {
@@ -129,7 +102,6 @@ export async function runSeed(opts: SeedCommandOptions = {}): Promise<SeedComman
   };
 }
 
-/** Format a ScaffoldPlan as a plain colored list for CLI output. */
 function formatPlanBody(plan: ScaffoldPlan, cwd: string): string {
   const lines: string[] = [];
 
@@ -186,14 +158,12 @@ async function confirm(prompt: string, input?: NodeJS.ReadableStream): Promise<b
   const rl = createInterface({ input: input ?? process.stdin, output: process.stdout });
   try {
     const answer = (await rl.question(prompt)).trim().toLowerCase();
-    // Default Y on empty input
     return answer === '' || answer === 'y' || answer === 'yes';
   } finally {
     rl.close();
   }
 }
 
-/** Commander subcommand factory. Registered in cli.ts alongside init/start/mcp. */
 export function seedCommand(): Command {
   return new Command('seed')
     .description(

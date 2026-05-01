@@ -1,14 +1,3 @@
-/**
- * Internal markdown link support for CodeMirror (source mode):
- *
- * 1. Mark decorations — highlights [text](./internal.md) links with the same
- *    sky colour used for wiki links, so internal links are visually distinct.
- *
- * 2. Ctrl/Cmd+click navigation — resolves the href relative to the current
- *    document (from window.location.hash) and follows in-app doc + anchor links.
- *
- * External links (http://, https://, etc.) are left untouched.
- */
 import { type Extension, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
@@ -24,10 +13,7 @@ import {
   shouldOpenInNewTab,
 } from '../internal-link-helpers';
 
-// ── Decoration ────────────────────────────────────────────────────────────────
 
-// Matches [text](href) with an optional CommonMark title. Captures [1] text and
-// [2] href only so downstream resolution doesn't need to strip the title.
 const MD_LINK_RE =
   /\[([^\]\n]*)\]\((<[^>\n]+>|[^)\s\n]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
 
@@ -76,7 +62,6 @@ const mdLinkDecorations = ViewPlugin.fromClass(
   { decorations: (v) => v.decorations },
 );
 
-// ── Ctrl/Cmd+click navigation ─────────────────────────────────────────────────
 
 const mdLinkClickHandler = EditorView.domEventHandlers({
   mousedown(event: MouseEvent, view: EditorView) {
@@ -110,7 +95,6 @@ const mdLinkClickHandler = EditorView.domEventHandlers({
   },
 });
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
 
 const mdLinkTheme = EditorView.theme({
   '.cm-md-internal-link': {
@@ -123,12 +107,7 @@ const mdLinkTheme = EditorView.theme({
   },
 });
 
-// ── Export ────────────────────────────────────────────────────────────────────
 
-/**
- * CodeMirror extensions for internal markdown link support in source mode.
- * Highlights relative [text](href) links and enables Cmd/Ctrl+click navigation.
- */
 export function createMdLinkSourceExtension(): Extension {
   return [mdLinkDecorations, mdLinkClickHandler, mdLinkTheme];
 }

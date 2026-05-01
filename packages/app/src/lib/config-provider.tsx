@@ -1,23 +1,3 @@
-/**
- * Top-level ConfigProvider.
- *
- * Holds the user-global + project `bindConfigDoc` instances for the entire
- * app session. Exposes both bindings + a merged-config view (project
- * overrides user, per the per-field `defaultScope` ladder defined in core
- * schema metadata) via React context. Mounted inside DocumentProvider so it
- * can read `collabUrl`; mounted above everything that consumes config so
- * chrome controls + Settings pane can share state.
- *
- * Drives the next-themes bridge in one place: when `mergedConfig.appearance.theme`
- * changes (from the Settings pane, the chrome ThemeToggle, an external file
- * edit picked up by the chokidar watcher, or a CC1 broadcast from another
- * tab), this provider calls `setTheme()` so the page actually flips.
- *
- * `appearance.theme` is dual-track: localStorage 'ok-theme-v1' stays as
- * the FOUC cache; config.yml is authoritative once set. Both writes
- * (chrome + Settings) flow through `userBinding.patch()` so the two
- * stay coherent.
- */
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   bindConfigDoc,
@@ -38,11 +18,6 @@ interface ConfigContextValue {
   projectBinding: ConfigBinding | null;
   userConfig: Config | null;
   projectConfig: Config | null;
-  /**
-   * Layered view: project fields override user fields per leaf. `null`
-   * until the first user-binding sync. Consumers that just want "the
-   * effective theme" should read `merged.appearance?.theme`.
-   */
   merged: Config | null;
 }
 
@@ -102,13 +77,9 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     };
   }, [collabUrl]);
 
-  // React Compiler memoizes — no manual `useMemo` per project convention.
   const merged: Config | null =
     userState && projectState ? mergeLayered(userState.config, projectState.config) : null;
 
-  // Bridge `appearance.theme` from the merged config into next-themes app-
-  // wide. setTheme writes through to localStorage so the FOUC script reads
-  // the latest value on next reload.
   const { setTheme } = useTheme();
   const themeValue = merged?.appearance?.theme;
   useEffect(() => {
@@ -136,29 +107,11 @@ export function useConfigContext(): ConfigContextValue {
   return ctx;
 }
 
-/**
- * Merge the layered configs per the loader's precedence: project
- * overrides user — EXCEPT for leaves marked `scope: 'user'` in the
- * field registry. User-scope fields are personal preferences (theme,
- * editor mode default); a stale project value should not override
- * the user's choice and lock collaborators into one mode. Workspace
- * values for user-scope fields are ignored at merge time, even if
- * they exist on disk (e.g., from a buggy prior write).
- *
- * Recursive on nested mappings; arrays replace wholesale (matches
- * `applyPatchToDocument` semantics + RFC 7396 §1).
- */
 function mergeLayered(user: Config, project: Config): Config {
   return mergeDeep(user, project, []) as Config;
 }
 
 function mergeDeep(user: unknown, project: unknown, path: (string | number)[]): unknown {
-  // Scope-aware leaf precedence. Each side's stale value is ignored when the
-  // field's registered scope rules it out, so a user-global YAML carrying a
-  // project-only field (e.g., `preview.baseUrl` left over from a prior
-  // project) doesn't leak into the merged view, and a project YAML
-  // carrying a user-only field (e.g., `appearance.theme` written under
-  // earlier 'either' semantics) doesn't override the user's choice.
   if (path.length > 0) {
     const meta = getLeafFieldMeta(ConfigSchema, path);
     if (meta?.scope === 'user') return user;

@@ -1,31 +1,3 @@
-/**
- * Settings pane.
- *
- * Replaces the document view in the main editor area when invoked via Cmd-,,
- * the App menu, HelpPopover, or CommandPalette. Sub-tabs separate
- * project ("This project") and user-global ("User") scopes;
- * each tab acquires its own `HocuspocusProvider` and binds via
- * `bindConfigDoc`.
- *
- * Auto-save: per-control commits via `binding.patch`. Client-side L1
- * validation gates writes; invalid commits never mutate Y.Text. Per-field
- * reset writes the schema default. Modified-at-scope indicator shows a
- * colored bar on `'either'` fields whose value differs from the schema
- * default.
- *
- * Form harness: a single `useForm<Config>` instance owned by
- * `useConfigForm(binding)` (resolver-less); external Y.Text updates merge
- * in via `binding.subscribe → form.reset({keepDirtyValues: true,
- * keepDirty: true, keepTouched: true})`. Each `SettingsField` wraps its
- * body in a shadcn `FormField` whose render-prop dispatches on the
- * schema-walker's type tag.
- *
- * L3 rejection from non-pane writers (CLI, MCP, hand-edit) surfaces as a
- * sonner toast + brief field flash.
- *
- * The Integrations section hosts an "Install in Claude Desktop" row that
- * opens `<InstallInClaudeDesktopDialog>`.
- */
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
@@ -86,19 +58,6 @@ interface SettingsPaneProps {
   onScopeChange: (scope: SettingsScope) => void;
 }
 
-/**
- * Discriminated union: a section is either the scalar variant (`fields[]`
- * iterated by SettingsForm + SettingsSection) OR the custom variant
- * (delegates wholly to a custom component like `<FoldersSection>`). The
- * `custom?: never` branch makes `{ custom: 'folders', fields: [{...}] }`
- * unrepresentable — a stray `fields[]` entry on a custom section would
- * silently never render under the dispatcher's early-return.
- *
- * Custom sections still carry `title` / `description` for shape
- * uniformity (the SECTIONS array is iterated as a single list), but the
- * custom component owns its own `<section>` + heading + scope handling
- * and the dispatcher never reads those fields.
- */
 type SectionDef =
   | {
       id: string;
@@ -119,7 +78,6 @@ interface FieldDef {
   path: string[];
   label: string;
   description?: string;
-  /** Optional override: 'enum-toggle' renders enum as a ToggleGroup; default is select-style toggle. */
   control?: 'enum-toggle';
 }
 
@@ -217,11 +175,6 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-/**
- * Lifecycle wrapper for one config doc — owns the HocuspocusProvider +
- * ConfigBinding lifetime. Each config doc gets its own provider; no
- * client-side y-indexeddb is instantiated.
- */
 interface ConfigDocConnection {
   provider: HocuspocusProvider;
   binding: ConfigBinding;
@@ -274,10 +227,6 @@ export function SettingsPane({ scope, onClose, onScopeChange }: SettingsPaneProp
   const { collabUrl } = useDocumentContext();
   const connection = useConfigDocConnection(collabUrl, scope);
 
-  // The next-themes bridge for `appearance.theme` lives in <ConfigProvider>
-  // (mounted at App root) — it's app-wide, not pane-scoped, so chrome
-  // controls and external file edits propagate to next-themes whether
-  // Settings is open or not.
 
   return (
     <div
@@ -345,7 +294,6 @@ function SettingsSkeleton() {
   return (
     <div className="space-y-6 p-6">
       {Array.from({ length: 3 }).map((_, sectionIdx) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: skeleton placeholder; index is stable across renders
         <div key={sectionIdx} className="space-y-3">
           <Skeleton className="h-5 w-32" />
           <Skeleton className="h-4 w-64" />
@@ -364,19 +312,6 @@ interface BoundSettingsFormProps {
   binding: ConfigBinding;
 }
 
-/**
- * Mounts the harness (`useConfigForm`) once per binding identity and
- * wraps the form in shadcn's `<Form>` (which is RHF's `FormProvider`).
- * Splitting from `SettingsPane` keeps the hook out of the loading branch
- * (`connection === null || !synced`) so we don't `useForm` on a binding
- * that hasn't synced yet.
- *
- * Owns the CC1 `'config-validation-rejected'` subscription and the
- * per-field flash state, since both need access to the `form` instance —
- * `form.setError` populates the inline FormMessage, `form.setFocus` puts
- * focus on the offending field, and the flash triggers the
- * `animate-settings-flash` CSS animation on the FormItem wrapper.
- */
 function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
   const { form, commitField } = useConfigForm(binding);
   const [flashedPath, setFlashedPath] = useState<string | null>(null);
@@ -390,10 +325,6 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
           (scope === 'user' && event.docName === CONFIG_DOC_NAME_USER);
         if (!isMatchingScope) return;
 
-        // Toast carries the full multi-line summary (humanFormat); the
-        // inline FormMessage shows only the path-matched issue so the
-        // field doesn't render a multi-line block with file paths and
-        // caret markers.
         toast.error(humanFormat(event.error), { duration: 8000 });
 
         const path = firstIssuePath(event.error);
@@ -407,15 +338,6 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
           if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
           flashTimerRef.current = setTimeout(() => {
             setFlashedPath(null);
-            // Clear the inline error alongside the flash. The toast (8s)
-            // remains the persistent feedback channel; if the external
-            // writer corrected the value via Y.Text, `applyExternalUpdate`
-            // already updated the field — we don't want a stale red
-            // FormMessage lingering on a now-valid value. If the user
-            // hasn't corrected it, their next commit will re-reject and
-            // re-fire setError. (Without this, `runCommitIfDirty` would
-            // skip a click-and-blur on the untouched field, leaving the
-            // error stuck.)
             form.clearErrors(path as FieldPath<Config>);
           }, 600);
         }
@@ -446,12 +368,6 @@ function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormPro
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
         if (section.custom === 'folders') {
-          // Custom-rendered section. The schema's `folders` field is
-          // `scope: 'either'` so the section renders on both sub-tabs;
-          // FoldersSection edits the active tab's array. FoldersSection
-          // owns its own `<section>` + heading (no SettingsSection wrap)
-          // because its add/remove/reorder UX needs full control over
-          // the heading-row layout.
           return (
             <FoldersSection
               key={section.id}
@@ -523,10 +439,6 @@ interface SettingsFieldProps {
 }
 
 function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldProps) {
-  // 'use no memo' — the FormField inline render-prop below destructures
-  // `ctl` (a ControllerRenderProps with a `ref` field), which the React
-  // Compiler heuristic flags as ref-access during render. Same rationale
-  // as FieldControlBody / control bodies.
   'use no memo';
   const form = useFormContext<Config>();
   const leafSchema = resolveLeafSchema(ConfigSchema, field.path);
@@ -538,8 +450,6 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
   const dottedName = field.path.join('.') as FieldPath<Config>;
 
   const [savedTick, setSavedTick] = useState(false);
-  // Tracks the SavedIndicator timeout so an unmount mid-flash doesn't fire
-  // `setSavedTick(false)` on a torn-down component (React warning).
   const savedTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
@@ -554,45 +464,17 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
     savedTickTimerRef.current = setTimeout(() => setSavedTick(false), 1200);
   };
 
-  /**
-   * Run `commitField` (the harness-owned binding.patch + form.setError /
-   * form.clearErrors path) and flash the SavedIndicator on success. The
-   * value committed is whatever currently lives in the form at `name` —
-   * call sites are responsible for writing the desired value via
-   * `ctl.onChange` (per-control commits) or `form.setValue` (reset path)
-   * BEFORE invoking `runCommit`.
-   */
   const runCommit = (): boolean => {
     const ok = commitField(dottedName);
     if (ok) flashSavedTick();
     return ok;
   };
 
-  /**
-   * Per-interaction commit (blur/change/Enter). Skips no-op commits where
-   * the field is not dirty against its current `defaultValue` baseline —
-   * after a successful commit, `useConfigForm` re-baselines via
-   * `form.resetField(name, { defaultValue: value })`, so subsequent
-   * blurs on an unchanged field correctly report `isDirty: false` and
-   * the unconditional `binding.patch → Y.Text delete+insert` cycle is
-   * avoided. Returns true on no-op (no error to surface).
-   *
-   * The reset path bypasses this guard by calling `runCommit` directly:
-   * `form.setValue(name, target, { shouldDirty: false })` leaves the
-   * field non-dirty, but the commit is still intentional (the user
-   * clicked Reset).
-   */
   const runCommitIfDirty = (): boolean => {
     if (!form.getFieldState(dottedName).isDirty) return true;
     return runCommit();
   };
 
-  /**
-   * Reset writes the schema default (or `null` for fields with no
-   * default — null-as-clear preserves RFC 7396 semantics) into form
-   * state, then commits via the harness. `shouldDirty: false` so the
-   * field doesn't end up flagged as dirty after reset.
-   */
   const reset = () => {
     const target = defaultValue === undefined ? null : defaultValue;
     form.setValue(dottedName, target as never, { shouldDirty: false });
@@ -613,9 +495,6 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
       control={form.control}
       name={dottedName}
       render={({ field: ctl }) => {
-        // Modified indicator + reset-button visibility derive from the
-        // form's reactive value (`ctl.value`) so they update in lockstep
-        // with user edits, external Y.Text updates, and resets.
         const isModified =
           defaultValue === undefined
             ? ctl.value !== undefined && ctl.value !== null
@@ -659,10 +538,6 @@ function SettingsField({ field, scope, commitField, isFlashed }: SettingsFieldPr
               </FormDescription>
             ) : null}
             {readonlyReason ? (
-              // Wrap in <FormControl> so the slot's `id={formItemId}` lands
-              // on the note div — the FormLabel's `htmlFor` resolves to it
-              // instead of dangling. `role="note"` makes screen readers
-              // announce this as explanatory text.
               <FormControl>
                 <div
                   role="note"
@@ -698,29 +573,9 @@ interface FieldControlBodyProps {
   ctl: ControllerRenderProps<Config, FieldPath<Config>>;
   typeTag: string | undefined;
   enumOptions: readonly string[] | undefined;
-  /**
-   * Commits the field's CURRENT form value via the harness's
-   * `commitField`. Call sites must write the desired value through
-   * `ctl.onChange` BEFORE invoking — the commit reads from form state.
-   */
   onCommit: () => boolean;
 }
 
-/**
- * Type-tag-driven dispatch for the inner control element. Returns a
- * single React element so the wrapping `<FormControl>` (Radix Slot)
- * can forward `id`, `aria-describedby`, and `aria-invalid` to the
- * underlying DOM input. The Slot clones this component with those props;
- * destructure + forward as `...slotForwarded` into each leaf — without
- * this hop the a11y attributes hit FieldControlBody and stop, breaking
- * screen-reader notification of L1 rejection (ARIA §4.10).
- *
- * `'use no memo'` opts out of React Compiler memoization because RHF's
- * `ControllerRenderProps` exposes a `ref` field; the compiler heuristic
- * flags every property access on objects with `ref` as ref-access during
- * render. The control bodies below use the same opt-out for the same
- * reason.
- */
 function FieldControlBody({
   field,
   ctl,
@@ -746,12 +601,6 @@ function FieldControlBody({
   }
   if (typeTag === 'enum' && enumOptions && enumOptions.length > 0) {
     if (field.control === 'enum-toggle' || enumOptions.length <= 4) {
-      // Slot.Root forwards `id` onto its child; ToggleGroup root renders a
-      // <div>, which is not a labelable element — `<label htmlFor>` on a
-      // div doesn't focus its descendants on click. Pluck the id and put
-      // it on the first ToggleGroupItem (a <button>) so label-click moves
-      // focus into the group. aria-describedby/aria-invalid stay on the
-      // wrapper since they describe the group as a whole.
       const { id: forwardedId, ...wrapperSlotProps } = slotForwarded;
       return (
         <ToggleGroup
@@ -794,10 +643,6 @@ function FieldControlBody({
   return <StringControlBody ctl={ctl} onCommit={onCommit} {...slotForwarded} />;
 }
 
-/**
- * String-typed text input. Form value IS the displayed text — no local
- * presentation buffer needed. Commits on blur or Enter.
- */
 function StringControlBody({
   ctl,
   onCommit,
@@ -828,12 +673,6 @@ function StringControlBody({
   );
 }
 
-/**
- * Number-typed input. Form value is a `number`; the textbox needs a
- * string presentation buffer so the user can type intermediate text
- * (`'1.'`, `'-'`) without it parsing prematurely. The local `pendingText`
- * resyncs with `ctl.value` whenever the user isn't actively editing.
- */
 function NumberControlBody({
   ctl,
   onCommit,
@@ -847,9 +686,6 @@ function NumberControlBody({
   const lastSyncedValueRef = useRef(ctl.value);
 
   useEffect(() => {
-    // Skip if ctl.value hasn't changed since the last sync (dedup —
-    // avoids resetting pendingText on unrelated re-renders). When
-    // ctl.value DOES change, refresh pendingText to track it.
     if (lastSyncedValueRef.current === ctl.value) return;
     setPendingText(ctl.value === undefined ? '' : String(ctl.value));
     lastSyncedValueRef.current = ctl.value;
@@ -858,7 +694,6 @@ function NumberControlBody({
   const commitText = () => {
     const parsed = Number(pendingText);
     if (!Number.isFinite(parsed)) {
-      // Let L1 reject + show a typed FormMessage error rather than silently swallow.
       ctl.onChange(pendingText as unknown as number);
       onCommit();
       return;
@@ -890,12 +725,6 @@ function NumberControlBody({
   );
 }
 
-/**
- * String-array textarea. Form value is `string[]`; the textarea displays
- * a newline-joined string. Local `pendingText` resyncs with `ctl.value`
- * whenever the user isn't actively editing. Commit splits on newlines,
- * trims each entry, and filters empty lines.
- */
 function StringArrayControlBody({
   ctl,
   onCommit,
@@ -943,11 +772,6 @@ function StringArrayControlBody({
 }
 
 function SavedIndicator({ visible }: { visible: boolean }) {
-  // Live region — auto-save replaces an explicit Save button, so this
-  // checkmark IS the save confirmation. Polite announcement so screen
-  // readers say "Saved" without interrupting other speech (WCAG 4.1.3).
-  // Always render the wrapper so the SR-only text node is present at
-  // mount time; the visible checkmark is the only thing that toggles.
   return (
     <span role="status" aria-live="polite" className="text-emerald-600">
       {visible ? (
@@ -995,7 +819,6 @@ function IntegrationsSection() {
         : undefined;
     const detect = desktopBridge?.skill?.detectClaudeDesktop;
     if (!detect) {
-      // Web mode or non-Electron — always show.
       setShowRow(true);
       return;
     }

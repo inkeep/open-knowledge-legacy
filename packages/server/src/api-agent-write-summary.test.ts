@@ -222,9 +222,6 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
     });
 
     test('summary 80 chars exact → stored as-is, no hint (D20 edge)', async () => {
-      // Exactly-at-cap must NOT emit `truncatedFrom` or `hint` per D20.
-      // Guards against off-by-one regressions in `normalizeSummary` (e.g.
-      // `raw.length >= MAX_SUMMARY_LENGTH` vs `> MAX_SUMMARY_LENGTH`).
       const s = 'z'.repeat(80);
       const response = await callApi(
         hocuspocus,
@@ -268,7 +265,6 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
       const m = getMetrics();
       expect(m.summariesProvided).toBe(0);
       expect(m.summariesTruncated).toBe(0);
-      // Underlying contributor row should NOT carry a whitespace summary.
       expect(formatContributors()).not.toContain('"summaries"');
     });
 
@@ -329,8 +325,6 @@ describe('summary parameter — three agent-write endpoints (US-003)', () => {
 
   describe('/api/agent-patch', () => {
     test('404 "not found" does NOT increment counters or fire contributor', async () => {
-      // Seed a doc first — post-foundation getSession returns a SessionRecord
-      // wrapping the DirectConnection + per-session origin (D2 / precedent #24).
       const session = await sessionManager.getSession('test-doc');
       session.dc.document.transact(() => {
         applyAgentMarkdownWrite(session.dc.document, '# H\n', 'replace');

@@ -8,29 +8,6 @@ declare module '@tiptap/core' {
   }
 }
 
-/**
- * jsxComponent — block-level PM node for MDX JSX flow elements.
- *
- * Post-Component-Blocks-v2 shape:
- *   atom: false, content: 'block*', isolating: true, defining: true
- *
- * Children are recursively-walked mdast children from mdxJsxFlowElement.
- * Descriptor dispatch at render time determines the NodeView branch
- * (registered → live React, wildcard → UnregisteredBadge, error → nested CM).
- *
- * Attrs:
- *   - componentName: the JSX tag name (e.g., 'Callout', 'Accordion')
- *   - kind: 'element' | 'expression' — discriminates JSX elements from {expression} blocks
- *   - attributes: preserved mdast MdxJsxAttribute[] for serialize reconstruct
- *   - sourceRaw: byte-exact source from parse (pristine serialization path)
- *     — for `kind:'expression'` the wrapped expression bytes, for `kind:'element'`
- *     the full `<Component …>…</Component>` source used by the γ pristine path.
- *   - sourceDirty: γ pattern flag — false = pristine (serialize via sourceRaw),
- *     true = edited (serialize via reconstruction)
- *   - props: structured props destructured from MdxJsxAttribute[] via descriptor.props (FR-1)
- *
- * See SPEC §9.1, FR-3, Precedent #9 (schema add-only), Precedent #10.
- */
 export const JsxComponent = Node.create({
   name: 'jsxComponent',
   group: 'block',

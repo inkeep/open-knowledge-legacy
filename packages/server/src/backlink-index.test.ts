@@ -73,8 +73,6 @@ describe('extractWikiLinksFromMarkdown', () => {
   });
 
   test('fence-length matching: longer closing fence ends a shorter opening fence', () => {
-    // CommonMark: a closing fence must be at least as long as the opening fence.
-    // A longer closing fence is valid. A shorter closing fence does NOT close the block.
     const markdown = [
       'Before [[alpha]].',
       '````ts',
@@ -125,8 +123,6 @@ describe('extractWikiLinksFromMarkdown', () => {
   });
 
   test('backslash-escaped opening bracket suppresses wiki-link', () => {
-    // \[ escapes the first bracket; the second [ is a standalone char, so [[page]]
-    // appears as literal text in the snippet and is not extracted as a link.
     const markdown = 'Not a link: \\[[page]] but [[real]] is.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
@@ -135,8 +131,6 @@ describe('extractWikiLinksFromMarkdown', () => {
   });
 
   test('inline code with multi-backtick delimiter: shorter run does not close span', () => {
-    // CommonMark §6.1: closing backtick string must be exactly the same length.
-    // `` `foo``bar` `` — the '``' inside does NOT close the single-backtick span.
     const markdown = 'See `foo``bar` and [[target]].\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
@@ -481,7 +475,6 @@ describe('BacklinkIndex', () => {
   });
 });
 
-// ── resolveMarkdownHref ────────────────────────────────────────────────────────
 
 describe('resolveMarkdownHref', () => {
   test('resolves same-directory relative link', () => {
@@ -535,7 +528,6 @@ describe('resolveMarkdownHref', () => {
   });
 });
 
-// ── extractMarkdownLinksFromMarkdown ──────────────────────────────────────────
 
 describe('extractMarkdownLinksFromMarkdown', () => {
   test('extracts relative inline markdown links', () => {
@@ -603,7 +595,6 @@ describe('extractMarkdownLinksFromMarkdown', () => {
   });
 
   test('does not double-count wiki-links that precede markdown links', () => {
-    // [[wiki]] and [md](./other.md) in same line — wiki link is processed first
     const md = '[[wiki]] links to [markdown](./other.md).';
     const mdLinks = extractMarkdownLinksFromMarkdown(md, 'notes');
     expect(mdLinks.map((l) => l.target)).toEqual(['other']);
@@ -615,7 +606,6 @@ describe('extractMarkdownLinksFromMarkdown', () => {
   });
 });
 
-// ── BacklinkIndex: markdown link integration ───────────────────────────────────
 
 describe('BacklinkIndex with markdown links', () => {
   test('updateDocumentFromMarkdown indexes markdown links alongside wiki links', () => {
@@ -651,11 +641,9 @@ describe('BacklinkIndex with markdown links', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-dedup-'));
     try {
       const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
-      // Both [[target]] and [text](./target.md) point to "target"
       const md = '[[target]] and [text](./target.md).';
       index.updateDocumentFromMarkdown('source', md);
       const backlinks = index.getBacklinks('target');
-      // Only one backlink entry for "source" (no duplicate)
       expect(backlinks.filter((b) => b.source === 'source')).toHaveLength(1);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });

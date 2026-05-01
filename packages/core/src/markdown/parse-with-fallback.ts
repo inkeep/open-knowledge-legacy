@@ -1,28 +1,8 @@
-/**
- * R6: Block-level split-then-rejoin fallback parser.
- *
- * On parse failure with position info, split source at the enclosing block
- * boundary (MDX-aware for paired tags), replace the failing block with
- * rawMdxFallback, parse the halves recursively, and merge. Reference
- * definitions are hoisted (R11) so cross-block link semantics survive splits.
- *
- * See SPEC §9 R6 for the full algorithm description.
- */
 import type { JSONContent } from '@tiptap/core';
 import { incrementBlockFallback, incrementWholeDocFallback } from '../metrics/parse-health.ts';
 import { findFencedRegions, isInsideFence } from './fence-regions.ts';
 import { hoistRefDefs } from './ref-def-hoist.ts';
 
-/**
- * Maximum recursion depth for the block-level split-then-rejoin fallback.
- * Exported so tests can parametrically exercise the depth=N vs depth=N+1
- * boundary without duplicating the literal (US-015).
- *
- * Boundary semantics: the guard is `depth > MAX_SPLIT_DEPTH`, so a call at
- * depth === MAX_SPLIT_DEPTH is the deepest that is permitted to attempt a
- * parse; depth === MAX_SPLIT_DEPTH + 1 immediately falls through to
- * whole-doc raw text and increments `parseFallback.wholeDoc`.
- */
 export const MAX_SPLIT_DEPTH = 20;
 
 type ParseFn = (markdown: string) => JSONContent;
@@ -31,20 +11,6 @@ interface ParseWithFallbackOptions {
   parse: ParseFn;
 }
 
-/**
- * Defense-in-depth budget against adversarial MDX that could drive the
- * recursive fallback path with pathological per-region failures.
- *
- * MAX_SPLIT_DEPTH already caps recursion depth; in practice the total
- * parse() work is bounded by ~O(N × depth) because each recursion operates
- * on a non-overlapping substring of its parent (with a marginal overhead
- * from `hoistRefDefs` prepend). A hostile input with N unclosed tags could
- * still tie up the event loop for seconds on the server-side Observer B
- * hot path (precedent #14 — server is the single writer). The wall-clock
- * ceiling and parse-call cap are belt-and-braces defense against
- * multi-tenant CPU starvation: first one to trip aborts to whole-doc raw
- * text, which is always a valid PM doc.
- */
 const MAX_PARSE_WALLCLOCK_MS = 500;
 const MAX_TOTAL_PARSE_CALLS = 1000;
 
@@ -53,10 +19,6 @@ interface ParseBudget {
   calls: number;
 }
 
-/**
- * Parse markdown with block-level fallback on failure.
- * Returns JSONContent (same shape as MarkdownManager.parse).
- */
 export function parseWithFallback(source: string, opts: ParseWithFallbackOptions): JSONContent {
   const budget: ParseBudget = {
     startMs:
@@ -77,25 +39,6 @@ function budgetExhausted(budget: ParseBudget): boolean {
   return now - budget.startMs >= MAX_PARSE_WALLCLOCK_MS;
 }
 
-/**
- * Internal recursion core. Exported for test-only use (US-015 boundary
- * coverage of `depth > MAX_SPLIT_DEPTH`). Production callers should use
- * `parseWithFallback` which pins the starting depth at 0.
- */
-/**
- * Extract a structured error payload from an unknown caught value. Keeps the
- * bracket-style message friendly for humans reading dev-server output while
- * adding name + stack (head of) for log aggregators that key off JSON shape.
- * See CLAUDE.md "Logging conventions" and the `bridge-merge-content-loss`
- * event shape for the precedent this mirrors.
- *
- * Both `message` and `stack` are capped. Unified mdast/micromark errors can
- * quote source snippets of arbitrary length; an adversarial file would
- * otherwise produce multi-KB per-parse log entries and a log-volume DoS
- * amplification under load. Matches the `slice(0, 200)` pattern in
- * `tryPerBlockFallback` but with a slightly larger ceiling for the top-level
- * site because the primary message is the main signal for diagnosis.
- */
 const MAX_ERROR_MESSAGE_LEN = 500;
 
 function errorPayload(err: unknown): { name: string; message: string; stack?: string } {
@@ -103,8 +46,6 @@ function errorPayload(err: unknown): { name: string; message: string; stack?: st
     return {
       name: err.name,
       message: err.message.slice(0, MAX_ERROR_MESSAGE_LEN),
-      // Stack traces can be tens of KB. Keep the first 4 frames — enough to
-      // locate the throw site without flooding log aggregators.
       stack: err.stack?.split('\n').slice(0, 4).join('\n'),
     };
   }
@@ -128,11 +69,6 @@ export function parseRecursive(
     return wholeDocRawText(source);
   }
 
-  // Wall-clock / call-count budget (defense-in-depth against adversarial
-  // MDX on the server Observer B hot path). When tripped, abort to
-  // whole-doc raw text which is always a valid PM doc. `budget` is
-  // optional so existing test callers that invoke `parseRecursive`
-  // directly (e.g. US-015 boundary coverage) don't need the wrapper.
   if (budget) {
     if (budgetExhausted(budget)) {
       incrementWholeDocFallback();
@@ -154,12 +90,6 @@ export function parseRecursive(
     const offset = extractErrorOffset(e);
     const payload = errorPayload(e);
     if (offset === undefined) {
-      // Position-less error — covers PM-construction failures (RangeError from
-      // `prosemirror-model/schema.ts:201` "Invalid content for node X") and
-      // other errors that carry no `.place`/`.offset`. Before falling through
-      // to whole-doc, try per-block source splitting: if ANY top-level block
-      // parses clean, preserve it. This upgrades M2 from "zero whole-doc on
-      // clean files" to "zero whole-doc wherever per-block split can recover."
       if (depth === 0) {
         const perBlock = tryPerBlockFallback(source, parse, e, budget);
         if (perBlock) return perBlock;
@@ -224,10 +154,6 @@ export function parseRecursive(
         JSON.stringify({
           event: 'mdx-whole-doc-fallback',
           reason: `Recovery failed: ${recoveryPayload.message}`,
-          // Disambiguate which recovery stage threw: block-split + rejoin
-          // (this catch site) vs per-block independent parse (caught inline
-          // inside `tryPerBlockFallback`). Saves guesswork during incident
-          // triage when a sibling `mdx-block-fallback` is also in the logs.
           recoveryPath: 'block-split-then-rejoin',
           error: recoveryPayload,
           originalError: payload,
@@ -238,7 +164,6 @@ export function parseRecursive(
   }
 }
 
-// ── Error offset extraction ────────────────────────────────────────
 
 interface VFilePlace {
   offset?: number;
@@ -249,11 +174,8 @@ function extractErrorOffset(err: unknown): number | undefined {
   if (!err || typeof err !== 'object') return undefined;
   const e = err as { place?: VFilePlace; position?: VFilePlace };
 
-  // VFileMessage Point shape: err.place.offset
   if (e.place && typeof e.place.offset === 'number') return e.place.offset;
-  // VFileMessage Position shape: err.place.start.offset
   if (e.place?.start && typeof e.place.start.offset === 'number') return e.place.start.offset;
-  // Some errors use .position instead of .place
   if (e.position && typeof e.position.offset === 'number') return e.position.offset;
   if (e.position?.start && typeof e.position.start.offset === 'number')
     return e.position.start.offset;
@@ -261,7 +183,6 @@ function extractErrorOffset(err: unknown): number | undefined {
   return undefined;
 }
 
-// ── Fallback region detection ──────────────────────────────────────
 
 interface Region {
   start: number;
@@ -286,13 +207,7 @@ function nearestBlankLineAfter(src: string, offset: number): number | null {
   return null;
 }
 
-// ── Single-pass structural enumeration (FR-23) ────────────────────
 
-/**
- * Tag event produced by scanTagEvents — an open, close, or self-closing tag
- * occurrence in source order. Only matches UpperCase tag names (JSX / MDX
- * component convention); lowercase `<div>` or `<span>` are treated as HTML.
- */
 export interface TagEvent {
   kind: 'open' | 'close' | 'self-close';
   name: string;
@@ -300,47 +215,16 @@ export interface TagEvent {
   end: number;
 }
 
-/**
- * A region in the source identified as either a properly-paired tag span
- * or an unmatched open tag bounded by blank line / EOF.
- */
 interface FallbackRegion {
   start: number;
   end: number;
   source: 'pair' | 'unmatched';
 }
 
-/**
- * Scan source for JSX/MDX tag events in source order.
- *
- * Fence-aware: tags inside ``` fences are skipped.
- * Quote-aware: `>` inside attribute double-quotes is not treated as the tag
- * terminator. When a quote never closes, the tag emits no event (safe-coarsening
- * documented in FR-23).
- * Brace-aware: `>` inside `{…}` expression attributes is not treated as the
- * tag terminator (handles `<Foo bar={x > 5}>` correctly).
- *
- * Only matches UpperCase tag names (JSX / MDX component convention).
- */
-/**
- * Max bytes the per-tag forward scan for `>` will consume. The outer
- * `src.matchAll(TAG_START_RE)` loop visits every `<UpperCase` occurrence;
- * without a bound, a pathological input of N unclosed tags forces each
- * match to rescan most of the remaining source (O(N^2)). Real MDX tags
- * are < 1 KB; 32 KB accommodates every legitimate case with headroom and
- * caps the worst-case cost at O(N * MAX_TAG_SCAN_SPAN) = O(N).
- *
- * When the scan hits the bound without finding a terminator, the tag emits
- * no event — same "safe-coarsening" documented for the unclosed-attribute
- * case in FR-23. The higher-level fallback still produces a correct
- * result: surrounding blocks parse normally, the unbounded tag span
- * collapses to a source-editor fallback region.
- */
 const MAX_TAG_SCAN_SPAN = 32 * 1024;
 
 export function scanTagEvents(src: string, fences: Array<[number, number]>): TagEvent[] {
   const events: TagEvent[] = [];
-  // Match potential tag starts: `<UpperCase` or `</UpperCase`
   const TAG_START_RE = /<(\/?)([A-Z][A-Za-z0-9.]*)/g;
 
   for (const match of src.matchAll(TAG_START_RE)) {
@@ -349,9 +233,6 @@ export function scanTagEvents(src: string, fences: Array<[number, number]>): Tag
 
     const isClose = match[1] === '/';
     const name = match[2];
-    // Forward-scan from after the tag name to find the terminating `>`
-    // while respecting quote and brace state. Bounded by MAX_TAG_SCAN_SPAN
-    // so adversarial input (N unclosed tags) stays linear overall.
     const scanStart = tagStartPos + match[0].length;
     const scanEnd = Math.min(src.length, scanStart + MAX_TAG_SCAN_SPAN);
     let inDoubleQuote = false;
@@ -363,7 +244,6 @@ export function scanTagEvents(src: string, fences: Array<[number, number]>): Tag
       const ch = src[i];
       if (inDoubleQuote) {
         if (ch === '"') inDoubleQuote = false;
-        // Backslash escape inside quotes — skip next char
         if (ch === '\\' && i + 1 < scanEnd) i++;
         continue;
       }
@@ -382,14 +262,11 @@ export function scanTagEvents(src: string, fences: Array<[number, number]>): Tag
       if (braceDepth > 0) continue;
       if (ch === '>') {
         terminatorPos = i;
-        // Check if the char before `>` is `/` (self-closing)
         if (i > 0 && src[i - 1] === '/') isSelfClosing = true;
         break;
       }
     }
 
-    // If forward scan never found `>` outside quotes/braces, emit no event
-    // (safe-coarsening documented in FR-23: unclosed attribute quote case).
     if (terminatorPos === -1) continue;
 
     const tagEnd = terminatorPos + 1;
@@ -406,22 +283,6 @@ export function scanTagEvents(src: string, fences: Array<[number, number]>): Tag
   return events;
 }
 
-/**
- * Build a list of fallback regions from the source in a single pass.
- *
- * Uses a stack-based enumeration of open/close tag events:
- * - Open tags push onto the stack.
- * - Self-closing tags (<Foo />) are skipped (never enter the stack).
- * - Close tags pop the stack to the matching name. Tags between the top and
- *   the match are evicted as unmatched-open regions (bounded by the evicting
- *   close's start, capped by nearest blank line).
- * - At EOF, remaining stack entries emit unmatched-open regions bounded by
- *   the nearest blank line after the open tag (or EOF).
- *
- * Properly-matched open+close pairs emit as 'pair' regions.
- *
- * O(n) in source length — one regex scan + O(1) work per tag event.
- */
 export function enumerateFallbackRegions(src: string): FallbackRegion[] {
   const fences = findFencedRegions(src);
   const events = scanTagEvents(src, fences);
@@ -436,7 +297,6 @@ export function enumerateFallbackRegions(src: string): FallbackRegion[] {
       continue;
     }
 
-    // Close tag — pop to matching name
     let matchIdx = -1;
     for (let i = stack.length - 1; i >= 0; i--) {
       if (stack[i].name === ev.name) {
@@ -447,7 +307,6 @@ export function enumerateFallbackRegions(src: string): FallbackRegion[] {
 
     if (matchIdx === -1) continue; // orphan close with no matching open — drop
 
-    // Tags above the match are evicted as unmatched-opens
     for (let i = stack.length - 1; i > matchIdx; i--) {
       const open = stack[i];
       const blankCap = nearestBlankLineAfter(src, open.start) ?? src.length;
@@ -458,7 +317,6 @@ export function enumerateFallbackRegions(src: string): FallbackRegion[] {
       });
     }
 
-    // Emit the proper pair
     regions.push({
       start: stack[matchIdx].start,
       end: ev.end,
@@ -468,7 +326,6 @@ export function enumerateFallbackRegions(src: string): FallbackRegion[] {
     stack.length = matchIdx;
   }
 
-  // Anything still on the stack at EOF is an unmatched-open
   for (const open of stack) {
     const blankCap = nearestBlankLineAfter(src, open.start) ?? src.length;
     regions.push({
@@ -481,20 +338,9 @@ export function enumerateFallbackRegions(src: string): FallbackRegion[] {
   return regions;
 }
 
-/**
- * Find the tightest structural fallback region containing the error offset.
- *
- * Uses single-pass structural enumeration (FR-23) to identify paired and
- * unmatched-open regions; returns the smallest region containing the error
- * offset. Falls back to blank-line block bounds when no MDX region contains
- * the offset (position-less errors, errors in pure prose).
- *
- * Does NOT take a parse parameter. Does NOT invoke any parse call.
- */
 function findFallbackRegion(src: string, errorOffset: number): Region {
   const regions = enumerateFallbackRegions(src);
 
-  // Innermost containing region wins (smallest span)
   let best: FallbackRegion | null = null;
   for (const r of regions) {
     if (r.start <= errorOffset && errorOffset <= r.end) {
@@ -503,22 +349,12 @@ function findFallbackRegion(src: string, errorOffset: number): Region {
   }
   if (best) return { start: best.start, end: best.end };
 
-  // No MDX structure around the error — fall back to blank-line block bounds
   const blockStart = nearestBlankLineBefore(src, errorOffset) ?? 0;
   const blockEnd = nearestBlankLineAfter(src, errorOffset) ?? src.length;
   return { start: blockStart, end: blockEnd };
 }
 
-// ── Per-block source splitting for position-less errors ───────────
 
-/**
- * Split `source` into top-level blocks at blank-line boundaries (skipping
- * fenced code regions which may contain blank lines internally). Returns
- * an array of `{ src, start, end }` covering the full source with block
- * offsets into the original string.
- *
- * Fence-awareness: a blank line INSIDE ``` fences is NOT a block boundary.
- */
 interface SourceBlock {
   src: string;
   start: number;
@@ -547,20 +383,6 @@ function splitSourceIntoBlocks(source: string): SourceBlock[] {
   return blocks;
 }
 
-/**
- * When the top-level parse throws without a position (PM-construction
- * RangeError, etc.), split the source at blank-line block boundaries and
- * parse each block independently. Failing blocks substitute a rawMdxFallback
- * holding that block's raw text; succeeding blocks contribute their content.
- *
- * Returns `null` if per-block recovery didn't improve over whole-doc (e.g.,
- * only one block, or every block fails). In that case, the caller falls
- * through to whole-doc raw text.
- *
- * Ref-def hoisting (R11) applies across blocks: any `[label]: url` definitions
- * in a successfully-parsed block are prepended to the source of subsequent
- * blocks when they get parsed independently.
- */
 function tryPerBlockFallback(
   source: string,
   parse: ParseFn,
@@ -568,8 +390,6 @@ function tryPerBlockFallback(
   budget?: ParseBudget,
 ): JSONContent | null {
   const blocks = splitSourceIntoBlocks(source);
-  // Single block means the whole source IS one block; per-block recovery
-  // degenerates to whole-doc.
   if (blocks.length < 2) return null;
 
   const merged: JSONContent[] = [];
@@ -578,25 +398,17 @@ function tryPerBlockFallback(
   let hoistedRefDefs = '';
 
   for (const block of blocks) {
-    // Budget enforcement per block: without this, an adversarial doc with N
-    // pathological blocks defeats the top-level budget (each block calls
-    // `parse()` here without incrementing `budget.calls`). When the budget
-    // is exhausted mid-loop, bail out — the existing merge logic below
-    // returns what's been accumulated so far, which is always a valid PM doc.
     if (budget && budgetExhausted(budget)) break;
     if (budget) budget.calls += 1;
     const blockSource = hoistedRefDefs + block.src;
     try {
       const blockResult = parse(blockSource);
       const children = (blockResult.content as JSONContent[] | undefined) ?? [];
-      // If the block parse succeeded, harvest its ref-defs for downstream blocks
       hoistedRefDefs += hoistRefDefs(block.src);
-      // Filter out the synthetic empty-doc paragraph that appears for ref-def-only blocks
       const nonEmpty = children.filter(
         (c) => c.type !== 'paragraph' || (Array.isArray(c.content) && c.content.length > 0),
       );
       if (nonEmpty.length === 0 && children.length > 0) {
-        // Block was all ref-defs; contribute nothing to the rendered output
         anySucceeded = true;
         continue;
       }
@@ -604,10 +416,6 @@ function tryPerBlockFallback(
       anySucceeded = true;
     } catch (blockErr) {
       incrementBlockFallback();
-      // Surface BOTH the block-specific failure AND the original top-level
-      // error — the two may differ (e.g. top-level is PM-construction, the
-      // block fails with a different MDX tokenizer error). Capped so log
-      // aggregators don't see unbounded payloads (A9 parse-health budget).
       const blockMsg = (blockErr as Error)?.message?.slice(0, 200) ?? 'unknown block error';
       const originalMsg = (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown';
       console.warn(
@@ -633,10 +441,6 @@ function tryPerBlockFallback(
 
   if (!anySucceeded) return null; // every block failed — no improvement over whole-doc
   if (!anyFailed) {
-    // Per-block dispatch succeeded where top-level failed — emit the merged result.
-    // This can happen when a cross-block construct (e.g., a link reference
-    // resolved across blocks) caused the full-doc parse to fail but each block
-    // parses in isolation.
     return {
       type: 'doc',
       content: merged.length > 0 ? merged : [{ type: 'paragraph', content: [] }],
@@ -648,7 +452,6 @@ function tryPerBlockFallback(
   };
 }
 
-// ── Whole-doc raw text fallback ────────────────────────────────────
 
 function wholeDocRawText(source: string): JSONContent {
   return {

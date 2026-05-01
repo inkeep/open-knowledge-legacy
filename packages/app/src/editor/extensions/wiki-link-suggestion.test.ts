@@ -207,7 +207,6 @@ describe('computeFallbackAttrs', () => {
   });
 
   test('leading hash is treated as page mode, not anchor mode', () => {
-    // parseQuery only treats `#` as anchor separator when it has a non-empty left side
     expect(computeFallbackAttrs('#bar')).toEqual({
       target: 'bar',
       alias: '#bar',
@@ -217,7 +216,6 @@ describe('computeFallbackAttrs', () => {
 });
 
 describe('wikiLinkMatcher', () => {
-  /** Stub that satisfies the subset of ResolvedPos used by wikiLinkMatcher. */
   function stubPosition(textBefore: string, blockStart: number) {
     const cursorPos = blockStart + textBefore.length;
     return {

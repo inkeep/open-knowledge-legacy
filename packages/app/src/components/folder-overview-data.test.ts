@@ -28,7 +28,6 @@ describe('buildFolderOverviewData', () => {
 
     expect(data.title).toBe('Reports');
 
-    // Folders come first, then files — each group sorted by title (localeCompare)
     expect(data.children).toEqual([
       { kind: 'folder', path: 'reports/q2', name: 'q2', title: 'q2' },
       { kind: 'folder', path: 'reports/q1', name: 'q1', title: 'Quarter One' },

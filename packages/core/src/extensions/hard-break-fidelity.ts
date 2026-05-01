@@ -1,12 +1,3 @@
-/**
- * HardBreak extension override for source-text fidelity.
- *
- * Extends @tiptap/extension-hard-break (preserving setHardBreak command
- * and Shift+Enter shortcut) and adds the hardBreakStyle attribute to
- * distinguish backslash from two-space hard breaks.
- *
- * Markdown parsing/serialization is handled by the unified pipeline (packages/core/src/markdown/).
- */
 
 import HardBreak from '@tiptap/extension-hard-break';
 

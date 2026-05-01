@@ -34,8 +34,6 @@ describe('file-tree-operations', () => {
   });
 
   test('normalizeRenameValue preserves .md suffix as an explicit extension signal', () => {
-    // Post-commit-2 the helper stripped extensions for display; updated to
-    // preserve so the server can detect an extension-change rename.
     expect(normalizeRenameValue('file', 'renamed.md')).toBe('renamed.md');
     expect(normalizeRenameValue('folder', 'renamed.md')).toBe('renamed.md');
   });

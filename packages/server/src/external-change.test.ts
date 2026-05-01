@@ -1,14 +1,3 @@
-/**
- * Direct unit tests for the unified disk→CRDT bridge (`applyExternalChange`).
- *
- * Covers the 3 internal branches of the throwing helper:
- *   (a) document-missing → silent early return (no throw, no mutations)
- *   (b) frontmatter asymmetry → XmlFragment gets body only, Y.Text gets full content
- *   (c) Y.Text no-op → skip delete/insert when content unchanged
- *   (d) transaction origin → matches LocalTransactionOrigin shape
- *
- * Plus the factory wrapper's error-swallowing contract (S1.R2).
- */
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -46,16 +35,13 @@ describe('applyExternalChange — throwing helper', () => {
 
     applyExternalChange(hp, docName, fullContent);
 
-    // Y.Text contains the FULL content (FM region IS the FM source of truth — D8).
     const ytext = doc.getText('source');
     expect(ytext.toString()).toBe(fullContent);
 
-    // FM extracted from the YAML region matches what was on disk.
     const { frontmatter } = stripFrontmatter(ytext.toString());
     expect(frontmatter).toContain('title: Test');
     expect(frontmatter).toContain('---');
 
-    // XmlFragment contains body-derived nodes but NOT frontmatter text.
     const xmlFragment = doc.getXmlFragment('default');
     const xmlString = xmlFragment.toString();
     expect(xmlString).not.toContain('title: Test');
@@ -95,22 +81,12 @@ describe('applyExternalChange — throwing helper', () => {
     const malformed = '---\ntitle: [unterminated\nstatus: published\n---\n# Body\n';
     applyExternalChange(hp, docName, malformed);
 
-    // Y.Text holds the malformed bytes verbatim — no defensive revert.
     expect(doc.getText('source').toString()).toBe(malformed);
 
     await conn.disconnect();
   });
 
   test('(b4) FM-indent preserved verbatim; body canonicalized to match XmlFragment (bridge invariant)', async () => {
-    // Two parts of the same disk→CRDT contract:
-    //   - FM region is preserved EXACTLY (D8/D26 — user's YAML formatting,
-    //     including `  - characters` indent, must round-trip).
-    //   - Body region matches XmlFragment's canonical serialization
-    //     (bridge invariant — `stripTrailingWhitespace(ytext) ===
-    //     stripTrailingWhitespace(serialize(fragment))`). Markdown has
-    //     multiple equivalent representations (NG7 — doc-start `---` is
-    //     a thematic break that serializes to canonical `***`); writing
-    //     the raw disk bytes for these constructs would diverge.
     const docName = 'test-fm-indent-body-canonical';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
@@ -119,7 +95,6 @@ describe('applyExternalChange — throwing helper', () => {
     applyExternalChange(hp, docName, onDisk);
 
     const ytext = doc.getText('source').toString();
-    // FM region byte-identical to disk (preserves indent + scalar style).
     const { frontmatter } = stripFrontmatter(ytext);
     expect(frontmatter).toBe('---\ntags:\n  - characters\n  - air-nomads\n---\n');
 
@@ -127,11 +102,6 @@ describe('applyExternalChange — throwing helper', () => {
   });
 
   test('(b5) horizontal-rule canonicalization: doc-start `---` body becomes canonical `***`', async () => {
-    // NG7 — input markdown contains `---` (a thematic break) as the doc
-    // body. The mdast parser canonicalizes thematic-break markers to
-    // `***` on serialize. Y.Text's body half must hold the canonical
-    // form so the bridge invariant holds; if we wrote `---` verbatim
-    // to Y.Text but XmlFragment serialized to `***`, they'd diverge.
     const docName = 'test-thematic-break-canonical';
     const conn = await hp.openDirectConnection(docName);
     const doc = getDoc(conn);
@@ -139,8 +109,6 @@ describe('applyExternalChange — throwing helper', () => {
     applyExternalChange(hp, docName, '---\n');
 
     const ytext = doc.getText('source').toString();
-    // No FM block (single `---` doesn't match `^---\n…\n---`); the line
-    // is body content. After canonicalization Y.Text holds `***\n`.
     expect(ytext).toContain('***');
     expect(ytext).not.toContain('---');
 

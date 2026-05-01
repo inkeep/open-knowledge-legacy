@@ -51,13 +51,6 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        // Layout contract: flex column with header + DialogBody + footer.
-        // max-h caps height to viewport (matches the horizontal
-        // max-w-[calc(100%-2rem)] pattern with a symmetric 2rem buffer).
-        // overflow-hidden on the dialog itself; scrolling lives inside
-        // DialogBody (flex-1 + min-h-0 + overflow-y-auto), so the footer
-        // stays pinned and the scrollbar never crosses the footer's border-t
-        // / bg-muted strip.
         className={cn(
           'fixed top-1/2 left-1/2 z-50 flex w-full max-h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-6 overflow-hidden rounded-xl bg-popover p-6 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
           className,
@@ -92,11 +85,6 @@ function DialogBody({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="dialog-body"
-      // -mx-6 + px-6 lets the scrollbar sit at the dialog edge (cleaner than
-      // inset by the dialog padding). flex-1 + min-h-0 lets the body shrink
-      // to fit available space inside the flex column so overflow-y-auto
-      // actually triggers — without min-h-0 the row sizes to content and
-      // there's nothing to scroll.
       className={cn(
         '-mx-6 min-h-0 flex-1 overflow-y-auto px-6 subtle-scrollbar scroll-fade-mask',
         className,

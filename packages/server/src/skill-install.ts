@@ -9,20 +9,11 @@ import {
   resolveBundledSkillDir,
 } from './build-skill-zip.ts';
 
-/**
- * Minimal logger duck-type accepted by `installUserSkill`. Compatible with
- * `PinoLogger` (`warn(data, message)`) and ad-hoc console-style shims.
- */
 export interface SkillInstallLogger {
   warn: (data: unknown, message: string) => void;
   info?: (data: unknown, message: string) => void;
 }
 
-/**
- * Minimal signature of `node:child_process`'s `spawn` — the subset this
- * module actually calls. Injectable so unit tests can replace with a
- * deterministic fake subprocess.
- */
 export type SpawnLike = (
   command: string,
   args: readonly string[],
@@ -30,50 +21,22 @@ export type SpawnLike = (
 ) => ReturnType<typeof spawn>;
 
 export interface InstallUserSkillOptions {
-  /**
-   * Override `$HOME`. Sidecar path becomes `${home}/.ok/skill-installed-version`
-   * and `HOME` env var is overridden for the `npx skills` subprocess so it writes
-   * per-host skill copies under the overridden home. Tests pass a tmpdir here.
-   */
   home?: string;
-  /** Optional logger. Falls back to `console.warn` / `console.info`. */
   logger?: SkillInstallLogger;
-  /**
-   * Inject a `spawn`-like function for unit tests. Defaults to `node:child_process#spawn`.
-   * Production callers never pass this.
-   */
   spawn?: SpawnLike;
-  /**
-   * Subprocess timeout in milliseconds. Defaults to 60_000 (60 s) per SPEC FR6.
-   * Tests may lower this for faster coverage.
-   */
   timeoutMs?: number;
 }
 
 export type InstallUserSkillResult = 'installed' | 'skip-current' | 'failed';
 
-/** Sidecar filename — plain version string + trailing newline. SPEC D5/FR7. */
 const SIDECAR_FILENAME = 'skill-installed-version';
 
-/**
- * Central source directory the `skills` CLI writes when invoked with
- * `add … -g --copy`. The skip-current gate verifies this exists alongside the
- * sidecar version match — sidecar presence alone is not proof the skill is
- * still on disk (e.g. after a manual `npx skills remove -g`).
- */
 const CENTRAL_SKILL_DIR_REL = ['.agents', 'skills', 'open-knowledge'] as const;
 
-/** Pinned patch-range for the `skills` CLI. SPEC D16. */
 const SKILLS_CLI_SPEC = 'skills@~1.5.0';
 
-/** Subprocess timeout default. SPEC FR6. */
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-/**
- * Match a plain semver-ish version string (digits + dots + optional prerelease).
- * Empty / malformed sidecar content falls through the test and is treated as
- * "fresh install" per SPEC FR7.
- */
 const VERSION_RE = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/;
 
 async function readServerPackageVersion(): Promise<string> {
@@ -162,7 +125,6 @@ function runSpawn(
     });
 
     child.on('error', (err) => {
-      // ENOENT on `npx` itself surfaces here.
       settle({ kind: 'spawn-error', stderr, error: err });
     });
 
@@ -175,33 +137,12 @@ function runSpawn(
       try {
         child.kill('SIGTERM');
       } catch {
-        /* already exited */
       }
       settle({ kind: 'timeout', stderr });
     }, timeoutMs);
   });
 }
 
-/**
- * Install Open Knowledge's user-global Agent Skill to every detected agent host
- * via `npx skills@~1.5.0 add <bundled-path> --agent '*' -g -y --copy`.
- *
- * Idempotency: a plain version-string sidecar at
- * `${home}/.ok/skill-installed-version` gates re-install. The
- * subprocess is NOT invoked (and `'skip-current'` is returned) only when BOTH
- * the sidecar matches the current `@inkeep/open-knowledge-server` package
- * version AND the central skill source directory at
- * `${home}/.agents/skills/open-knowledge` is still on disk. The disk-presence
- * check exists because a manual `npx skills remove -g` (or equivalent rm)
- * leaves the sidecar untouched, which would otherwise wedge the next `ok init`
- * into a no-op despite the skill being gone.
- *
- * Always resolves (never throws). Non-zero exit, timeout, or spawn error logs
- * a warning via `opts.logger` (or `console.warn`) and returns `'failed'`.
- *
- * See SPEC `specs/2026-04-22-mcp-guidance-no-project-pollution/SPEC.md` §6
- * (FR5-FR9) and §10 (D4-D6, D15-D19) for the full contract.
- */
 export async function installUserSkill(
   opts: InstallUserSkillOptions = {},
 ): Promise<InstallUserSkillResult> {
@@ -302,7 +243,6 @@ export async function installUserSkill(
     return 'failed';
   }
 
-  // nonzero
   logger.warn(
     {
       event: 'skill-install.failed',
@@ -316,36 +256,21 @@ export async function installUserSkill(
   return 'failed';
 }
 
-// ─── Claude Desktop install (.skill file + OS file association) ────────────
-//
-// Distinct surface from `installUserSkill` above (which targets Claude Code
-// via `npx skills add`). This path produces an `openknowledge.skill` zip and
-// hands it to the OS so Claude Desktop's native install dialog takes over.
-// Shared consumers: `ok install-skill` CLI, `POST /api/install-skill`, and
-// the Electron main-process skill bridge.
 
 const DOWNLOADS_DIR = 'Downloads';
 const SKILL_FILENAME = 'openknowledge.skill';
 
 export interface BuildAndOpenSkillOptions {
-  /** Output path for the built skill file. Defaults to `~/Downloads/openknowledge.skill`. */
   out?: string;
-  /** Build only — skip the OS file-association invocation. */
   noOpen?: boolean;
-  /** Test seam — defaults to `node:child_process.spawn`. */
   spawnFn?: SpawnLike;
-  /** Test seam — defaults to `os.platform()`. */
   platformName?: NodeJS.Platform;
-  /** Test seam — defaults to `os.homedir()`. */
   homeDir?: string;
 }
 
 export type BuildAndOpenSkillStatus =
-  /** Build + file-association invocation both succeeded. */
   | 'installed'
-  /** `noOpen`, unsupported platform, or handoff failed — file is on disk, no app launched. */
   | 'built'
-  /** Build itself failed — no file written. */
   | 'failed';
 
 export interface BuildAndOpenSkillResult {
@@ -355,9 +280,7 @@ export interface BuildAndOpenSkillResult {
   sha256?: string;
   cliVersion?: string;
   skillVersion?: string;
-  /** Soft-fail signal when status is `'built'` and the OS handoff didn't run. */
   handoffError?: { reason: 'unsupported-platform' | 'spawn-error'; message: string };
-  /** Hard-fail signal when status is `'failed'`. */
   buildError?: string;
 }
 
@@ -365,15 +288,6 @@ function defaultDownloadsPath(home: string): string {
   return join(home, DOWNLOADS_DIR, SKILL_FILENAME);
 }
 
-/**
- * Invoke the OS file association for `.skill`. macOS: `open`. Windows:
- * `start` via cmd.exe. Linux: `xdg-open`. Detached + unref so the parent
- * exits cleanly while Claude Desktop launches in the background.
- *
- * Returns `{ ok: true }` on spawn success — NOT on install completion. We
- * have no observability across the OS boundary into Claude Desktop's native
- * install dialog.
- */
 function invokeFileAssociation(
   skillPath: string,
   platformName: NodeJS.Platform,
@@ -386,8 +300,6 @@ function invokeFileAssociation(
       return { ok: true };
     }
     if (platformName === 'win32') {
-      // cmd /c start "" "<path>" — empty quoted string is the window title
-      // arg `start` requires when the path itself is quoted.
       spawnFn('cmd', ['/c', 'start', '""', skillPath], detached).unref();
       return { ok: true };
     }
@@ -417,7 +329,6 @@ export async function buildAndOpenSkill(
   const platformName = opts.platformName ?? osPlatform();
   const spawnFn = opts.spawnFn ?? spawn;
 
-  // Ensure parent dir exists (e.g. ~/Downloads may be absent in test homes).
   try {
     await mkdir(dirname(outputPath), { recursive: true });
   } catch (err) {
@@ -429,9 +340,6 @@ export async function buildAndOpenSkill(
 
   let build: BuildSkillZipResult;
   try {
-    // skipVersionCheck: true during local installs — users on CLI versions
-    // that lack SKILL.md metadata.version would otherwise get blocked here.
-    // CI passes false (version alignment required for releases).
     build = await buildSkillZip({ outputPath, skipVersionCheck: true });
   } catch (err) {
     return {

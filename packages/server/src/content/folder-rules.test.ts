@@ -114,16 +114,10 @@ describe('resolveFolderFrontmatter', () => {
 
   test('matcher compilation is memoized per rules array reference', () => {
     const rules: FolderRule[] = [{ match: 'specs/**', frontmatter: { title: 'Specs' } }];
-    // Track picomatch calls indirectly: the second call should still work
-    // after the rules array is cached — verifies memoization does not break
-    // correctness. Correctness across many calls is the observable contract;
-    // recompilation avoidance is a perf invariant.
     const a = resolveFolderFrontmatter(rules, 'specs/foo.md');
     const b = resolveFolderFrontmatter(rules, 'specs/foo.md');
     expect(a).toEqual(b);
 
-    // A different array instance with identical content produces the same
-    // result but compiles a fresh matcher set (WeakMap key is by identity).
     const rulesCopy: FolderRule[] = [{ match: 'specs/**', frontmatter: { title: 'Specs' } }];
     const c = resolveFolderFrontmatter(rulesCopy, 'specs/foo.md');
     expect(c).toEqual(a);

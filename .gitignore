@@ -1,23 +1,10 @@
 node_modules/
 dist/
-
-# Per-package lockfiles — only root bun.lock should exist in monorepo
 packages/*/bun.lock
-
-# Electron desktop build output — electron-vite output + electron-builder dist
 packages/desktop/out/
 packages/desktop/dist-desktop/
-# smoke-mock-update.mjs writes this file at keep-alive start and unlinks
-# on Ctrl+C; no one should ever commit it — it pins the updater to a
-# random local port that dies the moment the smoke server exits.
 packages/desktop/dev-app-update.yml
-
-# Turbo cache
 .turbo/
-
-# init_spike: accidental tsc JS emit beside src/ (sources are .ts/.tsx; .d.ts may live under src/types/)
-init_spike/src/**/*.js
-init_spike/src/**/*.js.map
 tmp/
 .DS_Store
 *.log
@@ -25,56 +12,18 @@ tmp/
 .source/
 .idea/
 .bun/
-
-# TypeScript incremental build cache
 *.tsbuildinfo
-
-# Local review artifacts — generated on demand, not meant to be committed
-.claude/pr-diff/
-.claude/skills/pr-context/
-.claude/worktrees/
-.claude/scheduled_tasks.lock
-.worktrees/
-
-# Manual-QA scratch namespace at repo root — disposable session content
-# written by /qa runs via the OK MCP into the default content dir
-/qa-*.md
-/drag-*.md
-/test-mcp-sanity.md
-
-# Vercel CLI link state — per-machine; auto-created by `vercel` / `vercel link`
 .vercel/
-
-# Runtime content file — accumulates test artifacts from dev/agent-sim runs
-init_spike/content/test-doc.md
-
-# Wiki/content runtime directory (pre-wiki→content rename on main)
 packages/content/
-
-# Playwright generated artifacts (test runs + stored traces + last-run manifest)
-# These directories are created by `node_modules/@playwright/test/cli.js test` and
-# must be excluded from biome/lint and git alike.
 test-results/
 packages/app/test-results/
 playwright-report/
 blob-report/
-
-# Editor workspace files
 .vscode/
 .mcp.json
 .cursor/mcp.json
-.claude/launch.json
-
-# Benchmark harness output — per-run artifacts, published as CI artifacts.
-# Baselines live in specs/.../evidence/perf-baseline-measured.md instead.
-packages/core/tests/perf/results.*.json
-
+.claude/
+.codex/
+.open-knowledge/
+.mirror-output/
 /test-doc.md
-
-# Repo-root scratch files used during local browser verification — never
-# meant to land. Anchored to the root so legitimate `*-testing.md` reports
-# under `reports/**` are unaffected.
-/sarah-testing.md
-
-# Open Knowledge per-machine runtime state self-ignores via
-# .ok/.gitignore. No OK-internal paths belong here.

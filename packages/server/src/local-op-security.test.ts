@@ -12,7 +12,6 @@ import {
   isSafeLocalPath,
 } from './local-op-security.ts';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeReq(remoteAddress: string, origin?: string): IncomingMessage {
   const req = new EventEmitter() as unknown as IncomingMessage;
@@ -36,7 +35,6 @@ function makeSendJson(calls: Array<{ status: number; data: unknown }>) {
   };
 }
 
-// ─── isLoopbackRequest ────────────────────────────────────────────────────────
 
 describe('isLoopbackRequest', () => {
   test('allows 127.0.0.1', () => {
@@ -56,7 +54,6 @@ describe('isLoopbackRequest', () => {
   });
 });
 
-// ─── hasValidLocalOpOrigin ────────────────────────────────────────────────────
 
 describe('hasValidLocalOpOrigin', () => {
   test('allows absent origin', () => {
@@ -79,7 +76,6 @@ describe('hasValidLocalOpOrigin', () => {
   });
 });
 
-// ─── isAllowedGitUrl ──────────────────────────────────────────────────────────
 
 describe('isAllowedGitUrl', () => {
   test('allows https URL', () => {
@@ -120,7 +116,6 @@ describe('isAllowedGitUrl', () => {
   });
 });
 
-// ─── isSafeLocalPath ─────────────────────────────────────────────────────────
 
 describe('isSafeLocalPath', () => {
   const home = homedir();
@@ -144,12 +139,10 @@ describe('isSafeLocalPath', () => {
     expect(isSafeLocalPath(`${home}/repo\0/evil`)).toBe(false);
   });
   test('rejects path that escapes via ..', () => {
-    // Resolved path of home + '/../etc' lands outside home
     expect(isSafeLocalPath(`${home}/../etc`)).toBe(false);
   });
 });
 
-// ─── checkLocalOpSecurity ────────────────────────────────────────────────────
 
 describe('checkLocalOpSecurity', () => {
   test('allows loopback request with no origin', () => {
@@ -191,7 +184,6 @@ describe('checkLocalOpSecurity', () => {
   });
 });
 
-// ─── createConcurrencyGuard ───────────────────────────────────────────────────
 
 describe('createConcurrencyGuard', () => {
   test('tryAcquire succeeds first time', () => {

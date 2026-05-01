@@ -1,9 +1,3 @@
-/**
- * MDX handler round-trip tests (US-008, R8).
- *
- * Verifies that MDX shapes round-trip byte-identically through
- * the new unified pipeline.
- */
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
@@ -50,12 +44,8 @@ describe('MDX: flow element (block-level JSX)', () => {
     expect(roundTrip(md)).toBe(md);
   });
 
-  // Paired components with children require handling mdxJsxFlowElement children
-  // which are parsed as nested mdast nodes. Deferred until schema supports children.
 });
 
-// Inline MDX requires a jsxInline PM node type (not jsxComponent which is block atom)
-// Deferred until schema is expanded for MDX inline support.
 
 describe('MDX: PM node storage', () => {
   test('self-closing component parsed to jsxComponent with sourceRaw', () => {

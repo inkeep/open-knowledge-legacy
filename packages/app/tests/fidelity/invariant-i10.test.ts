@@ -1,21 +1,3 @@
-/**
- * Invariant I10 — Structural crash resistance: parse() handles nested,
- * truncated, and interleaved constructs without unexpected errors.
- *
- * While I8 tests random character soup and I9 tests guard completeness
- * at the remark-mdx level, I10 tests STRUCTURAL combinations:
- *   - Dangerous chars INSIDE marks (emphasis wrapping bare `<`)
- *   - Truncated constructs (half-typed JSX, unclosed code fences)
- *   - Containers with dangerous content (blockquote + bare `{`)
- *   - MDX components containing inline HTML/autolinks/wiki links
- *   - Interleaved valid + invalid blocks in the same document
- *   - Deeply nested: blockquote > list > marks > dangerous chars
- *
- * These are the patterns real users create while editing. A user doesn't
- * type random characters — they type half a JSX component, switch to
- * visual mode, then come back and finish it. The document is structurally
- * coherent but contains incomplete fragments.
- */
 
 import { describe, test } from 'bun:test';
 import { VFileMessage } from '@inkeep/open-knowledge-core';
@@ -31,7 +13,6 @@ import {
 } from './arbitraries';
 import { mdManager, NUM_RUNS, PBT_TIMEOUT_MS } from './helpers';
 
-/** Same crash classifier as I8 — expected parse errors vs handler bugs. */
 function isExpectedParseError(err: unknown): boolean {
   if (err instanceof SyntaxError) return true;
   if (err instanceof VFileMessage) return true;
@@ -146,50 +127,42 @@ describe('I10 — structural crash resistance: nested/truncated/interleaved', ()
 
   test('hardcoded structural edge cases', () => {
     const cases = [
-      // Dangerous chars inside marks
       '**text with <bare angle**',
       '*emphasis with {unclosed brace*',
       '~~strike with <br> inside~~',
       '`code with <angle>`',
       '**bold with [[WikiLink]] inside**',
 
-      // Truncated constructs after valid content
       '# Heading\n\n<Callout>unclosed body',
       'Paragraph\n\n```js\nunclosed code',
       'Text\n\n:::note\nunclosed directive',
       'Normal text [broken link](https://',
       'Content [[broken wiki',
 
-      // Containers with dangerous content
       '> blockquote with <bare angle',
       '> quote with {unclosed brace',
       '- list item with <br> and <bare',
       '1. ordered with {expr} and {broken',
       '> > double nested with <danger',
 
-      // MDX containing dangerous inline
       '<Callout>\n\nContent with <br> and <bare\n\n</Callout>',
       '<Note>\n\n[[WikiLink]] and {expression}\n\n</Note>',
       '<Card>\n\n<https://autolink.com> text\n\n</Card>',
 
-      // Interleaved valid + dangerous
       '# Heading\n\n<bare angle\n\n**bold text**\n\n{unclosed',
       '```js\ncode\n```\n\n<Component\n\n- list item',
       '---\n\n<foo bar\n\n> quote',
 
-      // Deeply nested
       '> - **bold with <angle>**',
       '> - *italic [[Page]] and <bare*',
       '> 1. `code` and {brace} text',
 
-      // Feature interactions
       '<Callout>see <https://url></Callout>',
       '**[[Page|<alias>]]**',
       '> <https://autolink.com> and text',
       '- <Icon /> item with content',
       '`<not html>` in code span',
 
-      // Overlapping/ambiguous
       '*italic **bold* text**',
       '**bold *italic** text*',
       '<div><span>nested</div></span>',

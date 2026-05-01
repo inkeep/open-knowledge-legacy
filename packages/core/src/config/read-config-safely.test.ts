@@ -54,7 +54,6 @@ describe('readConfigSafely', () => {
     if (!result.valid) {
       expect(result.error.code).toBe('YAML_PARSE');
       expect(result.value.server.host).toBe('localhost'); // defaults
-      // File should have been sidelined.
       expect(existsSync(path)).toBe(false);
       expect(result.sidelinedTo).toBeDefined();
       if (result.sidelinedTo) {
@@ -62,7 +61,6 @@ describe('readConfigSafely', () => {
         expect(result.sidelinedTo).toContain('.invalid-');
       }
     }
-    // Warning was logged.
     expect(warnings.length).toBeGreaterThan(0);
   });
 
@@ -89,7 +87,6 @@ describe('readConfigSafely', () => {
         expect(issue.source?.file).toBe(path);
         expect(issue.source?.line).toBe(4);
       }
-      // File sidelined.
       expect(existsSync(path)).toBe(false);
       expect(result.sidelinedTo).toBeDefined();
     }
@@ -111,11 +108,6 @@ describe('readConfigSafely', () => {
   });
 
   test('sideline rename failure logs warning and falls through (file stays in place)', () => {
-    // Simulate a rename failure by pointing to a path inside a non-writable
-    // directory. We can't reliably make a dir non-writable in CI, but we
-    // can use sideline=false to verify the warn-and-fall-through pathway.
-    // The schema-invalid sideline-disabled case asserts `sidelinedTo` is
-    // undefined (covered above); here we just verify the warn path fires.
     const path = resolve(testDir, 'broken.yml');
     writeFileSync(path, 'server:\n  host: 12345\n', 'utf-8');
     const warnings: string[] = [];
@@ -134,17 +126,13 @@ describe('readConfigSafely', () => {
     writeFileSync(path, 'mcp:\n  autoStart: notabool\n', 'utf-8');
     const result = readConfigSafely({
       absPath: path,
-      // Real ISO format includes colons; helper should sanitize them.
       timestamp: '2026-04-29T01:23:45.678Z',
       warn: () => {},
     });
     expect(result.valid).toBe(false);
     if (!result.valid && result.sidelinedTo) {
-      // Colons + dots inside the timestamp portion get replaced.
       const tail = result.sidelinedTo.split('.invalid-')[1] ?? '';
       expect(tail.includes(':')).toBe(false);
-      // Note: `.invalid-` itself contains a dot, so we check the timestamp
-      // portion specifically — colons are the platform-portable concern.
     }
   });
 
@@ -176,10 +164,8 @@ describe('readConfigSafely', () => {
     const result = readConfigSafely({ absPath: path });
     expect(result.valid).toBe(true);
     expect(existsSync(path)).toBe(true);
-    // No `.invalid-*` siblings created.
     const siblings = readdirSync(testDir).filter((f) => f.includes('.invalid-'));
     expect(siblings).toEqual([]);
-    // Original content preserved.
     expect(readFileSync(path, 'utf-8')).toContain('host: 0.0.0.0');
   });
 });

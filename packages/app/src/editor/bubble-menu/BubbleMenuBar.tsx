@@ -22,9 +22,6 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
   const [tooltipKey, setTooltipKey] = useState(0);
   const stopAutoUpdateRef = useRef<(() => void) | null>(null);
 
-  // Virtual element whose getBoundingClientRect always reflects the current
-  // selection position. contextElement lets autoUpdate discover scroll ancestors
-  // (including the overflow-y-auto editor container) automatically.
   const virtualEl = {
     getBoundingClientRect: () => {
       try {
@@ -55,7 +52,6 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
           }
         })
         .catch(() => {
-          // Position calculation failed (e.g., detached element) — autoUpdate will retry
         });
     });
   };
@@ -63,8 +59,6 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
   const onHide = () => {
     stopAutoUpdateRef.current?.();
     stopAutoUpdateRef.current = null;
-    // Bump key to force remount of tooltip-bearing children — prevents "rogue tooltips"
-    // that stay open after the bubble menu hides due to portal/z-index timing.
     setTooltipKey((k) => k + 1);
   };
 

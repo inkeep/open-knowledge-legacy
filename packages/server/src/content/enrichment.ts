@@ -1,18 +1,3 @@
-/**
- * Shared `enrichPath()` — single source of truth for per-path metadata
- * assembly used by `read_document`, `search`, and `exec`.
- *
- * Returns a **single unified `EnrichedMeta` shape** with nullable fields
- * (D20 / FR14). Multi-path callers (ls/grep/find enrichment) pass
- * `{ includeRichFields: false }` and get `backlinkCount`, `history`, and
- * `historySource` as `null` to avoid N-amplification. Single-path callers
- * (cat) pass `{ includeRichFields: true }` and get all fields populated.
- *
- * `catalogCategory` was removed per D19 (folder INDEX.md frontmatter
- * deprecated across OK; catalog is an on-demand view, not a stored artifact).
- *
- * See SPEC.md FR7 + FR14 + FR15 + D13 + D19 + D20.
- */
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
@@ -44,10 +29,8 @@ function parseFrontmatter<S extends ZodType>(content: string, schema: S): output
 
 export type { GitCommit } from './project-log.ts';
 
-/** Bound on recursive directory scan when computing `DirectoryMeta`. */
 const DIRECTORY_SCAN_CAP = 1000;
 
-/** Dirs skipped when computing DirectoryMeta (same policy as mtime-scan). */
 const DIR_SKIP: ReadonlySet<string> = new Set([
   '.git',
   OK_DIR,
@@ -61,12 +44,9 @@ const DIR_SKIP: ReadonlySet<string> = new Set([
 
 const WIKI_EXT_RE = /\.(md|mdx)$/i;
 
-/** Full backlink entry surfaced in rich enrichment. */
 export interface BacklinkEntry {
-  /** docName of the source that links to this path. */
   source: string;
   title?: string;
-  /** Short excerpt from the source around the link, when the server provides one. */
   snippet?: string | null;
 }
 
@@ -86,136 +66,46 @@ interface ExternalForwardLinkEntry {
 
 export type ForwardLinkEntry = DocumentForwardLinkEntry | ExternalForwardLinkEntry;
 
-/**
- * Directory-level enrichment — what a folder contains. Returned for
- * directory entries in `ls` output so agents get a real folder summary
- * without opening anything.
- *
- * This is the on-demand equivalent of what the old persisted INDEX.md
- * catalogs used to surface (D26 teardown): recursive file count, child
- * dirs, most recent wiki file as a content hint. Computed per call; no
- * storage layer.
- */
 export interface DirectoryMeta {
-  /** Project-root-relative path to the directory (no trailing slash). */
   path: string;
   type: 'directory';
-  /**
-   * Folder title from a matching `folders:` rule in config.yml, if any.
-   * Absent when no folder rule matches or no rules are configured.
-   */
   title?: string;
-  /** Folder description from a matching `folders:` rule. Absent when no match. */
   description?: string;
-  /**
-   * Folder tags from matching `folders:` rules (concat + dedup across rules).
-   * Absent when no matching rule contributes any tag.
-   *
-   * Note the type divergence from `EnrichedMeta.tags` (which is always
-   * `string[]`, defaulting to `[]`): on `DirectoryMeta`, tags is optional so
-   * that folders without a matching rule have no `tags` key at all — matching
-   * the behavior of `title` and `description` on this type. EnrichedMeta.tags
-   * stays always-present because every file has frontmatter state (even if
-   * empty). Consumers of `EnrichedEntry` must handle both cases:
-   *   file.tags.length       // always safe — array or []
-   *   directory.tags?.length // optional — may be undefined
-   */
   tags?: string[];
-  /** Number of wiki (.md/.mdx) files directly in this dir (not recursive). */
   directMdCount: number;
-  /** Number of wiki (.md/.mdx) files in this dir and all descendants (bounded). */
   recursiveMdCount: number;
-  /** Subdirectories directly in this dir (excluding .git, node_modules, etc.). */
   childDirCount: number;
-  /** Most recently modified wiki file under this dir — a content hint without opening. */
   mostRecentMd?: {
     path: string;
     title?: string;
-    /** ISO mtime. */
     updatedAt: string;
   };
-  /** `true` when the recursive scan hit `DIRECTORY_SCAN_CAP`. */
   truncated: boolean;
 }
 
-/**
- * Unified enrichment shape. Fields are nullable when unavailable or
- * deliberately omitted (multi-path avoidance of N-amplification).
- */
 export interface EnrichedMeta {
-  /** Project-root-relative path. */
   path: string;
   title?: string;
   description?: string;
   tags: string[];
-  /**
-   * Backlink count. Null on multi-path output or when Hocuspocus is
-   * unreachable (FR9). Populated on single-path rich enrichment.
-   */
   backlinkCount: number | null;
-  /**
-   * Full backlink list. Null on multi-path output (avoids N-amplification)
-   * or when Hocuspocus is unreachable. Populated on single-path rich.
-   */
   backlinks: BacklinkEntry[] | null;
-  /**
-   * Forward-link count. Null on multi-path output or when Hocuspocus is
-   * unreachable. Populated on single-path rich enrichment.
-   */
   forwardLinkCount: number | null;
-  /**
-   * Full forward-link list. Null on multi-path output or when Hocuspocus is
-   * unreachable. Populated on single-path rich enrichment.
-   */
   forwardLinks: ForwardLinkEntry[] | null;
-  /**
-   * Recent OK-edit activity on this path, merged across shadow-repo's
-   * per-writer refs. Null on multi-path output. `[]` when shadow repo is
-   * present but has no edits touching the path.
-   */
   history: ShadowCommit[] | null;
-  /**
-   *   - `'shadow-repo'`         — history comes from a live shadow repo (may be `[]`)
-   *   - `'shadow-repo-absent'`  — no shadow repo exists for this project
-   *   - `null`                  — history field is `null` (multi-path output)
-   */
   historySource: HistorySource | null;
-  /**
-   * Project-git commit history for this path — durable authored commits
-   * from the project's own `.git/` (not the shadow repo). Null on
-   * multi-path output.
-   */
   projectHistory: GitCommit[] | null;
-  /**
-   *   - `'git'`         — project is a git repo (history may be `[]` for new files)
-   *   - `'git-absent'`  — project has no `.git/`
-   *   - `null`          — field not populated (multi-path output)
-   */
   projectHistorySource: ProjectHistorySource | null;
 }
 
 interface EnrichPathDeps {
   projectDir: string;
   serverUrl?: string | undefined;
-  /** History depth for rich mode; defaults to 5. */
   historyDepth?: number;
-  /**
-   * Folder-rule defaults from `config.yml` `folders:`. When provided, the
-   * resolver merges rule-derived title/description/tags with the file's own
-   * frontmatter — file scalars win; tags concat (rules first, file last)
-   * with first-occurrence-preserved dedup. Omit / pass `[]` for today's
-   * file-only behavior.
-   */
   folderRules?: FolderRule[];
 }
 
 interface EnrichPathOptions {
-  /**
-   * When `true`, populate `backlinkCount` + `history` + `historySource`
-   * (rich mode). When `false` (default), those three fields are `null`
-   * regardless of data availability — used on multi-path enrichment to
-   * avoid N-amplification of backlink HTTP calls and shadow-log reads.
-   */
   includeRichFields?: boolean;
 }
 
@@ -242,11 +132,6 @@ async function readFrontmatter(
   }
 }
 
-/**
- * Fetch the full backlinks list from the Hocuspocus server. Returns `null`
- * when no serverUrl is configured or the request fails — callers treat
- * null as "degrade gracefully" per FR9.
- */
 async function fetchBacklinks(
   serverUrl: string | undefined,
   docName: string,
@@ -278,24 +163,8 @@ async function fetchBacklinks(
   return entries;
 }
 
-/**
- * Chunk size for bulk backlink-count fetches. Keeps each URL comfortably
- * under typical 8KB HTTP URL limits even with long docNames (e.g. 100 x
- * ~70-char paths ≈ 7KB after comma-joining and percent-encoding).
- */
 const BACKLINK_COUNT_CHUNK = 100;
 
-/**
- * Bulk backlink-count fetch for slim-enrichment callers (multi-path ls/grep/
- * find/multi-cat). Batches into chunks of ${BACKLINK_COUNT_CHUNK} to keep
- * each request URL well under the 8KB limit; chunks fire in parallel so
- * latency stays close to a single round-trip. Returns `null` when no
- * serverUrl or every chunk fails; otherwise returns a `Map<docName, number>`
- * with entries from all successful chunks (partial chunks are merged —
- * missing docNames ⇒ not in the map).
- *
- * See `/api/backlink-counts` in `api-extension.ts`.
- */
 export async function fetchBacklinkCountsBatch(
   serverUrl: string | undefined,
   docNames: string[],
@@ -363,11 +232,6 @@ async function fetchForwardLinks(
   return entries;
 }
 
-/**
- * Merge file frontmatter with folder-rule defaults (FR3 + FR4).
- * Scalars (title, description): file value wins when set; folder value fills in.
- * Tags: concat folder tags first, file tags last; dedup first-occurrence.
- */
 function mergeFileAndFolder(
   fileFm: { title?: string; description?: string; tags: string[] } | null,
   folderRules: FolderRule[] | undefined,
@@ -401,10 +265,6 @@ function mergeFileAndFolder(
   return { title, description, tags };
 }
 
-/**
- * Assemble enrichment for a single wiki path. See `EnrichedMeta` for the
- * unified shape and the convention for nullable fields on multi-path output.
- */
 export async function enrichPath(
   relPathInput: string,
   deps: EnrichPathDeps,
@@ -436,7 +296,6 @@ export async function enrichPath(
     };
   }
 
-  // Rich mode — fan out all five data sources in parallel.
   const [fm, backlinks, forwardLinks, shadow, project] = await Promise.all([
     fmPromise,
     fetchBacklinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
@@ -468,7 +327,6 @@ export async function enrichPath(
   };
 }
 
-/** Union type surfaced to callers that enrich a mixed list of files and dirs. */
 export type EnrichedEntry = EnrichedMeta | DirectoryMeta;
 
 interface DirScanResult {
@@ -522,8 +380,6 @@ async function scanDirectory(absDir: string, projectDir: string): Promise<DirSca
           const st = await stat(absFile);
           if (!result.mostRecent || st.mtimeMs > result.mostRecent.mtimeMs) {
             const rel = relative(projectDir, absFile);
-            // Normalize to forward-slashes — project-root-relative paths in
-            // EnrichedMeta are always POSIX-form (agents and bash consume them).
             const relPath = rel.split(/[\\/]/).filter(Boolean).join('/');
             result.mostRecent = { absPath: absFile, relPath, mtimeMs: st.mtimeMs };
           }
@@ -534,16 +390,6 @@ async function scanDirectory(absDir: string, projectDir: string): Promise<DirSca
   return result;
 }
 
-/**
- * Assemble enrichment for a directory path. Returns folder-shape metadata
- * (counts + most-recent wiki file hint) — the on-demand equivalent of the
- * old persisted INDEX.md catalogs (D26 teardown).
- *
- * When `folderRules` is provided, a matching rule's title/description/tags
- * are attached directly to the returned `DirectoryMeta` (D19 / FR5 folder-
- * level view). `scanDirectory` semantics (recursive/direct/childDirCount)
- * are NOT affected by rules — counts remain raw-count per FR12.
- */
 export async function enrichDirectory(
   relPathInput: string,
   deps: Pick<EnrichPathDeps, 'projectDir' | 'folderRules'>,

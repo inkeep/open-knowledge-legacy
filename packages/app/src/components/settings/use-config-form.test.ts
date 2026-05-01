@@ -1,20 +1,3 @@
-/**
- * Unit tests for the binding-harness pure helpers (`applyExternalUpdate`,
- * `runCommit`, `pickFirstIssueForPath`). The hook itself (`useConfigForm`)
- * is glue — its full stateful behavior is exercised at the Settings-pane
- * level (Playwright E2E + source-level guards in `SettingsPane.test.ts`).
- *
- * Repo convention (no @testing-library/react, no happy-dom): mock the
- * `ConfigBinding` system boundary; structure logic so it can be tested
- * against a `Pick<UseFormReturn>`-shaped mock instead of a live `useForm`.
- *
- * The single integration-style assertion is the keepDirtyValues semantic:
- * `applyExternalUpdate` must call `form.reset(next, { keepDirtyValues:
- * true, keepDirty: true, keepTouched: true })` — that exact options
- * triple is what `bindConfigDoc.subscribe → form.reset` relies on for the
- * "external update lands on non-dirty fields, leaves dirty fields alone"
- * contract.
- */
 
 import { describe, expect, mock, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -34,9 +17,6 @@ import {
   runCommit,
 } from './use-config-form';
 
-// ---------------------------------------------------------------------------
-// applyExternalUpdate — bridge contract for binding.subscribe → form.reset
-// ---------------------------------------------------------------------------
 
 describe('applyExternalUpdate', () => {
   test('calls form.reset with keepDirtyValues + keepDirty + keepTouched', () => {
@@ -59,9 +39,6 @@ describe('applyExternalUpdate', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// runCommit — per-field commit + error mirroring
-// ---------------------------------------------------------------------------
 
 interface MockedRunCommitForm extends RunCommitForm<Config> {
   reset?: never;
@@ -110,10 +87,6 @@ describe('runCommit — success path', () => {
     const result = runCommit(form, binding, 'mcp.tools.search.maxResults');
 
     expect(result).toBe(true);
-    // Asserting the field-name argument guards against a refactor where
-    // form.getValues() is called with no argument — which in production
-    // would return the entire form state and produce a malformed patch
-    // (entire Config nested under `mcp.tools.search.maxResults`).
     expect(getValues).toHaveBeenCalledWith('mcp.tools.search.maxResults');
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0]?.[0]).toEqual({
@@ -137,10 +110,6 @@ describe('runCommit — success path', () => {
   });
 
   test('re-baselines defaultValue via resetField so the field is no longer dirty', () => {
-    // Without this re-baseline, every committed field stays dirty
-    // forever; the next external Y.Text update would skip it under
-    // `keepDirtyValues: true`, leaving the UI stuck on the user's old
-    // value after a remote-writer change.
     const { form, resetField } = createMockForm(() => 100);
     const { binding } = createMockBinding(() => ({
       ok: true,
@@ -153,19 +122,10 @@ describe('runCommit — success path', () => {
     expect(resetField).toHaveBeenCalledTimes(1);
     const [name, options] = resetField.mock.calls[0] ?? [];
     expect(name).toBe('mcp.tools.search.maxResults');
-    // Exact match — `keepDirty` MUST NOT be present. If it slipped in
-    // (e.g. `keepDirty: true`), committed fields would stay dirty forever
-    // and external Y.Text updates under `keepDirtyValues: true` would
-    // skip them — exactly the regression this test is meant to prevent.
     expect(options).toEqual({ defaultValue: 100, keepError: false });
   });
 
   test('null-as-clear (reset path) round-trips through buildPatch and binding.patch', () => {
-    // The Settings-pane reset button writes `null` for fields with no
-    // schema default. `buildPatch` must preserve null (RFC 7396
-    // null-as-clear), and `binding.patch` must receive `{[path]: null}`.
-    // A regression that strips nulls would silently break reset-to-default
-    // for `appearance.theme` / `appearance.editorModeDefault`.
     const { form, resetField } = createMockForm(() => null);
     const { binding, patch } = createMockBinding(() => ({
       ok: true,
@@ -178,8 +138,6 @@ describe('runCommit — success path', () => {
     expect(result).toBe(true);
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0]?.[0]).toEqual({ appearance: { theme: null } });
-    // Re-baseline the resetField default to null so subsequent external
-    // updates can flow through.
     expect(resetField).toHaveBeenCalledTimes(1);
     expect(resetField.mock.calls[0]?.[1]).toMatchObject({ defaultValue: null });
   });
@@ -210,24 +168,13 @@ describe('runCommit — failure path', () => {
       type: 'config-binding',
       message: 'Expected number, received string',
     });
-    // clearErrors(name) IS called in the SCHEMA_INVALID-with-issues branch
-    // before the per-issue setError loop, so stale child-path errors from
-    // a prior failure don't survive when the new issue set shrinks. See
-    // the "consecutive failures" regression test below for the scenario.
     expect(clearErrors).toHaveBeenCalledTimes(1);
     expect(clearErrors).toHaveBeenCalledWith('mcp.tools.search.maxResults');
-    // resetField MUST stay inside the success branch — if it leaked to
-    // the failure path, committed-but-invalid fields would lose their
-    // dirty status and the next external update under
-    // `keepDirtyValues: true` would skip them, silently reverting the
-    // user's edit.
     expect(resetField).not.toHaveBeenCalled();
   });
 
   test('falls back to humanFormat when no SCHEMA_INVALID issue path matches the field name', () => {
     const { form, setError, resetField } = createMockForm(() => 'localhost');
-    // Generic WRITE_ERROR (no path-keyed issues) — humanFormat fallback
-    // must produce a non-empty message.
     const error: ConfigValidationError = {
       code: 'WRITE_ERROR',
       detail: 'EACCES: permission denied',
@@ -245,11 +192,6 @@ describe('runCommit — failure path', () => {
   });
 
   test('routes child-path issues to their own dotted path when commit name is the parent (atomic array commit)', () => {
-    // Atomic full-array commit on `folders` rejected by a Zod issue at
-    // `folders.0.match`. The error must land on the child path so the
-    // matching FormMessage renders inline at the row's Match input —
-    // setError on the called parent path would land on a FieldPath with
-    // no FormField, leaving the row visually silent.
     const { form, setError } = createMockForm(() => [{ match: '', frontmatter: {} }]);
     const error: ConfigValidationError = {
       code: 'SCHEMA_INVALID',
@@ -305,15 +247,6 @@ describe('runCommit — failure path', () => {
   });
 
   test('clears prior child-path errors before re-routing the new issue set (consecutive failures)', () => {
-    // Concrete scenario: a folders row is rejected with both `match` and
-    // `frontmatter.description` invalid. The user fixes `match` and blurs;
-    // the second commit rejects with only `frontmatter.description` left.
-    // Without clearErrors(name) before the loop, the old `folders.0.match`
-    // error persists in formState.errors and the row visually shows a red
-    // FormMessage on a field the user has already fixed. RHF's
-    // unset(errors, 'folders') deletes the whole subtree, so a single
-    // clearErrors call on the parent path covers all child-path errors —
-    // verified against react-hook-form 7.74.0 dist/index.esm.mjs:897-919.
     const { form, setError, clearErrors } = createMockForm(() => [
       { match: 'specs/**', frontmatter: { description: 42 } },
     ]);
@@ -333,23 +266,11 @@ describe('runCommit — failure path', () => {
 
     expect(clearErrors).toHaveBeenCalledTimes(1);
     expect(clearErrors).toHaveBeenCalledWith('folders');
-    // Order matters: the clearErrors call must precede the setError calls
-    // — otherwise the loop sets the new error but the stale ones survive.
-    // bun:test's `mock.calls` records call order across the same mock; we
-    // assert ordering via invocationCallOrder is unavailable, so instead
-    // verify that the resulting setError targets only the current issue.
     expect(setError).toHaveBeenCalledTimes(1);
     expect(setError.mock.calls[0]?.[0]).toBe('folders.0.frontmatter.description');
   });
 
   test('falls back to commit name when issue.path is empty (root-level refine guard)', () => {
-    // ConfigIssueSchema.path has no .min(1), so an empty path is
-    // schema-valid (e.g., a future .refine()/.superRefine() on the
-    // ConfigSchema root would emit issues with empty paths). Without the
-    // length guard, `''.map(String).join('.')` produces the empty string;
-    // setError('', …) lands at formState.errors[''] — invisible to every
-    // FormField and never cleared by clearErrors('folders') because
-    // unset(errors, 'folders') only touches the 'folders' subtree.
     const { form, setError } = createMockForm(() => ({}));
     const error: ConfigValidationError = {
       code: 'SCHEMA_INVALID',
@@ -375,12 +296,6 @@ describe('runCommit — failure path', () => {
   });
 
   test('SCHEMA_INVALID with empty issues[] falls back to humanFormat on the commit name', () => {
-    // The `issues.length > 0` guard in runCommit is intentional: a
-    // structurally-valid SCHEMA_INVALID (per ConfigIssueSchema) may carry
-    // an empty issues[] array. Routing it through the SCHEMA_INVALID
-    // branch with no issues would zero-iterate the loop and call no
-    // setError, leaving the commit silently failing. The else branch
-    // surfaces humanFormat(error) on the commit name instead.
     const { form, setError } = createMockForm(() => 'localhost');
     const error: ConfigValidationError = {
       code: 'SCHEMA_INVALID',
@@ -399,9 +314,6 @@ describe('runCommit — failure path', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// pickFirstIssueForPath — message selection contract
-// ---------------------------------------------------------------------------
 
 describe('pickFirstIssueForPath', () => {
   test('returns the issue.message when an issue path matches the field name', () => {
@@ -436,9 +348,6 @@ describe('pickFirstIssueForPath', () => {
       ],
     };
     const out = pickFirstIssueForPath(error, 'server.host');
-    // humanFormat for SCHEMA_INVALID renders the full multi-line summary —
-    // assert it isn't the bare path-matched message (which doesn't exist
-    // for `server.host`) and isn't empty.
     expect(out).not.toBe('invalid url');
     expect(out.length).toBeGreaterThan(0);
   });
@@ -462,11 +371,6 @@ describe('pickFirstIssueForPath', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Smoke test for the hook's exported interface — the hook function itself
-// can't be invoked outside a render context (RHF requires it), so we
-// verify it's a function and the typed result names match the contract.
-// ---------------------------------------------------------------------------
 
 describe('useConfigForm module shape', () => {
   test('exports useConfigForm as a function', async () => {
@@ -478,11 +382,6 @@ describe('useConfigForm module shape', () => {
   });
 });
 
-// Source-level guards: the hook invokes useForm with binding.current() as
-// the seed and runs without a resolver. The repo's no-DOM unit-test
-// convention means we can't render the hook; the guard ensures the
-// structural contract holds. Behavioral coverage of useForm itself
-// belongs to RHF's own tests + Settings-pane Playwright E2E.
 const HOOK_SRC = readFileSync(join(__dirname, 'use-config-form.ts'), 'utf8');
 
 describe('useConfigForm source-level guards', () => {
@@ -491,7 +390,6 @@ describe('useConfigForm source-level guards', () => {
   test('initializes useForm with binding.current() as defaultValues + no resolver', () => {
     expect(SRC).toContain('useForm');
     expect(SRC).toContain('defaultValues: binding.current()');
-    // No zodResolver, no resolver: prop on useForm — bindConfigDoc.patch is the single L1.
     expect(SRC).not.toContain('zodResolver');
     expect(SRC).not.toMatch(/resolver:\s/);
   });

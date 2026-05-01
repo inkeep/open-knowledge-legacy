@@ -119,7 +119,6 @@ export function EditorDemo() {
     if (newMode === mode) return;
 
     if (newMode === 'source' && editor) {
-      // tiptap-markdown extends storage but doesn't export types
       const storage = editor.storage as unknown as Record<string, { getMarkdown: () => string }>;
       const md = storage.markdown.getMarkdown();
       setMarkdown(md);
@@ -255,9 +254,6 @@ export function EditorDemo() {
   );
 }
 
-/* ---------------------------------------------------------------------------
- * SourceTextarea — styled to look like the real CodeMirror source editor
- * --------------------------------------------------------------------------- */
 
 function SourceTextarea({
   ref,
@@ -303,9 +299,6 @@ function SourceTextarea({
   );
 }
 
-/* ---------------------------------------------------------------------------
- * Icons — exact SVGs from packages/app/src/components/icons/
- * --------------------------------------------------------------------------- */
 
 function TextboxIcon({ className }: { className?: string }) {
   return (
@@ -323,9 +316,6 @@ function MarkdownIcon({ className }: { className?: string }) {
   );
 }
 
-/* ---------------------------------------------------------------------------
- * ModeToggle — mirrors the real ToggleGroup with variant="segmented" size="sm"
- * --------------------------------------------------------------------------- */
 
 function ModeToggle({
   mode,
@@ -376,10 +366,6 @@ function ToggleItem({
   );
 }
 
-/* ---------------------------------------------------------------------------
- * DemoBlockDragHandle — uses the real @tiptap/extension-drag-handle plugin.
- * Mirrors packages/app/src/editor/extensions/drag-handle.ts but self-contained.
- * --------------------------------------------------------------------------- */
 
 const HANDLE_HEIGHT = 20;
 const MAX_SINGLE_LINE_HEIGHT = 44;
@@ -466,9 +452,6 @@ const DemoBlockDragHandle = Extension.create({
   },
 });
 
-/* ---------------------------------------------------------------------------
- * MockPresenceBar — mirrors packages/app/src/presence/PresenceBar.tsx
- * --------------------------------------------------------------------------- */
 
 function MockPresenceBar() {
   return (

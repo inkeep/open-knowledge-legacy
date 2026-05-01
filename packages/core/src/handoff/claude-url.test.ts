@@ -44,7 +44,6 @@ test('buildClaudeUrl single-encodes em-dash in path (code)', () => {
       docPath: '/Users/who/proj/café — notes.md',
     }),
   );
-  // em-dash U+2014 → UTF-8 E2 80 94 → %E2%80%94; é → %C3%A9; space → %20
   expect(url).toContain('&file=%2FUsers%2Fwho%2Fproj%2Fcaf%C3%A9%20%E2%80%94%20notes.md');
 });
 
@@ -77,11 +76,8 @@ test('buildClaudeUrl single-encodes literal & in filename (cowork) — DC8.5', (
       docPath: '/Users/who/A & B/doc.md',
     }),
   );
-  // & → %26; each separator stays as %2F; URL's three &-separators between
-  // query params remain literal &, but the path itself contains %26 not &
   expect(url).toContain('&folder=%2FUsers%2Fwho%2FA%20%26%20B');
   expect(url).toContain('&file=%2FUsers%2Fwho%2FA%20%26%20B%2Fdoc.md');
-  // Exactly 2 literal & (q→folder, folder→file) — the path's & is escaped
   expect(url.split('&').length - 1).toBe(2);
 });
 
@@ -93,9 +89,7 @@ test('buildClaudeUrl single-encodes # in filename (code) — DC8.5', () => {
       docPath: '/Users/who/proj/notes#1.md',
     }),
   );
-  // # → %23
   expect(url).toContain('&file=%2FUsers%2Fwho%2Fproj%2Fnotes%231.md');
-  // No bare # in the URL (would terminate the query string otherwise)
   expect(url.includes('#')).toBe(false);
 });
 
@@ -107,7 +101,6 @@ test('buildClaudeUrl single-encodes Windows backslash path (cowork) — DC8.5', 
       docPath: 'C:\\Users\\who\\proj\\docs\\note.md',
     }),
   );
-  // \ → %5C; : → %3A
   expect(url).toContain('&folder=C%3A%5CUsers%5Cwho%5Cproj');
   expect(url).toContain('&file=C%3A%5CUsers%5Cwho%5Cproj%5Cdocs%5Cnote.md');
 });

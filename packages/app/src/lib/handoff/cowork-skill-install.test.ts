@@ -1,11 +1,3 @@
-/**
- * Unit tests for the lazy Claude Cowork skill-install gate. Exercises the
- * pure `ensureCoworkSkillInstalled` helper with in-memory storage + installer
- * doubles. No DOM, no React — matches the repo convention.
- *
- * Installer-specific behavior (Electron bridge, HTTP endpoint) is tested in
- * `skill-installer.test.ts`. This file covers the guard policy.
- */
 
 import { describe, expect, mock, test } from 'bun:test';
 import {

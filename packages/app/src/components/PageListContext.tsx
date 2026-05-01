@@ -7,39 +7,18 @@ import { deriveKnownFolderPaths } from './navigation-targets';
 export interface PageMeta {
   size: number;
   modified: string;
-  /**
-   * On-disk extension — `.md` or `.mdx`. Surfaced by `/api/pages` so
-   * the editor header can render `foo.mdx` vs `foo.md` faithfully
-   * instead of hard-coding `.md`. Optional for backward compat.
-   */
   docExt?: string;
 }
 
 interface PageListContextValue {
-  /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
-  /**
-   * Slug-keyed index mapping `toWikiLinkSlug(docName)` → original docName.
-   * First-wins on slug collision. Used by navigation / resolution paths so
-   * a dropped `.md` file carrying a lowercased-slug target
-   * (e.g. `casecheck123`) resolves against a case-preserved cache entry
-   * (e.g. `CaseCheck123`). Without this, `pages.has(slug)` fails every
-   * time on non-slug-form docNames.
-   */
   pagesBySlug: ReadonlyMap<string, string>;
-  /** Display titles returned by `/api/pages`, keyed by docName. */
   pageTitles: ReadonlyMap<string, string>;
-  /** File metadata (size, modified) returned by `/api/pages`, keyed by docName. */
   pageMeta: ReadonlyMap<string, PageMeta>;
-  /** Set of known folder paths derived from the current document list. */
   folderPaths: Set<string>;
-  /** True while the page list is being fetched from the server. */
   loading: boolean;
-  /** Error message from the most recent fetch failure, or null on success. */
   error: string | null;
-  /** Re-fetch the page list from the server. Call after creating a new page. */
   refetch: () => void;
-  /** Optimistically mark a page as present before watcher/index propagation settles. */
   addPage: (docName: string) => void;
 }
 
@@ -159,7 +138,6 @@ export function PageListProvider({ children }: { children: ReactNode }) {
     setError(null);
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: run only on mount
   useEffect(() => {
     void refetch();
     const handleResume = () => {
@@ -187,14 +165,6 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   const folderPaths = deriveKnownFolderPaths(pages);
   const pagesBySlug = buildPagesBySlugIndex(pages, toWikiLinkSlug);
 
-  // Publish to the page-list-cache side-channel so plain-DOM chip consumers
-  // (V2 internal-link.ts / wiki-link.ts NodeView) can read live resolution
-  // state without React context. `setPageListCache` absorbs no-op calls via
-  // Set-content equality — safe to call every render. `pagesBySlug` is
-  // derived from `pages` via `buildPagesBySlugIndex` (first-wins on slug
-  // collision) so slug-normalized wiki-link resolution is O(1) in the hot
-  // path — dropped `.md` files carry lowercased slugs as targets; the
-  // index bridges that to the case-preserved / non-slug-form cache entries.
   useEffect(() => {
     setPageListCache({ pages, folderPaths, pagesBySlug });
   }, [pages, folderPaths, pagesBySlug]);

@@ -1,10 +1,3 @@
-/**
- * `get_history` MCP tool — list version history for a document.
- *
- * Calls GET /api/history with optional filtering and pagination.
- * Returns timeline entries from the shadow repo with commit SHAs
- * that can be passed to `rollback_to_version`.
- */
 import { z } from 'zod';
 import { resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ConfigOrResolver, ServerInstance, ServerUrlOrResolver } from './shared.ts';

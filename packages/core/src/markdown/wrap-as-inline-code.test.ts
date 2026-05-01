@@ -6,13 +6,6 @@ import { wrapAsInlineCode } from './index.ts';
 const PBT_TIMEOUT_MS = process.env.STRESS_FIDELITY === '1' ? 90_000 : 30_000;
 const PBT_NUM_RUNS = process.env.STRESS_FIDELITY === '1' ? 1_000 : 100;
 
-/**
- * Unit tests for `wrapAsInlineCode` — the mark handler that collapses PM text
- * runs with the `code` mark into mdast `inlineCode`, preserving any outer
- * wrapping mark's structural shape (link/strong/emphasis/delete).
- *
- * Addresses PR #188 reviewer Consider item (D-Q17 LOCKED — 6 cases).
- */
 
 const text = (value: string) => ({ type: 'text' as const, value });
 const link = (url: string, children: MdastNodes[]) => ({
@@ -83,8 +76,6 @@ describe('wrapAsInlineCode — children-shape coverage', () => {
   test('nested wrapper preserves both levels (link containing strong)', () => {
     const input = [link('https://x', [strong([text('deep')])])];
     const out = wrapAsInlineCode(input as MdastNodes[]);
-    // Outer link preserved; the recursive call collapses the inner strong+text
-    // into an inlineCode nested inside the link.
     expect(out).toEqual({
       type: 'link',
       url: 'https://x',
@@ -102,13 +93,6 @@ describe('wrapAsInlineCode — children-shape coverage', () => {
 describe('wrapAsInlineCode — properties: shape + content preservation', () => {
   const ALLOWED = new Set(['inlineCode', 'link', 'strong', 'emphasis', 'delete']);
 
-  /**
-   * Recursively collect every text leaf value from an mdast input-children
-   * array OR a single mdast output node. Order-preserving so we can assert
-   * that `wrapAsInlineCode` neither drops nor reorders characters — an
-   * implementation that loses content would pass a type-only check but
-   * fail this.
-   */
   function collectText(nodeOrArray: MdastNodes | MdastNodes[]): string {
     const arr = Array.isArray(nodeOrArray) ? nodeOrArray : [nodeOrArray];
     let out = '';
@@ -143,11 +127,7 @@ describe('wrapAsInlineCode — properties: shape + content preservation', () => 
           ),
           (children) => {
             const out = wrapAsInlineCode(children as MdastNodes[]);
-            // Type property: output must be inlineCode or a structural wrapper.
             expect(ALLOWED.has(out.type)).toBe(true);
-            // Content-preservation property: every character the input carried
-            // must appear in the output, in order. A regression that dropped
-            // `lang`, dropped children, or zeroed out `value` would fail this.
             const inputText = collectText(children as MdastNodes[]);
             const outputText = collectText(out);
             expect(outputText).toBe(inputText);

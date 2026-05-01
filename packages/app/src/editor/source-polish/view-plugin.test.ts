@@ -4,18 +4,6 @@ import { EditorState } from '@codemirror/state';
 import { GFM } from '@lezer/markdown';
 import { buildDecorationsForRanges } from './view-plugin';
 
-/**
- * Unit tests for source-polish view-plugin's decoration builder.
- *
- * Calls `buildDecorationsForRanges(state, ranges)` directly — no EditorView, so
- * no DOM needed (Bun test env has no `document`). We always pass a whole-doc
- * range because the ViewPlugin's viewport-scoping is a separate concern covered
- * by Playwright.
- *
- * We inspect the returned DecorationSet by iterating it and extracting
- * class names via `spec.class`. Pure range-and-class-level assertions;
- * no rendering.
- */
 
 function createState(doc: string): EditorState {
   return EditorState.create({
@@ -39,8 +27,6 @@ function collect(doc: string): DecoInfo[] {
   while (cursor.value) {
     const spec =
       (cursor.value as unknown as { spec?: { class?: string; attributes?: unknown } }).spec ?? {};
-    // Line decorations in CM6 are zero-length (from === to) and have attributes.
-    // Mark decorations span a range.
     const isLine = cursor.from === cursor.to;
     out.push({
       from: cursor.from,
@@ -90,8 +76,6 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
       const doc = '~~ padded ~~';
       const decos = collect(doc);
       const delRanges = markRangesWithClass(decos, 'cm-del');
-      // Strikethrough parser treats these as potential delimiters; as long as
-      // we extract exactly what's between the two delimiters, we're correct.
       if (delRanges.length > 0) {
         expect(doc.slice(delRanges[0].from, delRanges[0].to)).toBe(' padded ');
       }
@@ -127,7 +111,6 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
     test('nested list — each item gets its own .cm-list-item', () => {
       const doc = '- outer\n  - inner';
       const decos = collect(doc);
-      // outer at offset 0, inner at offset 8 (after "\n  - ")
       const outerClasses = classesAtLine(decos, 0).join(' ');
       const innerClasses = classesAtLine(decos, 8).join(' ');
       expect(outerClasses).toContain('cm-list-item');
@@ -138,7 +121,6 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
   describe('FencedCode — .cm-fenced-code-line', () => {
     test('content lines get .cm-fenced-code-line; fence lines do NOT', () => {
       const doc = '```ts\nconst x = 1;\n```';
-      //           0         6          19
       const decos = collect(doc);
       expect(classesAtLine(decos, 0).join(' ')).not.toContain('cm-fenced-code-line');
       expect(classesAtLine(decos, 6).join(' ')).toContain('cm-fenced-code-line');
@@ -162,7 +144,6 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
   describe('Tables — .cm-table-header / .cm-table-row', () => {
     test('header row → .cm-table-header; body row → .cm-table-row; delimiter row → .cm-table-row', () => {
       const doc = '| a | b |\n| - | - |\n| 1 | 2 |';
-      //           0           10         20
       const decos = collect(doc);
       expect(classesAtLine(decos, 0).join(' ')).toContain('cm-table-header');
       expect(classesAtLine(decos, 10).join(' ')).toContain('cm-table-row');
@@ -210,15 +191,8 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
 
   describe('YAML frontmatter — decorations skip the FM region', () => {
     test('list-style items inside `--- … ---` do NOT get .cm-list-item', () => {
-      // Markdown-list parsing fires on `  - characters` even though the
-      // line is inside a YAML frontmatter block. Applying `.cm-list-item`'s
-      // negative `text-indent` to YAML lines clips the leading whitespace
-      // into negative-x and makes `  - foo` render flush-left. Skip those
-      // decorations for any node inside the FM region.
       const doc = '---\ntags:\n  - characters\n  - air-nomads\n---\n# Body\n';
       const decos = collect(doc);
-      // line 3 (`  - characters`) starts at offset 11; line 4 (`  - air-nomads`)
-      // at offset 28. Neither should carry `cm-list-item`.
       expect(classesAtLine(decos, 11).join(' ')).not.toContain('cm-list-item');
       expect(classesAtLine(decos, 28).join(' ')).not.toContain('cm-list-item');
     });
@@ -226,7 +200,6 @@ describe('source-polish view-plugin — buildDecorationsForRanges', () => {
     test('body list items AFTER the FM block still get .cm-list-item', () => {
       const doc = '---\ntags:\n  - characters\n---\n- body item\n';
       const decos = collect(doc);
-      // Find the body list line — `- body item` after the closing fence.
       const bodyListStart = doc.indexOf('- body item');
       expect(classesAtLine(decos, bodyListStart).join(' ')).toContain('cm-list-item');
     });

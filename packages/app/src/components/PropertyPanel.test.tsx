@@ -4,9 +4,6 @@ import { renderToString } from 'react-dom/server';
 import { PropertyProvider } from './PropertyContext';
 import { PropertyPanel } from './PropertyPanel';
 
-// Renders PropertyPanel inside PropertyProvider — the panel reads
-// `useProperties()` for the cross-tree add-property signal and would throw
-// "must be used within <PropertyProvider />" without this wrapper.
 function renderPanel(provider: HocuspocusProvider): string {
   return renderToString(
     <PropertyProvider>
@@ -29,16 +26,10 @@ afterEach(() => {
     try {
       p.destroy();
     } catch {
-      // ignore
     }
   }
 });
 
-/**
- * Seed the FM region of `Y.Text('source')` directly. After D8, the YAML
- * region IS the FM source of truth; the panel reads through `bindFrontmatterDoc`
- * which observes Y.Text.
- */
 function seedYTextFm(provider: HocuspocusProvider, fenced: string): void {
   const ytext = provider.document.getText('source');
   provider.document.transact(() => {
@@ -198,8 +189,6 @@ describe('PropertyPanel add-property trigger', () => {
 describe('PropertyPanel duplicate-name surfacing', () => {
   test('two rows with the same name both render with a duplicate-name marker (D17/FR6)', () => {
     const provider = makeProvider('dup-name-doc');
-    // yaml@2 with `uniqueKeys: false` admits duplicate keys; both are
-    // emitted by Document.toString and parsed via readFmKeys.
     seedYTextFm(provider, '---\ntitle: First\ntitle: Second\n---\n');
     const html = renderPanel(provider);
     const dupMarkerMatches = html.match(/data-testid="property-duplicate-marker"/g) ?? [];

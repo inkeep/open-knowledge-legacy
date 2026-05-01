@@ -81,11 +81,6 @@ describe('installDeepLinkListener (M4 US-007)', () => {
   });
 
   test('URL-encodes nested doc names (round-trips via docNameFromHash)', () => {
-    // Nested docNames are the common MCP producer shape. The deep-link parser
-    // hands us `docs/a` after URL-decoding the query param; we encode the
-    // WHOLE string with encodeURIComponent so that `/` becomes `%2F`. The
-    // consumer `docNameFromHash` (packages/app/src/lib/doc-hash.ts) splits on
-    // `/` then decodes each segment, reconstructing `docs/a` cleanly.
     const bridge = makeBridge();
     const setHash = mock(() => {});
     installDeepLinkListener({ bridge, setHash });

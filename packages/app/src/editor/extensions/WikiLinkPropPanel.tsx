@@ -1,18 +1,3 @@
-/**
- * WikiLinkPropPanel — singleton React UI for the active wiki-link node.
- *
- * Replaces the per-instance `WikiLinkView` React NodeView with a single
- * subtree rendered at editor root via the InteractionLayer (FR4/FR6). The
- * chip itself is a plain-DOM NodeView (see `wiki-link.ts`).
- *
- * Reads node attrs by resolving the live PM position via `getPos()` (passed
- * from the NodeView's setup) — the chip's position can change as the user
- * edits, so we must read fresh attrs from `editor.state.doc.nodeAt(pos)`.
- *
- * Mirrors the V2 InternalLinkPropPanel architecture: chip-click → activate
- * → singleton PropPanel surfaces Open / Edit / Remove + Create-page (when
- * unresolved). Folder targets get a Create-index affordance.
- */
 
 import {
   classifyWikiLinkTarget,
@@ -48,7 +33,6 @@ import { isSafeNavigationUrl } from '../safe-navigation-url';
 import { useHeadings } from './use-headings';
 import { getWikiLinkResolutionCandidates, isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
-// ── Edit dialog ───────────────────────────────────────────────────────────────
 
 interface EditWikiLinkDialogProps {
   open: boolean;
@@ -209,17 +193,14 @@ function EditWikiLinkDialog({
   );
 }
 
-// ── PropPanel ─────────────────────────────────────────────────────────────────
 
 interface WikiLinkPropPanelProps {
   editor: Editor;
-  /** Resolves the wiki-link node's current PM position. */
   getPos: () => number | undefined;
   onClose: () => void;
 }
 
 export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanelProps) {
-  // Read current node attrs from PM state via getPos.
   const pos = getPos();
   const node = pos != null ? editor.state.doc.nodeAt(pos) : null;
   const target = String(node?.attrs.target ?? '');
@@ -242,7 +223,6 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
   const folderCreateSeed = folderIndexCreateSeed(linkIntent);
 
   if (!node) {
-    // Node was removed mid-render — gracefully close.
     return null;
   }
 
@@ -270,13 +250,9 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
 
   function handleNavigate(opts: { newTab?: boolean }) {
     if (externalTarget) {
-      // Gate via isSafeNavigationUrl (review Major #13). Refuses
-      // javascript:/data:/vbscript:/etc. authored URLs that would execute
-      // arbitrary JS in the viewer's origin.
       if (isSafeNavigationUrl(externalTarget.url)) {
         window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
       } else {
-        // eslint-disable-next-line no-console
         console.warn('[safe-nav] blocked non-safe scheme:', externalTarget.url);
       }
       return;
@@ -370,10 +346,6 @@ export function WikiLinkPropPanel({ editor, getPos, onClose }: WikiLinkPropPanel
     };
   }
 
-  // Floating-UI virtual reference. `posToDOMRect` is queried lazily on each
-  // autoUpdate tick so the panel tracks the chip across PM edits / scroll —
-  // matches the BubbleMenuBar pattern. `contextElement` lets autoUpdate
-  // discover the editor's overflow scroll ancestors automatically.
   const triggerReference = {
     getBoundingClientRect: () => {
       const livePos = getPos();

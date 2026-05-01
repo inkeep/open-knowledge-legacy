@@ -55,7 +55,6 @@ describe('enrichPath — slim (multi-path) shape', () => {
     expect(meta.title).toBe('Auth');
     expect(meta.description).toBe('OAuth');
     expect(meta.tags).toEqual(['auth', 'oauth']);
-    // Rich fields are null (slim shape)
     expect(meta.backlinkCount).toBe(null);
     expect(meta.history).toBe(null);
     expect(meta.historySource).toBe(null);
@@ -270,11 +269,6 @@ describe('enrichDirectory — folder-rule attachment', () => {
     mkdirSync(resolve(project, 'specs/2026-04-16'), { recursive: true });
     writeFileSync(resolve(project, 'specs/2026-04-16/foo.md'), '# foo\n');
 
-    // Use two patterns that BOTH match `specs/2026-04-16` directly:
-    //   - `specs/**` — globstar matches zero+ segments, so matches `specs/2026-04-16`
-    //   - `specs/*` — single-segment wildcard matches `specs/2026-04-16`
-    // Picomatch globstar nuance: `specs/2026-*/**` matches only DESCENDANTS
-    // of `specs/2026-X/` — it does NOT match `specs/2026-04-16` itself.
     const rules: FolderRule[] = [
       { match: 'specs/**', frontmatter: { title: 'Specs', tags: ['spec'] } },
       { match: 'specs/*', frontmatter: { title: '2026 Specs', tags: ['2026'] } },

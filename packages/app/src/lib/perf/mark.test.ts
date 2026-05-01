@@ -35,7 +35,6 @@ describe('mark', () => {
     try {
       performance.clearMeasures();
     } catch {
-      // ignore in envs where clearMeasures throws
     }
   });
 

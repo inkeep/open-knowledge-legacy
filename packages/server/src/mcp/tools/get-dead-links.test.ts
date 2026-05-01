@@ -100,7 +100,6 @@ describe('get_dead_links MCP tool', () => {
 
       const result = await handler({ sourceDocNames: ['alpha.md', 'beta'] });
       expect(requests).toEqual(['/api/dead-links?sourceDocName=alpha&sourceDocName=beta']);
-      // text is the JSON pretty-printed structured content
       expect(result.content[0]?.text).toContain('missing-target');
       expect(result.structuredContent).toBeDefined();
     } finally {

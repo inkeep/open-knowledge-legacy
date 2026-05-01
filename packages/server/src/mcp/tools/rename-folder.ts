@@ -1,10 +1,3 @@
-/**
- * `rename_folder` MCP tool — managed folder rename via the server API.
- *
- * Calls POST /api/rename-path with kind: 'folder'. Renames the target folder
- * atomically and rewrites inbound wiki-links + supported markdown links across
- * all affected docs. One MCP call replaces N rename_document calls.
- */
 import { z } from 'zod';
 import type { AgentIdentity } from '../agent-identity.ts';
 import { type PreviewUrlSource, resolvePreviewUrlForTool } from './preview-url.ts';
@@ -35,20 +28,14 @@ interface RenameFolderSuccess {
   ok: true;
   renamed: RenameFolderMapping[];
   rewrittenDocs: RenameFolderRewrittenDoc[];
-  /** Map of newly-renamed docName → resolved preview URL. Empty when UI is down. */
   previewUrls: Record<string, string>;
-  /** Source of the previewUrl resolver. Omitted when previewUrls is empty. */
   previewUrlSource?: PreviewUrlSource;
-  /** Stored summary echo (same applied to every affected-doc contributor entry).
-   *  Absent when no summary was supplied. */
   summary?: { value: string; truncatedFrom?: number; hint?: string };
 }
 
 interface RenameFolderError {
   ok: false;
   error: string;
-  /** Server-supplied structured collision list when 409 is a rename-map collision.
-   *  Empty/absent for other 4xx error classes (validation, missing source, etc.). */
   colliding?: RenameCollisionPair[];
 }
 
