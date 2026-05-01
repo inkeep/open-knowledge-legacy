@@ -234,6 +234,66 @@ describe('runCommit — failure path', () => {
     expect(errArg?.message).toContain('EACCES');
     expect(resetField).not.toHaveBeenCalled();
   });
+
+  test('routes child-path issues to their own dotted path when commit name is the parent (atomic array commit)', () => {
+    // Atomic full-array commit on `folders` rejected by a Zod issue at
+    // `folders.0.match`. The error must land on the child path so the
+    // matching FormMessage renders inline at the row's Match input —
+    // setError on the called parent path would land on a FieldPath with
+    // no FormField, leaving the row visually silent.
+    const { form, setError } = createMockForm(() => [{ match: '', frontmatter: {} }]);
+    const error: ConfigValidationError = {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['folders', 0, 'match'],
+          message: '`match` must be a non-empty glob pattern',
+          issueCode: 'too_small',
+        },
+      ],
+    };
+    const { binding } = createMockBinding(() => ({ ok: false, error }));
+
+    const result = runCommit(form, binding, 'folders');
+
+    expect(result).toBe(false);
+    expect(setError).toHaveBeenCalledTimes(1);
+    const [name, errArg] = setError.mock.calls[0] ?? [];
+    expect(name).toBe('folders.0.match');
+    expect(errArg).toMatchObject({
+      type: 'config-binding',
+      message: '`match` must be a non-empty glob pattern',
+    });
+  });
+
+  test('routes multiple SCHEMA_INVALID issues each to their own path', () => {
+    const { form, setError } = createMockForm(() => [
+      { match: '', frontmatter: { description: 42 } },
+    ]);
+    const error: ConfigValidationError = {
+      code: 'SCHEMA_INVALID',
+      issues: [
+        {
+          path: ['folders', 0, 'match'],
+          message: '`match` must be a non-empty glob pattern',
+          issueCode: 'too_small',
+        },
+        {
+          path: ['folders', 0, 'frontmatter', 'description'],
+          message: 'Expected string, received number',
+          issueCode: 'invalid_type',
+        },
+      ],
+    };
+    const { binding } = createMockBinding(() => ({ ok: false, error }));
+
+    runCommit(form, binding, 'folders');
+
+    expect(setError).toHaveBeenCalledTimes(2);
+    const paths = setError.mock.calls.map((c) => c[0]);
+    expect(paths).toContain('folders.0.match');
+    expect(paths).toContain('folders.0.frontmatter.description');
+  });
 });
 
 // ---------------------------------------------------------------------------

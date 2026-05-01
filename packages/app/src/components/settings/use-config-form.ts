@@ -115,10 +115,33 @@ export function runCommit<T extends Config = Config>(
     });
     return true;
   }
-  form.setError(name, {
-    type: 'config-binding',
-    message: pickFirstIssueForPath(result.error, name),
-  });
+  // For SCHEMA_INVALID, route each issue to its own dotted path so the
+  // matching FormMessage renders inline at the field that failed. When the
+  // commit name is a parent of the failing path (e.g. atomic full-array
+  // commit on `folders` rejected by a `folders.0.match` Zod issue), setting
+  // the error at the called name only would land on a path that has no
+  // FormField — leaving the row visually silent. Issues whose paths don't
+  // map to a registered FormField simply don't render but still appear in
+  // form.formState.errors. Non-SCHEMA errors (WRITE_ERROR, YAML_PARSE, …)
+  // and the no-issues fallback land on the called name with humanFormat.
+  if (
+    isKnownConfigError(result.error) &&
+    result.error.code === 'SCHEMA_INVALID' &&
+    result.error.issues.length > 0
+  ) {
+    for (const issue of result.error.issues) {
+      const issuePath = issue.path.map(String).join('.');
+      form.setError(issuePath as FieldPath<T>, {
+        type: 'config-binding',
+        message: issue.message,
+      });
+    }
+  } else {
+    form.setError(name, {
+      type: 'config-binding',
+      message: pickFirstIssueForPath(result.error, name),
+    });
+  }
   return false;
 }
 
