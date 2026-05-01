@@ -120,11 +120,7 @@ drafts/
 *.draft.md
 ```
 
-Then drop the obsolete keys from `config.yml`:
-
-```bash
-npx @inkeep/open-knowledge config migrate
-```
+Then remove the `content.include` and `content.exclude` keys from your `config.yml` by hand. If you forget, OK refuses to start with a source-located `REMOVED_KEY` error pointing at the offending lines, so you can't miss them.
 
 `content.include` had only one real job — gating which extensions count as content — and `.md`/`.mdx` extension matching is now hardcoded upstream. If your old `content.include` was the default (`['**/*.md', '**/*.mdx']`), you don't need to add anything to `.okignore` for it.
 
