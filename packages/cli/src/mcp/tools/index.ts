@@ -2,8 +2,9 @@
  * MCP tool registry.
  *
  * Aggregates workflow tools (ingest, research, consolidate),
- * document tools (write_document, edit_document, rename_document,
- * undo_agent_edit, redo_agent_edit, list_documents), link-graph tools
+ * document tools (write_document, edit_document, delete_document,
+ * rename_document, undo_agent_edit, redo_agent_edit, list_documents),
+ * link-graph tools
  * (get_backlinks, get_forward_links, get_orphans, get_hubs, get_dead_links),
  * and enriched tools
  * (read_document, search) into a single `registerAllTools` function that
@@ -29,6 +30,10 @@ import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
 } from './consolidate.ts';
+import {
+  DESCRIPTION as DELETE_DOCUMENT_DESCRIPTION,
+  register as registerDeleteDocument,
+} from './delete-document.ts';
 import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
@@ -132,6 +137,7 @@ const _TOOL_DESCRIPTIONS = {
   suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
+  delete_document: DELETE_DOCUMENT_DESCRIPTION,
   // frontmatter_patch parked — see import block above.
   get_history: GET_HISTORY_DESCRIPTION,
   save_version: SAVE_VERSION_DESCRIPTION,
@@ -239,6 +245,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     serverUrl: opts.serverUrl,
     config: opts.config,
     resolveCwd: named('edit_document'),
+    identityRef: opts.identityRef,
+  });
+  registerDeleteDocument(registrationServer, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: named('delete_document'),
     identityRef: opts.identityRef,
   });
   // frontmatter_patch is parked — see import block at top of file.

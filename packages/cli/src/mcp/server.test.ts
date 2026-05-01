@@ -106,6 +106,7 @@ describe('registerAllTools', () => {
       'suggest_links',
       'write_document',
       'edit_document',
+      'delete_document',
       'get_history',
       'save_version',
       'rollback_to_version',
