@@ -48,7 +48,7 @@ The doc lands with the right title, headings, and tags — the agent didn't inve
 | Human in IDE       | Open `<folder>/.ok/frontmatter.yml`, save | Open `<folder>/.ok/templates/foo.md`, save            |
 | Human in editor UI | — Future Work —                           | — Future Work —                                       |
 
-**`.ok/` is gitignored.** Per-machine local agent operating context. Templates and folder defaults don't sync via git. (D20.)
+**`.ok/` is gitignored.** Per-machine local agent operating context. Templates and folder defaults don't sync via git. (D18.)
 
 The rest of this document is the formal version.
 
@@ -109,7 +109,7 @@ content-root/
 - **No reserved names** beyond the two above.
 - **Hub docs (`INDEX.md`, `README.md`) carry no special status.**
 - **Hidden in listings.** `.ok/` directories do NOT appear as entries in `ls` / `list_documents` / `find` output. Their CONTENTS surface as structured fields (`frontmatter_defaults`, `templates_available`) on the parent folder's enriched record.
-- **Gitignored by default** (D20). Per-machine local agent operating context. Users wanting shared team templates manually adjust `.gitignore`.
+- **Gitignored by default** (D18). Per-machine local agent operating context. Users wanting shared team templates manually adjust `.gitignore`.
 
 ## 4. Cascade and walk direction
 
@@ -460,7 +460,7 @@ This spec **supersedes NG10 [NEVER]** in [config-edit-paths SPEC](../2026-04-25-
 
 - **No PER-DOC sidecars.** This spec introduces no `.<filename>.metadata.json`, no `_meta.json`, no `_index.md`, no `.frontmatter.yml` next to a single doc.
 - **No implicit hub-doc convention.** `INDEX.md` / `README.md` carry no special status.
-- **OK pollutes nothing visible.** `.ok/` is dot-prefixed AND hidden from OK's enriched listings (D18).
+- **OK pollutes nothing visible.** `.ok/` is dot-prefixed AND hidden from OK's enriched listings (D16).
 
 **The cutover.** The implementation rewrites `folders[]` use sites to read from nested `.ok/frontmatter.yml`. Existing `folders[]` entries in any user's `.ok/config.yml` get migrated as part of the implementation PR (mechanical: each entry's `match` glob resolves to a target folder, write nested file, drop the entry from `folders[]`). After cutover, the `folders[]` schema entry is removed. There is no "transitional" period in the spec.
 
@@ -479,14 +479,14 @@ Test added in same PR: `content-filter.test.ts` exercises `isDirExcluded('meetin
 ## 10. Interaction with existing systems
 
 - **CRDT / Hocuspocus.** `frontmatter.yml` and `templates/*.md` are NOT CRDT-managed. Filesystem-only configuration / source assets. Reads happen at `list_documents` / `read_document` resolution time; no Y.Doc, no live sync.
-- **`.gitignore`.** `.ok/` (root + nested) is gitignored by default (D20). `ok init` adds the entry.
+- **`.gitignore`.** `.ok/` (root + nested) is gitignored by default (D18). `ok init` adds the entry.
 - **File watcher.** Adding/removing `<folder>/.ok/frontmatter.yml` invalidates merged-frontmatter cache for the affected subtree. Adding/removing a `templates/*.md` invalidates `list_documents` `templates_available` for any descendant whose walk-up resolves there.
 - **Folder rename / move.** Renaming a folder carries its `.ok/` with it (it's part of the folder's contents on disk).
 - **Settings pane.** No change in v1. Future work could add a tab for nested-frontmatter editing AND template editing; out of scope.
 
 ## 11. Open questions
 
-### 11.1 Structured frontmatter (JSON Schema) — defer to v2? **[OPEN — likely defer]**
+### 11.1 Structured frontmatter (JSON Schema) — defer to v2 **[RESOLVED 2026-05-01 → D20]**
 
 Today: frontmatter is freeform YAML. *Structured frontmatter* would let a folder declare a typed schema (`status: enum[draft|review|shipped]`, `attendees: string[]`, etc.), validated on save. Notion DB property schemas do this; Obsidian Properties (v1.4+) infers types from values vault-wide but isn't strict-schema.
 
@@ -498,34 +498,35 @@ Today: frontmatter is freeform YAML. *Structured frontmatter* would let a folder
 - **[NEVER]** NG-T2: Per-doc metadata sidecars (`.<filename>.metadata.json`, `_meta.json`, etc.). NG10's anti-per-doc-clutter survives this supersession.
 - **[NEVER]** NG-T3: Hub-doc-as-metadata-carrier (`INDEX.md` / `README.md` frontmatter as folder defaults). Mechanism stays in `.ok/frontmatter.yml`; hub docs are content.
 - **[NEVER]** NG-T4: `.ok/` directories appearing as visible folder entries in any listing surface (`ls`, `list_documents`, `find`, sidebar). Their contents surface as structured fields on the parent folder's record.
-- **[NOT NOW]** NG-T5: JSON Schema validation of frontmatter. See 11.1; revisit when a concrete pain point emerges.
+- **[NOT NOW]** NG-T5: JSON Schema validation of frontmatter (D20). Revisit only when a concrete user demand surfaces — e.g. "every doc in meetings/ MUST have an attendees: field." Defaults-only handles \~90% of the actual work; templates handle the soft-scaffolding case.
 - **[NOT NOW]** NG-T6: Settings-pane UI for editing nested `frontmatter.yml` or templates. Filesystem + MCP only in v1. Revisit when the editor grows a folder-management surface.
 - **[NOT NOW]** NG-T7: Folder-scoped agent guidance (a `.ok/agents.md` or similar). Stays in CLAUDE.md / skills for v1.
 - **[NOT NOW]** NG-T8: Folder-scoped `.okignore` overrides expressed in `.ok/frontmatter.yml`. Path scoping continues via nested `.okignore` files.
 
 ## 13. Decision log
 
-| #   | Date       | Type | Decision                                                                                                                     | Rationale                                                                                                                      |
-| --- | ---------- | ---- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| D1  | 2026-05-01 | T    | Sparse / opt-in nested `.ok/` directories                                                                                    | Folder-rename portability + reduced merge-conflict surface; templates need a folder-scoped home that single-root can't provide |
-| D2  | 2026-05-01 | T    | v1 contents bounded to `frontmatter.yml` + `templates/`                                                                      | Avoid kitchen-sink directory; new members are non-breaking adds                                                                |
-| D3  | 2026-05-01 | T    | Lazy creation, auto-clean when empty                                                                                         | Empty `.ok/` is leaked state                                                                                                   |
-| D4  | 2026-05-01 | P    | Hub docs (`INDEX.md`, `README.md`) get no special status                                                                     | Mechanism stands on its own                                                                                                    |
-| D5  | 2026-05-01 | T    | No templating engine in v1 — body-and-merge only                                                                             | Simplest thing; agents reason about variable content; defer engine until demand emerges                                        |
-| D6  | 2026-05-01 | T    | Tags originate from templates at create time, not from cascade. Cascade rule for all keys = simple last-wins / replace       | Agent picks template; passive cascade doesn't decide tags                                                                      |
-| D7  | 2026-05-01 | T    | `templates_available` aggregates leaf→root walk-up, with optional bounded descent via `depth`                                | Templates are a menu; leaf-first surfaces most-locally-relevant first                                                          |
-| D8  | 2026-05-01 | P    | No reserved names inside `.ok/` beyond the two v1 members                                                                    | Reserving names we don't ship invites cargo-cult                                                                               |
-| D9  | 2026-05-01 | T    | Template is a first-class function argument to `write_document`                                                              | Replaces `cp`-then-edit                                                                                                        |
-| D10 | 2026-05-01 | X    | Supersede NG10 [NEVER] in config-edit-paths SPEC                                                                             | Templates are new; cascade is brittle at scale; folder portability win                                                         |
-| D11 | 2026-05-01 | T    | Reuse `set_folder_rule` (existing tool) — writes nested `.ok/frontmatter.yml`. No `storage:` arg, no legacy split.           | Avoid `update_frontmatter` collision with parked `frontmatter_patch`; one tool, one storage location, no phasing complexity    |
-| D12 | 2026-05-01 | T    | Fix `BUILTIN_SKIP_DIRS` check to walk all path segments (FR-CF1)                                                             | Closes the indexing gap nested `.ok/` would expose; collateral fix for nested `node_modules/...`                               |
-| D13 | 2026-05-01 | T    | `list_documents` accepts `depth: number` (default `1`), mirroring `find -maxdepth`                                           | Agents already know `find` semantics; one parameter covers both "ls this folder" and "find templates anywhere"                 |
-| D14 | 2026-05-01 | P    | Templates SHOULD carry `title` + `description` in frontmatter (soft contract — warning, not error)                           | Powers agent-pick decision; soft warning surfaces convention without blocking                                                  |
-| D15 | 2026-05-01 | T    | New MCP tools `write_template` and `delete_template` for template lifecycle                                                  | No existing tool fits — templates are filesystem-only, not CRDT docs                                                           |
-| D16 | 2026-05-01 | P    | `.ok/` directories hidden from default listings (`ls`, `list_documents`, `find`). Contents surface as structured fields      | Treat `.ok/` as plumbing; eliminate clutter                                                                                    |
-| D17 | 2026-05-01 | T    | `templates_available` entries carry a `scope` field: `"local" \| "inherited" \| "descendant"`                                | Critical for agent pick correctness — prevents picking descendant-scoped template at parent folder                             |
-| D18 | 2026-05-01 | P    | `.ok/` gitignored by default                                                                                                 | Per-machine local agent operating context; users wanting shared templates manually adjust `.gitignore`                         |
-| D19 | 2026-05-01 | X    | No phasing / legacy convergence story. Spec describes destination; implementation cuts over `folders[]` to nested in one PR. | "Ignore legacy stuff — we are actively designing this project" (Tim, 2026-05-01)                                               |
+| #   | Date       | Type | Decision                                                                                                                     | Rationale                                                                                                                                                                                                                                   |
+| --- | ---------- | ---- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | 2026-05-01 | T    | Sparse / opt-in nested `.ok/` directories                                                                                    | Folder-rename portability + reduced merge-conflict surface; templates need a folder-scoped home that single-root can't provide                                                                                                              |
+| D2  | 2026-05-01 | T    | v1 contents bounded to `frontmatter.yml` + `templates/`                                                                      | Avoid kitchen-sink directory; new members are non-breaking adds                                                                                                                                                                             |
+| D3  | 2026-05-01 | T    | Lazy creation, auto-clean when empty                                                                                         | Empty `.ok/` is leaked state                                                                                                                                                                                                                |
+| D4  | 2026-05-01 | P    | Hub docs (`INDEX.md`, `README.md`) get no special status                                                                     | Mechanism stands on its own                                                                                                                                                                                                                 |
+| D5  | 2026-05-01 | T    | No templating engine in v1 — body-and-merge only                                                                             | Simplest thing; agents reason about variable content; defer engine until demand emerges                                                                                                                                                     |
+| D6  | 2026-05-01 | T    | Tags originate from templates at create time, not from cascade. Cascade rule for all keys = simple last-wins / replace       | Agent picks template; passive cascade doesn't decide tags                                                                                                                                                                                   |
+| D7  | 2026-05-01 | T    | `templates_available` aggregates leaf→root walk-up, with optional bounded descent via `depth`                                | Templates are a menu; leaf-first surfaces most-locally-relevant first                                                                                                                                                                       |
+| D8  | 2026-05-01 | P    | No reserved names inside `.ok/` beyond the two v1 members                                                                    | Reserving names we don't ship invites cargo-cult                                                                                                                                                                                            |
+| D9  | 2026-05-01 | T    | Template is a first-class function argument to `write_document`                                                              | Replaces `cp`-then-edit                                                                                                                                                                                                                     |
+| D10 | 2026-05-01 | X    | Supersede NG10 [NEVER] in config-edit-paths SPEC                                                                             | Templates are new; cascade is brittle at scale; folder portability win                                                                                                                                                                      |
+| D11 | 2026-05-01 | T    | Reuse `set_folder_rule` (existing tool) — writes nested `.ok/frontmatter.yml`. No `storage:` arg, no legacy split.           | Avoid `update_frontmatter` collision with parked `frontmatter_patch`; one tool, one storage location, no phasing complexity                                                                                                                 |
+| D12 | 2026-05-01 | T    | Fix `BUILTIN_SKIP_DIRS` check to walk all path segments (FR-CF1)                                                             | Closes the indexing gap nested `.ok/` would expose; collateral fix for nested `node_modules/...`                                                                                                                                            |
+| D13 | 2026-05-01 | T    | `list_documents` accepts `depth: number` (default `1`), mirroring `find -maxdepth`                                           | Agents already know `find` semantics; one parameter covers both "ls this folder" and "find templates anywhere"                                                                                                                              |
+| D14 | 2026-05-01 | P    | Templates SHOULD carry `title` + `description` in frontmatter (soft contract — warning, not error)                           | Powers agent-pick decision; soft warning surfaces convention without blocking                                                                                                                                                               |
+| D15 | 2026-05-01 | T    | New MCP tools `write_template` and `delete_template` for template lifecycle                                                  | No existing tool fits — templates are filesystem-only, not CRDT docs                                                                                                                                                                        |
+| D16 | 2026-05-01 | P    | `.ok/` directories hidden from default listings (`ls`, `list_documents`, `find`). Contents surface as structured fields      | Treat `.ok/` as plumbing; eliminate clutter                                                                                                                                                                                                 |
+| D17 | 2026-05-01 | T    | `templates_available` entries carry a `scope` field: `"local" \| "inherited" \| "descendant"`                                | Critical for agent pick correctness — prevents picking descendant-scoped template at parent folder                                                                                                                                          |
+| D18 | 2026-05-01 | P    | `.ok/` gitignored by default                                                                                                 | Per-machine local agent operating context; users wanting shared templates manually adjust `.gitignore`                                                                                                                                      |
+| D19 | 2026-05-01 | X    | No phasing / legacy convergence story. Spec describes destination; implementation cuts over `folders[]` to nested in one PR. | "Ignore legacy stuff — we are actively designing this project" (Tim, 2026-05-01)                                                                                                                                                            |
+| D20 | 2026-05-01 | X    | Defer JSON Schema validation of frontmatter to v2 (resolves 11.1)                                                            | Obsidian Properties is type-inference, not schema; Notion DB schemas are typed but not filesystem-backed. Defaults + templates handle \~90% of need. Non-breaking to add `schema:` key in v2 when a user actually asks for hard validation. |
 
 ## 14. Functional requirements
 
