@@ -82,7 +82,7 @@ What to log:
 - \`research\` / \`consolidate\` runs (provisional or canonical articles produced)
 - Direct \`write_document\` / \`edit_document\` / renames / deletions outside the three workflow tools
 - Folder restructures (\`ok seed\`, manual reorganization)
-- \`.open-knowledge/config.yml\` changes
+- \`.ok/config.yml\` changes
 
 **Reference docs as markdown links, not bare paths.** Every doc you touched should appear as \`[path/to/doc](./path/to/doc.md)\` so the log shows up in \`get_backlinks\` for those docs. A bare path string (\`Files touched: foo/bar.md\`) does not register in the doc graph — the audit trail compounds only when the log is a real linker.
 

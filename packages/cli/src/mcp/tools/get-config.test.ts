@@ -107,9 +107,9 @@ describe('get_config tool', () => {
 
   test('reflects on-disk config when caller passes a resolver that loads it', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ok-get-config-disk-'));
-    mkdirSync(join(cwd, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(cwd, '.ok'), { recursive: true });
     writeFileSync(
-      join(cwd, '.open-knowledge', 'config.yml'),
+      join(cwd, '.ok', 'config.yml'),
       'mcp:\n  tools:\n    search:\n      maxResults: 100\n',
     );
     // Simulate the resolver pattern (loads on-disk config per cwd).

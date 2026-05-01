@@ -72,7 +72,7 @@ function joinRelative(root: string, path: string): string {
 /**
  * Compute a ScaffoldPlan for the given project. Read-only — performs no writes.
  *
- * Throws `SeedPrerequisiteError` if `.open-knowledge/` is absent — the user
+ * Throws `SeedPrerequisiteError` if `.ok/` is absent — the user
  * must run `ok init` first.
  *
  * @see specs/2026-04-23-ok-seed-scaffold/SPEC.md

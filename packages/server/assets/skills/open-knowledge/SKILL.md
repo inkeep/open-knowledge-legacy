@@ -1,6 +1,6 @@
 ---
 name: open-knowledge
-description: "MUST invoke when the project contains a .open-knowledge/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .open-knowledge/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
+description: "MUST invoke when the project contains a .ok/ directory — before any read or edit of .md / .mdx files, any mcp__open-knowledge__ tool call, and any write_document / edit_document. Skip if no .ok/ — not an Open Knowledge project. Carries preview-attach (open preview browser at session start; one-shot on `action: attach-preview-once`), STOP rules for native Read/Grep/Edit on in-scope markdown, grounding rules (every factual claim needs a source), standard markdown linking with get_dead_links verification, image sourcing + alt-text + source-citation rules, folder-first organization with config.yml metadata, and the anti-pattern table. Authoritative — MCP server instructions and AGENTS.md overlap but do not substitute for the full attach rule, grounding rule, media rules, dead-link verification, and failure-mode guidance carried only here."
 compatibility: "Claude Code, Claude Desktop, Claude Cowork, Claude.ai web. Requires Open Knowledge MCP server + code execution."
 metadata:
   version: "0.3.0"
@@ -11,7 +11,7 @@ metadata:
 
 Open Knowledge (OK) is a markdown-CRDT collaboration platform exposed via MCP. This skill carries the behavioral rules agents need to use it fluently. Every section is a MUST unless marked otherwise.
 
-> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.open-knowledge/skill-installed-version` to see what's installed locally.
+> Skill version: tracks `@inkeep/open-knowledge-server` package version. Check `cat ~/.ok/skill-installed-version` to see what's installed locally.
 
 ## STOP — native tools on in-scope `.md` / `.mdx`
 
@@ -21,7 +21,7 @@ When this workspace has Open Knowledge MCP configured, do **not** use your host'
 - **`Bash ls` / `Bash find` / `Bash cat` on dirs containing in-scope markdown** — use `exec("ls …")` / `exec("find … -name '*.md'")` / `exec("cat …")` instead. Native returns bare names; `exec` returns frontmatter, backlink counts, and recent activity per child.
 - **Glob patterns that target markdown** (`**/*.md`, any dir known to be markdown-heavy like `specs/**`, `reports/**`, `docs/**`) — use `exec` with `find`, or `list_documents({ dir })`.
 - **Dispatching the Explore / general-purpose subagent for markdown-heavy exploration** — subagents use native `Read` / `Grep` / `Glob` internally and bypass Open Knowledge entirely. Do markdown exploration yourself via `exec` / `search`. Subagents remain appropriate for **source-code** exploration.
-- **Reading `.open-knowledge/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.open-knowledge/` directory is in-scope; treat its contents the same as any other knowledge-base file.
+- **Reading `.ok/AGENTS.md` via native `Read`** — observed failure mode during M1 testing. The `.ok/` directory is in-scope; treat its contents the same as any other knowledge-base file.
 
 Why: native tools skip frontmatter, backlinks, shadow-repo activity, and project git history that OK's tools return for every matched knowledge-base file. `exec` is the primary read surface; it runs read-only bash (`cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` — pipes OK) and returns raw stdout plus enriched metadata per file.
 
@@ -141,21 +141,21 @@ tags:
 ---
 ```
 
-**Folder-level defaults via `.open-knowledge/config.yml` `folders:`.** See next section.
+**Folder-level defaults via `.ok/config.yml` `folders:`.** See next section.
 
-## Follow `.open-knowledge/config.yml` — it is the project contract
+## Follow `.ok/config.yml` — it is the project contract
 
-**Read `.open-knowledge/config.yml` at the start of every session that involves writing to the knowledge base.** It is the single source of truth for:
+**Read `.ok/config.yml` at the start of every session that involves writing to the knowledge base.** It is the single source of truth for:
 
 - **Folder structure intent** — the `folders:` block tells you which folders exist, what each one contains, and what tags its files should carry. Every `exec("ls <folder>")` / `read_document` / `search` call merges these defaults with per-file frontmatter automatically, but you should also read config.yml directly when orienting so you can *place new docs in the right folder* and *write them in the voice + shape the project expects*.
 - **Per-folder instructions** — each `folders:` entry's `description:` field is the canonical place for "what does this folder contain + how should agents work inside it." Treat the description as a binding instruction, not flavor text. If a folder's description says "preserve verbatim, no analysis" (e.g. `external-sources/`), don't synthesize into those files; takeaways belong elsewhere.
-- **Content scope** — `content.dir` / `content.include` / `content.exclude` define which files count as knowledge-base documents. Anything outside those globs is regular source code, not a knowledge-base doc.
+- **Content scope** — `content.dir` defines the content root. `.gitignore` and `.okignore` files (gitignore syntax, nested at any depth) define which paths are excluded from the document index. Anything excluded is regular source code, not a knowledge-base doc.
 
 If a project uses `ok seed` to scaffold the Karpathy three-layer layout (`external-sources/` → `research/` → `articles/`), each folder's description in `config.yml` encodes the layer's rules. Projects with custom layouts put their own discipline in their own descriptions. Either way: **follow what config.yml says.**
 
-## Folder structure + metadata — edit `.open-knowledge/config.yml`
+## Folder structure + metadata — edit `.ok/config.yml`
 
-When you create or restructure folders, you SHOULD add a matching entry to the `folders:` key in `.open-knowledge/config.yml` with a glob + frontmatter defaults. This is how per-folder title/description/tags land without duplicating frontmatter on every child file.
+When you create or restructure folders, you SHOULD add a matching entry to the `folders:` key in `.ok/config.yml` with a glob + frontmatter defaults. This is how per-folder title/description/tags land without duplicating frontmatter on every child file.
 
 Example:
 
@@ -220,7 +220,7 @@ The skill carries the trigger ("KB content changed this turn — go look"). The 
 | Cite a web source you just fetched              | inline `[source](https://...)` because YOU did the fetch (not the user)            | `ingest` it — agent-initiated fetches are not exempt from the closed-loop rule    |
 | Finish a turn that changed KB content           | move on without checking for a log                                                 | check for a `log.md` and follow its contract per Log discipline                    |
 | Add an image                                    | empty alt `![](./x.png)` or generic alt `![image](./x)`                            | meaningful alt + source caption below                                             |
-| Catalog folder contents                         | create `INDEX.md` hub file                                                         | add `folders:` entry in `.open-knowledge/config.yml`                              |
+| Catalog folder contents                         | create `INDEX.md` hub file                                                         | add `folders:` entry in `.ok/config.yml`                              |
 | Fork a skill and expect no stomp                | Edit installed SKILL.md                                                            | `npx skills remove` before CLI upgrade                                            |
 
 ## Workflow tools — when to invoke them
@@ -249,6 +249,6 @@ If `write_document` or `edit_document` returns a "Hocuspocus server is not runni
 
 ## Scope recap
 
-When MCP is connected, the server's `instructions` echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and `.open-knowledge/config.yml` as two views of the same rules. `.gitignore` still applies.
+When MCP is connected, the server's `instructions` echo the **resolved** `content.dir` for this session — treat that and `.ok/config.yml` as two views of the same rules. `.gitignore` and `.okignore` (at the project root and at any folder depth) define exclusions.
 
-Default mental model (no jargon): unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
+Default mental model (no jargon): **every `.md` and `.mdx` under `content.dir`** not excluded by `.gitignore` or `.okignore` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. Read `.okignore` (and any nested `.okignore` files) once per turn to know what's excluded.

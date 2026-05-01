@@ -46,6 +46,7 @@ import {
   parkTiptapEditor,
   setActivityMountList,
   shouldCacheEditor,
+  subscribePoolEviction,
   type TiptapCacheEntry,
   VIEW_COUNT_CACHE_THRESHOLD,
 } from './editor-cache';
@@ -1415,6 +1416,64 @@ describe('setActivityMountList — connect/disconnect transitions', () => {
     });
     setActivityMountList(['cm-only-doc']);
     expect(h.providerSpies.connectCalls).toBe(1);
+  });
+
+  test('pool-resident-but-not-V2-cached doc: demote still disconnects via ProviderPool fallback', () => {
+    // FR3b regression test for ACTIVITY_MOUNT_LIMIT=1 silent violation. When
+    // a doc is pool-open (HocuspocusProvider connected) but the V2 editor
+    // cache rejected it (defer-mount + cache-miss, e.g. PROJECT > BYTES_CACHE_THRESHOLD),
+    // findProvider must fall back to pool.entries — otherwise the demote
+    // path silently skips the disconnect and the provider keeps draining
+    // peer bytes into the local Y.Doc forever.
+    const ydoc = new Y.Doc();
+    const { provider, spies } = makeFakeProvider(ydoc);
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>([
+        ['orphan-doc', { provider }],
+      ]) as ReadonlyMap<string, { provider: HocuspocusProvider }>,
+      onEvict: (_cb: (docName: string) => void) => () => {
+        // no-op: test doesn't exercise pool eviction
+      },
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    try {
+      // Doc is NOT in V2 cache — only in pool.entries.
+      expect(__peekTiptap('orphan-doc')).toBeUndefined();
+      expect(__peekCm('orphan-doc')).toBeUndefined();
+
+      // Promote — provider connect (idempotent on already-connected pool provider).
+      setActivityMountList(['orphan-doc']);
+      expect(spies.connectCalls).toBe(1);
+
+      // Demote — must disconnect via pool fallback. This is the bug guard.
+      setActivityMountList([]);
+      expect(spies.disconnectCalls).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test('subscribePoolEviction unsubscribe clears pool reference: subsequent demote no-ops without pool', () => {
+    // After unsubscribe, the cache must NOT retain a stale pool reference.
+    // Otherwise a later test or subsequent component lifecycle could see
+    // disconnects for providers that have already been torn down.
+    const ydoc = new Y.Doc();
+    const { provider, spies } = makeFakeProvider(ydoc);
+    const fakePool = {
+      entries: new Map<string, { provider: HocuspocusProvider }>([
+        ['orphan-doc', { provider }],
+      ]) as ReadonlyMap<string, { provider: HocuspocusProvider }>,
+      onEvict: (_cb: (docName: string) => void) => () => {},
+    };
+    const unsubscribe = subscribePoolEviction(fakePool);
+    setActivityMountList(['orphan-doc']);
+    expect(spies.connectCalls).toBe(1);
+
+    unsubscribe();
+
+    setActivityMountList([]);
+    // After unsubscribe the pool ref is gone; nothing to find, nothing to disconnect.
+    expect(spies.disconnectCalls).toBe(0);
   });
 });
 

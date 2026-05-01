@@ -3,7 +3,7 @@
  *
  * Three pure pieces, all dependency-injected for bun-test loadability:
  *
- *   1. Marker read/write at `<home>/.open-knowledge/mcp-status.json`. The
+ *   1. Marker read/write at `<home>/.ok/mcp-status.json`. The
  *      user-scoped marker fires the consent dialog exactly once per user per
  *      Mac. Shape is either `{configured: true, configuredAt, editors,
  *      cliPath}` on Add, or `{configured: false, skippedAt}` on Skip. `null`
@@ -60,11 +60,11 @@ import { wrapperPathInBundle } from './cli-install.ts';
 /** Canonical symlink path created by the `Install Command-Line Tools…` flow. */
 export const SYMLINK_OK_PATH = '/usr/local/bin/ok';
 
-const MCP_STATUS_DIR_NAME = '.open-knowledge';
+const MCP_STATUS_DIR_NAME = '.ok';
 const MCP_STATUS_FILE_NAME = 'mcp-status.json';
 
 /**
- * Shape of `<home>/.open-knowledge/mcp-status.json`. Either a confirmed
+ * Shape of `<home>/.ok/mcp-status.json`. Either a confirmed
  * wiring (`configured: true`) or a recorded skip (`configured: false`).
  * Absence of the file means "no prior decision" — distinct from a
  * persisted skip, which suppresses the dialog forever.
@@ -181,7 +181,7 @@ function isValidMarker(value: unknown): value is McpStatusMarker {
 }
 
 /**
- * Write the marker atomically. Creates `<home>/.open-knowledge/` when absent
+ * Write the marker atomically. Creates `<home>/.ok/` when absent
  * so the first-ever first-launch write succeeds on a machine with no prior
  * OK user-level state. Pretty-printed + trailing newline so `cat` output is
  * readable for a user inspecting their own config.
@@ -507,7 +507,7 @@ interface RunMcpWiringOpts {
    * menu's "Configure AI Tool Integrations…" item so a user who
    * previously Skip'd (or wants to add an editor that wasn't installed at
    * consent time) can re-trigger from the GUI instead of hand-deleting
-   * `~/.open-knowledge/mcp-status.json`.
+   * `~/.ok/mcp-status.json`.
    *
    * The other guards stay active even under forceShow: non-darwin still
    * no-ops, dev-mode still no-ops without OK_M6B_FORCE (contamination

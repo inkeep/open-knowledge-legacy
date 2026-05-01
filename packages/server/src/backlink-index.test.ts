@@ -318,7 +318,7 @@ describe('BacklinkIndex', () => {
 
       await index.saveToDisk();
       const cacheRaw = readFileSync(
-        join(projectDir, '.open-knowledge', 'cache', 'main', 'backlinks.json'),
+        join(projectDir, '.ok', 'cache', 'main', 'backlinks.json'),
         'utf-8',
       );
       expect(cacheRaw).toContain('"beta"');

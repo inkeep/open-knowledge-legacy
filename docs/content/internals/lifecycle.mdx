@@ -21,9 +21,9 @@ The underlying design is in `specs/2026-04-16-zero-ceremony-resume/SPEC.md`. Thi
 └──────────────────────────┘        └──────────────────────────┘
 ```
 
-Both processes live in the same `<contentDir>/.open-knowledge/` directory. Neither is a parent of the other — they're independent siblings coordinated through lockfiles and one SIGTERM signal at shutdown time.
+Both processes live in the same `<contentDir>/.ok/` directory. Neither is a parent of the other — they're independent siblings coordinated through lockfiles and one SIGTERM signal at shutdown time.
 
-`ok start` serves the collab surface only. On startup it reads `ui.lock`; if absent or stale it detach-spawns `ok ui` as a sibling (`spawn(..., {detached: true, stdio: ['ignore', 'ignore', <stderr-fd>]}) + child.unref()`), with the spawned child's stderr redirected at the kernel layer to `.open-knowledge/last-spawn-error.log`.
+`ok start` serves the collab surface only. On startup it reads `ui.lock`; if absent or stale it detach-spawns `ok ui` as a sibling (`spawn(..., {detached: true, stdio: ['ignore', 'ignore', <stderr-fd>]}) + child.unref()`), with the spawned child's stderr redirected at the kernel layer to `.ok/last-spawn-error.log`.
 
 `ok ui` serves the static React bundle (`dist/public/`) plus `GET /api/config`, which returns `{collabUrl, previewUrl, port}` read from `server.lock` on every request (no-store). The React app's `fetchApiConfig` hook bootstraps its `HocuspocusProvider` from this endpoint with exponential-backoff retry (2s → 4s → 8s → 15s), falling back to `defaultCollabWsUrl()` on 404 so `bun run dev` still works.
 

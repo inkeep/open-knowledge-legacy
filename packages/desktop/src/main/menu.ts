@@ -10,7 +10,7 @@
  *   - Window: macOS defaults (Minimize / Zoom / Bring to Front)
  *
  * Out of M1 scope (deferred to later milestones):
- *   - Project menu (Save Version, Version History, Reveal .open-knowledge/, Trust Project)
+ *   - Project menu (Save Version, Version History, Reveal .ok/, Trust Project)
  *   - File → Clone from GitHub… (depends on M4/M5)
  *   - View → Graph / Timeline / Backlinks / Outline toggles (renderer surfaces, M2+ polish)
  *   - File → Install Command-Line Tools… (D52, M6 scope)
@@ -78,7 +78,7 @@ export interface MenuDeps {
    * Pass 2 Major #5: re-trigger M6b consent from the File menu. Invoked
    * by "Configure AI Tool Integrations…" — a user who Skip'd first-launch
    * (or added a new editor afterwards) can re-open the dialog without
-   * hand-deleting `~/.open-knowledge/mcp-status.json`. Gated on darwin
+   * hand-deleting `~/.ok/mcp-status.json`. Gated on darwin
    * + `app.isPackaged`; `index.ts` short-circuits in dev + non-darwin so
    * the menu item is hidden there.
    */

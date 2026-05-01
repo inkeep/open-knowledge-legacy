@@ -106,12 +106,12 @@ describe('runInit', () => {
   // Original tests — backward compat (default editors: ['claude'])
   // -----------------------------------------------------------------------
 
-  it('scaffolds .open-knowledge/ and writes a fresh global Claude config', async () => {
+  it('scaffolds .ok/ and writes a fresh global Claude config', async () => {
     const result = await runInitForTest();
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
     // Post-V0-24.2 scaffold: config-only, no content subdirs.
-    // Per SPEC 2026-04-22 (FR2): the internal .open-knowledge/AGENTS.md
+    // Per SPEC 2026-04-22 (FR2): the internal .ok/AGENTS.md
     // README is no longer scaffolded.
     expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
     expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(false);
@@ -265,7 +265,7 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(claudeConfigPath())).toBe(false);
 
-    // But the .open-knowledge/ config scaffold IS created
+    // But the .ok/ config scaffold IS created
     expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
@@ -1051,15 +1051,12 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
       });
       result.preview = preview;
 
       const output = formatInitResult(result, testDir);
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
-      expect(output).toContain('Scope: include=');
       expect(output).toContain('Re-check anytime: open-knowledge preview');
     });
 
@@ -1079,8 +1076,6 @@ describe('runInit', () => {
         totalCount: 0,
         sample: [],
         contentDir: testDir,
-        include: ['**/*.md'],
-        exclude: [],
         warnings: [],
       };
 
@@ -1125,8 +1120,6 @@ describe('runInit', () => {
       const preview = previewContent({
         projectDir: testDir,
         contentDir,
-        include: config.content.include,
-        exclude: config.content.exclude,
       });
       result.preview = preview;
 
@@ -1594,7 +1587,7 @@ describe('writeUserMcpConfigs', () => {
     });
   });
 
-  it('does NOT create .git, AGENTS.md, .open-knowledge, or launch.json under the fake HOME', async () => {
+  it('does NOT create .git, AGENTS.md, .ok, or launch.json under the fake HOME', async () => {
     await writeUserMcpConfigs({
       editors: ['claude', 'cursor', 'vscode'],
       cliPath: CLI_PATH,

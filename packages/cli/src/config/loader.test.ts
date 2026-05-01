@@ -8,7 +8,7 @@ let testDir: string;
 let fakeHome: string;
 
 // Stub node:os.homedir() before importing the loader so Layer 1 (user-global
-// config) doesn't read the real `~/.open-knowledge/config.yml` and pollute
+// config) doesn't read the real `~/.ok/config.yml` and pollute
 // every test that asserts on `sources`. Bun caches the resolved homedir on
 // first call, so mutating `process.env.HOME` in beforeEach is too late.
 await mock.module('node:os', () => {
@@ -57,9 +57,8 @@ describe('loadConfig', () => {
     // sources
     expect(sources).toHaveLength(0);
 
-    // content globs
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual([]);
+    // content
+    expect(config.content.dir).toBe('.');
 
     // server — host has a default; port is NOT a schema field per D29
     expect(config.server.host).toBe('localhost');
@@ -78,7 +77,7 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
 
     expect(config.server.host).toBe('localhost');
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.content.dir).toBe('.');
     expect(config.mcp.autoStart).toBe(true);
   });
 
@@ -86,8 +85,7 @@ describe('loadConfig', () => {
     writeWorkspaceConfig(`
 # This is a fully commented config
 # content:
-#   include:
-#     - "**/*.md"
+#   dir: .
 # server:
 #   host: localhost
 `);
@@ -96,7 +94,7 @@ describe('loadConfig', () => {
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
     expect(config.server.host).toBe('localhost');
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.content.dir).toBe('.');
   });
 
   test('stale dropped fields (sync.*, persistence.debounceMs, server.port) load via loose-mode (D34)', () => {
@@ -129,7 +127,7 @@ describe('loadConfig', () => {
     // sibling default preserved
     expect(config.server.openOnAgentEdit).toBe(false);
     // other sections untouched
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.content.dir).toBe('.');
   });
 
   test('project config overrides multiple sections at once', () => {
@@ -149,19 +147,77 @@ mcp:
     expect(config.mcp.tools.search.maxResults).toBe(50);
   });
 
-  test('custom content include/exclude patterns', () => {
-    writeWorkspaceConfig(`
-content:
+  test('content.include in project config rejects with REMOVED_KEY error directing to .okignore', () => {
+    writeWorkspaceConfig(`content:
   include:
     - "**/*.md"
-    - "**/*.mdx"
+`);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
+    // Source-located header: file:line:col points inside the fixture.
+    expect(caught?.message).toMatch(
+      new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
+    );
+    expect(caught?.message).toContain('content.include');
+    // include-specific redirect: surfaces content.dir as the simpler
+    // subdirectory-scoping alternative AND warns that .okignore is
+    // exclude-only (don't copy include patterns directly).
+    expect(caught?.message).toContain('content.dir');
+    expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('exclude-only');
+  });
+
+  test('content.exclude in project config rejects with REMOVED_KEY error', () => {
+    writeWorkspaceConfig(`content:
   exclude:
     - "**/drafts/**"
 `);
-    const { config } = loadConfig(testDir);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    const expectedPath = resolve(testDir, OK_DIR, 'config.yml');
+    expect(caught?.message).toMatch(
+      new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
+    );
+    expect(caught?.message).toContain('content.exclude');
+    // exclude-specific redirect: 1:1 migration to .okignore.
+    expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('1:1 migration');
+  });
 
-    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.content.exclude).toEqual(['**/drafts/**']);
+  test('content.include AND content.exclude together emit BOTH REMOVED_KEY errors in one pass', () => {
+    writeWorkspaceConfig(`content:
+  include:
+    - "**/*.md"
+  exclude:
+    - "**/drafts/**"
+`);
+    let caught: Error | undefined;
+    try {
+      loadConfig(testDir);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    // Both keys should appear in the error message — no two-trip fix cycle
+    // where the user fixes include, restarts, then sees exclude as a fresh
+    // error.
+    expect(caught?.message).toContain('content.include');
+    expect(caught?.message).toContain('content.exclude');
+    // Each key carries its own redirect (include → content.dir + exclude-only;
+    // exclude → 1:1 migration).
+    expect(caught?.message).toContain('content.dir');
+    expect(caught?.message).toContain('1:1 migration');
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
@@ -187,11 +243,6 @@ content:
 
   test('negative mcp.tools.search.maxResults throws', () => {
     writeWorkspaceConfig('mcp:\n  tools:\n    search:\n      maxResults: -1\n');
-    expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
-  });
-
-  test('empty include array throws', () => {
-    writeWorkspaceConfig('content:\n  include: []\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 

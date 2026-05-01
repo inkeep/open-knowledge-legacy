@@ -22,10 +22,10 @@
 #   1. Runs `bun run build` from repo root (turbo-cached; no-op when clean).
 #   2. Starts TWO CLI processes on kernel-assigned ports:
 #        a. `open-knowledge start --port 0` — collab server (Hocuspocus +
-#           /api/*). Polls `.open-knowledge/server.lock` for bound port.
+#           /api/*). Polls `.ok/server.lock` for bound port.
 #        b. `open-knowledge ui --port 0` — React asset server + /api/config
 #           proxy. Reads server.lock to derive collab URL for the SPA.
-#           Polls `.open-knowledge/ui.lock` for bound port.
+#           Polls `.ok/ui.lock` for bound port.
 #      Post-2026-04-16 CLI split: `ok start` is collab-only (no static
 #      assets), `ok ui` is the sole server of the React bundle. Playwright
 #      must navigate against the UI port, NOT the collab port.
@@ -90,8 +90,8 @@ require_jq
 REPO_ROOT="$(resolve_repo_root)"
 
 CLI_BIN="$REPO_ROOT/packages/cli/dist/cli.mjs"
-SERVER_LOCK="$REPO_ROOT/.open-knowledge/server.lock"
-UI_LOCK="$REPO_ROOT/.open-knowledge/ui.lock"
+SERVER_LOCK="$REPO_ROOT/.ok/server.lock"
+UI_LOCK="$REPO_ROOT/.ok/ui.lock"
 RESULTS_DIR="$REPO_ROOT/packages/app/tests/perf/results"
 
 # ── 1. Build (turbo-cached) ──────────────────────────────────────────────────

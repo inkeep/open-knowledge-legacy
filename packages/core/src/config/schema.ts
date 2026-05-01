@@ -18,14 +18,12 @@ export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
 export type FolderRule = z.infer<typeof FolderRuleSchema>;
 
 export const ConfigSchema = z.looseObject({
-  // `content.*` is PROJECT-scope. `dir` / `include` / `exclude` define
-  // which files are part of *this* project's knowledge graph; a user-global
-  // override doesn't make sense (each project has its own files, and a
-  // user-level glob would either be ignored or actively wrong when working
-  // across multiple repos). Settings pane hides these on the user tab via
-  // `isFieldVisibleAtScope`; loader rejects them in user YAML with a
-  // source-located error per the existing `preview.baseUrl` precedent.
-  // Supersedes the original 'either' framing per user direction 2026-04-29.
+  // `content.dir` is PROJECT-scope — names the root of the project's
+  // knowledge graph. `content.include` / `content.exclude` were removed:
+  // path rules now live in `.okignore` files (gitignore syntax) at the
+  // project root and at any folder depth. The YAML loader rejects the
+  // removed keys with a source-located REMOVED_KEY error directing the
+  // user to `.okignore`.
   content: z
     .looseObject({
       dir: z
@@ -36,28 +34,9 @@ export const ConfigSchema = z.looseObject({
           defaultScope: 'project',
         })
         .default('.'),
-      include: z
-        .array(z.string())
-        .min(1)
-        .register(fieldRegistry, {
-          scope: 'project',
-          agentSettable: true,
-          defaultScope: 'project',
-        })
-        .default(['**/*.md', '**/*.mdx']),
-      exclude: z
-        .array(z.string())
-        .register(fieldRegistry, {
-          scope: 'project',
-          agentSettable: true,
-          defaultScope: 'project',
-        })
-        .default([]),
     })
     .default({
       dir: '.',
-      include: ['**/*.md', '**/*.mdx'],
-      exclude: [],
     }),
   github: z
     .looseObject({

@@ -20,12 +20,7 @@ describe('ContentFilter', () => {
     test('excludes files matching .gitignore patterns', () => {
       writeFileSync(join(projectDir, '.gitignore'), 'dist/\ntmp/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('dist/output.md')).toBe(true);
       expect(filter.isExcluded('tmp/scratch.md')).toBe(true);
@@ -33,12 +28,7 @@ describe('ContentFilter', () => {
     });
 
     test('excludes .git directory even without .gitignore', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('.git/objects/readme.md')).toBe(true);
     });
@@ -48,12 +38,7 @@ describe('ContentFilter', () => {
       // This matches real git behavior: directory-level ignore blocks all negation.
       writeFileSync(join(projectDir, '.gitignore'), 'logs/*\n!logs/important.md\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('logs/debug.md')).toBe(true);
       expect(filter.isExcluded('logs/important.md')).toBe(false);
@@ -62,121 +47,79 @@ describe('ContentFilter', () => {
     test('handles wildcard patterns in .gitignore', () => {
       writeFileSync(join(projectDir, '.gitignore'), '*.log\nbuild-*\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md', '**/*.log'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
+      // .log is not a supported doc extension; the upstream gate already
+      // excludes it. Filter alone is consulted only with supported docs in
+      // production, but the test asserts that the filter's gitignore matching
+      // doesn't accidentally let it through either.
       expect(filter.isExcluded('error.log')).toBe(true);
       expect(filter.isExcluded('docs/guide.md')).toBe(false);
     });
   });
 
-  describe('config exclude filtering', () => {
-    test('excludes files matching content.exclude patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['vendor/**', 'archive/**'],
-      });
+  describe('.okignore filtering', () => {
+    test('excludes files matching root .okignore patterns', () => {
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n');
 
-      expect(filter.isExcluded('vendor/lib.md')).toBe(true);
-      expect(filter.isExcluded('archive/old.md')).toBe(true);
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('drafts/wip.md')).toBe(true);
+      expect(filter.isExcluded('docs/guide.md')).toBe(false);
+    });
+
+    test('cross-source negation — .okignore !pattern overrides .gitignore exclusion', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'secret.md\n');
+      writeFileSync(join(projectDir, '.okignore'), '!secret.md\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      // .gitignore alone would exclude. The negation in .okignore wins because
+      // both files are loaded into the same `ignore` instance.
+      expect(filter.isExcluded('secret.md')).toBe(false);
+    });
+
+    test('nested .okignore at folder depth applies patterns with correct path prefix', () => {
+      mkdirSync(join(projectDir, 'subdir'), { recursive: true });
+      writeFileSync(join(projectDir, 'subdir', '.okignore'), 'private.md\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('subdir/private.md')).toBe(true);
+      // The nested rule is folder-scoped — root-level same-named file is admitted.
+      expect(filter.isExcluded('private.md')).toBe(false);
+    });
+
+    test('mixed nested .gitignore + .okignore are both honored', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
+      mkdirSync(join(projectDir, 'docs'), { recursive: true });
+      writeFileSync(join(projectDir, 'docs', '.gitignore'), 'build/\n');
+      writeFileSync(join(projectDir, 'docs', '.okignore'), 'wip/\n');
+      mkdirSync(join(projectDir, 'docs', 'build'), { recursive: true });
+      mkdirSync(join(projectDir, 'docs', 'wip'), { recursive: true });
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isExcluded('docs/build/output.md')).toBe(true);
+      expect(filter.isExcluded('docs/wip/draft.md')).toBe(true);
       expect(filter.isExcluded('docs/readme.md')).toBe(false);
     });
 
-    test('config exclude patterns applied after gitignore', () => {
-      // .gitignore negates a path, but config exclude re-excludes it
-      writeFileSync(join(projectDir, '.gitignore'), 'logs/\n!logs/important.md\n');
+    test('malformed lines in .okignore are silently skipped (gitignore parity)', () => {
+      // node-ignore drops invalid patterns silently — same as git itself.
+      writeFileSync(join(projectDir, '.okignore'), '   \n# valid comment\nvalid.md\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['logs/**'],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
-      // Config exclude overrides gitignore negation
-      expect(filter.isExcluded('logs/important.md')).toBe(true);
-      expect(filter.isExcluded('logs/debug.md')).toBe(true);
-    });
-  });
-
-  describe('include pattern matching', () => {
-    test('only includes files matching content.include patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
-
-      expect(filter.isExcluded('readme.md')).toBe(false);
-      expect(filter.isExcluded('docs/guide.md')).toBe(false);
-      expect(filter.isExcluded('script.js')).toBe(true);
-      expect(filter.isExcluded('data.json')).toBe(true);
-    });
-
-    test('supports multiple include patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md', '**/*.txt'],
-        excludePatterns: [],
-      });
-
-      expect(filter.isExcluded('readme.md')).toBe(false);
-      expect(filter.isExcluded('notes.txt')).toBe(false);
-      expect(filter.isExcluded('script.js')).toBe(true);
-    });
-  });
-
-  describe('exclusion supersedes inclusion', () => {
-    test('file matching both include and exclude is excluded', () => {
-      writeFileSync(join(projectDir, '.gitignore'), 'dist/\n');
-
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['vendor/**'],
-      });
-
-      // Matches include (**/*.md) AND gitignore exclude (dist/)
-      expect(filter.isExcluded('dist/output.md')).toBe(true);
-
-      // Matches include (**/*.md) AND config exclude (vendor/**)
-      expect(filter.isExcluded('vendor/readme.md')).toBe(true);
-
-      // Matches include only — not excluded
-      expect(filter.isExcluded('docs/guide.md')).toBe(false);
+      expect(filter.isExcluded('valid.md')).toBe(true);
+      // Filter constructed without crashing; valid line still applies.
+      expect(filter.isExcluded('other.md')).toBe(false);
     });
   });
 
   describe('non-git graceful degradation', () => {
-    test('works with no .gitignore file', () => {
-      // No .gitignore — only config patterns apply
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['archive/**'],
-      });
-
-      expect(filter.isExcluded('docs/guide.md')).toBe(false);
-      expect(filter.isExcluded('archive/old.md')).toBe(true);
-    });
-
-    test('works with no .gitignore and no exclude patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+    test('works with no .gitignore and no .okignore', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('readme.md')).toBe(false);
       expect(filter.isExcluded('docs/guide.md')).toBe(false);
@@ -190,12 +133,7 @@ describe('ContentFilter', () => {
       writeFileSync(join(projectDir, 'subdir', '.gitignore'), 'build/\n');
       mkdirSync(join(projectDir, 'subdir', 'build'), { recursive: true });
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('subdir/build/output.md')).toBe(true);
       expect(filter.isExcluded('subdir/readme.md')).toBe(false);
@@ -206,45 +144,31 @@ describe('ContentFilter', () => {
       mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
       writeFileSync(join(projectDir, 'node_modules', 'pkg', '.gitignore'), 'test/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
-      // node_modules should be excluded by root .gitignore
       expect(filter.isExcluded('node_modules/pkg/readme.md')).toBe(true);
     });
   });
 
   describe('getWatcherIgnoreGlobs', () => {
-    test('returns gitignore and config exclude patterns', () => {
+    test('returns gitignore + okignore patterns, dropping negation/comment lines', () => {
       writeFileSync(join(projectDir, '.gitignore'), 'dist/\ntmp/\n# comment\n!keep\n');
+      writeFileSync(join(projectDir, '.okignore'), 'drafts/\n!important.md\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['vendor/**'],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       const globs = filter.getWatcherIgnoreGlobs();
       expect(globs).toContain('dist/');
       expect(globs).toContain('tmp/');
-      expect(globs).toContain('vendor/**');
+      expect(globs).toContain('drafts/');
       // Should not include negation or comment patterns
       expect(globs).not.toContain('!keep');
+      expect(globs).not.toContain('!important.md');
       expect(globs).not.toContain('# comment');
     });
 
     test('returns empty array when no patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.getWatcherIgnoreGlobs()).toEqual([]);
     });
@@ -254,12 +178,7 @@ describe('ContentFilter', () => {
     test('excludes directories matching gitignore directory patterns (trailing slash)', () => {
       writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\ndist/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isDirExcluded('node_modules')).toBe(true);
       expect(filter.isDirExcluded('dist')).toBe(true);
@@ -267,41 +186,19 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('docs')).toBe(false);
     });
 
-    test('excludes directories matching config exclude patterns', () => {
-      // Pattern 'archive/' excludes the directory itself; 'archive/**' only excludes contents.
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['archive/'],
-      });
+    test('excludes directories matching .okignore patterns', () => {
+      writeFileSync(join(projectDir, '.okignore'), 'archive/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isDirExcluded('archive')).toBe(true);
       expect(filter.isDirExcluded('docs')).toBe(false);
     });
 
-    test('does not apply include patterns to directories', () => {
-      // Directories should not be excluded just because they don't match **/*.md
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
-
-      expect(filter.isDirExcluded('src')).toBe(false);
-      expect(filter.isDirExcluded('docs')).toBe(false);
-    });
-
-    test('excludes built-in skip dirs even without a .gitignore entry', () => {
-      // BUILTIN_SKIP_DIRS prunes package-manager, runtime, and build-output directories
-      // regardless of user config — prevents broken symlinks and avoids walking large trees.
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+    test('excludes built-in skip dirs even without an ignore-file entry', () => {
+      // BUILTIN_SKIP_DIRS prunes package-manager, runtime, build-output, and
+      // per-project state directories regardless of user config.
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // Package managers / runtimes
       expect(filter.isDirExcluded('node_modules')).toBe(true);
@@ -314,8 +211,10 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('.next')).toBe(true);
       expect(filter.isDirExcluded('.turbo')).toBe(true);
       expect(filter.isDirExcluded('coverage')).toBe(true);
-      // VCS
+      // VCS / per-project state
       expect(filter.isDirExcluded('.git')).toBe(true);
+      expect(filter.isDirExcluded('.ok')).toBe(true);
+      expect(filter.isDirExcluded('.ok/cache')).toBe(true);
       // Normal dirs still pass
       expect(filter.isDirExcluded('docs')).toBe(false);
       expect(filter.isDirExcluded('src')).toBe(false);
@@ -332,50 +231,39 @@ describe('ContentFilter', () => {
       writeFileSync(join(nmDir, 'README.md'), '# Pkg\n');
       writeFileSync(join(projectDir, 'docs.md'), '# Docs\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // node_modules was skipped: the .md inside it was NOT counted, so the
       // sibling-asset rule does not apply and its assets remain excluded.
       expect(filter.isExcluded('node_modules/logo.png')).toBe(true);
     });
+
+    test('does not descend into .ok during populateDirCount (BUILTIN_SKIP_DIRS)', () => {
+      // Adding `.ok` to BUILTIN_SKIP_DIRS skips the walker descent entirely,
+      // independent of the committed `.ok/.gitignore` self-ignore. Without
+      // this, tooling that runs against a project with markdown inside `.ok/`
+      // (e.g. seed/starter scaffolding) would falsely admit assets next to
+      // those internal docs.
+      mkdirSync(join(projectDir, '.ok'), { recursive: true });
+      writeFileSync(join(projectDir, '.ok', 'AGENTS.md'), '# Agents\n');
+      writeFileSync(join(projectDir, 'docs.md'), '# Docs\n');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      expect(filter.isDirExcluded('.ok')).toBe(true);
+      // No descent → no dirCount entry for `.ok` → asset stays excluded.
+      expect(filter.isExcluded('.ok/logo.png')).toBe(true);
+    });
   });
 
   describe('reserved system doc names', () => {
-    test('excludes __system__.md regardless of include patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
-
-      // Reserved system doc name is always excluded even though it matches **/*.md
-      expect(filter.isExcluded('__system__.md')).toBe(true);
-    });
-
-    test('excludes __system__.md even when include patterns match it explicitly', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md', '__system__.md'],
-        excludePatterns: [],
-      });
-
+    test('excludes __system__.md', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
       expect(filter.isExcluded('__system__.md')).toBe(true);
     });
 
     test('does not exclude files with __system__ in non-identity positions', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // Only the exact reserved docName ('__system__') is blocked — subfolders / lookalikes pass
       expect(filter.isExcluded('notes/__system__-notes.md')).toBe(false);
@@ -389,25 +277,15 @@ describe('ContentFilter', () => {
     // named after the project or user-global config docs. Sidecars or
     // accidental collisions on those names would otherwise round-trip into
     // the user's content tree.
-    test('excludes __config__/project.md regardless of include patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+    test('excludes __config__/project.md', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('__config__/project.md')).toBe(true);
       expect(filter.isExcluded('__config__/project.mdx')).toBe(true);
     });
 
-    test('excludes __user__/config.yml.md regardless of include patterns', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+    test('excludes __user__/config.yml.md', () => {
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // After stripDocExtension, '__user__/config.yml.md' → '__user__/config.yml'
       // which is the reserved doc name for the user-global config.
@@ -416,12 +294,7 @@ describe('ContentFilter', () => {
     });
 
     test('does not exclude unrelated files in __config__/ or __user__/ paths', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // Only the exact reserved synthetic names are blocked.
       expect(filter.isExcluded('__config__/something-else.md')).toBe(false);
@@ -436,15 +309,10 @@ describe('ContentFilter', () => {
       mkdirSync(contentDir);
       writeFileSync(join(projectDir, '.gitignore'), 'dist/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir });
 
-      // Paths are relative to contentDir for include matching,
-      // but relative to projectDir for gitignore matching.
+      // Paths are relative to contentDir for the filter API,
+      // but mapped to projectDir-relative for the ignore lookup.
       expect(filter.isExcluded('readme.md')).toBe(false);
     });
 
@@ -455,31 +323,10 @@ describe('ContentFilter', () => {
       // Root .gitignore excludes docs/generated/ (project-relative)
       writeFileSync(join(projectDir, '.gitignore'), 'docs/generated/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir });
 
       // Path is contentDir-relative; filter maps to project-relative for gitignore
       expect(filter.isExcluded('generated/output.md')).toBe(true);
-      expect(filter.isExcluded('guide.md')).toBe(false);
-    });
-
-    test('config exclude patterns work with split dirs', () => {
-      const contentDir = join(projectDir, 'docs');
-      mkdirSync(contentDir);
-
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['archive/**'],
-      });
-
-      // Config exclude is contentDir-relative, prefixed internally to docs/archive/**
-      expect(filter.isExcluded('archive/old.md')).toBe(true);
       expect(filter.isExcluded('guide.md')).toBe(false);
     });
 
@@ -489,12 +336,18 @@ describe('ContentFilter', () => {
       // .gitignore at contentDir root (not project root)
       writeFileSync(join(contentDir, '.gitignore'), 'drafts/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir });
+
+      expect(filter.isExcluded('drafts/wip.md')).toBe(true);
+      expect(filter.isExcluded('guide.md')).toBe(false);
+    });
+
+    test('loads .okignore at contentDir root when contentDir != projectDir', () => {
+      const contentDir = join(projectDir, 'docs');
+      mkdirSync(contentDir);
+      writeFileSync(join(contentDir, '.okignore'), 'drafts/\n');
+
+      const filter = createContentFilter({ projectDir, contentDir });
 
       expect(filter.isExcluded('drafts/wip.md')).toBe(true);
       expect(filter.isExcluded('guide.md')).toBe(false);
@@ -505,12 +358,7 @@ describe('ContentFilter', () => {
       mkdirSync(contentDir);
       writeFileSync(join(projectDir, '.gitignore'), 'docs/generated/\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir });
 
       expect(filter.isDirExcluded('generated')).toBe(true);
       expect(filter.isDirExcluded('tutorials')).toBe(false);
@@ -523,12 +371,7 @@ describe('ContentFilter', () => {
         writeFileSync(join(externalContentDir, 'readme.md'), '# Hello');
         writeFileSync(join(externalContentDir, 'sub', 'nested.md'), '# Nested');
 
-        const filter = createContentFilter({
-          projectDir,
-          contentDir: externalContentDir,
-          includePatterns: ['**/*.md'],
-          excludePatterns: [],
-        });
+        const filter = createContentFilter({ projectDir, contentDir: externalContentDir });
 
         expect(filter.isExcluded('readme.md')).toBe(false);
         expect(filter.isExcluded('sub/nested.md')).toBe(false);
@@ -544,12 +387,7 @@ describe('ContentFilter', () => {
       mkdirSync(join(projectDir, 'docs'));
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
       expect(filter.isExcluded('docs/photo.jpg')).toBe(false);
@@ -562,12 +400,7 @@ describe('ContentFilter', () => {
       mkdirSync(join(projectDir, 'docs'));
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/diagram.svg')).toBe(false);
     });
@@ -575,12 +408,7 @@ describe('ContentFilter', () => {
     test('excludes allowlisted asset when no sibling .md exists', () => {
       mkdirSync(join(projectDir, 'assets'));
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('assets/foo.png')).toBe(true);
     });
@@ -589,16 +417,10 @@ describe('ContentFilter', () => {
       mkdirSync(join(projectDir, 'docs'));
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // Script extensions and arbitrary unknown types stay excluded even when
-      // a sibling .md is present. `.js` is in EXECUTABLE_BLOCKLIST territory;
-      // `.xyz`/`.unknown` cover the novel-extension default-exclude path.
+      // a sibling .md is present.
       expect(filter.isExcluded('docs/script.js')).toBe(true);
       expect(filter.isExcluded('docs/arbitrary.xyz')).toBe(true);
       expect(filter.isExcluded('docs/other.unknown')).toBe(true);
@@ -606,22 +428,12 @@ describe('ContentFilter', () => {
 
     test('includes widened user-drop extensions when sibling .md exists (2026-04-24b)', () => {
       // SPEC §Post-finalization amendment (2026-04-24b) — D-M accept-all
-      // alignment. Prior to this amendment the content filter's step-3
-      // sibling-asset rule gated by a narrow `ASSET_EXTENSIONS` set of
-      // ~18 extensions, causing common user-drop types (.m4v video, .docx
-      // office, .csv tabular, etc.) to fall through to Vite's SPA fallback
-      // as text/html. This test pins the widened set against the filter's
-      // admission behavior — one representative from each user-visible
-      // class (video, audio, office-doc, tabular, text).
+      // alignment. Pins the widened ASSET_EXTENSIONS set against the filter's
+      // admission behavior — one representative from each user-visible class.
       mkdirSync(join(projectDir, 'docs'));
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       // Video (the bug reporter's file type)
       expect(filter.isExcluded('docs/clip.m4v')).toBe(false);
@@ -638,16 +450,12 @@ describe('ContentFilter', () => {
       expect(filter.isExcluded('docs/config.json')).toBe(false);
     });
 
-    test('exclude takes precedence over sibling-asset rule', () => {
+    test('.okignore exclusion takes precedence over sibling-asset rule', () => {
       mkdirSync(join(projectDir, 'docs'));
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+      writeFileSync(join(projectDir, '.okignore'), '**/*.png\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: ['**/*.png'],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
     });
@@ -657,23 +465,13 @@ describe('ContentFilter', () => {
       writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
       writeFileSync(join(projectDir, '.gitignore'), '*.png\n');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
     });
 
     test('refcount lifecycle: increment then decrement returns to original', () => {
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
 
@@ -689,12 +487,7 @@ describe('ContentFilter', () => {
       writeFileSync(join(projectDir, 'docs', 'a.md'), '# A');
       writeFileSync(join(projectDir, 'docs', 'b.md'), '# B');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('docs/img.png')).toBe(false);
 
@@ -708,12 +501,7 @@ describe('ContentFilter', () => {
     test('sibling-asset rule works for root-level files', () => {
       writeFileSync(join(projectDir, 'readme.md'), '# README');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir: projectDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
 
       expect(filter.isExcluded('logo.png')).toBe(false);
     });
@@ -723,15 +511,39 @@ describe('ContentFilter', () => {
       mkdirSync(join(contentDir, 'docs'), { recursive: true });
       writeFileSync(join(contentDir, 'docs', 'guide.md'), '# Guide');
 
-      const filter = createContentFilter({
-        projectDir,
-        contentDir,
-        includePatterns: ['**/*.md'],
-        excludePatterns: [],
-      });
+      const filter = createContentFilter({ projectDir, contentDir });
 
       expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
       expect(filter.isExcluded('docs/script.js')).toBe(true);
+    });
+  });
+
+  describe('FR15 default-shape regression', () => {
+    test('default project (gitignore + no .okignore + no content.* keys) indexes the same .md/.mdx set as before the rename', () => {
+      // FR15 verification: a project with only .gitignore + no custom config
+      // and no .okignore must index the exact same files as the pre-rename
+      // baseline did with `content.include = ['**/*.md', '**/*.mdx']` and
+      // empty `content.exclude`.
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\n');
+      mkdirSync(join(projectDir, 'docs'), { recursive: true });
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+      writeFileSync(join(projectDir, 'docs', 'overview.mdx'), '# Overview');
+      mkdirSync(join(projectDir, 'node_modules', 'pkg'), { recursive: true });
+      writeFileSync(join(projectDir, 'node_modules', 'pkg', 'README.md'), '# Pkg');
+      writeFileSync(join(projectDir, 'README.md'), '# Project');
+      writeFileSync(join(projectDir, 'script.ts'), 'export {}');
+
+      const filter = createContentFilter({ projectDir, contentDir: projectDir });
+
+      // Indexed: README.md, docs/guide.md, docs/overview.mdx
+      expect(filter.isExcluded('README.md')).toBe(false);
+      expect(filter.isExcluded('docs/guide.md')).toBe(false);
+      expect(filter.isExcluded('docs/overview.mdx')).toBe(false);
+
+      // Excluded: node_modules content (gitignore + BUILTIN_SKIP_DIRS), .ts
+      // (not a supported doc), nothing else.
+      expect(filter.isExcluded('node_modules/pkg/README.md')).toBe(true);
+      expect(filter.isExcluded('script.ts')).toBe(true);
     });
   });
 });

@@ -16,12 +16,12 @@ describe('shouldRefuseMcpStart', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  test('refuses when no port + no .open-knowledge/', () => {
+  test('refuses when no port + no .ok/', () => {
     expect(shouldRefuseMcpStart(tmpDir, undefined)).toBe(true);
   });
 
-  test('allows when .open-knowledge/ exists (the `ok init` marker)', () => {
-    mkdirSync(resolve(tmpDir, '.open-knowledge'), { recursive: true });
+  test('allows when .ok/ exists (the `ok init` marker)', () => {
+    mkdirSync(resolve(tmpDir, '.ok'), { recursive: true });
     expect(shouldRefuseMcpStart(tmpDir, undefined)).toBe(false);
   });
 

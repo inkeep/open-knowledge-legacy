@@ -51,8 +51,6 @@ async function startHarness(contentDir: string): Promise<Harness> {
   const contentFilter = createContentFilter({
     projectDir: contentDir,
     contentDir,
-    includePatterns: ['**/*.md'],
-    excludePatterns: [],
   });
   const middleware = createAssetServeMiddleware({
     contentFilter,

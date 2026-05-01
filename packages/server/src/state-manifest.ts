@@ -1,7 +1,7 @@
 /**
  * Durable per-project state schema manifest.
  *
- * `.open-knowledge/state.json` answers one question: *can the current binary
+ * `.ok/state.json` answers one question: *can the current binary
  * read this project's on-disk state at all?* A version-mismatching runtime
  * must refuse to boot rather than silently misinterpret durable state.
  *
@@ -14,10 +14,10 @@
  *   migration in this scope.
  * - Manifest present + corrupt → throw. NG8 — corrupt is NOT treated as
  *   absent; that would silently overwrite real durable state.
- * - Manifest absent + no `.open-knowledge/` AND no `.git/open-knowledge/`
+ * - Manifest absent + no `.ok/` AND no `.git/ok/`
  *   shadow repo → genuinely fresh project. Write the manifest at the
  *   current `STATE_SCHEMA_VERSION`.
- * - Manifest absent + any pre-existing state (`.open-knowledge/` directory
+ * - Manifest absent + any pre-existing state (`.ok/` directory
  *   OR a shadow repo) → adopting a pre-versioned project. Write the manifest
  *   at `stateSchemaVersion = 0` (pre-manifest sentinel) with `createdBy.adoptedAt`
  *   set, log a one-time adoption warning. v1 binaries can read schema-0 state
@@ -35,7 +35,7 @@ import { PROTOCOL_VERSION, RUNTIME_VERSION, STATE_SCHEMA_VERSION } from './versi
 
 /**
  * Filename for the state manifest, relative to the lock dir
- * (`<contentDir>/.open-knowledge/`).
+ * (`<contentDir>/.ok/`).
  */
 export const STATE_MANIFEST_FILENAME = 'state.json';
 
@@ -59,19 +59,19 @@ export type ProjectShape = 'fresh' | 'adopt';
  * Determine whether the project is genuinely fresh (no prior state) or has
  * pre-existing on-disk state that pre-dates the manifest scheme.
  *
- * Adoption is signaled ONLY by the shadow repo at `<projectRoot>/.git/open-knowledge/`.
- * The `<contentDir>/.open-knowledge/` directory is NOT a reliable signal — it
+ * Adoption is signaled ONLY by the shadow repo at `<projectRoot>/.git/ok/`.
+ * The `<contentDir>/.ok/` directory is NOT a reliable signal — it
  * can exist for reasons that don't imply pre-version-field durable state:
  *
  * - `initContent` (CLI's `ok start` autoInitFn) creates it during boot before
  *   the manifest check runs.
  * - `acquireServerLock` creates it when writing the lock file.
- * - A prior boot crash mid-init may have left an empty `.open-knowledge/`.
+ * - A prior boot crash mid-init may have left an empty `.ok/`.
  *
  * If we treated lockDir-existence as adoption, every fresh project would be
  * misclassified as adopted and stamp schema-0 instead of the current schema.
  * The shadow repo is durable, version-relevant state — the actual artifact
- * future binaries might not be able to read. The `.open-knowledge/` directory
+ * future binaries might not be able to read. The `.ok/` directory
  * contents (`config.yml`, sync caches) are version-independent or cheap to
  * regenerate. The lockDir parameter is retained for API stability and future
  * use (e.g., a more specific signal once we have one).
@@ -194,7 +194,7 @@ export function writeStateManifest(lockDir: string, record: StateManifestRecord)
 
 interface AssertCompatibleStateManifestOptions {
   lockDir: string;
-  /** Path to the project's shadow repo (`.git/open-knowledge/`). Used for adopt detection. */
+  /** Path to the project's shadow repo (`.git/ok/`). Used for adopt detection. */
   shadowRepoDir: string;
   /** Override the current binary's STATE_SCHEMA_VERSION — primarily for tests. */
   currentStateSchemaVersion?: number;

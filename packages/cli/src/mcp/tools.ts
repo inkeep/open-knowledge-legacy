@@ -9,7 +9,7 @@
  *
  * - **Read tools (`read_document`, `list_documents`, `search_documents`)** —
  *   D2-rejected. Agents use their native `Read`, `Grep`, and `Glob` tools
- *   directly against files in `.open-knowledge/`. Proxying reads through MCP
+ *   directly against files in `.ok/`. Proxying reads through MCP
  *   adds latency, hides the filesystem, and duplicates capability the agent
  *   already has. Do not revive without revisiting D2.
  *

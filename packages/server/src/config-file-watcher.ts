@@ -1,5 +1,5 @@
 /**
- * Chokidar single-file watcher for `.open-knowledge/config.yml` paths.
+ * Chokidar single-file watcher for `.ok/config.yml` paths.
  *
  * Watches a single absolute path. On `add` or `change`, reads the file and
  * fires `onChange(content)`. The caller wires `onChange` to
@@ -61,7 +61,7 @@ export async function startConfigFileWatcher(
   // isn't the file we care about.
   const watchDir = dirname(absPath);
   // mkdir -p the parent so chokidar has something to watch even when
-  // the user-global `~/.open-knowledge/` directory hasn't been created
+  // the user-global `~/.ok/` directory hasn't been created
   // yet. Cheap, idempotent, mode 0o755 (default).
   try {
     tracedMkdirSync(watchDir, { recursive: true });

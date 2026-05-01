@@ -644,7 +644,7 @@ describe('file operation API routes', () => {
     });
   });
 
-  test('managed rename rejects .open-knowledge as a destination (reserved directory)', async () => {
+  test('managed rename rejects .ok as a destination (reserved directory)', async () => {
     const dir = setupTmpDir();
     mkdirSync(join(dir, 'project'));
     writeFileSync(join(dir, 'project', 'index.md'), '# Index\n', 'utf-8');
@@ -656,7 +656,7 @@ describe('file operation API routes', () => {
       {
         kind: 'folder',
         fromPath: 'project',
-        toPath: '.open-knowledge',
+        toPath: '.ok',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -664,11 +664,11 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toEqual({
       ok: false,
-      error: '.open-knowledge is a reserved directory',
+      error: '.ok is a reserved directory',
     });
   });
 
-  test('managed rename rejects .open-knowledge subpath as a destination', async () => {
+  test('managed rename rejects .ok subpath as a destination', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
 
@@ -679,7 +679,7 @@ describe('file operation API routes', () => {
       {
         kind: 'file',
         fromPath: 'notes',
-        toPath: '.open-knowledge/secret',
+        toPath: '.ok/secret',
       },
       { backlinkIndex: buildBacklinkIndex(dir) },
     );
@@ -687,7 +687,7 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.body)).toEqual({
       ok: false,
-      error: '.open-knowledge is a reserved directory',
+      error: '.ok is a reserved directory',
     });
   });
 

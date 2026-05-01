@@ -88,7 +88,7 @@ describe('Managed rename — crash recovery via boot-time initAsync (QA-006)', (
         { docName: 'docs/index', content: preRenameDocsIndex },
       ],
     });
-    mkdirSync(join(contentDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(contentDir, '.ok'), { recursive: true });
     writeManagedRenameJournal(contentDir, journal);
 
     // Sanity preconditions — the staged "mid-rename" state is what we expect.
@@ -155,7 +155,7 @@ describe('Managed rename — crash recovery via boot-time initAsync (QA-006)', (
       affectedDocs: [{ from: 'articles/a', to: 'essays/a' }],
       snapshots: [{ docName: 'articles/a', content: '# A\n' }],
     });
-    mkdirSync(join(contentDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(contentDir, '.ok'), { recursive: true });
     writeManagedRenameJournal(contentDir, journal);
 
     const server = await createRestartableServer({ contentDir });

@@ -77,4 +77,4 @@ packages/core/tests/perf/results.*.json
 /sarah-testing.md
 
 # Open Knowledge per-machine runtime state self-ignores via
-# .open-knowledge/.gitignore. No OK-internal paths belong here.
+# .ok/.gitignore. No OK-internal paths belong here.

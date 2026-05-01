@@ -6,7 +6,7 @@
  * lock file at `<lockDir>/server.lock` contains JSON metadata used for
  * stale detection and for MCP port discovery.
  *
- * `lockDir` is `<contentDir>/.open-knowledge` by convention.
+ * `lockDir` is `<contentDir>/.ok` by convention.
  *
  * Sibling of `shadow-lock.ts` (guards a shadow repo) and `ui-lock.ts`
  * (guards the UI process). All three share `process-lock.ts` for the lock

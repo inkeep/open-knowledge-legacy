@@ -18,7 +18,7 @@ let lockPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-server-lock-test-'));
-  lockDir = resolve(tmpDir, '.open-knowledge');
+  lockDir = resolve(tmpDir, '.ok');
   lockPath = resolve(lockDir, 'server.lock');
 });
 

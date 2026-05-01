@@ -336,8 +336,6 @@ describe('classifyEvents', () => {
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      includePatterns: ['**/*.md'],
-      excludePatterns: [],
     });
 
     // Create files in both included and excluded dirs
@@ -415,8 +413,6 @@ describe('startWatcher file index', () => {
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      includePatterns: ['**/*.md'],
-      excludePatterns: [],
     });
 
     const handle = await startWatcher(contentDir, async () => {}, filter);
@@ -430,16 +426,15 @@ describe('startWatcher file index', () => {
     }
   });
 
-  test('file index excludes files matching config exclude patterns', async () => {
+  test('file index excludes files matching .okignore patterns', async () => {
     mkdirSync(resolve(contentDir, 'archive'), { recursive: true });
     writeFileSync(resolve(contentDir, 'readme.md'), '# README\n');
     writeFileSync(resolve(contentDir, 'archive', 'old.md'), '# Old\n');
+    writeFileSync(resolve(tmpDir, '.okignore'), 'content/archive/\n');
 
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      includePatterns: ['**/*.md'],
-      excludePatterns: ['archive/**'],
     });
 
     const handle = await startWatcher(contentDir, async () => {}, filter);
@@ -549,8 +544,6 @@ describe('file-watcher ContentFilter refcount hooks', () => {
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      includePatterns: ['**/*.md'],
-      excludePatterns: [],
     });
 
     // Before rename: old-dir has an .md, so assets there should be included
@@ -612,8 +605,6 @@ describe('file-watcher ContentFilter refcount hooks', () => {
       contentDir,
       // No explicit asset include — admission depends entirely on the
       // sibling-asset fallback rule, which is the path the bug lives on.
-      includePatterns: ['**/*.md'],
-      excludePatterns: [],
     });
 
     // Pre-condition: dirCount for `fresh/` is 0 → asset is excluded.
@@ -751,8 +742,6 @@ describe('startWatcher symlink handling', () => {
     const filter = createContentFilter({
       projectDir: tmpDir,
       contentDir,
-      includePatterns: ['**/*.md'],
-      excludePatterns: [],
     });
 
     const handle = await startWatcher(contentDir, async () => {}, filter);

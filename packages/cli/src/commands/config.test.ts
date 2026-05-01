@@ -49,14 +49,14 @@ describe('runValidate', () => {
       loadConfigFn: () =>
         ({
           config: {} as never,
-          sources: ['/home/test/.open-knowledge/config.yml'],
+          sources: ['/home/test/.ok/config.yml'],
         }) as never,
       log: (msg) => stderr.push(msg),
       error: (msg) => stderr.push(msg),
     });
     expect(outcome.ok).toBe(true);
     expect(stderr.some((m) => m.includes('✓ Configuration valid'))).toBe(true);
-    expect(stderr.some((m) => m.includes('/home/test/.open-knowledge/config.yml'))).toBe(true);
+    expect(stderr.some((m) => m.includes('/home/test/.ok/config.yml'))).toBe(true);
     expect(stdout).toEqual([]);
   });
 
@@ -74,7 +74,7 @@ describe('runValidate', () => {
     const stderr: string[] = [];
     const outcome = runValidate({
       loadConfigFn: () => {
-        throw new Error('Invalid configuration at /tmp/.open-knowledge/config.yml:7:18\n  ...');
+        throw new Error('Invalid configuration at /tmp/.ok/config.yml:7:18\n  ...');
       },
       error: (msg) => stderr.push(msg),
     });
@@ -186,6 +186,26 @@ describe('runMigrate', () => {
     expect(wsOutcome?.removed.sort()).toEqual(
       ['persistence.debounceMs', 'persistence.maxDebounceMs', 'server.port'].sort(),
     );
+  });
+
+  test('removes content.{include,exclude} leaf fields (project)', async () => {
+    const wsPath = projectConfigPath(project.cwd);
+    const original = `content:\n  dir: .\n  include:\n    - "**/*.md"\n  exclude:\n    - drafts/**\n`;
+    writeConfigYaml(wsPath, original);
+    const outcome = await runMigrate({
+      cwd: project.cwd,
+      scope: 'project',
+      homedirOverride: project.userHome,
+      log: () => {},
+    });
+    expect(outcome.ok).toBe(true);
+    const migrated = readFileSync(wsPath, 'utf-8');
+    expect(migrated).not.toContain('include:');
+    expect(migrated).not.toContain('exclude:');
+    // Sibling field preserved
+    expect(migrated).toContain('dir: .');
+    const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
+    expect(wsOutcome?.removed.sort()).toEqual(['content.exclude', 'content.include'].sort());
   });
 
   test('idempotent — second run is a no-op', async () => {
@@ -348,6 +368,8 @@ describe('DROPPED_FIELD_PATHS', () => {
       ['persistence', 'debounceMs'],
       ['persistence', 'maxDebounceMs'],
       ['server', 'port'],
+      ['content', 'include'],
+      ['content', 'exclude'],
     ]);
   });
 });

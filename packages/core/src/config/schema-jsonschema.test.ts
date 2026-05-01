@@ -35,18 +35,13 @@ interface Fixture {
 const FIXTURES: Fixture[] = [
   { name: 'empty object — defaults fill in', input: {}, shouldAccept: true },
   {
-    name: 'full content section',
-    input: { content: { dir: '.', include: ['**/*.md'], exclude: [] } },
+    name: 'content section with dir set',
+    input: { content: { dir: 'docs' } },
     shouldAccept: true,
   },
   {
-    name: 'partial content (only include)',
-    input: { content: { include: ['**/*.md'] } },
-    shouldAccept: true,
-  },
-  {
-    name: 'empty include array — min(1) fails',
-    input: { content: { include: [] } },
+    name: 'content with non-string dir rejected',
+    input: { content: { dir: 12345 } },
     shouldAccept: false,
   },
   { name: 'invalid host (number)', input: { server: { host: 12345 } }, shouldAccept: false },

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import {
+  buildAndOpenSkill,
   type InstallUserSkillOptions,
   installUserSkill,
   type SkillInstallLogger,
@@ -110,7 +111,7 @@ function freshHome(): string {
   return mkdtempSync(join(tmpdir(), 'ok-skill-install-'));
 }
 
-const SIDECAR_REL = ['.open-knowledge', 'skill-installed-version'] as const;
+const SIDECAR_REL = ['.ok', 'skill-installed-version'] as const;
 function sidecarPathFor(home: string): string {
   return join(home, ...SIDECAR_REL);
 }
@@ -132,7 +133,7 @@ function writeCentralSkill(home: string): void {
 }
 
 function writeSidecar(home: string, content: string): void {
-  const dir = join(home, '.open-knowledge');
+  const dir = join(home, '.ok');
   mkdirSync(dir, { recursive: true });
   writeFileSync(sidecarPathFor(home), content, 'utf-8');
 }
@@ -346,5 +347,123 @@ describe('installUserSkill — HOME propagates to subprocess env', () => {
     await installUserSkill(opts);
 
     expect((calls[0]?.opts.env as NodeJS.ProcessEnv)?.HOME).toBe(home);
+  });
+});
+
+// ─── buildAndOpenSkill ─────────────────────────────────────────────────────
+//
+// Shared primitive that produces `openknowledge.skill` and hands it to the OS
+// file association. Consumed by the `ok install-skill` CLI, the
+// `POST /api/install-skill` endpoint, and (in principle) the Electron skill
+// bridge — every test here protects all three call sites at once.
+
+describe('buildAndOpenSkill', () => {
+  function makeFakeSpawn(capture: {
+    command?: string;
+    args?: readonly string[];
+    threw?: Error;
+  }): SpawnLike {
+    return ((command: string, args: readonly string[]) => {
+      if (capture.threw) throw capture.threw;
+      capture.command = command;
+      capture.args = args;
+      return { unref: () => {} } as ReturnType<SpawnLike>;
+    }) as SpawnLike;
+  }
+
+  test('--no-open: builds the file and returns status="built" without spawning', async () => {
+    const home = freshHome();
+    const capture: { command?: string; args?: readonly string[] } = {};
+
+    const result = await buildAndOpenSkill({
+      out: join(home, 'no-open.skill'),
+      noOpen: true,
+      spawnFn: makeFakeSpawn(capture),
+    });
+
+    expect(result.status).toBe('built');
+    expect(result.outputPath).toBe(join(home, 'no-open.skill'));
+    expect(capture.command).toBeUndefined();
+    expect(result.handoffError).toBeUndefined();
+  });
+
+  test('darwin: spawns `open <path>` and returns status="installed"', async () => {
+    const home = freshHome();
+    const capture: { command?: string; args?: readonly string[] } = {};
+    const out = join(home, 'darwin.skill');
+
+    const result = await buildAndOpenSkill({
+      out,
+      platformName: 'darwin',
+      spawnFn: makeFakeSpawn(capture),
+    });
+
+    expect(result.status).toBe('installed');
+    expect(capture.command).toBe('open');
+    expect(capture.args).toEqual([out]);
+  });
+
+  test('win32: spawns `cmd /c start "" <path>` and returns status="installed"', async () => {
+    const home = freshHome();
+    const capture: { command?: string; args?: readonly string[] } = {};
+    const out = join(home, 'win32.skill');
+
+    const result = await buildAndOpenSkill({
+      out,
+      platformName: 'win32',
+      spawnFn: makeFakeSpawn(capture),
+    });
+
+    expect(result.status).toBe('installed');
+    expect(capture.command).toBe('cmd');
+    expect(capture.args?.[0]).toBe('/c');
+    expect(capture.args?.[1]).toBe('start');
+    expect(capture.args?.[3]).toBe(out);
+  });
+
+  test('linux: spawns `xdg-open <path>` and returns status="installed"', async () => {
+    const home = freshHome();
+    const capture: { command?: string; args?: readonly string[] } = {};
+
+    const result = await buildAndOpenSkill({
+      out: join(home, 'linux.skill'),
+      platformName: 'linux',
+      spawnFn: makeFakeSpawn(capture),
+    });
+
+    expect(result.status).toBe('installed');
+    expect(capture.command).toBe('xdg-open');
+  });
+
+  test('unsupported platform: status="built" with handoffError reason=unsupported-platform', async () => {
+    const home = freshHome();
+
+    const result = await buildAndOpenSkill({
+      out: join(home, 'aix.skill'),
+      platformName: 'aix' as NodeJS.Platform,
+      spawnFn: makeFakeSpawn({
+        threw: new Error('spawn should not have been called'),
+      }),
+    });
+
+    expect(result.status).toBe('built');
+    expect(result.handoffError?.reason).toBe('unsupported-platform');
+    expect(result.handoffError?.message).toContain("'aix'");
+  });
+
+  test('spawn throws: status="built" with handoffError reason=spawn-error', async () => {
+    const home = freshHome();
+
+    const result = await buildAndOpenSkill({
+      out: join(home, 'spawn-error.skill'),
+      platformName: 'darwin',
+      spawnFn: makeFakeSpawn({ threw: new Error('EACCES: permission denied') }),
+    });
+
+    // Build succeeded; handoff failed soft.
+    expect(result.status).toBe('built');
+    expect(result.handoffError?.reason).toBe('spawn-error');
+    expect(result.handoffError?.message).toContain('EACCES');
+    expect(result.outputPath).toBeDefined();
   });
 });

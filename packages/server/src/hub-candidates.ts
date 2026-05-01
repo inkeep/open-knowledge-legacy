@@ -9,7 +9,7 @@
  *   - At each level, look for: INDEX.md, README.md, REPORT.md, SPEC.md, OR a
  *     file whose basename matches the folder name (e.g. `reports/r1/r1.md`).
  *   - Return up to 3 nearest-first docNames that exist in the file index
- *     (which is already scoped to `content.include`).
+ *     (which is already scoped by ContentFilter).
  */
 
 /**

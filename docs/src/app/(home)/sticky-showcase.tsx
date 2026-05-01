@@ -629,7 +629,7 @@ function InstallVisual() {
           </div>
         </div>
         <div className="space-y-1">
-          <div className="text-[var(--slide-muted)]">Scaffolding .open-knowledge/ ...</div>
+          <div className="text-[var(--slide-muted)]">Scaffolding .ok/ ...</div>
           <div className="text-[var(--slide-muted)]">Registering MCP server in .mcp.json ...</div>
         </div>
         <div
@@ -653,7 +653,7 @@ function InstallVisual() {
           <div>
             Found <span className="text-[var(--slide-text)]">12 markdown files</span> in content/
           </div>
-          <div>Shadow repo initialized at .git/open-knowledge/</div>
+          <div>Shadow repo initialized at .git/ok/</div>
         </div>
         <div className="flex items-center gap-2 pt-1">
           <div className="size-1.5 animate-pulse rounded-full bg-emerald-500" />

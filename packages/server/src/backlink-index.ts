@@ -764,7 +764,7 @@ export class BacklinkIndex {
   }
 
   private cachePath(branch = this.activeBranch): string {
-    return resolve(this.projectDir, '.open-knowledge', 'cache', branch, 'backlinks.json');
+    return resolve(this.projectDir, '.ok', 'cache', branch, 'backlinks.json');
   }
 
   updateDocument(

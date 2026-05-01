@@ -25,7 +25,7 @@ function scaffoldOkDir(dir: string, configYml?: string): void {
 }
 
 describe('planSeed — preconditions', () => {
-  test('throws SeedPrerequisiteError when .open-knowledge/ is absent', async () => {
+  test('throws SeedPrerequisiteError when .ok/ is absent', async () => {
     await expect(planSeed({ projectDir: testDir })).rejects.toThrow(SeedPrerequisiteError);
   });
 
