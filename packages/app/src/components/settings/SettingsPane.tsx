@@ -77,6 +77,7 @@ import {
   getLeafTypeTag,
   resolveLeafSchema,
 } from './schema-walker';
+import type { SlotForwardedProps } from './slot-forwarded-props';
 import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 interface SettingsPaneProps {
@@ -726,12 +727,6 @@ interface FieldControlBodyProps {
    */
   onCommit: () => boolean;
 }
-
-type SlotForwardedProps = {
-  id?: string;
-  'aria-invalid'?: boolean | 'true' | 'false';
-  'aria-describedby'?: string;
-};
 
 /**
  * Type-tag-driven dispatch for the inner control element. Returns a

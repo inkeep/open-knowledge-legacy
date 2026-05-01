@@ -43,6 +43,27 @@ describe('TagPillInput source-level guards', () => {
     expect(branch).toContain('addTag(draft)');
   });
 
+  test('comma always prevents default — even on empty draft (no literal comma in input)', () => {
+    // Pin the unconditional `preventDefault` on comma. Comma is the tag
+    // delimiter and must NEVER appear as literal content; pressing comma
+    // alone with an empty draft must be a no-op (not insert a `,`
+    // character that would later be committed as a single-character tag
+    // on blur). Unlike Enter/Tab, the preventDefault must live OUTSIDE
+    // the `draft.trim()` guard. A future refactor that "harmonizes" all
+    // three branches to be conditional would silently regress this.
+    const commaIdx = SRC.indexOf("e.key === ','");
+    expect(commaIdx).toBeGreaterThan(-1);
+    const after = SRC.slice(commaIdx);
+    const nextElseIdx = after.indexOf('} else if');
+    const branch = nextElseIdx > -1 ? after.slice(0, nextElseIdx) : after;
+    const preventIdx = branch.indexOf('e.preventDefault()');
+    const trimIdx = branch.indexOf('draft.trim()');
+    expect(preventIdx).toBeGreaterThan(-1);
+    expect(trimIdx).toBeGreaterThan(-1);
+    // preventDefault must come BEFORE draft.trim() — i.e. unconditional.
+    expect(preventIdx).toBeLessThan(trimIdx);
+  });
+
   test('handles Backspace-on-empty pill removal', () => {
     expect(SRC).toContain("e.key === 'Backspace'");
     expect(SRC).toContain("draft === ''");

@@ -40,6 +40,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { TagPillInput } from '@/components/ui/tag-pill-input';
 import type { SettingsScope } from '@/lib/use-settings-route';
+import type { SlotForwardedProps } from './slot-forwarded-props';
 
 interface FoldersSectionProps {
   form: UseFormReturn<Config>;
@@ -51,10 +52,6 @@ interface FoldersSectionProps {
 const FOLDERS_PATH = 'folders' as FieldPath<Config>;
 
 export function FoldersSection({ form, commitField, scope, flashedPath }: FoldersSectionProps) {
-  // 'use no memo' — render-prop bodies below destructure ControllerRenderProps
-  // (which carries `.ref`); the React Compiler heuristic flags this as
-  // ref-access during render. Same opt-out as SettingsField.
-  'use no memo';
   // `Config` is inferred from `z.looseObject({...})`, which carries an index
   // signature (`[k: string]: unknown`). RHF's `FieldArrayPath<Config>`
   // collapses under that signature and can't narrow to the literal
@@ -298,7 +295,10 @@ function FolderRow({
         control={form.control}
         name={titlePath}
         render={({ field: ctl }) => (
-          <FormItem className="space-y-1" data-field={titlePath}>
+          <FormItem
+            className={`space-y-1 ${flashedPath === titlePath ? 'animate-settings-flash' : ''}`}
+            data-field={titlePath}
+          >
             <FormLabel className="text-sm font-medium">Title</FormLabel>
             <FormDescription className="text-xs text-muted-foreground">
               Default <code className="font-mono">title</code> frontmatter for matched docs.
@@ -330,7 +330,10 @@ function FolderRow({
         control={form.control}
         name={descriptionPath}
         render={({ field: ctl }) => (
-          <FormItem className="space-y-1" data-field={descriptionPath}>
+          <FormItem
+            className={`space-y-1 ${flashedPath === descriptionPath ? 'animate-settings-flash' : ''}`}
+            data-field={descriptionPath}
+          >
             <FormLabel className="text-sm font-medium">Description</FormLabel>
             <FormDescription className="text-xs text-muted-foreground">
               Default <code className="font-mono">description</code> frontmatter for matched docs.
@@ -362,7 +365,10 @@ function FolderRow({
         control={form.control}
         name={tagsPath}
         render={({ field: ctl }) => (
-          <FormItem className="space-y-1" data-field={tagsPath}>
+          <FormItem
+            className={`space-y-1 ${flashedPath === tagsPath ? 'animate-settings-flash' : ''}`}
+            data-field={tagsPath}
+          >
             <FormLabel className="text-sm font-medium">Tags</FormLabel>
             <FormDescription className="text-xs text-muted-foreground">
               Default tags applied to matched docs (unioned with file-level tags).
@@ -383,12 +389,6 @@ interface TagsFieldProps {
   onCommit: () => boolean;
 }
 
-type SlotForwardedProps = {
-  id?: string;
-  'aria-invalid'?: boolean | 'true' | 'false';
-  'aria-describedby'?: string;
-};
-
 /**
  * TagPillInput wrapper that forwards FormControl Slot props onto the inner
  * input and commits via the harness on blur. Splitting from the inline
@@ -403,7 +403,7 @@ function TagsField({ ctl, onCommit, ...slotForwarded }: TagsFieldProps & SlotFor
       {...slotForwarded}
       ref={ctl.ref}
       value={value}
-      onChange={(next) => ctl.onChange(next)}
+      onChange={ctl.onChange}
       onBlur={() => {
         ctl.onBlur();
         onCommit();
