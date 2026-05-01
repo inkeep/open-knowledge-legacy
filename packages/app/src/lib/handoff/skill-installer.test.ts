@@ -44,6 +44,21 @@ describe('electronSkillInstaller', () => {
       message: 'no SKILL.md',
     });
   });
+
+  test('bridge throws: ok-false with bridge-error reason (IPC channel broken)', async () => {
+    const bridge: ElectronSkillBridge = {
+      buildAndOpen: mock(async () => {
+        throw new Error('IPC channel closed');
+      }),
+    };
+    const installer = electronSkillInstaller(bridge);
+
+    expect(await installer.install()).toEqual({
+      ok: false,
+      reason: 'bridge-error',
+      message: 'IPC channel closed',
+    });
+  });
 });
 
 describe('httpSkillInstaller', () => {
@@ -153,5 +168,38 @@ describe('httpSkillInstaller', () => {
       reason: 'network-error',
       message: 'NetworkError: failed to connect',
     });
+  });
+
+  test('response.json() throws: ok-false with parse-error (malformed body)', async () => {
+    const installer = httpSkillInstaller({
+      fetch: mock(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw new SyntaxError('Unexpected token < in JSON at position 0');
+            },
+          }) as unknown as Response,
+      ) as unknown as typeof fetch,
+    });
+
+    const result = await installer.install();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('parse-error');
+    }
+  });
+
+  test('response.json() returns null/missing status: ok-false with parse-error', async () => {
+    const installer = httpSkillInstaller({
+      fetch: fakeFetch({ body: { unexpected: 'shape' } }),
+    });
+
+    const result = await installer.install();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('parse-error');
+    }
   });
 });

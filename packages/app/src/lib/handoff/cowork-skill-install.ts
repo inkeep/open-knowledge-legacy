@@ -84,7 +84,12 @@ export async function ensureCoworkSkillInstalled(
 
   const result = await installer.install();
   if (result.ok) {
-    storage?.setItem(key, GUARD_VALUE);
+    try {
+      storage?.setItem(key, GUARD_VALUE);
+    } catch {
+      // QuotaExceededError or SecurityError — guard is non-critical;
+      // worst case the installer runs again on the next click.
+    }
     return { kind: 'installed-now', path: result.path, handoffWarning: result.handoffWarning };
   }
   return { kind: 'install-failed', reason: result.reason, message: result.message };

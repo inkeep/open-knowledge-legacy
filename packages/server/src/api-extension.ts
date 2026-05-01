@@ -6331,7 +6331,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (raw.length > 0) {
         const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
         if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
-        if (typeof parsed.out === 'string') opts.out = parsed.out;
+        if (typeof parsed.out === 'string') {
+          // `out` flows into `path.resolve()` + `mkdir({recursive: true})` +
+          // `spawn('cmd', ['/c', 'start', '""', skillPath])` on Windows.
+          // Confine to $HOME consistent with sibling local-op handlers
+          // (`handleLocalOpClone`, `handleLocalOpOpen`).
+          if (!isSafeLocalPath(parsed.out)) {
+            json(res, 400, {
+              ok: false,
+              error: 'Output path must be within home directory',
+            });
+            return;
+          }
+          opts.out = parsed.out;
+        }
       }
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });

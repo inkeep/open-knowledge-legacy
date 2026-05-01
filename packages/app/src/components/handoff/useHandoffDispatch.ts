@@ -212,7 +212,14 @@ export async function runHandoffDispatch(
   // file; the user uploads it manually and clicks again to start a session.
   // `already-installed` and `host-unsupported` fall through to normal dispatch.
   if (target === 'claude-cowork' && attempt === 1) {
-    const installOutcome = await deps.ensureCoworkSkillInstalled();
+    let installOutcome: EnsureCoworkSkillOutcome;
+    try {
+      installOutcome = await deps.ensureCoworkSkillInstalled();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.toast.error(`Couldn't install Open Knowledge skill — ${message}`);
+      return { ok: false, reason: 'dispatch-error', detail: `install-error: ${message}` };
+    }
     if (installOutcome.kind === 'installed-now') {
       deps.toast.success(
         'Open Knowledge skill saved. Upload it in Claude Desktop, then click Cowork again.',

@@ -430,8 +430,8 @@ export async function buildAndOpenSkill(
   let build: BuildSkillZipResult;
   try {
     // skipVersionCheck: true during local installs — users on CLI versions
-    // that predate Ship 1b's SKILL.md metadata.version would otherwise get
-    // blocked here. CI passes false (version alignment required for releases).
+    // that lack SKILL.md metadata.version would otherwise get blocked here.
+    // CI passes false (version alignment required for releases).
     build = await buildSkillZip({ outputPath, skipVersionCheck: true });
   } catch (err) {
     return {

@@ -146,4 +146,19 @@ describe('ensureCoworkSkillInstalled — guard semantics', () => {
     await ensureCoworkSkillInstalled(deps({ storage: null, installer }));
     expect(installer.install).toHaveBeenCalledTimes(2);
   });
+
+  test('storage.setItem throws (QuotaExceededError): install still reports installed-now', async () => {
+    const installer = fakeInstaller({ ok: true, path: '/tmp/skill' });
+    const throwingStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+    };
+
+    const result = await ensureCoworkSkillInstalled(deps({ storage: throwingStorage, installer }));
+
+    expect(result.kind).toBe('installed-now');
+    expect(installer.install).toHaveBeenCalledTimes(1);
+  });
 });

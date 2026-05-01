@@ -49,7 +49,16 @@ export type ElectronSkillBridge = Pick<OkDesktopBridge['skill'], 'buildAndOpen'>
 export function electronSkillInstaller(bridge: ElectronSkillBridge): SkillInstaller {
   return {
     async install() {
-      const result = await bridge.buildAndOpen();
+      let result: Awaited<ReturnType<ElectronSkillBridge['buildAndOpen']>>;
+      try {
+        result = await bridge.buildAndOpen();
+      } catch (err) {
+        return {
+          ok: false,
+          reason: 'bridge-error',
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (result.ok) return { ok: true, path: result.path };
       return { ok: false, reason: result.reason, message: result.message };
     },
@@ -109,7 +118,19 @@ export function httpSkillInstaller(opts: HttpSkillInstallerOptions = {}): SkillI
           message: `HTTP ${response.status}`,
         };
       }
-      const body = (await response.json()) as ServerSkillInstallResponse;
+      let body: ServerSkillInstallResponse;
+      try {
+        body = (await response.json()) as ServerSkillInstallResponse;
+      } catch (err) {
+        return {
+          ok: false,
+          reason: 'parse-error',
+          message: err instanceof Error ? err.message : 'Invalid server response',
+        };
+      }
+      if (!body || typeof body.status !== 'string') {
+        return { ok: false, reason: 'parse-error', message: 'Invalid server response shape' };
+      }
       if (body.status === 'failed') {
         return {
           ok: false,

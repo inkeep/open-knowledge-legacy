@@ -482,6 +482,28 @@ describe('runHandoffDispatch — Cowork install gate', () => {
     expect(ensureSpy).not.toHaveBeenCalled();
     expect(deps.dispatchHandoff).toHaveBeenCalledTimes(1);
   });
+
+  test('install gate throws: surfaces error toast + dispatch-error outcome (no unhandled rejection)', async () => {
+    const { runHandoffDispatch } = await import('./useHandoffDispatch');
+    const deps = buildDeps({
+      ensureCoworkSkillInstalled: mock(async () => {
+        throw new Error('IPC channel closed');
+      }),
+    });
+
+    const outcome = await runHandoffDispatch('claude-cowork', sampleInput(), deps);
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('dispatch-error');
+      expect(outcome.detail).toContain('install-error');
+      expect(outcome.detail).toContain('IPC channel closed');
+    }
+    expect(deps.dispatchHandoff).not.toHaveBeenCalled();
+    expect(deps.toast.errorCalls[0]?.message).toBe(
+      "Couldn't install Open Knowledge skill — IPC channel closed",
+    );
+  });
 });
 
 describe('buildHandoffInput — shared surface helper (US-011)', () => {
