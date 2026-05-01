@@ -25,6 +25,10 @@ import {
   type HandoffTarget,
 } from '@inkeep/open-knowledge-core';
 import { toast as sonnerToast } from 'sonner';
+import {
+  type EnsureCoworkSkillOutcome,
+  ensureCoworkSkillInstalledWithDefaults,
+} from '@/lib/handoff/cowork-skill-install';
 import { dispatchHandoff as defaultDispatchHandoff } from '@/lib/handoff/dispatch';
 import { KNOWN_TARGETS } from '@/lib/handoff/targets';
 import {
@@ -111,6 +115,13 @@ export interface HandoffDispatchDeps {
   readonly isElectronHost: () => boolean;
   /** Lookup display name for toast copy; falls back to the target id. */
   readonly getDisplayName: (target: HandoffTarget) => string;
+  /**
+   * Lazy install gate for Claude Cowork. Runs `okDesktop.skill.buildAndOpen()`
+   * on the first Cowork click per skill version, then becomes a no-op via a
+   * localStorage guard (see `cowork-skill-install.ts`). Web hosts return
+   * `host-unsupported` and `runHandoffDispatch` falls through to URL dispatch.
+   */
+  readonly ensureCoworkSkillInstalled: () => Promise<EnsureCoworkSkillOutcome>;
 }
 
 /**
@@ -196,6 +207,25 @@ export async function runHandoffDispatch(
   deps: HandoffDispatchDeps,
   attempt = 1,
 ): Promise<HandoffOutcome> {
+  // First-click install gate for Claude Cowork. `installed-now` skips URL
+  // dispatch this turn — Claude Desktop is already opening with the .skill
+  // file; the user uploads it manually and clicks again to start a session.
+  // `already-installed` and `host-unsupported` fall through to normal dispatch.
+  if (target === 'claude-cowork' && attempt === 1) {
+    const installOutcome = await deps.ensureCoworkSkillInstalled();
+    if (installOutcome.kind === 'installed-now') {
+      deps.toast.success(
+        'Open Knowledge skill saved. Upload it in Claude Desktop, then click Cowork again.',
+      );
+      return { ok: true };
+    }
+    if (installOutcome.kind === 'install-failed') {
+      const detail = installOutcome.message ?? installOutcome.reason;
+      deps.toast.error(`Couldn't install Open Knowledge skill — ${detail}`);
+      return { ok: false, reason: 'dispatch-error', detail: `install-failed: ${detail}` };
+    }
+  }
+
   const payload: HandoffPayload = {
     target,
     projectDir: input.projectDir,
@@ -274,6 +304,7 @@ export function defaultHandoffDispatchDeps(): HandoffDispatchDeps {
     now: () => new Date(),
     isElectronHost: () => isElectronHostDefault(),
     getDisplayName: getDisplayNameDefault,
+    ensureCoworkSkillInstalled: ensureCoworkSkillInstalledWithDefaults,
   };
 }
 

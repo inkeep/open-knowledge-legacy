@@ -1,9 +1,13 @@
 import { type SpawnOptions, spawn } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { homedir, platform as osPlatform } from 'node:os';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveBundledSkillDir } from './build-skill-zip.ts';
+import {
+  type BuildSkillZipResult,
+  buildSkillZip,
+  resolveBundledSkillDir,
+} from './build-skill-zip.ts';
 
 /**
  * Minimal logger duck-type accepted by `installUserSkill`. Compatible with
@@ -310,4 +314,152 @@ export async function installUserSkill(
       `${SKILLS_CLI_SPEC} add ${bundledDir} --agent '*' -g -y --copy`,
   );
   return 'failed';
+}
+
+// ─── Claude Desktop install (.skill file + OS file association) ────────────
+//
+// Distinct surface from `installUserSkill` above (which targets Claude Code
+// via `npx skills add`). This path produces an `openknowledge.skill` zip and
+// hands it to the OS so Claude Desktop's native install dialog takes over.
+// Shared consumers: `ok install-skill` CLI, `POST /api/install-skill`, and
+// the Electron main-process skill bridge.
+
+const DOWNLOADS_DIR = 'Downloads';
+const SKILL_FILENAME = 'openknowledge.skill';
+
+export interface BuildAndOpenSkillOptions {
+  /** Output path for the built skill file. Defaults to `~/Downloads/openknowledge.skill`. */
+  out?: string;
+  /** Build only — skip the OS file-association invocation. */
+  noOpen?: boolean;
+  /** Test seam — defaults to `node:child_process.spawn`. */
+  spawnFn?: SpawnLike;
+  /** Test seam — defaults to `os.platform()`. */
+  platformName?: NodeJS.Platform;
+  /** Test seam — defaults to `os.homedir()`. */
+  homeDir?: string;
+}
+
+export type BuildAndOpenSkillStatus =
+  /** Build + file-association invocation both succeeded. */
+  | 'installed'
+  /** `noOpen`, unsupported platform, or handoff failed — file is on disk, no app launched. */
+  | 'built'
+  /** Build itself failed — no file written. */
+  | 'failed';
+
+export interface BuildAndOpenSkillResult {
+  status: BuildAndOpenSkillStatus;
+  outputPath?: string;
+  size?: number;
+  sha256?: string;
+  cliVersion?: string;
+  skillVersion?: string;
+  /** Soft-fail signal when status is `'built'` and the OS handoff didn't run. */
+  handoffError?: { reason: 'unsupported-platform' | 'spawn-error'; message: string };
+  /** Hard-fail signal when status is `'failed'`. */
+  buildError?: string;
+}
+
+function defaultDownloadsPath(home: string): string {
+  return join(home, DOWNLOADS_DIR, SKILL_FILENAME);
+}
+
+/**
+ * Invoke the OS file association for `.skill`. macOS: `open`. Windows:
+ * `start` via cmd.exe. Linux: `xdg-open`. Detached + unref so the parent
+ * exits cleanly while Claude Desktop launches in the background.
+ *
+ * Returns `{ ok: true }` on spawn success — NOT on install completion. We
+ * have no observability across the OS boundary into Claude Desktop's native
+ * install dialog.
+ */
+function invokeFileAssociation(
+  skillPath: string,
+  platformName: NodeJS.Platform,
+  spawnFn: SpawnLike,
+): { ok: true } | { ok: false; reason: 'unsupported-platform' | 'spawn-error'; message: string } {
+  const detached: SpawnOptions = { detached: true, stdio: 'ignore' };
+  try {
+    if (platformName === 'darwin') {
+      spawnFn('open', [skillPath], detached).unref();
+      return { ok: true };
+    }
+    if (platformName === 'win32') {
+      // cmd /c start "" "<path>" — empty quoted string is the window title
+      // arg `start` requires when the path itself is quoted.
+      spawnFn('cmd', ['/c', 'start', '""', skillPath], detached).unref();
+      return { ok: true };
+    }
+    if (platformName === 'linux') {
+      spawnFn('xdg-open', [skillPath], detached).unref();
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: 'unsupported-platform',
+      message: `Platform '${platformName}' has no file-association invocation wired.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'spawn-error',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function buildAndOpenSkill(
+  opts: BuildAndOpenSkillOptions = {},
+): Promise<BuildAndOpenSkillResult> {
+  const home = opts.homeDir ?? homedir();
+  const outputPath = resolvePath(opts.out ?? defaultDownloadsPath(home));
+  const platformName = opts.platformName ?? osPlatform();
+  const spawnFn = opts.spawnFn ?? spawn;
+
+  // Ensure parent dir exists (e.g. ~/Downloads may be absent in test homes).
+  try {
+    await mkdir(dirname(outputPath), { recursive: true });
+  } catch (err) {
+    return {
+      status: 'failed',
+      buildError: `could not create output directory: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  let build: BuildSkillZipResult;
+  try {
+    // skipVersionCheck: true during local installs — users on CLI versions
+    // that predate Ship 1b's SKILL.md metadata.version would otherwise get
+    // blocked here. CI passes false (version alignment required for releases).
+    build = await buildSkillZip({ outputPath, skipVersionCheck: true });
+  } catch (err) {
+    return {
+      status: 'failed',
+      buildError: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const baseResult: BuildAndOpenSkillResult = {
+    status: 'built',
+    outputPath: build.outputPath,
+    size: build.size,
+    sha256: build.sha256,
+    cliVersion: build.cliVersion,
+    skillVersion: build.skillVersion,
+  };
+
+  if (opts.noOpen) {
+    return baseResult;
+  }
+
+  const invocation = invokeFileAssociation(build.outputPath, platformName, spawnFn);
+  if (!invocation.ok) {
+    return {
+      ...baseResult,
+      handoffError: { reason: invocation.reason, message: invocation.message },
+    };
+  }
+
+  return { ...baseResult, status: 'installed' };
 }

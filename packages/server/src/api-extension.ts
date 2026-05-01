@@ -81,6 +81,7 @@ import {
   parseFrontmatterMetadata,
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
+import { buildAndOpenSkill } from './skill-install.ts';
 import { readUiLock } from './ui-lock.ts';
 import {
   HashingPassThrough,
@@ -6304,6 +6305,48 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * `POST /api/install-skill` — build `openknowledge.skill` and open it via
+   * the OS file association so Claude Desktop's native install dialog takes
+   * over. Web-host counterpart of the Electron `okDesktop.skill.buildAndOpen`
+   * bridge — both delegate to `buildAndOpenSkill` in `skill-install.ts`.
+   *
+   * Loopback-only via `checkLocalOpSecurity` — the handler spawns child
+   * processes (`open` / `start` / `xdg-open`) and writes to the user's
+   * `~/Downloads`, which is squarely state-mutating.
+   *
+   * Request body (optional JSON): `{ noOpen?: boolean, out?: string }`.
+   * Response: the `BuildAndOpenSkillResult` shape verbatim.
+   */
+  async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const opts: { noOpen?: boolean; out?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
+        if (typeof parsed.out === 'string') opts.out = parsed.out;
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await buildAndOpenSkill(opts);
+      json(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -6391,6 +6434,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/install-skill': handleInstallSkill,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
   };
@@ -6422,6 +6466,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/abort-merge',
     '/api/test-reset',
     '/api/test-rescan-backlinks',
+    '/api/install-skill',
   ]);
   // Every `/api/local-op/*` endpoint mutates local filesystem state or
   // issues network requests on behalf of the user — clone/open/auth
