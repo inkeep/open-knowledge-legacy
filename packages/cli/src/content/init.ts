@@ -215,6 +215,28 @@ state.json
 last-spawn-error.log
 `;
 
+/**
+ * Single source of truth for the project-root `.okignore` scaffold.
+ *
+ * Comment-only header — no example excludes ship by default. The body
+ * teaches gitignore syntax + the cross-source `!` override that makes
+ * `.okignore` strictly more expressive than the previous YAML
+ * `content.exclude` block.
+ */
+export const OK_OKIGNORE_TEMPLATE = `# .okignore — paths to exclude from the Open Knowledge document index.
+# Uses gitignore syntax (parsed by the \`ignore\` npm library), evaluated
+# alongside .gitignore in a single ignore-lib instance.
+#
+# Patterns combine with .gitignore: an entry here adds to exclusions, and
+# a leading \`!\` re-includes a file that .gitignore excluded.
+# Nested .okignore files at any folder depth are honored (mirrors .gitignore).
+#
+# Examples:
+#   drafts/        # exclude a directory
+#   *.draft.md     # exclude files matching a pattern
+#   !keep.md       # re-include a file .gitignore excluded
+`;
+
 export function initContent(projectDir: string): {
   created: string[];
   updated: string[];
@@ -248,6 +270,16 @@ export function initContent(projectDir: string): {
     created.push(CONFIG_FILENAME);
   } else {
     skipped.push(CONFIG_FILENAME);
+  }
+
+  // .okignore at project root: writeIfMissing — never clobber an existing file.
+  // Lives alongside .gitignore (not under .ok/) so users author it like any
+  // other root-level ignore file. Patterns load through ContentFilter into the
+  // same ignore-lib instance as .gitignore, with cross-source `!` overrides.
+  if (writeIfMissing(join(projectDir, '.okignore'), OK_OKIGNORE_TEMPLATE)) {
+    created.push('.okignore');
+  } else {
+    skipped.push('.okignore');
   }
 
   return { created, updated, skipped };

@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
-import { buildConfigYmlContent, initContent, packageVersionMajorMinor } from './init.ts';
+import {
+  buildConfigYmlContent,
+  initContent,
+  OK_OKIGNORE_TEMPLATE,
+  packageVersionMajorMinor,
+} from './init.ts';
 
 describe('initContent', () => {
   let testDir: string;
@@ -232,6 +237,38 @@ describe('committed .ok/.gitignore matches scaffold output', () => {
       const committed = readFileSync(committedPath, 'utf-8');
 
       expect(committed).toBe(scaffolded);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// Drift guard: the committed project-root `.okignore` in this repo MUST stay
+// in sync with `OK_OKIGNORE_TEMPLATE`. Same pattern as the .gitignore drift
+// guard above — `ok init` is the writer; the committed file is the dogfood.
+describe('committed .okignore matches scaffold output', () => {
+  it('matches OK_OKIGNORE_TEMPLATE byte-for-byte', () => {
+    const tmp = resolve(
+      tmpdir(),
+      `okignore-mirror-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmp, { recursive: true });
+    try {
+      initContent(tmp);
+      const scaffolded = readFileSync(join(tmp, '.okignore'), 'utf-8');
+      expect(scaffolded).toBe(OK_OKIGNORE_TEMPLATE);
+
+      let dir = dirname(import.meta.path);
+      while (dir !== '/' && !existsSync(join(dir, '.okignore'))) {
+        dir = dirname(dir);
+      }
+      if (dir === '/') {
+        throw new Error(
+          `drift-guard: could not locate .okignore by walking up from ${import.meta.path}`,
+        );
+      }
+      const committed = readFileSync(join(dir, '.okignore'), 'utf-8');
+      expect(committed).toBe(OK_OKIGNORE_TEMPLATE);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
