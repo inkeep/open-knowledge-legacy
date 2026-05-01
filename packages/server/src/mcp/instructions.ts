@@ -17,23 +17,18 @@ import type { Config } from '../config/schema.ts';
  * Build the MCP `instructions` payload from the project's loaded content config.
  *
  * Takes only `Config['content']` (not the whole `Config`) — the rendered
- * string interpolates the active content root and include/exclude globs and
- * needs nothing else from the config tree. Narrowing the parameter keeps the
- * function reusable from any caller that already has the content subtree
- * resolved without forcing them to materialize an entire `Config`.
+ * string interpolates the active content root and needs nothing else from
+ * the config tree. Path filtering moved to `.okignore` (gitignore syntax) at
+ * the project root and at any folder depth — no longer in YAML.
  */
 export function buildInstructions(content: Config['content']): string {
-  const includeLine = content.include.map((p) => `\`${p}\``).join(', ');
-  const excludeLine =
-    content.exclude.length > 0 ? content.exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
-
   return `# Open Knowledge (OK) — collaborative markdown via MCP
 
-**STOP** *(when \`.open-knowledge/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
+**STOP** *(when \`.ok/\` exists)* — do NOT use native \`Read\`, \`Grep\`, \`Glob\`, \`Edit\`, \`Write\` on in-scope \`.md\` / \`.mdx\`. Reads: \`exec\` / \`read_document\` / \`search\`. Writes: \`write_document\` / \`edit_document\` ONLY.
 
 **Preview:** open the browser at session start if not already open. On \`attach-preview-once\` in a write response, open \`previewUrl\` one-shot.
 
-Content dir: ${content.dir}. Include: ${includeLine}. Exclude: ${excludeLine}.
+Content dir: ${content.dir}. Path scope: \`.gitignore\` + \`.okignore\` (gitignore syntax) at the project root or any folder depth.
 
 ## Reads
 
@@ -47,6 +42,6 @@ Claude Code Desktop: \`preview_start("open-knowledge-ui")\`. Other hosts: open-U
 
 Detailed conventions (wiki-link authoring, frontmatter, anti-patterns) live in the installed \`open-knowledge\` Agent Skill. If missing, run \`npx @inkeep/open-knowledge init\`.
 
-**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.open-knowledge/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
+**Escape hatch.** Native \`Read\`/\`Grep\`/\`Glob\` on \`.md\` is allowed when the project has no \`.ok/\`, when no OK MCP is registered, or right after a failed OK MCP call (then prefix with \`Open Knowledge MCP unavailable:\`). Non-markdown: native tools always.
 `;
 }

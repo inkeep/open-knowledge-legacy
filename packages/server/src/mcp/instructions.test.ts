@@ -9,7 +9,7 @@ function defaultContent(): Config['content'] {
 test('buildInstructions carries the STOP rule on native tools for in-scope markdown', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('STOP');
-  expect(text).toContain('when `.open-knowledge/` exists');
+  expect(text).toContain('when `.ok/` exists');
   expect(text).toContain('write_document');
   expect(text).toContain('edit_document');
 });
@@ -42,30 +42,17 @@ test('buildInstructions documents the read tool routing (exec / read_document / 
 test('buildInstructions surfaces an explicit native-tool escape hatch', () => {
   const text = buildInstructions(defaultContent());
   expect(text).toContain('Escape hatch');
-  expect(text).toContain('no `.open-knowledge/`');
+  expect(text).toContain('no `.ok/`');
   expect(text).toContain('Open Knowledge MCP unavailable:');
 });
 
-test('buildInstructions interpolates content.dir, content.include, and content.exclude', () => {
+test('buildInstructions interpolates content.dir and points at .okignore for path scope', () => {
   const content: Config['content'] = {
     dir: 'wiki',
-    include: ['**/*.md'],
-    exclude: ['drafts/**'],
   };
   const text = buildInstructions(content);
   expect(text).toContain('Content dir: wiki');
-  expect(text).toContain('`**/*.md`');
-  expect(text).toContain('`drafts/**`');
-});
-
-test('buildInstructions renders "(none)" when no exclude globs are configured', () => {
-  const content: Config['content'] = {
-    dir: '.',
-    include: ['**/*.md', '**/*.mdx'],
-    exclude: [],
-  };
-  const text = buildInstructions(content);
-  expect(text).toContain('Exclude: (none)');
+  expect(text).toContain('.okignore');
 });
 
 test('buildInstructions stays under the 2 KB Claude Code per-server cap', () => {
