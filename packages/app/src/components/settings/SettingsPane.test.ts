@@ -112,3 +112,20 @@ describe('SettingsPane folders section integration', () => {
     expect(SRC).toMatch(/<SettingsForm[\s\S]{0,200}form=\{form\}/);
   });
 });
+
+describe('SettingsPane Sync section guards', () => {
+  test('Sync section renders only on the project tab', () => {
+    expect(SRC).toMatch(/scope\s*===\s*'project'[^\n]*<SyncSection\s*\/>/);
+  });
+
+  test('Sync section toggle goes through the shared confirmation hook', () => {
+    expect(SRC).toContain("from '@/hooks/use-enable-sync-with-confirm'");
+    expect(SRC).toContain('useEnableSyncWithConfirm');
+    expect(SRC).toContain('EnableSyncConfirmDialog');
+  });
+
+  test('Sync toggle label is associated to the Switch via htmlFor', () => {
+    expect(SRC).toMatch(/<label\s+htmlFor="settings-sync-toggle"/);
+    expect(SRC).toMatch(/<Switch[\s\S]*?id="settings-sync-toggle"/);
+  });
+});

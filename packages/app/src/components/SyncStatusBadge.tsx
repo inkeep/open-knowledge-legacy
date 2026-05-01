@@ -1,8 +1,8 @@
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
-import { useState } from 'react';
-import { toast } from 'sonner';
+import { useEnableSyncWithConfirm } from '@/hooks/use-enable-sync-with-confirm';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatusDetailed } from '@/hooks/use-git-sync-status';
+import { EnableSyncConfirmDialog } from './EnableSyncConfirmDialog';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
@@ -23,17 +23,6 @@ async function triggerSync(op: 'sync' | 'push' | 'pull'): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op }),
   });
-}
-
-async function setSyncEnabled(enabled: boolean): Promise<void> {
-  const res = await fetch('/api/sync/set-enabled', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    throw new Error(`set-enabled failed: HTTP ${res.status}`);
-  }
 }
 
 interface BadgeIconProps {
@@ -61,7 +50,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
     case 'auth-error':
       return <LogIn className={`${cls} text-destructive`} />;
     case 'disabled':
-      return <CloudOff className={`${cls} text-muted-foreground`} />;
+      return <AlertTriangle className={`${cls} text-amber-500`} />;
     default:
       return <Cloud className={`${cls} text-muted-foreground`} />;
   }
@@ -82,8 +71,6 @@ function badgeLabel(status: GitSyncStatus): string {
     case 'offline':
       return '';
     case 'auth-error':
-      return '';
-    case 'disabled':
       return '';
     default:
       return '';
@@ -161,19 +148,9 @@ function PopoverBody({
   onOpenConflictResolver,
   onSetIdentity,
 }: PopoverBodyProps) {
-  const [toggling, setToggling] = useState(false);
   const enabled = status.syncEnabled;
-
-  async function handleToggle(next: boolean) {
-    setToggling(true);
-    try {
-      await setSyncEnabled(next);
-    } catch (e) {
-      console.error('[sync] toggle failed', e);
-      toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
-    }
-    setToggling(false);
-  }
+  const { toggling, confirmOpen, setConfirmOpen, onToggleRequest, onConfirm } =
+    useEnableSyncWithConfirm();
 
   return (
     <div className="flex flex-col gap-2">
@@ -185,10 +162,16 @@ function PopoverBody({
         <Switch
           checked={enabled}
           disabled={toggling}
-          onCheckedChange={(next) => void handleToggle(next)}
+          onCheckedChange={onToggleRequest}
           aria-label={enabled ? 'Disable sync' : 'Enable sync'}
         />
       </div>
+      <EnableSyncConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        isSubmitting={toggling}
+        onConfirm={() => void onConfirm()}
+      />
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}
       {status.pausedReason && (
@@ -308,6 +291,8 @@ export function SyncStatusBadge({
   }
 
   if (status.state === 'dormant' && !status.hasRemote) return null;
+
+  if (status.state === 'disabled' && !status.pausedReason) return null;
 
   const label = badgeLabel(status);
   const showIdentityDot = Boolean(status.identityUnresolved);

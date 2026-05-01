@@ -63,7 +63,6 @@ interface PersistedSyncState {
   pausedReason?: string;
   pausedSinceUtc?: string;
   inflightConflicts: string[];
-  syncEnabled?: boolean;
 }
 
 interface SyncEngineOptions {
@@ -78,6 +77,7 @@ interface SyncEngineOptions {
   cc1Broadcaster?: CC1Broadcaster | null;
   onStateChange?: (state: SyncState) => void;
   setBatchInProgress?: (value: boolean) => void;
+  onAutoDisable?: (reason: 'protected-branch') => void | Promise<void>;
 }
 
 function jitteredMs(seconds: number): number {
@@ -126,6 +126,7 @@ export class SyncEngine {
   private cc1Broadcaster: CC1Broadcaster | null;
   private onStateChange: ((state: SyncState) => void) | undefined;
   private setBatchInProgress: ((value: boolean) => void) | undefined;
+  private onAutoDisable: ((reason: 'protected-branch') => void | Promise<void>) | undefined;
 
   private pullTimer: ReturnType<typeof setTimeout> | null = null;
   private pushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -164,6 +165,7 @@ export class SyncEngine {
     this.cc1Broadcaster = options.cc1Broadcaster ?? null;
     this.onStateChange = options.onStateChange;
     this.setBatchInProgress = options.setBatchInProgress;
+    this.onAutoDisable = options.onAutoDisable;
     this.statePath = resolve(this.contentDir, '.ok', 'sync-state.json');
     this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, this.currentBranch);
   }
@@ -692,6 +694,7 @@ export class SyncEngine {
               '[sync] push cycle: nothing to commit (tree unchanged, origin matches HEAD)',
             );
             this.lastPushedSha = headSha;
+            this.lastSyncUtc = new Date().toISOString();
             this.transitionTo('idle');
             return;
           }
@@ -1131,9 +1134,10 @@ export class SyncEngine {
       this.transitionTo('auth-error');
       this.pausedReason = 'auth-error';
     } else if (classified.class === 'semantic' && classified.subclass === 'protected-branch') {
-      this.syncEnabled = false; // Disable permanently — user must change branch or permissions
+      this.syncEnabled = false;
       this.transitionTo('disabled');
       this.pausedReason = 'protected-branch';
+      void this.onAutoDisable?.('protected-branch');
     } else if (classified.class === 'local' && classified.subclass === 'dirty-tree') {
       this.consecutiveFailures++;
       this.transitionTo('idle');
@@ -1176,7 +1180,6 @@ export class SyncEngine {
         pausedReason: this.pausedReason,
         pausedSinceUtc: this.pausedReason ? new Date().toISOString() : undefined,
         inflightConflicts: this.conflictStore.list().map((c) => c.file),
-        syncEnabled: this.syncEnabled,
       };
       writeFileSync(this.statePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (e) {
@@ -1195,7 +1198,6 @@ export class SyncEngine {
       this.lastPushedSha = data.lastPushedSha ?? null;
       this.consecutiveFailures = data.consecutiveFailures ?? 0;
       this.pausedReason = data.pausedReason;
-      if (data.syncEnabled !== undefined) this.syncEnabled = data.syncEnabled;
 
       const inflightFiles = data.inflightConflicts ?? [];
       if (inflightFiles.length > 0) {

@@ -2,7 +2,7 @@ import { describe as _bunDescribe, afterEach, beforeEach, expect, test } from 'b
 
 const describe = process.env.CI ? _bunDescribe.skip : _bunDescribe;
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import simpleGit from 'simple-git';
@@ -87,6 +87,13 @@ describe('SyncEngine state persistence round-trip', () => {
     expect(existsSync(statePath())).toBe(true);
   });
 
+  test('sync-state.json does not persist the config-owned enabled preference', async () => {
+    const engine = makeEngine({ syncEnabled: true });
+    await engine.destroy();
+    const persisted = JSON.parse(readFileSync(statePath(), 'utf-8')) as Record<string, unknown>;
+    expect(persisted.syncEnabled).toBeUndefined();
+  });
+
   test('restores consecutiveFailures from disk on start()', async () => {
     const persisted = {
       version: 1,
@@ -101,6 +108,23 @@ describe('SyncEngine state persistence round-trip', () => {
     const engine = makeEngine({ syncEnabled: false });
     await engine.start();
     expect(engine.getStatus().consecutiveFailures).toBe(4);
+  });
+
+  test('ignores legacy syncEnabled from sync-state.json', async () => {
+    const persisted = {
+      version: 1,
+      lastSyncUtc: null,
+      lastFetchUtc: null,
+      lastPushedSha: null,
+      consecutiveFailures: 0,
+      inflightConflicts: [],
+      syncEnabled: true,
+    };
+    writeFileSync(statePath(), JSON.stringify(persisted), 'utf-8');
+
+    const engine = makeEngine({ syncEnabled: false });
+    await engine.start();
+    expect(engine.getStatus().syncEnabled).toBe(false);
   });
 
   test('restores inflightConflicts into conflictCount', async () => {
@@ -499,6 +523,35 @@ describe('SyncEngine push cycle pushes existing commits when local is ahead of o
       const remoteAfter = (await git.revparse(['origin/main'])).trim();
       expect(remoteAfter).toBe(headBefore);
       expect(engine.getStatus().lastPushedSha).toBe(headBefore);
+    } finally {
+      await engine.destroy();
+    }
+  });
+
+  test('records lastSyncUtc when HEAD already matches origin and tree is clean', async () => {
+    const git = simpleGit(projectDir);
+    await git.init(['--initial-branch=main']);
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    await simpleGit(bareDir).init(true);
+    await git.addRemote('origin', bareDir);
+    await git.push(['--set-upstream', 'origin', 'main']);
+
+    const head = (await git.revparse(['HEAD'])).trim();
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      await engine.trigger('push');
+
+      const status = engine.getStatus();
+      expect(status.lastPushedSha).toBe(head);
+      expect(status.lastSyncUtc).not.toBeNull();
     } finally {
       await engine.destroy();
     }

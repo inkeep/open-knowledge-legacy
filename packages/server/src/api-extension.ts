@@ -39,6 +39,7 @@ import {
   SYSTEM_DOC_NAME,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
+import { writeConfigPatch } from '@inkeep/open-knowledge-core/server';
 import {
   formatCheckpointSubject,
   formatRenameSubject,
@@ -4820,6 +4821,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       enabled = parsed.enabled;
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    const configWrite = await writeConfigPatch({
+      cwd: projectDir ?? contentDir,
+      scope: 'project',
+      patch: { autoSync: { enabled } },
+    });
+    if (!configWrite.ok) {
+      json(res, 500, { ok: false, error: 'Could not persist sync preference to config' });
       return;
     }
     await engine.setEnabled(enabled);

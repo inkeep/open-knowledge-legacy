@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/raw-mdx-nav-event';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { type EditorModeValue, useEditorMode } from '@/editor/use-editor-mode';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { useConfigContext } from '@/lib/config-provider';
 import { AuthModal } from './AuthModal';
+import { AutoSyncOnboardingDialog } from './AutoSyncOnboardingDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
 import { type PanelTab, TABS } from './DocPanel';
@@ -22,11 +24,18 @@ export function EditorPane() {
   const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const [activeTab, setActiveTab] = useState<PanelTab>(TABS[0].id);
   const [saving, setSaving] = useState(false);
-  const optInToastShownRef = useRef(false);
+  const [autoSyncOnboardingDismissed, setAutoSyncOnboardingDismissed] = useState(false);
 
   const syncStatus = useGitSyncStatus();
+  const { projectConfig } = useConfigContext();
 
   const { activeDocName } = useDocumentContext();
+
+  const showAutoSyncOnboarding =
+    !autoSyncOnboardingDismissed &&
+    syncStatus?.hasRemote === true &&
+    projectConfig !== null &&
+    projectConfig.autoSync?.enabled === undefined;
 
   useEffect(() => {
     function onRawMdxNav(e: Event) {
@@ -39,20 +48,6 @@ export function EditorPane() {
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, [activeDocName]);
-
-  useEffect(() => {
-    if (!optInToastShownRef.current && syncStatus?.state === 'dormant' && syncStatus.hasRemote) {
-      optInToastShownRef.current = true;
-      toast.info('This project has a GitHub remote.', {
-        description: 'Sign in to enable automatic sync with your team.',
-        duration: 8000,
-        action: {
-          label: 'Sign in',
-          onClick: () => setAuthModalOpen(true),
-        },
-      });
-    }
-  }, [syncStatus?.state, syncStatus?.hasRemote]);
 
   function handleModeChange(mode: EditorModeValue) {
     setEditorMode(mode);
@@ -107,6 +102,10 @@ export function EditorPane() {
         onSuccess={() => {
           setAuthModalOpen(false);
         }}
+      />
+      <AutoSyncOnboardingDialog
+        open={showAutoSyncOnboarding}
+        onResolved={() => setAutoSyncOnboardingDismissed(true)}
       />
       {/*
         Agent Activity Panel now lives inside DocPanel as the `'agent'` mode
