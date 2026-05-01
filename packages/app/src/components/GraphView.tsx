@@ -1,3 +1,4 @@
+import { LinkGraphSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, {
@@ -36,13 +37,6 @@ import {
   resolveGraphNodeClickAction,
 } from './graph-view-utils';
 import { resolveTargetNavigationIntent } from './target-navigation-intent';
-
-interface LinkGraphResponse {
-  ok: boolean;
-  nodes?: GraphNode[];
-  links?: GraphLink[];
-  error?: string;
-}
 
 const FOCUS_ANIMATION_MS = 350;
 const FOCUS_RETRY_INTERVAL_MS = 120;
@@ -523,21 +517,22 @@ export function GraphView({
         }
         const url = params.size > 0 ? `/api/link-graph?${params.toString()}` : '/api/link-graph';
         const res = await fetch(url);
-        if (!res.ok) {
-          if (cancelled) return;
-          setError(`Server error: ${res.status}`);
-          setLoading(false);
-          return;
-        }
-        const data = (await res.json()) as LinkGraphResponse;
+        const body = (await res.json().catch(() => null)) as unknown;
         if (cancelled) return;
-        if (!data.ok) {
-          setError(data.error ?? 'Failed to load graph');
+        if (!res.ok) {
+          const problem = ProblemDetailsSchema.safeParse(body);
+          setError(problem.success ? problem.data.title : `Server error: ${res.status}`);
           setLoading(false);
           return;
         }
-        const nextNodes = data.nodes ?? [];
-        const nextLinks = data.links ?? [];
+        const success = LinkGraphSuccessSchema.safeParse(body);
+        if (!success.success) {
+          setError('Link-graph response did not match expected shape.');
+          setLoading(false);
+          return;
+        }
+        const nextNodes = success.data.nodes as GraphNode[];
+        const nextLinks = success.data.links as GraphLink[];
         const nextNodeSig = buildGraphNodeSignature(nextNodes);
         const nextLinkSig = buildGraphLinkSignature(nextLinks);
         if (nextNodeSig !== lastSigRef.current.nodes || nextLinkSig !== lastSigRef.current.links) {

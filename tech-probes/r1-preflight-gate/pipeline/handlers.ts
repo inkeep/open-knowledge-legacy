@@ -4,8 +4,7 @@
  * Tier A passthrough handlers, Tier B fidelity handlers reading node.data, and
  * Tier C custom/simplified handlers including the critical `definition` override.
  */
-import { toPmNode, toPmMark } from '@handlewithcare/remark-prosemirror';
-import { fromPmNode, fromPmMark } from '@handlewithcare/remark-prosemirror';
+import { fromPmMark, fromPmNode, toPmMark, toPmNode } from '@handlewithcare/remark-prosemirror';
 import { schema } from './schema';
 
 // ──────────────────────────── mdast → PM ────────────────────────────
@@ -109,8 +108,7 @@ export const mdastToPmHandlers: Record<string, any> = {
     sourceRefLabel: n.label ?? n.identifier ?? null,
   })),
   // Override library's built-in yaml ignore — preserve frontmatter in-tree
-  yaml: (node: any) =>
-    schema.nodes.yaml.createAndFill({ value: node.value ?? '' }),
+  yaml: (node: any) => schema.nodes.yaml.createAndFill({ value: node.value ?? '' }),
 
   // CRITICAL: override library's built-in ignore
   definition: (node: any) =>
@@ -120,8 +118,7 @@ export const mdastToPmHandlers: Record<string, any> = {
       url: node.url ?? '',
       title: node.title ?? null,
     }),
-  html: (node: any) =>
-    schema.nodes.htmlBlock.createAndFill({ value: node.value ?? '' }),
+  html: (node: any) => schema.nodes.htmlBlock.createAndFill({ value: node.value ?? '' }),
 
   // MDX
   mdxJsxFlowElement: (node: any) => {
@@ -145,8 +142,7 @@ export const mdastToPmHandlers: Record<string, any> = {
   mdxjsEsm: (node: any) => schema.nodes.mdxjsEsm.createAndFill({ value: node.value ?? '' }),
 
   wikiLink: (node: any) => {
-    const labelText =
-      node.alias ?? node.target + (node.section ? `#${node.section}` : '');
+    const labelText = node.alias ?? node.target + (node.section ? `#${node.section}` : '');
     const mark = schema.marks.wikiLink.create({
       target: node.target,
       alias: node.alias ?? null,
@@ -161,7 +157,10 @@ export const mdastToPmHandlers: Record<string, any> = {
 export const pmToMdastNodeHandlers: Record<string, any> = {
   paragraph: fromPmNode('paragraph'),
   blockquote: fromPmNode('blockquote'),
-  heading: fromPmNode('heading', (n: any) => ({ depth: n.attrs.level, data: { sourceStyle: n.attrs.sourceStyle } })),
+  heading: fromPmNode('heading', (n: any) => ({
+    depth: n.attrs.level,
+    data: { sourceStyle: n.attrs.sourceStyle },
+  })),
   codeBlock: (pmNode: any) => {
     const value = pmNode.textContent ?? '';
     return {

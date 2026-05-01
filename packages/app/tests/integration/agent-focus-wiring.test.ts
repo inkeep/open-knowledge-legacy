@@ -119,11 +119,14 @@ describe('agent-focus wiring — L1 integration', () => {
 });
 
 describe('orphan-hint response shape — L1 integration (US-003)', () => {
+  // Post-D22: success body is flat `{ timestamp, subscriberCount,
+  // systemSubscriberCount, hints?, summary? }` — no `ok: true` wrapper.
+  // HTTP-status discrimination via the surrounding `res.ok` (when wired).
   async function postWrite(
     docName: string,
     body: string,
   ): Promise<{
-    ok: boolean;
+    timestamp: string;
     hints?: Array<{ type: string; parentCandidates: string[]; message: string }>;
   }> {
     const res = await fetch(`http://localhost:${server.port}/api/agent-write-md`, {
@@ -132,7 +135,7 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
       body: JSON.stringify({ markdown: body, position: 'replace', docName }),
     });
     return res.json() as Promise<{
-      ok: boolean;
+      timestamp: string;
       hints?: Array<{ type: string; parentCandidates: string[]; message: string }>;
     }>;
   }
@@ -162,7 +165,7 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
 
       const orphanName = `${folder}/orphan`;
       const body = await postWrite(orphanName, '# Orphan body without any wiki-links');
-      expect(body.ok).toBe(true);
+      expect(body.timestamp).toBeDefined();
       expect(body.hints).toBeDefined();
       expect(body.hints?.length).toBe(1);
       expect(body.hints?.[0].type).toBe('orphan');
@@ -187,7 +190,7 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
       await awaitBacklinkIndexed(server, target, `${folder}/README`);
 
       const body = await postWrite(target, '# Linked body v2');
-      expect(body.ok).toBe(true);
+      expect(body.timestamp).toBeDefined();
       expect(body.hints).toBeUndefined();
     },
     ORPHAN_HINT_TEST_TIMEOUT_MS,
@@ -198,7 +201,7 @@ describe('orphan-hint response shape — L1 integration (US-003)', () => {
     // No hub doc seeded; orphan is truly alone
     const orphanName = `${folder}/solo`;
     const body = await postWrite(orphanName, '# Solo body');
-    expect(body.ok).toBe(true);
+    expect(body.timestamp).toBeDefined();
     expect(body.hints).toBeUndefined();
   });
 });
@@ -218,7 +221,7 @@ describe('systemSubscriberCount response field — L1 integration (FR7a)', () =>
     docName: string,
     body: string,
   ): Promise<{
-    ok: boolean;
+    timestamp: string;
     subscriberCount?: number;
     systemSubscriberCount?: number;
   }> {
@@ -228,7 +231,7 @@ describe('systemSubscriberCount response field — L1 integration (FR7a)', () =>
       body: JSON.stringify({ markdown: body, position: 'replace', docName }),
     });
     return res.json() as Promise<{
-      ok: boolean;
+      timestamp: string;
       subscriberCount?: number;
       systemSubscriberCount?: number;
     }>;
@@ -237,7 +240,7 @@ describe('systemSubscriberCount response field — L1 integration (FR7a)', () =>
   test('response includes systemSubscriberCount alongside subscriberCount', async () => {
     const docName = `ssc-${crypto.randomUUID().slice(0, 8)}`;
     const body = await postWriteRaw(docName, '# hello');
-    expect(body.ok).toBe(true);
+    expect(body.timestamp).toBeDefined();
     expect(typeof body.subscriberCount).toBe('number');
     expect(typeof body.systemSubscriberCount).toBe('number');
   });
@@ -249,7 +252,7 @@ describe('systemSubscriberCount response field — L1 integration (FR7a)', () =>
     // We assert it specifically equals 0 when no prior subscriber exists.
     const docName = `ssc-cold-${crypto.randomUUID().slice(0, 8)}`;
     const body = await postWriteRaw(docName, '# hello');
-    expect(body.ok).toBe(true);
+    expect(body.timestamp).toBeDefined();
     expect(body.systemSubscriberCount).toBe(0);
   });
 });

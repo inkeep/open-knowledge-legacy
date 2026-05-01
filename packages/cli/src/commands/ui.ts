@@ -27,12 +27,16 @@
  * legitimate uninterrupted editing session, and short enough that a
  * forgotten UI doesn't linger overnight. Cancelled by `handle.release()`.
  */
+import { randomUUID } from 'node:crypto';
 import type { Server as HttpServer, ServerResponse } from 'node:http';
 import {
   ASSET_EXTENSIONS,
   defaultScheduler,
   EXECUTABLE_BLOCKLIST_EXTENSIONS,
   INLINE_RENDERABLE_EXTENSIONS,
+  type ProblemDetails,
+  ProblemDetailsSchema,
+  type ProblemType,
   type Scheduler,
 } from '@inkeep/open-knowledge-core';
 import { Command } from 'commander';
@@ -239,22 +243,19 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     // endpoints only exist on `ok start`, NOT `ok ui`. Without this proxy
     // the React app fetches would receive the SPA-fallback HTML and fail to
     // JSON.parse (QA-040). When the collab server is absent (no server.lock
-    // or port=0), we return a machine-readable 503 so the React app can
-    // distinguish "collab down" from "404 not found" — same envelope shape
-    // as `ok start`'s own API-route-not-found response.
+    // or port=0), we emit RFC 9457 problem+json so client-side
+    // `ProblemDetailsSchema.safeParse` flows surface the actionable
+    // "Start `ok start`" title instead of a generic HTTP-503 fallback.
     if (url?.startsWith('/api/')) {
       apiConfigNudge?.();
       const lock = readServerLock(lockDir);
       if (!lock || lock.port <= 0) {
-        res.writeHead(503, {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store',
-        });
-        res.end(
-          JSON.stringify({
-            error: 'Collab server not running. Start `ok start` or run `ok status`.',
-            path: url,
-          }),
+        emitProblem(
+          res,
+          503,
+          'urn:ok:error:collab-server-not-running',
+          'Collab server not running. Start `ok start` or run `ok status`.',
+          `Path: ${url}`,
         );
         return;
       }
@@ -275,7 +276,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
         if (staticHandler) {
           staticHandler(req, res);
         } else {
-          notFound(res);
+          notFound(res, url);
         }
       });
       return;
@@ -287,7 +288,7 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       return;
     }
 
-    notFound(res);
+    notFound(res, url);
   };
 
   // D-033 — BIND STRATEGY
@@ -438,9 +439,92 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   };
 }
 
-function notFound(res: ServerResponse): void {
-  res.writeHead(404);
-  res.end('Not found');
+/**
+ * RFC 9457 problem+json emitter shared by `ok ui`'s in-process responses
+ * (collab-server-not-running 503; SPA-fallthrough 404). Mirrors
+ * `errorResponse(...)` in `packages/server/src/http/error-response.ts` so
+ * client-side `ProblemDetailsSchema.safeParse` flows match across both
+ * processes.
+ *
+ * **Intentional divergences from `errorResponse(...)`** — documented so
+ * future readers don't try to "consolidate":
+ *
+ *   - **No `apiErrorCounter()` increment.** The CLI process has no OTel
+ *     SDK initialization (CLI lacks the server's telemetry infra entirely).
+ *     Adding a counter call here would be a no-op at best; at worst it
+ *     would lazy-initialize a meter the rest of the CLI doesn't use.
+ *   - **No Pino `log.error()` call.** CLI uses different logging
+ *     conventions (console + structured warn-style for events asserted in
+ *     tests). The server's `getLogger()` is a Pino instance not present
+ *     in the CLI runtime.
+ *   - **Adds `Cache-Control: no-store`** that the server helper doesn't.
+ *     `ok ui` is a dev-mode preview server; clients should never cache its
+ *     503/404 fallthroughs (e.g., on collab-server restart). The main
+ *     server's responses are routed through Vite/asset middleware that
+ *     handles caching policy at a different layer.
+ *
+ * Beyond those three divergences, the wire shape, header set, schema
+ * validation behavior (`safeParse` + hardcoded fallback on schema-validation
+ * failure), and URN closed-enum discipline are identical to `errorResponse(...)`.
+ */
+function emitProblem(
+  res: ServerResponse,
+  status: number,
+  type: ProblemType,
+  title: string,
+  detail?: string,
+): void {
+  const instance = randomUUID();
+  const body: ProblemDetails = {
+    type,
+    title,
+    status,
+    instance,
+    ...(detail !== undefined ? { detail } : {}),
+  };
+  // Defense-in-depth: `safeParse` mirrors `errorResponse`'s pass-1 hardening.
+  // The bare `http.createServer` listener has no try/catch — a throwing
+  // `.parse()` (schema tightening, hardcoded title violating `min(1)`, etc.)
+  // would crash the `ok ui` process. On validation failure, log to stderr
+  // (CLI has no Pino) and emit a hardcoded fallback so the client still gets
+  // a typed problem+json response.
+  const validated = ProblemDetailsSchema.safeParse(body);
+  if (!validated.success) {
+    console.warn('[ok ui] emitProblem produced an invalid ProblemDetails body:', {
+      issues: validated.error.issues,
+      body,
+    });
+    res.writeHead(status, {
+      'Content-Type': 'application/problem+json',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    res.end(
+      JSON.stringify({
+        type: 'urn:ok:error:internal-server-error' satisfies ProblemType,
+        title: 'Internal server error.',
+        status,
+        instance,
+      }),
+    );
+    return;
+  }
+  res.writeHead(status, {
+    'Content-Type': 'application/problem+json',
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
+
+function notFound(res: ServerResponse, path?: string): void {
+  emitProblem(
+    res,
+    404,
+    'urn:ok:error:not-found',
+    'Resource not found.',
+    path !== undefined ? `Path: ${path}` : undefined,
+  );
 }
 
 function resolveRequestedPort(optsPort: string | undefined, envPort: string | undefined): number {

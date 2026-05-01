@@ -14,6 +14,7 @@
  * passes the IPC transport explicitly.
  */
 
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { consumeAuthEventStream } from '@/components/auth-event-stream';
 import type { OkDesktopBridge, OkLocalOpAuthEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
@@ -56,20 +57,40 @@ export function httpAuthTransport(): AuthTransport {
               body: JSON.stringify({ json: true }),
               signal,
             });
-            if (!res.ok || !res.body) {
+            if (!res.ok) {
+              // Pre-stream RFC 9457 problem+json: the server emitted an error
+              // before committing to the NDJSON stream. Surface the typed
+              // `title` so the user sees the actual reason instead of a
+              // generic message.
+              let message = 'Failed to start sign-in — try again';
+              try {
+                const body = (await res.json()) as unknown;
+                const result = ProblemDetailsSchema.safeParse(body);
+                if (result.success) message = result.data.title;
+              } catch {
+                /* keep generic message */
+              }
+              push({ type: 'error', message });
+              return;
+            }
+            if (!res.body) {
               push({ type: 'error', message: 'Failed to start sign-in — try again' });
               return;
             }
             const terminatedByEvent = await consumeAuthEventStream(
               res.body,
               (line): 'terminal' | 'continue' => {
+                // Narrow try/catch to JSON.parse only — event-processing
+                // errors (e.g. push() throwing) propagate instead of being
+                // silently swallowed alongside malformed JSON lines.
+                let event: AuthEvent;
                 try {
-                  const event = JSON.parse(line) as AuthEvent;
-                  push(event);
-                  if (event.type === 'complete' || event.type === 'error') return 'terminal';
+                  event = JSON.parse(line) as AuthEvent;
                 } catch {
-                  /* ignore malformed line */
+                  return 'continue'; // malformed JSON line
                 }
+                push(event);
+                if (event.type === 'complete' || event.type === 'error') return 'terminal';
                 return 'continue';
               },
             );

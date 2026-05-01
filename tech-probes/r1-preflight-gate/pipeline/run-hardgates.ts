@@ -2,17 +2,18 @@
  * Run the remaining hard gates: definition override, fail-fast unknown type,
  * MDX multiline stability, position-data coverage.
  */
-import { parse, serialize } from './pipeline';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkFrontmatter from 'remark-frontmatter';
-import remarkMdx from 'remark-mdx';
-import remarkDirective from 'remark-directive';
-import { visit } from 'unist-util-visit';
+
 import { remarkProseMirror } from '@handlewithcare/remark-prosemirror';
-import { schema } from './schema';
+import remarkDirective from 'remark-directive';
+import remarkFrontmatter from 'remark-frontmatter';
+import remarkGfm from 'remark-gfm';
+import remarkMdx from 'remark-mdx';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
+import { visit } from 'unist-util-visit';
 import { mdastToPmHandlers } from './handlers';
+import { parse, serialize } from './pipeline';
+import { schema } from './schema';
 
 const results: any = {};
 
@@ -167,6 +168,7 @@ results.q9Coverage = {
 };
 
 import { writeFileSync } from 'node:fs';
+
 writeFileSync('/tmp/r1-probe-1776046234/hardgate-results.json', JSON.stringify(results, null, 2));
 
 console.log('=== Hard gate results ===');
@@ -174,10 +176,18 @@ console.log('3. Definition override:       ', results.definitionOverride.verdict
 console.log('   Full-form:                 ', results.definitionFull.pass ? 'PASS' : 'FAIL');
 console.log('4. Fail-fast unknown type:    ', results.failFastUnknown.pass ? 'PASS' : 'FAIL');
 console.log('   Error msg:                 ', results.failFastUnknown.errMsg);
-console.log('5. MDX multiline stability:   ', results.mdxMultiline.converged ? 'PASS (converged)' : 'FAIL');
-if (results.mdxMultiline.error) console.log('   MDX err:                   ', results.mdxMultiline.error);
+console.log(
+  '5. MDX multiline stability:   ',
+  results.mdxMultiline.converged ? 'PASS (converged)' : 'FAIL',
+);
+if (results.mdxMultiline.error)
+  console.log('   MDX err:                   ', results.mdxMultiline.error);
 console.log('   Pass 1 len:', r1.length, 'Pass 2 len:', r2.length, 'Pass 3 len:', r3.length);
-console.log('6. Position data coverage:    ', results.positionCoverage.coverage, results.positionCoverage.pass ? 'PASS' : 'WARN');
+console.log(
+  '6. Position data coverage:    ',
+  results.positionCoverage.coverage,
+  results.positionCoverage.pass ? 'PASS' : 'WARN',
+);
 console.log('   Missing by type:           ', results.positionCoverage.missingByType);
 console.log('8. Nested emphasis #12:       ', results.nestedEmphasis.pass ? 'PASS' : 'FAIL');
 console.log('   IN: ', JSON.stringify(results.nestedEmphasis.input));

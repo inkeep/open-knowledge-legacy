@@ -2,21 +2,29 @@
  * Typed upload-write errors.
  *
  * Extracted from api-extension.ts into its own module so upload-streaming.ts
- * and api-extension.ts can both import without creating a cycle. The union
- * is the stable error-code contract the HTTP 507/500/400 dispatch at the
- * handler boundary consumes.
- *
- * See reports/streaming-upload-refactor/REPORT.md §D6 for the full
- * classification table (ENOSPC → storage-full, EROFS/EACCES → storage-
- * readonly, busboy error → malformed-upload, etc.).
+ * and api-extension.ts can both import without creating a cycle. The reason
+ * field is a strict subset of `ProblemType` (D8 / D22 / D38) — the URN
+ * token is the same value the wire-side error envelope emits, so the
+ * handler dispatch from `e.reason` to the response is a typed pass-through
+ * (no kebab→URN translation table to drift).
  */
 
-export type UploadWriteReason =
-  | 'collision-exhaustion'
-  | 'storage-full'
-  | 'storage-readonly'
-  | 'storage-error'
-  | 'malformed-upload';
+import { assertNeverProblemType, type ProblemType } from '@inkeep/open-knowledge-core';
+
+/**
+ * The upload-side subset of `ProblemType`. Five variants:
+ * collision-exhaustion, storage-full, storage-readonly, storage-error,
+ * malformed-upload — each maps 1:1 to a `urn:ok:error:*` URN registered
+ * in `ProblemTypeSchema`.
+ */
+export type UploadWriteReason = Extract<
+  ProblemType,
+  | 'urn:ok:error:collision-exhaustion'
+  | 'urn:ok:error:storage-full'
+  | 'urn:ok:error:storage-readonly'
+  | 'urn:ok:error:storage-error'
+  | 'urn:ok:error:malformed-upload'
+>;
 
 export class UploadWriteError extends Error {
   readonly reason: UploadWriteReason;
@@ -32,5 +40,50 @@ export class UploadWriteError extends Error {
     super(`UploadWriteError: ${reason}`, { cause });
     this.name = 'UploadWriteError';
     this.reason = reason;
+  }
+}
+
+/**
+ * HTTP status for a given upload reason. Exhaustive switch — adding a new
+ * variant to `UploadWriteReason` surfaces here as a compile error before
+ * the handler can drop a write into a generic 500.
+ */
+export function uploadStatusFor(reason: UploadWriteReason): number {
+  switch (reason) {
+    case 'urn:ok:error:malformed-upload':
+      return 400;
+    case 'urn:ok:error:storage-full':
+      // RFC 4918 507 Insufficient Storage — explicit "disk full," retry
+      // makes no sense until the operator frees space.
+      return 507;
+    case 'urn:ok:error:storage-readonly':
+      return 500;
+    case 'urn:ok:error:storage-error':
+      return 500;
+    case 'urn:ok:error:collision-exhaustion':
+      return 500;
+    default:
+      return assertNeverProblemType(reason);
+  }
+}
+
+/**
+ * RFC 9457 `title` for a given upload reason. Required short human-readable
+ * English summary (D14 / RFC 9457 §3.1.4).
+ */
+export function uploadTitleFor(reason: UploadWriteReason): string {
+  switch (reason) {
+    case 'urn:ok:error:malformed-upload':
+      return 'Upload payload is malformed.';
+    case 'urn:ok:error:storage-full':
+      return 'Storage is full.';
+    case 'urn:ok:error:storage-readonly':
+      return 'Storage is read-only.';
+    case 'urn:ok:error:storage-error':
+      return 'Failed to write upload.';
+    case 'urn:ok:error:collision-exhaustion':
+      return 'Filename collision retries exhausted.';
+    default:
+      return assertNeverProblemType(reason);
   }
 }

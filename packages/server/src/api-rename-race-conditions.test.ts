@@ -166,10 +166,8 @@ describe('Finding 1 — folder-rename enumeration races concurrent index updates
 
     expect(captured.status).toBe(200);
     const body = JSON.parse(captured.body) as {
-      ok: boolean;
       renamed: Array<{ fromDocName: string; toDocName: string }>;
     };
-    expect(body.ok).toBe(true);
     // BEFORE fix: enumeration ran outside the lock with stale index → only
     // 2 entries. The directory-level mv still moves c.md to essays/, so the
     // journal becomes inconsistent with disk.
@@ -247,9 +245,9 @@ describe('Finding 2 — admission check uses on-disk source extension', () => {
     // AFTER fix: probe-and-register sees foo.mdx, admission then checks
     // 'articles/bar.mdx' which is excluded → 400.
     expect(captured.status).toBe(400);
-    const body = JSON.parse(captured.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('excluded');
+    const body = JSON.parse(captured.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(String(body.title)).toContain('excluded');
   });
 });
 

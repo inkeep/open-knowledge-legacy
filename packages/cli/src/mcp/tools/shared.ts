@@ -254,7 +254,17 @@ export function normalizeDocName(
 
 /**
  * HTTP GET helper for Hocuspocus API calls.
- * Returns `{ ok: false, error }` on network failure or non-JSON response.
+ *
+ * Post-D22 RFC 9457: success responses emit flat `{...data}` shapes (no
+ * `ok: true` wrapper). The server signals success/error via HTTP status —
+ * 2xx is success, 4xx/5xx is RFC 9457 Problem Details. This helper
+ * normalizes both to the legacy `{ok, error?, ...data}` shape MCP tool
+ * consumers read so cluster migrations land transparently.
+ *
+ * Returns `{ ok: true, ...data }` on HTTP 2xx; `{ ok: false, error }` on
+ * non-2xx (with `error` derived from `ProblemDetails.title` when the body
+ * is RFC 9457-shaped, or a generic HTTP-status string otherwise);
+ * `{ ok: false, error }` on network failure or non-JSON response.
  */
 export async function httpGet(
   baseUrl: string,
@@ -266,16 +276,13 @@ export async function httpGet(
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
-  try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
-  } catch {
-    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
-  }
+  return parseHttpResponse(res);
 }
 
 /**
  * HTTP POST helper for Hocuspocus API calls.
- * Returns `{ ok: false, error }` on network failure or non-JSON response.
+ *
+ * See `httpGet` for RFC 9457 normalization semantics.
  */
 export async function httpPost(
   baseUrl: string,
@@ -293,11 +300,65 @@ export async function httpPost(
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
+  return parseHttpResponse(res);
+}
+
+/**
+ * Normalize a Hocuspocus API response into the legacy `{ok, error?, ...}`
+ * shape. Success path emits `{ok: true, ...flatBody}`; error path emits
+ * `{ok: false, error: <title|status>}` with the original problem details
+ * accessible under `problem` for callers that want the typed `type` token.
+ *
+ * This is a transitional shim: it preserves the MCP tool surface contract
+ * while letting the wire shape advance to RFC 9457. When MCP tools
+ * eventually read `type`/`status` directly, this can collapse to a plain
+ * `await res.json()`.
+ */
+async function parseHttpResponse(res: Response): Promise<{ ok: boolean; [key: string]: unknown }> {
+  let body: unknown;
   try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
+    body = await res.json();
   } catch {
     return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
   }
+  if (!res.ok) {
+    // Prefer RFC 9457 `title` (post-D22 server emits problem+json on every
+    // error path; FR17 fail-on-any-occurrence enforces this for our handlers).
+    // The `error`/`message` fallback arms remain as defensive coverage for
+    // (a) test mocks that emit legacy shapes, (b) non-server intermediaries
+    // (reverse proxies, load balancers, gateways) that synthesize their own
+    // error bodies. Then `type`/`HTTP NNN` as last resorts.
+    const errBody = body as Partial<{
+      title: string;
+      type: string;
+      detail: string;
+      error: string;
+      message: string;
+    }> | null;
+    const errorMsg =
+      (typeof errBody?.title === 'string' && errBody.title.length > 0 && errBody.title) ||
+      (typeof errBody?.error === 'string' && errBody.error.length > 0 && errBody.error) ||
+      (typeof errBody?.message === 'string' && errBody.message.length > 0 && errBody.message) ||
+      (typeof errBody?.type === 'string' && errBody.type.length > 0 && errBody.type) ||
+      `HTTP ${res.status}`;
+    // Lift extension members from the body so callers reading
+    // `result.<extensionField>` work on both legacy `{ok:false, ...extras}`
+    // and RFC 9457 `application/problem+json` shapes (the schema is
+    // `.loose()`, so extensions like `colliding` ride on the body).
+    const extensions =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    return { ...extensions, ok: false, error: errorMsg, problem: body, status: res.status };
+  }
+  // Success: server emits flat `{...data}` post-D22. Wrap with `{ok: true}`
+  // so MCP tools can keep their `if (!result.ok) return error` short-circuit.
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    return { ok: true, ...(body as Record<string, unknown>) };
+  }
+  // Array-shaped success body (e.g., /api/rescue list response). Surface
+  // through the `data` key so consumers can opt into reading it.
+  return { ok: true, data: body };
 }
 
 /**

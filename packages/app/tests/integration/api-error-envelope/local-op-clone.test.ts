@@ -1,0 +1,202 @@
+/**
+ * Per-handler narrow-integration smoke test for `handleLocalOpClone` (US-005,
+ * D36 c — streaming-endpoint checkpoint).
+ *
+ * Validates the canonical pattern handles NDJSON streaming endpoints:
+ *   - Pre-stream errors (response head not yet written) emit RFC 9457
+ *     `application/problem+json` via `errorResponse(...)` — same shape as
+ *     non-streaming handlers.
+ *   - Mid-stream errors (response head already written as
+ *     `application/x-ndjson`) emit a typed event matching
+ *     `StreamingProblemEventSchema`: `{ type: 'error', problem: ProblemDetails }`.
+ *
+ * Real server + real handler + real schema. The test points the spawn at a
+ * deterministic non-existent binary so `child.on('error', ENOENT)` fires on
+ * every mid-stream test — no real `git clone` runs, no network access.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
+import { ProblemDetailsSchema, StreamingProblemEventSchema } from '@inkeep/open-knowledge-core';
+import { createTestServer, type TestServer } from '../test-harness';
+
+let server: TestServer;
+
+beforeAll(async () => {
+  // Deterministic ENOENT: spawn() against a path we control + can guarantee
+  // does not exist. The clone subprocess can't start, the `child.on('error')`
+  // handler fires, and we get to assert the streaming envelope without a
+  // real CLI install.
+  server = await createTestServer({
+    localOpCliArgs: ['/nonexistent-test-binary-do-not-create-this-file'],
+  });
+});
+
+afterAll(async () => {
+  await server.cleanup();
+});
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function postClone(body: unknown): Promise<Response> {
+  return fetch(`http://127.0.0.1:${server.port}/api/local-op/clone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+async function readNdjsonEvents(res: Response): Promise<unknown[]> {
+  const reader = res.body?.getReader();
+  if (!reader) return [];
+  const decoder = new TextDecoder();
+  const events: unknown[] = [];
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        events.push({ __raw: line });
+      }
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      events.push(JSON.parse(buffer));
+    } catch {
+      events.push({ __raw: buffer });
+    }
+  }
+  return events;
+}
+
+describe('local-op-clone envelope (RFC 9457 + streaming, US-005, D36 c)', () => {
+  test('pre-stream: malformed body emits problem+json 400 with urn:ok:error:invalid-request', async () => {
+    const res = await postClone('not-valid-json{');
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.data.status).toBe(400);
+      expect(parsed.data.title.length).toBeGreaterThan(0);
+      expect(parsed.data.instance).toBeDefined();
+      if (parsed.data.instance) expect(parsed.data.instance).toMatch(UUID_RE);
+      expect(parsed.data.status).toBe(res.status);
+    }
+  });
+
+  test('pre-stream: missing url field emits problem+json 400 (LocalOpCloneRequestSchema validation)', async () => {
+    const res = await postClone({ dir: '~/Documents/test' });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+      // Detail surfaces the missing field path.
+      expect(parsed.data.detail ?? '').toMatch(/url/i);
+    }
+  });
+
+  test('pre-stream: blocked URL protocol emits urn:ok:error:url-not-allowed', async () => {
+    const res = await postClone({ url: 'file:///etc/passwd', dir: '~/Documents/test' });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:url-not-allowed');
+      expect(parsed.data.status).toBe(400);
+    }
+  });
+
+  test('pre-stream: dir outside home emits urn:ok:error:dir-outside-home', async () => {
+    const res = await postClone({ url: 'https://github.com/owner/repo', dir: '/etc/repo' });
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:dir-outside-home');
+      expect(parsed.data.status).toBe(400);
+    }
+  });
+
+  test('pre-stream: method not allowed on GET emits problem+json 405 with Allow: POST', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/local-op/clone`, {
+      method: 'GET',
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    expect(res.headers.get('allow')).toBe('POST');
+
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:method-not-allowed');
+      expect(parsed.data.status).toBe(405);
+    }
+  });
+
+  test('mid-stream: spawn ENOENT emits typed { type: "error", problem: ProblemDetails } event on the NDJSON stream', async () => {
+    // Valid pre-stream gates (https URL + path under home dir) so the handler
+    // commits to the NDJSON response head; the spawn then fails with ENOENT
+    // (deterministic via localOpCliArgs override at server boot).
+    const res = await postClone({
+      url: 'https://github.com/owner/repo',
+      dir: `${homedir()}/.ok-test-clone-target`,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/x-ndjson');
+
+    const events = await readNdjsonEvents(res);
+    expect(events.length).toBeGreaterThan(0);
+
+    const errorEvents = events.filter(
+      (e): e is { type: string; problem: unknown } =>
+        typeof e === 'object' && e !== null && (e as { type?: unknown }).type === 'error',
+    );
+    expect(errorEvents.length).toBeGreaterThan(0);
+
+    // Every error event matches the canonical streaming envelope, and the
+    // nested `problem` field passes ProblemDetailsSchema.safeParse.
+    for (const evt of errorEvents) {
+      const eventParsed = StreamingProblemEventSchema.safeParse(evt);
+      expect(eventParsed.success).toBe(true);
+      if (eventParsed.success) {
+        expect(eventParsed.data.type).toBe('error');
+        expect(eventParsed.data.problem.type).toBe('urn:ok:error:clone-failed');
+        expect(eventParsed.data.problem.status).toBe(500);
+        expect(eventParsed.data.problem.title.length).toBeGreaterThan(0);
+        expect(eventParsed.data.problem.instance).toBeDefined();
+        if (eventParsed.data.problem.instance) {
+          expect(eventParsed.data.problem.instance).toMatch(UUID_RE);
+        }
+      }
+
+      // ProblemDetailsSchema.safeParse on the nested field — explicit per
+      // US-005 AC ("the NDJSON stream contains an error event whose
+      // `problem` field passes ProblemDetailsSchema.safeParse").
+      const problemParsed = ProblemDetailsSchema.safeParse((evt as { problem: unknown }).problem);
+      expect(problemParsed.success).toBe(true);
+    }
+  });
+});

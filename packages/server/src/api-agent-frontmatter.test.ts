@@ -310,9 +310,9 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.ok).toBe(false);
-      expect(parsed.error).toContain('Frontmatter edits are not supported');
-      expect(parsed.error).toContain('write_document');
+      expect(parsed.type).toBe('urn:ok:error:frontmatter-edit-not-supported');
+      expect(parsed.title).toContain('Frontmatter edits are not supported');
+      expect(parsed.title).toContain('write_document');
 
       expect(ytextFm(session.dc.document)).toBe(existingFm);
       expect(fmMap(session.dc.document)).toEqual({
@@ -350,7 +350,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('Frontmatter edits are not supported');
+      expect(parsed.title).toContain('Frontmatter edits are not supported');
 
       expect(ytextFm(session.dc.document)).toBe(existingFm);
       expect(fmMap(session.dc.document)).toEqual({ title: 'ToRemove' });
@@ -384,7 +384,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('Frontmatter edits are not supported');
+      expect(parsed.title).toContain('Frontmatter edits are not supported');
 
       expect(ytextFm(session.dc.document)).toBe(existingFm);
       expect(fmMap(session.dc.document)).toEqual({ status: 'draft' });
@@ -449,9 +449,14 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
       });
 
       expect(response.status).toBe(404);
+      // D22 + US-006: target-not-found emits RFC 9457 problem+json post-identity.
       const parsed = JSON.parse(response.body);
-      expect(parsed.ok).toBe(false);
-      expect(parsed.error).not.toContain('Frontmatter edits are not supported');
+      expect(parsed.type).toBe('urn:ok:error:target-not-found');
+      expect(parsed.status).toBe(404);
+      // Negative: confirm target-not-found isn't mis-routed to the
+      // frontmatter-rejection path. The URN check above already proves
+      // this; the title check here documents the intent.
+      expect(parsed.title).not.toContain('Frontmatter edits are not supported');
     } finally {
       await cleanup();
     }
@@ -478,7 +483,7 @@ describe('POST /api/agent-patch (edit_document) — frontmatter rejection', () =
 
       expect(response.status).toBe(400);
       const parsed = JSON.parse(response.body);
-      expect(parsed.error).toContain('Frontmatter edits are not supported');
+      expect(parsed.title).toContain('Frontmatter edits are not supported');
 
       const ytext = session.dc.document.getText('source').toString();
       expect(ytext).toContain('foo: bar appears here.');

@@ -1,9 +1,7 @@
+import type { RenamedDocMapping } from '@inkeep/open-knowledge-core';
 import type { DocEntry } from '@/components/file-tree-utils';
 
-export interface RenamedDocMapping {
-  fromDocName: string;
-  toDocName: string;
-}
+export type { RenamedDocMapping };
 
 export interface FileTreeTarget {
   kind: 'folder' | 'file';

@@ -49,21 +49,22 @@ describe('GET /api/principal', () => {
     }
   });
 
-  test('rejects DNS-rebinding Host header with 403 host-header-not-allowed', async () => {
+  test('rejects DNS-rebinding Host header with 403 host-not-allowed', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/principal`, {
       headers: { Host: 'attacker.example.com' },
     });
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('host-header-not-allowed');
+    expect(res.headers.get('content-type')).toContain('application/problem+json');
+    const body = (await res.json()) as { type: string; status: number };
+    expect(body.type).toBe('urn:ok:error:host-not-allowed');
+    expect(body.status).toBe(403);
   });
 
   test('Host-header check fires before method dispatch (no verb fingerprinting)', async () => {
     // An unauthorized caller must see 403 for every verb — if POST-with-bad-Host
     // returned 405 instead, the endpoint would leak "I exist, I expect GET" to
     // cross-origin callers. Both GET and POST from the same bad Host must produce
-    // the same 403 with the same error slug.
+    // the same 403 with the same problem-type token.
     const getRes = await fetch(`http://127.0.0.1:${server.port}/api/principal`, {
       headers: { Host: 'attacker.example.com' },
     });
@@ -73,9 +74,9 @@ describe('GET /api/principal', () => {
     });
     expect(getRes.status).toBe(403);
     expect(postRes.status).toBe(403);
-    const getBody = (await getRes.json()) as { error: string };
-    const postBody = (await postRes.json()) as { error: string };
-    expect(getBody.error).toBe('host-header-not-allowed');
-    expect(postBody.error).toBe('host-header-not-allowed');
+    const getBody = (await getRes.json()) as { type: string };
+    const postBody = (await postRes.json()) as { type: string };
+    expect(getBody.type).toBe('urn:ok:error:host-not-allowed');
+    expect(postBody.type).toBe('urn:ok:error:host-not-allowed');
   });
 });

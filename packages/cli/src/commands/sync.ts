@@ -46,8 +46,17 @@ export async function runSync(
         body: JSON.stringify({ op }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Server responded with ${res.status}`);
+        // RFC 9457 problem+json (D22) — read `title` for the user-visible
+        // message; fall back through legacy `error`/`message` for forward-
+        // compat with older servers, then HTTP status as a last resort.
+        const body = (await res.json().catch(() => ({}))) as {
+          title?: string;
+          error?: string;
+          message?: string;
+        };
+        throw new Error(
+          body.title ?? body.error ?? body.message ?? `Server responded with ${res.status}`,
+        );
       }
       emit(opts.json, { type: 'triggered', op, port: lock.port });
       if (!opts.json) {

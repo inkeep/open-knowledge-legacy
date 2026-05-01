@@ -1,3 +1,8 @@
+import {
+  type HeadingEntry,
+  PageHeadingsSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { usePageList } from '@/components/PageListContext';
@@ -11,6 +16,7 @@ import {
   PanelTitle,
 } from '@/components/ui/panel';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { HttpResponseParseError } from '@/editor/http-client';
 import { rememberPendingSourceNavigation } from '@/editor/source-editor-navigation';
 import { useActiveHeading } from '@/hooks/useActiveHeading';
 import { ProfilerBoundary } from '@/lib/perf';
@@ -25,24 +31,33 @@ import { cn } from '@/lib/utils';
  */
 const OUTLINE_INVALIDATE_DEBOUNCE_MS = 300;
 
-interface HeadingEntry {
-  level: number;
-  text: string;
-  slug: string;
-}
-
-interface PageHeadingsResponse {
-  ok: boolean;
-  headings?: HeadingEntry[];
-  error?: string;
-}
-
 async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const res = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
-  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-  const data = (await res.json()) as PageHeadingsResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load headings');
-  return data.headings ?? [];
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (cause) {
+    throw new HttpResponseParseError('Page headings response was not JSON', {
+      cause,
+      status: res.status,
+    });
+  }
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError('Page headings error response did not match RFC 9457', {
+        status: res.status,
+      });
+    }
+    throw new Error(problem.data.title);
+  }
+  const success = PageHeadingsSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError('Page headings response did not match success schema', {
+      status: res.status,
+    });
+  }
+  return success.data.headings ?? [];
 }
 
 // Button height (py-1.5 = 12px + text-sm line-height 20px). Marker is

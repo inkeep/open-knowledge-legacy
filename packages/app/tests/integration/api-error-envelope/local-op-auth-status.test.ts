@@ -1,0 +1,98 @@
+/**
+ * Per-handler narrow-integration smoke test for `handleLocalOpAuthStatus`
+ * (FR10 / D16, US-012). Covers method gating, body-shape validation, and the
+ * spawn-failure 500 path. The happy-path response shape is pinned by
+ * `LocalOpAuthStatusSuccessSchema` (`.loose()` accepts CLI-emitted extras).
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { LocalOpAuthStatusSuccessSchema, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
+import { createTestServer, type TestServer } from '../test-harness';
+
+let server: TestServer;
+
+beforeAll(async () => {
+  server = await createTestServer({
+    localOpCliArgs: ['/nonexistent-test-binary-do-not-create-this-file'],
+  });
+});
+
+afterAll(async () => {
+  await server.cleanup();
+});
+
+async function postStatus(body: unknown): Promise<Response> {
+  return fetch(`http://127.0.0.1:${server.port}/api/local-op/auth/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+
+describe('local-op-auth-status envelope (RFC 9457, US-012)', () => {
+  test('spawn failure emits urn:ok:error:auth-failed problem+json 500', async () => {
+    // ENOENT spawn (deterministic via localOpCliArgs override) → child.on('error')
+    // rejects the promise → handler's catch emits errorResponse 500 with
+    // urn:ok:error:auth-failed. The happy-path response shape is pinned by
+    // `LocalOpAuthStatusSuccessSchema` exercised in core/api.test.ts.
+    const res = await postStatus({});
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe('application/problem+json');
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:auth-failed');
+      expect(parsed.data.status).toBe(500);
+    }
+  });
+
+  test('LocalOpAuthStatusSuccessSchema accepts CLI-emitted shape', () => {
+    // Co-located schema test guarantees the wire-shape contract — a happy
+    // path with a real CLI subprocess is covered by host-network tests.
+    expect(LocalOpAuthStatusSuccessSchema.safeParse({ authenticated: false }).success).toBe(true);
+    expect(
+      LocalOpAuthStatusSuccessSchema.safeParse({
+        authenticated: true,
+        login: 'alice',
+        host: 'github.com',
+      }).success,
+    ).toBe(true);
+  });
+
+  test('malformed JSON body emits problem+json 400', async () => {
+    const res = await postStatus('not-valid-json{');
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+    }
+  });
+
+  test('empty host string fails schema with urn:ok:error:invalid-request', async () => {
+    const res = await postStatus({ host: '' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:invalid-request');
+    }
+  });
+
+  test('method-not-allowed on GET emits problem+json with Allow: POST', async () => {
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/local-op/auth/status`, {
+      method: 'GET',
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+    const body = await res.json();
+    const parsed = ProblemDetailsSchema.safeParse(body);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.type).toBe('urn:ok:error:method-not-allowed');
+    }
+  });
+});

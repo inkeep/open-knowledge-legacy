@@ -13,6 +13,7 @@
  *
  * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
  */
+import { type ProblemDetails, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
@@ -38,9 +39,14 @@ interface DeviceCompleteEvent {
   avatarUrl?: string;
 }
 
+/**
+ * Mid-stream error event per US-005 streaming envelope (D36 c). Replaces the
+ * pre-migration `{ type: 'error', message: string }` shape — title is sourced
+ * from the typed `problem` payload.
+ */
 interface DeviceErrorEvent {
   type: 'error';
-  message: string;
+  problem: ProblemDetails;
 }
 
 type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
@@ -294,29 +300,46 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
         body: JSON.stringify({ pat: pat.trim() }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
+        // Pre-validation error: emit RFC 9457 problem+json title.
+        let message = 'Invalid token — check that it has repo scope';
+        try {
+          const body = (await res.json()) as unknown;
+          const result = ProblemDetailsSchema.safeParse(body);
+          if (result.success) message = result.data.title;
+        } catch {
+          /* keep generic message */
+        }
+        setError(message);
+        setLoading(false);
+        return;
+      }
+      if (!res.body) {
         setError('Invalid token — check that it has repo scope');
         setLoading(false);
         return;
       }
       const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
+        // Narrow try/catch to JSON.parse only — event-processing errors
+        // propagate instead of being silently swallowed.
+        let event: DeviceEvent;
         try {
-          const event = JSON.parse(line) as DeviceEvent;
-          if (event.type === 'complete') {
-            onSuccess({
-              login: event.login,
-              name: event.name,
-              email: event.email,
-            });
-            setLoading(false);
-            return 'terminal';
-          } else if (event.type === 'error') {
-            setError(event.message);
-            setLoading(false);
-            return 'terminal';
-          }
+          event = JSON.parse(line) as DeviceEvent;
         } catch {
-          /* ignore */
+          return 'continue';
+        }
+        if (event.type === 'complete') {
+          onSuccess({
+            login: event.login,
+            name: event.name,
+            email: event.email,
+          });
+          setLoading(false);
+          return 'terminal';
+        } else if (event.type === 'error') {
+          setError(event.problem?.title ?? 'Sign-in error');
+          setLoading(false);
+          return 'terminal';
         }
         return 'continue';
       });
@@ -455,11 +478,14 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via config endpoint (best-effort)
-    void fetch('/api/local-op/auth/status', {
+    // Persist git identity via the correct endpoint (best-effort).
+    // /api/local-op/auth/set-identity writes to repo-local git config and
+    // nudges the sync engine to re-probe so the unresolved-identity UI
+    // banner clears on the next push cycle.
+    void fetch('/api/local-op/auth/set-identity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setIdentity: { name, email } }),
+      body: JSON.stringify({ name, email }),
     }).catch(() => {
       /* ignore */
     });

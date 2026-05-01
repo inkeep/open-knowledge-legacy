@@ -752,8 +752,13 @@ export function createServer(options: ServerOptions): ServerInstance {
       case 'asset-create':
       case 'asset-delete':
         return event.relativePath;
-      default:
+      case 'create':
+      case 'update':
+      case 'delete':
+      case 'conflict':
         return event.docName;
+      default:
+        return assertNeverDiskEvent(event);
     }
   }
 

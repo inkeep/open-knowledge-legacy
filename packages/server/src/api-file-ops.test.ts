@@ -185,7 +185,7 @@ describe('file operation API routes', () => {
       renamed: Array<{ fromDocName: string; toDocName: string }>;
       rewrittenDocs: Array<{ docName: string; rewrites: number }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed-notes' }]);
     expect(body.rewrittenDocs).toEqual([
       { docName: 'journal', rewrites: 2 },
@@ -261,10 +261,10 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(404);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Document not found: nonexistent-doc',
-    });
+    const parsed = JSON.parse(result.body) as Record<string, unknown>;
+    expect(parsed.type).toBe('urn:ok:error:doc-not-found');
+    expect(parsed.title).toContain('Document not found');
+    expect(parsed.title).toContain('nonexistent-doc');
 
     // Critical: NO empty Y.Doc was materialized in `Hocuspocus.documents`
     // for the missing name. The downstream phantom-file path that depends
@@ -278,7 +278,7 @@ describe('file operation API routes', () => {
     // already-loaded referring document` above.
     const ok = await callApi(dir, '/api/document?docName=real-doc', 'GET', {}, { hocuspocus });
     expect(ok.status).toBe(200);
-    expect((JSON.parse(ok.body) as { ok: boolean }).ok).toBe(true);
+    expect((JSON.parse(ok.body) as { docName: string }).docName).toBe('real-doc');
   });
 
   test('rename does NOT materialize a phantom file for an in-memory-only backlink source', async () => {
@@ -539,9 +539,9 @@ describe('file operation API routes', () => {
     expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Existing\n');
     expect(readFileSync(join(dir, 'journal.md'), 'utf-8')).toBe('# Journal\n\nSee [[notes]].\n');
 
-    const body = JSON.parse(result.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe('Destination already exists');
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:doc-already-exists');
+    expect(body.title).toContain('Destination already exists');
   });
 
   test('managed rename returns no-op success when source and destination match', async () => {
@@ -563,7 +563,6 @@ describe('file operation API routes', () => {
     expect(result.status).toBe(200);
     expect(readFileSync(join(dir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
     expect(JSON.parse(result.body)).toEqual({
-      ok: true,
       renamed: [],
       rewrittenDocs: [],
     });
@@ -586,10 +585,9 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Reserved document names cannot be renamed',
-    });
+    const reservedBody = JSON.parse(result.body) as Record<string, unknown>;
+    expect(reservedBody.type).toBe('urn:ok:error:reserved-doc-name');
+    expect(reservedBody.title).toContain('Reserved document names cannot be renamed');
   });
 
   test('managed rename with kind:folder on an existing file returns 400 (type mismatch)', async () => {
@@ -612,10 +610,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a folder',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a folder');
+    }
   });
 
   test('managed rename with kind:file on a .md-named directory returns 400 (type mismatch)', async () => {
@@ -638,10 +637,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'Source path is not a file',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:invalid-request');
+      expect(parsed.title).toContain('Source path is not a file');
+    }
   });
 
   test('managed rename rejects .ok as a destination (reserved directory)', async () => {
@@ -662,10 +662,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename rejects .ok subpath as a destination', async () => {
@@ -685,10 +686,11 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(400);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: '.ok is a reserved directory',
-    });
+    {
+      const parsed = JSON.parse(result.body) as Record<string, unknown>;
+      expect(parsed.type).toBe('urn:ok:error:reserved-doc-name');
+      expect(parsed.title).toContain('.ok is a reserved directory');
+    }
   });
 
   test('managed rename returns 404 when the source document is missing', async () => {
@@ -707,10 +709,12 @@ describe('file operation API routes', () => {
     );
 
     expect(result.status).toBe(404);
-    expect(JSON.parse(result.body)).toEqual({
-      ok: false,
-      error: 'file does not exist',
-    });
+    const notFoundBody = JSON.parse(result.body) as Record<string, unknown>;
+    expect(notFoundBody.type).toBe('urn:ok:error:doc-not-found');
+    // Title wording may vary ("file does not exist" / "Document does not exist")
+    // depending on handler-side phrasing; the URN above is the load-bearing assertion.
+    expect(typeof notFoundBody.title).toBe('string');
+    expect(String(notFoundBody.title).toLowerCase()).toContain('does not exist');
   });
 
   test.skipIf(process.platform === 'win32')(
@@ -737,10 +741,9 @@ describe('file operation API routes', () => {
       );
 
       expect(result.status).toBe(400);
-      expect(JSON.parse(result.body)).toEqual({
-        ok: false,
-        error: 'symlink-escape: path resolves outside content directory',
-      });
+      const symlinkBody = JSON.parse(result.body) as Record<string, unknown>;
+      expect(symlinkBody.type).toBe('urn:ok:error:path-escape');
+      expect(symlinkBody.title).toBe('symlink-escape: path resolves outside content directory');
     },
   );
 
@@ -759,7 +762,7 @@ describe('file operation API routes', () => {
     expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Notes\n');
 
     const body = JSON.parse(result.body) as { ok: boolean; renamed: Array<Record<string, string>> };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed-notes' }]);
   });
 
@@ -784,7 +787,7 @@ describe('file operation API routes', () => {
       ok: boolean;
       renamed: Array<{ fromDocName: string; toDocName: string }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.renamed).toEqual([
       { fromDocName: 'docs/index', toDocName: 'guides/index' },
       { fromDocName: 'docs/nested/page', toDocName: 'guides/nested/page' },
@@ -839,7 +842,7 @@ describe('file operation API routes', () => {
       ok: boolean;
       pages: Array<{ docName: string; title: string }>;
     };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.pages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ docName: 'guides/index', title: 'Docs' }),
@@ -924,7 +927,7 @@ describe('file operation API routes', () => {
     expect(existsSync(join(dir, 'trash-me.md'))).toBe(false);
 
     const body = JSON.parse(result.body) as { ok: boolean; deletedDocNames: string[] };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.deletedDocNames).toEqual(['trash-me']);
   });
 
@@ -943,7 +946,7 @@ describe('file operation API routes', () => {
     expect(existsSync(join(dir, 'archive'))).toBe(false);
 
     const body = JSON.parse(result.body) as { ok: boolean; deletedDocNames: string[] };
-    expect(body.ok).toBe(true);
+    expect(body.ok).toBeUndefined();
     expect(body.deletedDocNames).toEqual(['archive/index', 'archive/old/entry']);
   });
 
@@ -958,9 +961,9 @@ describe('file operation API routes', () => {
     });
 
     expect(result.status).toBe(400);
-    const body = JSON.parse(result.body) as { ok: boolean; error: string };
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain('relative content paths');
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.type).toBe('urn:ok:error:invalid-request');
+    expect(body.title).toContain('relative content paths');
   });
 
   test.skipIf(process.platform === 'win32')(

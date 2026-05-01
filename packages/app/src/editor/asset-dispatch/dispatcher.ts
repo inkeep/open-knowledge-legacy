@@ -64,7 +64,7 @@ export async function dispatchAssetClick(
   // 1. Cmd/Ctrl+click (or middle-click) always skips the registry.
   if (!ctx.forceOsDelegation) {
     const lookup = registry.lookup(ctx.ext);
-    if (lookup.found) {
+    if (lookup.ok) {
       lookup.viewer.render(ctx);
       return;
     }

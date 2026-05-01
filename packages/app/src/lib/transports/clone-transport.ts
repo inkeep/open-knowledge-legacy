@@ -11,6 +11,7 @@
  *     spawns a new editor window directly at `dir`).
  */
 
+import { ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import type { OkDesktopBridge, OkLocalOpCloneEvent } from '@/lib/desktop-bridge-types';
 import { createBufferedAsyncStream } from './buffered-async-stream';
 
@@ -54,8 +55,23 @@ export function httpCloneTransport(): CloneTransport {
               body: JSON.stringify({ url: request.url, dir: request.dir || undefined }),
               signal,
             });
-            if (!res.ok || !res.body) {
-              push({ type: 'error', message: 'Clone failed — check the URL and try again' });
+            if (!res.ok) {
+              // Pre-stream RFC 9457 problem+json: surface the typed `title`
+              // so the user sees why clone failed (rate limit, auth, etc.)
+              // instead of a generic "check the URL" message.
+              let message = `Clone failed — check the URL and try again (${res.status})`;
+              try {
+                const body = (await res.json()) as unknown;
+                const result = ProblemDetailsSchema.safeParse(body);
+                if (result.success) message = `Clone failed: ${result.data.title}`;
+              } catch {
+                /* keep generic message */
+              }
+              push({ type: 'error', message });
+              return;
+            }
+            if (!res.body) {
+              push({ type: 'error', message: 'Clone failed — empty response body' });
               return;
             }
             const reader = res.body.getReader();
@@ -69,11 +85,16 @@ export function httpCloneTransport(): CloneTransport {
               leftover = lines.pop() ?? '';
               for (const line of lines) {
                 if (!line.trim()) continue;
+                // Narrow try/catch to JSON.parse only — push() failures
+                // propagate instead of being silently swallowed alongside
+                // malformed JSON lines.
+                let event: CloneEvent;
                 try {
-                  push(JSON.parse(line) as CloneEvent);
+                  event = JSON.parse(line) as CloneEvent;
                 } catch {
-                  /* ignore malformed line */
+                  continue; // malformed NDJSON line
                 }
+                push(event);
               }
               if (signal.aborted) break;
             }

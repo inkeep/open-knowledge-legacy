@@ -22,6 +22,7 @@
 
 import { execFile } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { errorResponse } from './http/error-response.ts';
 
 export const INSTALLED_AGENTS_SCHEMES = ['claude', 'codex', 'cursor'] as const;
 export type InstalledAgentScheme = (typeof INSTALLED_AGENTS_SCHEMES)[number];
@@ -126,12 +127,15 @@ export function createInstalledAgentsProbe(deps: InstalledAgentsProbeDeps): {
 }
 
 /**
- * 405 on non-GET. 200 + flat `{claude, codex, cursor}` body on success.
+ * 405 on non-GET → RFC 9457 `application/problem+json`. 200 + flat
+ * `{claude, codex, cursor}` body on success (no `{ok:true,...}` wrapper) —
+ * the consumer `probeViaFetch` in
+ * `packages/app/src/lib/handoff/install-detect.ts` keys off the three literal
+ * scheme names directly.
  *
- * Response body is bare (no `{ok:true,...}` envelope) because the consumer
- * `probeViaFetch` in `packages/app/src/lib/handoff/install-detect.ts` keys off
- * the three literal scheme names directly. Errors use a bare `{error}` to
- * match.
+ * Caller (`handleInstalledAgentsRoute` in `api-extension.ts`) gates with
+ * `checkLocalOpSecurity` first; this function trusts that the request has
+ * passed the loopback + DNS-rebinding guard.
  */
 export async function handleInstalledAgents(
   req: IncomingMessage,
@@ -139,7 +143,10 @@ export async function handleInstalledAgents(
   probeAll: () => Promise<Record<InstalledAgentScheme, boolean>>,
 ): Promise<void> {
   if (req.method !== 'GET') {
-    writeJson(res, 405, { error: 'Method not allowed' });
+    errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+      handler: 'installed-agents',
+      extraHeaders: { Allow: 'GET' },
+    });
     return;
   }
   try {
@@ -147,7 +154,10 @@ export async function handleInstalledAgents(
     writeJson(res, 200, result);
   } catch (e) {
     console.error('[installed-agents]', e);
-    writeJson(res, 500, { error: 'Internal server error' });
+    errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+      handler: 'installed-agents',
+      cause: e,
+    });
   }
 }
 

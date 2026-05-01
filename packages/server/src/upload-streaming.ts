@@ -148,12 +148,12 @@ export function linkTempToFinalWithCollisionRetry(
       }
 
       if (code === 'ENOSPC' || code === 'EDQUOT') {
-        throw new UploadWriteError('storage-full', err);
+        throw new UploadWriteError('urn:ok:error:storage-full', err);
       }
       if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
-        throw new UploadWriteError('storage-readonly', err);
+        throw new UploadWriteError('urn:ok:error:storage-readonly', err);
       }
-      throw new UploadWriteError('storage-error', err);
+      throw new UploadWriteError('urn:ok:error:storage-error', err);
     }
   }
 
@@ -163,7 +163,7 @@ export function linkTempToFinalWithCollisionRetry(
   } catch {
     // tempfile will be reaped by boot-time orphan sweep
   }
-  throw new UploadWriteError('collision-exhaustion');
+  throw new UploadWriteError('urn:ok:error:collision-exhaustion');
 }
 
 /**

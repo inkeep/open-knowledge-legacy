@@ -21,42 +21,35 @@
  * activity.ts`. This hook is a pure consumer — never mutates Y.Doc state
  * (NF-P3).
  */
+import {
+  type ActivityAgentHeader,
+  type ActivityBurst,
+  type ActivityFile,
+  AgentActivitySuccessSchema,
+  AgentBurstDiffSuccessSchema,
+  ProblemDetailsSchema,
+} from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { HttpResponseParseError } from '@/editor/http-client';
 import { hasAgentPresenceShape } from '@/lib/agent-presence';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { LruStringCache } from '@/lib/lru-string-cache';
 
 // ---------------------------------------------------------------
-// Types (mirror the server's AgentActivityResult / BurstStat shape).
+// Types — schema-inferred via `z.infer` in core. Re-exported under the
+// historical names (`BurstData`, `FileData`) for callers that already import
+// these symbols, so the server schema is the single source of truth and
+// drift between client + server is impossible.
 // ---------------------------------------------------------------
 
-export interface BurstData {
-  stackIndex: number;
-  ts: number;
-  additions: number;
-  deletions: number;
-}
-
-export interface FileData {
-  docName: string;
-  additionsTotal: number;
-  deletionsTotal: number;
-  lastTs: number;
-  bursts: BurstData[];
-}
-
-interface AgentHeader {
-  displayName: string;
-  color: string;
-  icon?: string;
-  connectionId: string;
-}
+export type BurstData = ActivityBurst;
+export type FileData = ActivityFile;
 
 interface ActivityPanelData {
   sessionAlive: boolean;
-  agent: AgentHeader | null;
-  files: FileData[];
+  agent: ActivityAgentHeader | null;
+  files: ActivityFile[];
   /** Set of docNames this agent is currently writing to (FR-P17). */
   writingDocs: Set<string>;
 }
@@ -95,29 +88,38 @@ const BURST_DIFF_CACHE_LIMIT = 64;
 
 async function fetchAgentActivity(connectionId: string): Promise<{
   sessionAlive: boolean;
-  agent: AgentHeader | null;
-  files: FileData[];
+  agent: ActivityAgentHeader | null;
+  files: ActivityFile[];
 }> {
   const url = `/api/agent-activity?agentId=${encodeURIComponent(connectionId)}`;
   const res = await fetch(url);
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new HttpResponseParseError('Could not parse /api/agent-activity response.', {
+      cause: err,
+      status: res.status,
+    });
+  }
   if (!res.ok) {
-    throw new Error(`agent-activity fetch failed: HTTP ${res.status}`);
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        '/api/agent-activity returned a non-RFC-9457 error response.',
+        { cause: problem.error, status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
   }
-  const body = (await res.json()) as {
-    ok: boolean;
-    sessionAlive?: boolean;
-    agent?: AgentHeader | null;
-    files?: FileData[];
-    error?: string;
-  };
-  if (!body.ok) {
-    throw new Error(body.error ?? 'agent-activity fetch not ok');
+  const success = AgentActivitySuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError(
+      '/api/agent-activity returned a body that did not match AgentActivitySuccessSchema.',
+      { cause: success.error, status: res.status },
+    );
   }
-  return {
-    sessionAlive: body.sessionAlive ?? false,
-    agent: body.agent ?? null,
-    files: body.files ?? [],
-  };
+  return success.data;
 }
 
 async function fetchBurstDiffHttp(
@@ -129,14 +131,33 @@ async function fetchBurstDiffHttp(
     connectionId,
   )}&docName=${encodeURIComponent(docName)}&stackIndex=${stackIndex}`;
   const res = await fetch(url);
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    throw new HttpResponseParseError('Could not parse /api/agent-burst-diff response.', {
+      cause: err,
+      status: res.status,
+    });
+  }
   if (!res.ok) {
-    throw new Error(`agent-burst-diff fetch failed: HTTP ${res.status}`);
+    const problem = ProblemDetailsSchema.safeParse(body);
+    if (!problem.success) {
+      throw new HttpResponseParseError(
+        '/api/agent-burst-diff returned a non-RFC-9457 error response.',
+        { cause: problem.error, status: res.status },
+      );
+    }
+    throw new Error(problem.data.title);
   }
-  const body = (await res.json()) as { ok: boolean; diff?: string; error?: string };
-  if (!body.ok) {
-    throw new Error(body.error ?? 'agent-burst-diff fetch not ok');
+  const success = AgentBurstDiffSuccessSchema.safeParse(body);
+  if (!success.success) {
+    throw new HttpResponseParseError(
+      '/api/agent-burst-diff returned a body that did not match AgentBurstDiffSuccessSchema.',
+      { cause: success.error, status: res.status },
+    );
   }
-  return body.diff ?? '';
+  return success.data.diff;
 }
 
 // ---------------------------------------------------------------

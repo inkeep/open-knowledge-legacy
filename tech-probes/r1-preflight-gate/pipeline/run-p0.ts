@@ -5,7 +5,11 @@
 import { parse, serialize } from './pipeline';
 
 function stripTrailingWhitespace(s: string): string {
-  return s.split('\n').map((l) => l.trimEnd()).join('\n').replace(/\n+$/, '');
+  return s
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .join('\n')
+    .replace(/\n+$/, '');
 }
 
 const P0_CASES: { name: string; input: string }[] = [
@@ -55,6 +59,7 @@ for (const c of P0_CASES) {
 }
 
 import { writeFileSync } from 'node:fs';
+
 writeFileSync('/tmp/r1-probe-1776046234/p0-results.json', JSON.stringify(results, null, 2));
 console.log(`P0 entity/escape: ${pass}/${P0_CASES.length} pass`);
 for (const r of results) {

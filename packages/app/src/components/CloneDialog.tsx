@@ -3,11 +3,17 @@
  *
  * Supports:
  *   - Paste URL or owner/repo shorthand
- *   - Authenticated repo browse when signed in (GET /api/local-op/auth/repos)
+ *   - Authenticated repo browse when signed in (via `AuthQueryTransport.repos()`)
  *   - Local path auto-filled to ~/Documents/<repo-name>
- *   - Clone via POST /api/local-op/clone (NDJSON streaming progress)
+ *   - Clone via `CloneTransport` — HTTP wrapper around POST /api/local-op/clone
+ *     (default, web + editor) or IPC for the Project Navigator (Electron)
  *   - Sign-in integration: onSignIn prop opens AuthModal (US-027)
- *   - On complete: redirect to the new server port
+ *   - On complete: redirect to the new server port (HTTP) or call
+ *     `onCloneComplete({port?, dir})` (IPC — Electron main spawns a new editor)
+ *
+ * Pre-stream RFC 9457 problem+json errors are surfaced via the HTTP transport
+ * (`packages/app/src/lib/transports/clone-transport.ts`) — the dialog reads
+ * the unified `event.message` shape so HTTP and IPC consumers stay aligned.
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';

@@ -1,10 +1,10 @@
+import { ProblemDetailsSchema, RenameSuccessSchema } from '@inkeep/open-knowledge-core';
 import { FolderOpen, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
   isValidNodeName,
   normalizeRenameValue,
-  type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import { usePageList } from '@/components/PageListContext';
@@ -30,39 +30,6 @@ import { Textbox } from './icons/textbox';
 import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge } from './ui/badge';
-
-type RenameResponse =
-  | {
-      ok: true;
-      renamed: RenamedDocMapping[];
-      rewrittenDocs: Array<{ docName: string; rewrites: number }>;
-    }
-  | { ok: false; error: string };
-
-function isRenamedDocMapping(v: unknown): v is RenamedDocMapping {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof (v as { fromDocName: unknown }).fromDocName === 'string' &&
-    typeof (v as { toDocName: unknown }).toDocName === 'string'
-  );
-}
-
-function isRenameResponse(v: unknown): v is RenameResponse {
-  if (typeof v !== 'object' || v === null) return false;
-  const obj = v as Record<string, unknown>;
-  if (obj.ok === true) {
-    return (
-      Array.isArray(obj.renamed) &&
-      obj.renamed.every(isRenamedDocMapping) &&
-      Array.isArray(obj.rewrittenDocs)
-    );
-  }
-  if (obj.ok === false) {
-    return typeof obj.error === 'string';
-  }
-  return false;
-}
 
 interface EditorHeaderProps {
   editorMode: EditorMode;
@@ -259,29 +226,31 @@ export function EditorHeader({
         return;
       }
 
-      if (!res.ok || !isRenameResponse(raw)) {
-        const errorBody = raw as { error?: string } | null;
+      if (!res.ok) {
+        const problem = ProblemDetailsSchema.safeParse(raw);
+        const msg = problem.success ? problem.data.title : `Server error (HTTP ${res.status})`;
         console.warn('[EditorHeader] rename failed', {
           status: res.status,
           docName,
           newDocName,
         });
-        setRenameError(errorBody?.error || `Server error (HTTP ${res.status})`);
+        setRenameError(msg);
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
 
-      if (!raw.ok) {
-        setRenameError(raw.error || 'Failed to rename path');
+      const success = RenameSuccessSchema.safeParse(raw);
+      if (!success.success) {
+        setRenameError('Failed to rename path');
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
         lastFailedValueRef.current = normalized;
         return;
       }
 
-      const renamed = raw.renamed;
+      const renamed = success.data.renamed;
       const nextActiveDocName = remapActiveDocName(docName, renamed);
 
       // Wipe IDB for both ends of every rename pair before navigation. The

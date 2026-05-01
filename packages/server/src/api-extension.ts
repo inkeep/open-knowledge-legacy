@@ -32,20 +32,45 @@ import { setTimeout as wait } from 'node:timers/promises';
 import type { Document, Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
+  AgentPatchRequestSchema,
+  AgentUndoRequestSchema,
+  AgentWriteMdRequestSchema,
+  AgentWriteRequestSchema,
   ASSET_EXTENSIONS,
   applyFastDiff,
+  CreatePageRequestSchema,
   colorFromSeed,
   createCodeFenceTracker,
   DEFAULT_ATTACHMENT_FOLDER_PATH,
   DEFAULT_DEDUP_MODE,
+  DeletePathRequestSchema,
+  EmptyRequestSchema,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
+  type LocalOpAuthHostRequest,
+  LocalOpAuthHostRequestSchema,
+  LocalOpAuthPatRequestSchema,
+  LocalOpAuthSetIdentityRequestSchema,
+  type LocalOpCloneRequest,
+  LocalOpCloneRequestSchema,
+  LocalOpOpenRequestSchema,
   type Principal,
+  type ProblemType,
   prependFrontmatter,
+  RenamePathRequestSchema,
+  type RescueEntryFlat,
+  type RescueEntryTimeline,
+  RollbackRequestSchema,
   readFmMap,
+  SaveVersionRequestSchema,
+  SeedApplyRequestSchema,
   SYSTEM_DOC_NAME,
+  SyncResolveConflictRequestSchema,
+  SyncSetEnabledRequestSchema,
+  SyncTriggerRequestSchema,
   stripFrontmatter,
+  UploadRequestSchema,
 } from '@inkeep/open-knowledge-core';
 import {
   formatCheckpointSubject,
@@ -138,6 +163,8 @@ import { tracedMkdirSync, tracedRenameSync, tracedWriteFileSync } from './fs-tra
 import { withParentLock } from './git-handle.ts';
 import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import { sanitizeGitIdentity } from './git-identity-sanitize.ts';
+import { createStreamingErrorWriter, errorResponse } from './http/error-response.ts';
+import { validateBody, withValidation } from './http/request-validation.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -338,8 +365,6 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
   const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
   return { path };
 }
-
-const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
 
@@ -585,7 +610,12 @@ async function findDuplicateAsset(
  * HTTP status differentiates transient-yet-retry (500) from full-disk
  * (507) per RFC 4918.
  */
-import { UploadWriteError, type UploadWriteReason } from './upload-errors.ts';
+import {
+  UploadWriteError,
+  type UploadWriteReason,
+  uploadStatusFor,
+  uploadTitleFor,
+} from './upload-errors.ts';
 
 interface UploadResult {
   filename: string;
@@ -604,11 +634,11 @@ interface UploadResult {
  * HashingPassThrough Transform into createWriteStream(tempPath). Memory
  * becomes O(1); disk is the only bound.
  *
- * Error contract (typed via UploadWriteError.reason):
- *   - malformed-upload: busboy 'error' (unparseable multipart / no boundary / etc.)
- *   - storage-full: ENOSPC / EDQUOT during the write stream
- *   - storage-readonly: EROFS / EACCES / EPERM during the write stream
- *   - storage-error: any other write-stream error
+ * Error contract (typed via UploadWriteError.reason — URN-form ProblemType):
+ *   - urn:ok:error:malformed-upload: busboy 'error' (unparseable multipart, etc.)
+ *   - urn:ok:error:storage-full: ENOSPC / EDQUOT during the write stream
+ *   - urn:ok:error:storage-readonly: EROFS / EACCES / EPERM during the write stream
+ *   - urn:ok:error:storage-error: any other write-stream error
  *
  * On any error, the tempfile is best-effort unlinked before propagating.
  * See reports/streaming-upload-refactor/REPORT.md §D3-D6 for the rationale.
@@ -631,7 +661,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
         limits: { files: 1, fields: 10, fieldSize: 2 * 1024 },
       });
     } catch (err) {
-      reject(new UploadWriteError('malformed-upload', err));
+      reject(new UploadWriteError('urn:ok:error:malformed-upload', err));
       return;
     }
 
@@ -668,11 +698,11 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     };
 
     const classifyWriteError = (err: NodeJS.ErrnoException): UploadWriteReason => {
-      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'storage-full';
+      if (err.code === 'ENOSPC' || err.code === 'EDQUOT') return 'urn:ok:error:storage-full';
       if (err.code === 'EROFS' || err.code === 'EACCES' || err.code === 'EPERM') {
-        return 'storage-readonly';
+        return 'urn:ok:error:storage-readonly';
       }
-      return 'storage-error';
+      return 'urn:ok:error:storage-error';
     };
 
     bb.on('field', (name, val) => {
@@ -688,7 +718,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
       // which can throw ENOSPC / EDQUOT / EROFS / EACCES / EPERM / EIO. An
       // uncaught throw here bubbles back through busboy's `_write` and
       // re-emits as `'error'`, which the listener below classifies as
-      // `'malformed-upload'` (HTTP 400). That misleads operators triaging
+      // `'urn:ok:error:malformed-upload'` (HTTP 400). That misleads operators triaging
       // a full disk into chasing a phantom client bug. Catch the sync
       // throw, classify via the same table the pipeline rejection uses,
       // and drain the file part so busboy can finish parsing the rest.
@@ -728,7 +758,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     });
 
     bb.on('error', (err) => {
-      fail('malformed-upload', err);
+      fail('urn:ok:error:malformed-upload', err);
     });
 
     // busboy's `close` (Writable, emitClose:true via @types/busboy@1.6.0)
@@ -766,7 +796,7 @@ function readUploadBody(req: IncomingMessage, contentDir: string): Promise<Uploa
     req.on('close', () => {
       if (settled || pipelineError) return;
       if (!req.complete) {
-        fail('malformed-upload', new Error('client disconnected'));
+        fail('urn:ok:error:malformed-upload', new Error('client disconnected'));
       }
     });
 
@@ -1097,6 +1127,8 @@ export interface ApiExtensionOptions {
   forceUnloadDocument?: (document: Document) => Promise<void>;
 }
 
+const MAX_BODY_BYTES = 1_048_576;
+
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
@@ -1419,32 +1451,48 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // Managed rename mutates overlapping backlink sets across many docs, so serialize it.
   const runSerialized = createSerializedRunner();
 
-  function toManagedRenamePublicError(error: unknown): { status: number; error: string } {
+  function toManagedRenamePublicError(error: unknown): {
+    status: number;
+    type: ProblemType;
+    error: string;
+  } {
     if (!(error instanceof Error)) {
-      return { status: 500, error: 'Failed to rename document' };
+      return {
+        status: 500,
+        type: 'urn:ok:error:internal-server-error',
+        error: 'Failed to rename document',
+      };
     }
     if (error instanceof ManagedRenameSourceNotFoundError) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error instanceof ManagedRenameDestinationExistsError) {
-      return { status: 409, error: error.message };
+      return { status: 409, type: 'urn:ok:error:doc-already-exists', error: error.message };
     }
     if (error instanceof ManagedRenameSourceTypeMismatchError) {
-      return { status: 400, error: error.message };
+      return { status: 400, type: 'urn:ok:error:invalid-request', error: error.message };
     }
     if (error.message.startsWith('Cannot rename missing document:')) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error.message.startsWith('Cannot snapshot missing document:')) {
-      return { status: 404, error: error.message };
+      return { status: 404, type: 'urn:ok:error:doc-not-found', error: error.message };
     }
     if (error.message.startsWith('symlink-escape:')) {
-      return { status: 400, error: error.message };
+      return { status: 400, type: 'urn:ok:error:path-escape', error: error.message };
     }
     if (error.message === 'Managed rename requires backlink index support') {
-      return { status: 503, error: error.message };
+      return {
+        status: 503,
+        type: 'urn:ok:error:internal-server-error',
+        error: error.message,
+      };
     }
-    return { status: 500, error: 'Failed to rename document' };
+    return {
+      status: 500,
+      type: 'urn:ok:error:internal-server-error',
+      error: 'Failed to rename document',
+    };
   }
 
   async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
@@ -1972,882 +2020,82 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     if (normalized.truncatedFrom !== undefined && !fromDefault) incrementSummariesTruncated();
   }
 
-  async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleAgentWrite = withValidation(
+    AgentWriteRequestSchema,
+    async (_req, res, body) => {
+      try {
+        // `withValidation` already enforces docName safety + body shape.
+        // Empty / missing docName falls back to the `'test-doc'` default
+        // matching pre-migration behavior.
+        const rawDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(rawDocName);
 
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: Record<string, unknown>;
-      try {
-        body =
-          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      const rawDocName =
-        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body);
-      const normalizedSummary = normalizeSummary(body.summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const session = await sessionManager.getSession(docName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-      const content =
-        typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
-      const { response: summaryResponse, stored: storedSummary } =
-        summaryResponseFields(normalizedSummary);
+        // Identity extraction precedes every SEMANTIC error emission below
+        // (precedent #24). Body-shape errors emitted by `withValidation` are
+        // anonymous because no Y.Doc mutation is attempted.
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
 
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: docName,
-          mode: 'writing',
-          ts: Date.now(),
-        });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            `${content}\n`,
-            'append',
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-              : undefined,
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-write' },
           );
-
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Added (${agentName}): ${content.slice(0, 50)}`,
-          });
-        }, session.origin);
-        recordContributor(
-          docName,
-          agentId,
-          agentName,
-          colorSeed,
-          undefined,
-          buildAgentActor({ clientName, clientVersion, label }),
-          storedSummary,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(normalizedSummary);
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
-
-      flushDocToGit(docName, 'agent-write');
-      onAgentWrite?.();
-
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-write] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentWriteMd(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const { markdown, position: pos } = body as Record<string, unknown>;
-      if (!markdown || typeof markdown !== 'string') {
-        json(res, 400, { ok: false, error: 'markdown field required' });
-        return;
-      }
-
-      const position = pos === 'prepend' ? 'prepend' : pos === 'replace' ? 'replace' : 'append';
-      const rawDocName = (body as Record<string, unknown>).docName;
-      const effectiveDocName =
-        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
-      if (!isSafeDocName(effectiveDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const resolvedDocName = resolveAlias(effectiveDocName);
-      if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
-        json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body as Record<string, unknown>);
-      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { response: summaryResponse, stored: storedSummary } =
-        summaryResponseFields(normalizedSummary);
-      const session = await sessionManager.getSession(resolvedDocName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: resolvedDocName,
-          mode: 'writing',
-          ts: Date.now(),
-        });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            markdown,
-            position,
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
-              : undefined,
-          );
-
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
-          });
-        }, session.origin);
-        recordContributor(
-          resolvedDocName,
-          agentId,
-          agentName,
-          colorSeed,
-          undefined,
-          buildAgentActor({ clientName, clientVersion, label }),
-          storedSummary,
-        );
-        incrementAgentWriteCalls();
-        countNormalizedSummary(normalizedSummary);
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
-
-      flushDocToGit(resolvedDocName, 'agent-write-md');
-
-      // Focus (attribution) on __system__ awareness. Focus drives browser
-      // push-navigation to the doc the agent just wrote (writeKind); presence
-      // is separately maintained via setPresence/touchMode pairs above.
-      agentFocusBroadcaster?.setFocus(agentId, {
-        agentName,
-        currentDoc: resolvedDocName,
-        writeKind: 'write',
-        ts: Date.now(),
-      });
-      onAgentWrite?.();
-
-      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
-      // backlinks and a plausible hub exists in its folder tree, suggest the
-      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
-      const hints = computeOrphanHints(resolvedDocName);
-
-      const subscriberCount = getSubscriberCount(resolvedDocName);
-      const systemSubscriberCount = getSystemSubscriberCount();
-
-      // Once-per-session attach hint counter: fires when no editor is attached
-      // to `__system__` (transport-presence = false). Labels are bounded-
-      // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
-      // is always `agent` at this call site (`handleAgentWriteMd`), and
-      // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
-      if (systemSubscriberCount === 0) {
-        hintEmittedCounter().add(1, {
-          'shadow.writer': 'agent',
-          'agent.type': resolveAgentType(clientName),
-        });
-      }
-
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        subscriberCount,
-        systemSubscriberCount,
-        ...(hints ? { hints } : {}),
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-write-md] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleDocumentRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const rawDocName = url.searchParams.get('docName') || 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-
-      // Existing in-memory Y.Doc → read it directly; no need to round-trip
-      // through openDirectConnection (which would still resolve to the same
-      // doc but adds a connect/disconnect cycle).
-      const existing = hocuspocus.documents.get(docName);
-      if (existing) {
-        json(res, 200, { ok: true, docName, content: existing.getText('source').toString() });
-        return;
-      }
-
-      // No in-memory doc → require an on-disk file before opening a
-      // connection. `openDirectConnection` on a missing path materializes
-      // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
-      // suppressed for (PR #362's design). The persistence layer's
-      // phantom-doc guard blocks the eventual 0-byte file write, but any
-      // later code path that populates the lingering Y.Doc with content
-      // (a mis-routed agent write, the rename spine pulling it in via a
-      // stale backlink edge) would then land a phantom file because
-      // `reconciledBase` was never set. 404 here closes that whole class.
-      const filePath = resolveContentEntryPath(contentDir, 'file', docName);
-      if (!existsSync(filePath)) {
-        json(res, 404, { ok: false, error: `Document not found: ${docName}` });
-        return;
-      }
-
-      // Read via a transient DirectConnection rather than sessionManager.getSession —
-      // this endpoint has no agent identity, and creating a cached session would
-      // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
-      const dc = await hocuspocus.openDirectConnection(docName);
-      try {
-        const document = dc.document;
-        if (!document) {
-          json(res, 500, { ok: false, error: 'Document not available' });
           return;
         }
-        const content = document.getText('source').toString();
-        json(res, 200, { ok: true, docName, content });
-      } finally {
-        await dc.disconnect();
-      }
-    } catch (e) {
-      console.error('[document-read]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
 
-  async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const dir = url.searchParams.get('dir');
+        const normalizedSummary = normalizeSummary(body.summary);
+        const session = await sessionManager.getSession(docName, agentId, {
+          displayName: agentName,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+        const content =
+          typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
+        const { response: summaryResponse, stored: storedSummary } =
+          summaryResponseFields(normalizedSummary);
 
-      // Validate dir parameter (reject traversal attempts)
-      if (dir) {
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
         try {
-          safeSubdir(contentDir, dir);
-        } catch {
-          json(res, 400, { ok: false, error: 'Invalid directory parameter' });
-          return;
-        }
-      }
-
-      // Read from the watcher's in-memory file index (instant, no filesystem scan)
-      const index = getFileIndex();
-      const documents: {
-        docName: string;
-        docExt: string;
-        size: number;
-        modified: string;
-        isSymlink: boolean;
-        canonicalDocName: string | null;
-        targetPath: string | null;
-      }[] = [];
-
-      for (const [docName, entry] of index) {
-        // Filter by dir prefix if specified
-        if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
-
-        // Surfacing the registered on-disk extension lets the sidebar render
-        // `foo.mdx` vs `foo.md` faithfully instead of hard-coding `.md`.
-        const docExt = getDocExtension(docName);
-
-        documents.push({
-          docName,
-          docExt,
-          size: entry.size,
-          modified: entry.modified,
-          isSymlink: false,
-          canonicalDocName: null,
-          targetPath: null,
-        });
-
-        // Emit alias entries for this canonical file
-        for (const alias of entry.aliases) {
-          if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
-          const targetRelPath = relative(contentDir, entry.canonicalPath);
-          documents.push({
-            docName: alias,
-            docExt,
-            size: entry.size,
-            modified: entry.modified,
-            isSymlink: true,
-            canonicalDocName: docName,
-            targetPath: targetRelPath,
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
           });
-        }
-      }
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              `${content}\n`,
+              'append',
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+                : undefined,
+            );
 
-      documents.sort((a, b) => a.docName.localeCompare(b.docName));
-      json(res, 200, { ok: true, documents });
-    } catch (e) {
-      console.error('[document-list]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleBacklinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
-      }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
-        source: entry.source,
-        anchor: entry.anchor,
-        title: readPageTitleForDocName(entry.source),
-        snippet: entry.snippet,
-      }));
-      json(res, 200, { ok: true, docName, backlinks });
-    } catch (e) {
-      console.error('[backlinks]', e);
-      json(res, 500, { ok: false, error: 'Failed to read backlinks' });
-    }
-  }
-
-  /**
-   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
-   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
-   * (exec ls/grep/find slim enrichment) that need connection density per file
-   * without N-amplifying the single-doc `/api/backlinks` endpoint.
-   * docNames failing `isSafeDocName` are silently dropped from `counts`.
-   */
-  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const raw = url.searchParams.get('docNames');
-      if (!raw) {
-        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
-        return;
-      }
-      const counts: Record<string, number> = {};
-      for (const docName of raw.split(',')) {
-        const trimmed = docName.trim();
-        if (!trimmed || !isSafeDocName(trimmed)) continue;
-        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
-      }
-      json(res, 200, { ok: true, counts });
-    } catch (e) {
-      console.error('[backlink-counts]', e);
-      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
-    }
-  }
-
-  async function handleForwardLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
-      }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      json(res, 200, {
-        ok: true,
-        docName,
-        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
-          entry.kind === 'doc'
-            ? {
-                kind: 'doc' as const,
-                docName: entry.target,
-                anchor: entry.anchor,
-                title: readPageTitleForDocName(entry.target),
-                snippet: entry.snippet,
-              }
-            : {
-                kind: 'external' as const,
-                url: entry.url,
-                title: entry.label ?? entry.url,
-                snippet: entry.snippet,
-              },
-        ),
-      });
-    } catch (e) {
-      console.error('[forward-links]', e);
-      json(res, 500, { ok: false, error: 'Failed to read forward links' });
-    }
-  }
-
-  async function handleLinkGraph(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (docName && !isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-
-      const rawDegrees = url.searchParams.get('degrees');
-      if (rawDegrees && !docName) {
-        json(res, 400, { ok: false, error: 'docName is required when degrees is provided' });
-        return;
-      }
-
-      let nodes: IndexedGraphNode[];
-      let links: Array<{ source: string; target: string }>;
-
-      if (rawDegrees && docName) {
-        const degrees = Number.parseInt(rawDegrees, 10);
-        if (!Number.isFinite(degrees) || degrees < 0) {
-          json(res, 400, { ok: false, error: 'degrees must be a non-negative integer' });
-          return;
-        }
-
-        ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
-      } else {
-        ({ nodes, links } = backlinkIndex.getLinkGraph());
-      }
-
-      const enrichedNodes = nodes.map((node) => {
-        if (node.kind === 'doc') {
-          const meta = readFrontmatterMetadataForDocName(node.docName);
-          return {
-            id: node.id,
-            kind: 'doc' as const,
-            docName: node.docName,
-            anchor: node.anchor ?? null,
-            label: readPageTitleForDocName(node.docName),
-            cluster: meta.cluster ?? null,
-            category: meta.category ?? null,
-            tags: meta.tags ?? null,
-          };
-        }
-        return {
-          id: node.id,
-          kind: 'external' as const,
-          url: node.url,
-          label: node.label ?? node.url,
-        };
-      });
-      json(res, 200, { ok: true, nodes: enrichedNodes, links });
-    } catch (e) {
-      console.error('[link-graph]', e);
-      json(res, 500, { ok: false, error: 'Failed to read link graph' });
-    }
-  }
-
-  async function handleOrphans(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const mode = url.searchParams.get('mode') ?? 'both';
-      if (!isOrphanMode(mode)) {
-        json(res, 400, {
-          ok: false,
-          error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
-        });
-        return;
-      }
-
-      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()], mode).map((docName) => ({
-        docName,
-        title: readPageTitleForDocName(docName),
-      }));
-      json(res, 200, { ok: true, orphans });
-    } catch (e) {
-      console.error('[orphans]', e);
-      json(res, 500, { ok: false, error: 'Failed to read orphan pages' });
-    }
-  }
-
-  async function handleHubs(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const rawLimit = url.searchParams.get('limit');
-      const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
-      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
-      const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
-        docName: hub.docName,
-        title: readPageTitleForDocName(hub.docName),
-        count: hub.count,
-      }));
-      json(res, 200, { ok: true, hubs });
-    } catch (e) {
-      console.error('[hubs]', e);
-      json(res, 500, { ok: false, error: 'Failed to read hub pages' });
-    }
-  }
-
-  async function handleDeadLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    if (!backlinkIndex) {
-      json(res, 503, { ok: false, error: 'Backlink index not configured' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const sourceDocNames = url.searchParams.getAll('sourceDocName');
-      if (sourceDocNames.some((docName) => docName.length === 0 || !isSafeDocName(docName))) {
-        json(res, 400, { ok: false, error: 'Invalid sourceDocName' });
-        return;
-      }
-
-      const sourceDocNameFilter = sourceDocNames.length
-        ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
-        : undefined;
-      const deadLinks = backlinkIndex.getDeadLinks(collectAdmittedDocNames(), sourceDocNameFilter);
-
-      const response = {
-        ok: true,
-        deadLinks: deadLinks.map((entry) => ({
-          target: entry.target,
-          sources: entry.sources.map((sourceEntry) => ({
-            source: sourceEntry.source,
-            title: readPageTitleForDocName(sourceEntry.source),
-            snippet: sourceEntry.snippet,
-          })),
-        })),
-      };
-
-      json(res, 200, response);
-    } catch (e) {
-      console.error('[dead-links]', e);
-      json(res, 500, { ok: false, error: 'Failed to read dead links' });
-    }
-  }
-
-  async function handleAgentPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-      const {
-        find,
-        replace,
-        docName: bodyDocName,
-        offset: rawOffset,
-      } = body as Record<string, unknown>;
-      if (typeof find !== 'string' || find.length === 0) {
-        json(res, 400, { ok: false, error: 'find field required' });
-        return;
-      }
-      if (typeof replace !== 'string') {
-        json(res, 400, { ok: false, error: 'replace field required' });
-        return;
-      }
-      if (findLooksLikeFrontmatter(find)) {
-        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
-        json(res, 400, {
-          ok: false,
-          error:
-            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
-        });
-        return;
-      }
-      const hasOffset = Object.hasOwn(body, 'offset');
-      let offset: number | undefined;
-      if (hasOffset) {
-        if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0) {
-          json(res, 400, { ok: false, error: 'offset must be a non-negative integer' });
-          return;
-        }
-        offset = rawOffset;
-      }
-      const effectivePatchDocName =
-        typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc';
-      if (!isSafeDocName(effectivePatchDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(effectivePatchDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body as Record<string, unknown>);
-      const normalizedSummary = normalizeSummary((body as Record<string, unknown>).summary);
-      if (normalizedSummary.kind === 'invalid') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const session = await sessionManager.getSession(docName, agentId, {
-        displayName: agentName,
-        colorSeed,
-        clientName,
-      });
-      const timestamp = new Date().toISOString();
-
-      let notFound = false;
-      let staleTarget = false;
-      let fmIntersect = false;
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and transact
-      // (even future code added here) flips the badge back to idle rather
-      // than wedging it on 'editing'.
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
-          currentDoc: docName,
-          mode: 'writing',
-          ts: Date.now(),
-        });
-        // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
-        captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
-        // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
-        session.dc.document.transact(() => {
-          // Read current authoritative state. Search the FULL markdown
-          // (frontmatter + body) so agents can patch frontmatter fields
-          // (e.g. `title:`, `cluster:`) the same way they patch body text.
-          // XmlFragment is the authoritative body per precedent #12; the
-          // frontmatter lives in the YAML region of `Y.Text('source')`
-          // (D8) and must be composed in for the search surface to
-          // reflect the document as the agent sees it on disk.
-          const xmlFragment = session.dc.document.getXmlFragment('default');
-          const ytext = session.dc.document.getText('source');
-          const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
-          const currentBody = mdManager.serialize(
-            yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
-          );
-          const currentFull = prependFrontmatter(currentFm, currentBody);
-
-          const pos =
-            offset == null
-              ? currentFull.indexOf(find)
-              : currentFull.slice(offset, offset + find.length) === find
-                ? offset
-                : -1;
-          if (pos === -1) {
-            if (offset == null) {
-              notFound = true;
-            } else {
-              staleTarget = true;
-            }
-            return;
-          }
-
-          // Position-based FM-intersection check. The string-shape
-          // heuristic above handles yaml-style find strings; this catches
-          // the residual class where a non-yaml find (e.g. a single word
-          // like `draft`) happens to first-match in the FM region.
-          // `pos < currentFm.length` is the necessary-and-sufficient
-          // signal — FM is contiguous at doc start, so any match starting
-          // before the FM-end byte overlaps the FM region.
-          if (pos < currentFm.length) {
-            fmIntersect = true;
-            return;
-          }
-
-          // Splice at the character level. Only body-region patches
-          // reach here, so this branch never modifies the FM.
-          // `applyAgentMarkdownWrite` reads the current FM from the
-          // YAML region of Y.Text and writes the canonical full
-          // document back, so a body-only payload here keeps the
-          // existing FM intact.
-          const newFull =
-            currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
-          // FM lives in the YAML region of Y.Text directly (D8); body-only
-          // payloads to applyAgentMarkdownWrite preserve the existing FM
-          // because the helper reads `existingFm` from Y.Text.
-          const { body: newBody } = stripFrontmatter(newFull);
-          applyAgentMarkdownWrite(
-            session.dc.document,
-            newBody,
-            'replace',
-            options.resolveEmbed
-              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-              : undefined,
-          );
-
-          const activityMap = session.dc.document.getMap('agent-flash');
-          activityMap.set(agentId, {
-            agentId,
-            timestamp: Date.now(),
-            type: 'insert',
-            description: `Patched (${agentName}): ${find.slice(0, 50)}`,
-          });
-        }, session.origin);
-        if (!notFound && !staleTarget && !fmIntersect) {
-          // Only count + record when the patch actually applied. The M1
-          // denominator excludes 404/409 + FM-intersect 400 so adoption
-          // rate reflects successful writes, not total attempts.
-          const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Added (${agentName}): ${content.slice(0, 50)}`,
+            });
+          }, session.origin);
           recordContributor(
             docName,
             agentId,
@@ -2859,69 +2107,954 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           );
           incrementAgentWriteCalls();
           countNormalizedSummary(normalizedSummary);
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
         }
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
-      }
 
-      if (staleTarget) {
-        json(res, 409, {
-          ok: false,
-          error: 'Target text no longer matches at the requested offset',
+        flushDocToGit(docName, 'agent-write');
+        onAgentWrite?.();
+
+        // D22: success body is flat — no `{ ok: true }` wrapper. Clients
+        // discriminate via HTTP status (`if (!res.ok)`), then safeParse
+        // against `AgentWriteSuccessSchema`.
+        json(res, 200, {
+          timestamp,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
         });
-        return;
-      }
-      if (notFound) {
-        json(res, 404, { ok: false, error: 'Text not found in document' });
-        return;
-      }
-      if (fmIntersect) {
-        agentPatchFmTouchCounter().add(1, { result: 'rejected' });
-        json(res, 400, {
-          ok: false,
-          error:
-            'Frontmatter edits are not supported via edit_document. Frontmatter editing through MCP is currently unavailable; use write_document with position:"replace" to rewrite the document including its YAML block.',
-        });
-        return;
-      }
-
-      flushDocToGit(docName, 'agent-patch');
-
-      // Focus (attribution) on __system__ awareness. Presence is separately
-      // maintained via setPresence/touchMode pairs above.
-      agentFocusBroadcaster?.setFocus(agentId, {
-        agentName,
-        currentDoc: docName,
-        writeKind: 'edit',
-        ts: Date.now(),
-      });
-      onAgentWrite?.();
-
-      const subscriberCount = getSubscriberCount(docName);
-      const systemSubscriberCount = getSystemSubscriberCount();
-
-      // Once-per-session attach hint counter (matches handleAgentWriteMd).
-      if (systemSubscriberCount === 0) {
-        hintEmittedCounter().add(1, {
-          'shadow.writer': 'agent',
-          'agent.type': resolveAgentType(clientName),
+      } catch (e) {
+        log.error({ err: e }, '[agent-write] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-write',
+          cause: e,
         });
       }
+    },
+    { handler: 'agent-write', method: 'POST' },
+  );
 
-      const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+  const handleAgentWriteMd = withValidation(
+    AgentWriteMdRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const position = body.position ?? 'append';
+        const effectiveDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const resolvedDocName = resolveAlias(effectiveDocName);
 
-      json(res, 200, {
-        ok: true,
-        timestamp,
-        subscriberCount,
-        systemSubscriberCount,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      log.error({ err: e }, '[agent-patch] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
+
+        if (isSystemDoc(resolvedDocName) || isConfigDoc(resolvedDocName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${resolvedDocName}' is a reserved document name.`,
+            { handler: 'agent-write-md' },
+          );
+          return;
+        }
+
+        const normalizedSummary = normalizeSummary(body.summary);
+        const { response: summaryResponse, stored: storedSummary } =
+          summaryResponseFields(normalizedSummary);
+        const session = await sessionManager.getSession(resolvedDocName, agentId, {
+          displayName: agentName,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: resolvedDocName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              body.markdown,
+              position,
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: resolvedDocName }
+                : undefined,
+            );
+
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Added (${agentName}): ${body.markdown.trim().slice(0, 50)}`,
+            });
+          }, session.origin);
+          recordContributor(
+            resolvedDocName,
+            agentId,
+            agentName,
+            colorSeed,
+            undefined,
+            buildAgentActor({ clientName, clientVersion, label }),
+            storedSummary,
+          );
+          incrementAgentWriteCalls();
+          countNormalizedSummary(normalizedSummary);
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        flushDocToGit(resolvedDocName, 'agent-write-md');
+
+        // Focus (attribution) on __system__ awareness. Focus drives browser
+        // push-navigation to the doc the agent just wrote (writeKind); presence
+        // is separately maintained via setPresence/touchMode pairs above.
+        agentFocusBroadcaster?.setFocus(agentId, {
+          agentName,
+          currentDoc: resolvedDocName,
+          writeKind: 'write',
+          ts: Date.now(),
+        });
+        onAgentWrite?.();
+
+        // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+        // backlinks and a plausible hub exists in its folder tree, suggest the
+        // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+        const hints = computeOrphanHints(resolvedDocName);
+
+        const subscriberCount = getSubscriberCount(resolvedDocName);
+        const systemSubscriberCount = getSystemSubscriberCount();
+
+        // Once-per-session attach hint counter: fires when no editor is attached
+        // to `__system__` (transport-presence = false). Labels are bounded-
+        // cardinality per CLAUDE.md STOP rule on OTel attributes — writer-kind
+        // is always `agent` at this call site (`handleAgentWriteMd`), and
+        // `resolveAgentType` is a 6-valued enum. No raw session IDs or names.
+        if (systemSubscriberCount === 0) {
+          hintEmittedCounter().add(1, {
+            'shadow.writer': 'agent',
+            'agent.type': resolveAgentType(clientName),
+          });
+        }
+
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, {
+          timestamp,
+          subscriberCount,
+          systemSubscriberCount,
+          ...(hints ? { hints } : {}),
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        log.error({ err: e }, '[agent-write-md] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-write-md',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'agent-write-md', method: 'POST' },
+  );
+
+  const handleDocumentRead = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const rawDocName = url.searchParams.get('docName') || 'test-doc';
+        if (!isSafeDocName(rawDocName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'document-read',
+          });
+          return;
+        }
+        const docName = resolveAlias(rawDocName);
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'document-read' },
+          );
+          return;
+        }
+
+        // Existing in-memory Y.Doc → read it directly; no need to round-trip
+        // through openDirectConnection (which would still resolve to the same
+        // doc but adds a connect/disconnect cycle).
+        const existing = hocuspocus.documents.get(docName);
+        if (existing) {
+          json(res, 200, { docName, content: existing.getText('source').toString() });
+          return;
+        }
+
+        // No in-memory doc → require an on-disk file before opening a
+        // connection. `openDirectConnection` on a missing path materializes
+        // an empty Y.Doc into `Hocuspocus.documents` that auto-unload is
+        // suppressed for. The persistence layer's phantom-doc guard blocks
+        // the eventual 0-byte file write, but any later code path that
+        // populates the lingering Y.Doc with content (a mis-routed agent
+        // write, the rename spine pulling it in via a stale backlink edge)
+        // would then land a phantom file because `reconciledBase` was never
+        // set. 404 here closes that whole class.
+        const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+        if (!existsSync(filePath)) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', `Document not found: ${docName}`, {
+            handler: 'document-read',
+          });
+          return;
+        }
+
+        // Read via a transient DirectConnection rather than sessionManager.getSession —
+        // this endpoint has no agent identity, and creating a cached session would
+        // leak an anonymous "Agent" (icon='bot') entry into the presence bar.
+        const dc = await hocuspocus.openDirectConnection(docName);
+        try {
+          const document = dc.document;
+          if (!document) {
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:doc-not-available',
+              'Document is not available.',
+              { handler: 'document-read' },
+            );
+            return;
+          }
+          const content = document.getText('source').toString();
+          json(res, 200, { docName, content });
+        } finally {
+          await dc.disconnect();
+        }
+      } catch (e) {
+        console.error('[document-read]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read document.', {
+          handler: 'document-read',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'document-read', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleDocumentList = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const dir = url.searchParams.get('dir');
+
+        // Validate dir parameter (reject traversal attempts)
+        if (dir) {
+          try {
+            safeSubdir(contentDir, dir);
+          } catch {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'Invalid directory parameter.',
+              {
+                handler: 'document-list',
+              },
+            );
+            return;
+          }
+        }
+
+        // Read from the watcher's in-memory file index (instant, no filesystem scan)
+        const index = getFileIndex();
+        const documents: {
+          docName: string;
+          docExt: string;
+          size: number;
+          modified: string;
+          isSymlink: boolean;
+          canonicalDocName: string | null;
+          targetPath: string | null;
+        }[] = [];
+
+        for (const [docName, entry] of index) {
+          // Filter by dir prefix if specified
+          if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
+
+          // getDocExtension() returns the registered on-disk extension for the
+          // docName (or `.md` by default when nothing is yet recorded). Surfacing
+          // it to the client lets the sidebar render `foo.mdx` vs `foo.md`
+          // faithfully instead of hard-coding `.md`.
+          const docExt = getDocExtension(docName);
+
+          documents.push({
+            docName,
+            docExt,
+            size: entry.size,
+            modified: entry.modified,
+            isSymlink: false,
+            canonicalDocName: null,
+            targetPath: null,
+          });
+
+          // Emit alias entries for this canonical file
+          for (const alias of entry.aliases) {
+            if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
+            const targetRelPath = relative(contentDir, entry.canonicalPath);
+            documents.push({
+              docName: alias,
+              docExt,
+              size: entry.size,
+              modified: entry.modified,
+              isSymlink: true,
+              canonicalDocName: docName,
+              targetPath: targetRelPath,
+            });
+          }
+        }
+
+        documents.sort((a, b) => a.docName.localeCompare(b.docName));
+        json(res, 200, { documents });
+      } catch (e) {
+        console.error('[document-list]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to list documents.', {
+          handler: 'document-list',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'document-list', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleBacklinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'backlinks' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'backlinks',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'backlinks',
+          });
+          return;
+        }
+        const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
+          source: entry.source,
+          anchor: entry.anchor,
+          title: readPageTitleForDocName(entry.source),
+          snippet: entry.snippet,
+        }));
+        json(res, 200, { docName, backlinks });
+      } catch (e) {
+        console.error('[backlinks]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read backlinks.', {
+          handler: 'backlinks',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'backlinks', method: 'GET', skipBodyParse: true },
+  );
+
+  /**
+   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
+   * returns `{ counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * (exec ls/grep/find slim enrichment) that need connection density per file
+   * without N-amplifying the single-doc `/api/backlinks` endpoint.
+   * docNames failing `isSafeDocName` are silently dropped from `counts`.
+   */
+  const handleBacklinkCounts = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'backlink-counts' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const raw = url.searchParams.get('docNames');
+        if (!raw) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docNames parameter.', {
+            handler: 'backlink-counts',
+          });
+          return;
+        }
+        const counts: Record<string, number> = {};
+        for (const docName of raw.split(',')) {
+          const trimmed = docName.trim();
+          if (!trimmed || !isSafeDocName(trimmed)) continue;
+          counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+        }
+        json(res, 200, { counts });
+      } catch (e) {
+        console.error('[backlink-counts]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read backlink counts.',
+          { handler: 'backlink-counts', cause: e },
+        );
+      }
+    },
+    { handler: 'backlink-counts', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleForwardLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'forward-links' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'forward-links',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'forward-links',
+          });
+          return;
+        }
+        json(res, 200, {
+          docName,
+          forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
+            entry.kind === 'doc'
+              ? {
+                  kind: 'doc' as const,
+                  docName: entry.target,
+                  anchor: entry.anchor,
+                  title: readPageTitleForDocName(entry.target),
+                  snippet: entry.snippet,
+                }
+              : {
+                  kind: 'external' as const,
+                  url: entry.url,
+                  title: entry.label ?? entry.url,
+                  snippet: entry.snippet,
+                },
+          ),
+        });
+      } catch (e) {
+        console.error('[forward-links]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read forward links.',
+          { handler: 'forward-links', cause: e },
+        );
+      }
+    },
+    { handler: 'forward-links', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleLinkGraph = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'link-graph' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (docName && !isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'link-graph',
+          });
+          return;
+        }
+
+        const rawDegrees = url.searchParams.get('degrees');
+        if (rawDegrees && !docName) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'docName is required when degrees is provided.',
+            { handler: 'link-graph' },
+          );
+          return;
+        }
+
+        let nodes: IndexedGraphNode[];
+        let links: Array<{ source: string; target: string }>;
+
+        if (rawDegrees && docName) {
+          const degrees = Number.parseInt(rawDegrees, 10);
+          if (!Number.isFinite(degrees) || degrees < 0) {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'degrees must be a non-negative integer.',
+              { handler: 'link-graph' },
+            );
+            return;
+          }
+
+          ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
+        } else {
+          ({ nodes, links } = backlinkIndex.getLinkGraph());
+        }
+
+        const enrichedNodes = nodes.map((node) => {
+          if (node.kind === 'doc') {
+            const meta = readFrontmatterMetadataForDocName(node.docName);
+            return {
+              id: node.id,
+              kind: 'doc' as const,
+              docName: node.docName,
+              anchor: node.anchor ?? null,
+              label: readPageTitleForDocName(node.docName),
+              cluster: meta.cluster ?? null,
+              category: meta.category ?? null,
+              tags: meta.tags ?? null,
+            };
+          }
+          return {
+            id: node.id,
+            kind: 'external' as const,
+            url: node.url,
+            label: node.label ?? node.url,
+          };
+        });
+        json(res, 200, { nodes: enrichedNodes, links });
+      } catch (e) {
+        console.error('[link-graph]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read link graph.',
+          {
+            handler: 'link-graph',
+            cause: e,
+          },
+        );
+      }
+    },
+    { handler: 'link-graph', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleOrphans = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'orphans' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const mode = url.searchParams.get('mode') ?? 'both';
+        if (!isOrphanMode(mode)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Invalid orphan mode. Allowed values: incoming, outgoing, both.',
+            { handler: 'orphans' },
+          );
+          return;
+        }
+
+        const orphans = backlinkIndex
+          .getOrphans([...getFileIndex().keys()], mode)
+          .map((docName) => ({
+            docName,
+            title: readPageTitleForDocName(docName),
+          }));
+        json(res, 200, { orphans });
+      } catch (e) {
+        console.error('[orphans]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read orphan pages.',
+          { handler: 'orphans', cause: e },
+        );
+      }
+    },
+    { handler: 'orphans', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleHubs = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'hubs' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const rawLimit = url.searchParams.get('limit');
+        const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
+        const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+        const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
+          docName: hub.docName,
+          title: readPageTitleForDocName(hub.docName),
+          count: hub.count,
+        }));
+        json(res, 200, { hubs });
+      } catch (e) {
+        console.error('[hubs]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read hub pages.', {
+          handler: 'hubs',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'hubs', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleDeadLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      if (!backlinkIndex) {
+        errorResponse(
+          res,
+          503,
+          'urn:ok:error:backlink-index-not-configured',
+          'Backlink index is not configured.',
+          { handler: 'dead-links' },
+        );
+        return;
+      }
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const sourceDocNames = url.searchParams.getAll('sourceDocName');
+        if (sourceDocNames.some((docName) => docName.length === 0 || !isSafeDocName(docName))) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid sourceDocName.', {
+            handler: 'dead-links',
+          });
+          return;
+        }
+
+        const sourceDocNameFilter = sourceDocNames.length
+          ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
+          : undefined;
+        const deadLinks = backlinkIndex.getDeadLinks(
+          collectAdmittedDocNames(),
+          sourceDocNameFilter,
+        );
+
+        json(res, 200, {
+          deadLinks: deadLinks.map((entry) => ({
+            target: entry.target,
+            sources: entry.sources.map((sourceEntry) => ({
+              source: sourceEntry.source,
+              title: readPageTitleForDocName(sourceEntry.source),
+              snippet: sourceEntry.snippet,
+            })),
+          })),
+        });
+      } catch (e) {
+        console.error('[dead-links]', e);
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to read dead links.',
+          { handler: 'dead-links', cause: e },
+        );
+      }
+    },
+    { handler: 'dead-links', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleAgentPatch = withValidation(
+    AgentPatchRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const { find, replace, offset } = body;
+        const effectivePatchDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(effectivePatchDocName);
+
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
+
+        // Heuristic precheck: reject `find` strings that look like a YAML
+        // frontmatter block before doing any Y.Doc work. The position-based
+        // postcheck below catches non-yaml strings whose first match falls
+        // inside the FM region. Frontmatter edits must go through
+        // write_document with position:"replace", not edit_document.
+        if (findLooksLikeFrontmatter(find)) {
+          agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:frontmatter-edit-not-supported',
+            'Frontmatter edits are not supported via edit_document. Use write_document with position:"replace" to rewrite the document including its YAML block.',
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+
+        const normalizedSummary = normalizeSummary(body.summary);
+        const session = await sessionManager.getSession(docName, agentId, {
+          displayName: agentName,
+          colorSeed,
+          clientName,
+        });
+        const timestamp = new Date().toISOString();
+
+        let notFound = false;
+        let staleTarget = false;
+        let fmIntersect = false;
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and transact
+        // (even future code added here) flips the badge back to idle rather
+        // than wedging it on 'editing'.
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // FR-11: register one-shot observer BEFORE write transact so YTextEvent.delta is captured (D22)
+          captureEffect(session.dc.document.getText('source'), agentId, colorSeed, clientName);
+          // F1 (D2): use per-session origin, not shared AGENT_WRITE_ORIGIN (D32 STOP rule)
+          session.dc.document.transact(() => {
+            // Read current authoritative state. Search the FULL markdown
+            // (frontmatter + body) so agents can patch frontmatter fields
+            // (e.g. `title:`, `cluster:`) the same way they patch body text.
+            // XmlFragment is the authoritative body per precedent #12; the
+            // frontmatter lives in the YAML region of `Y.Text('source')`
+            // (D8) and must be composed in for the search surface to
+            // reflect the document as the agent sees it on disk.
+            const xmlFragment = session.dc.document.getXmlFragment('default');
+            const ytext = session.dc.document.getText('source');
+            const currentFm = stripFrontmatter(ytext.toString()).frontmatter;
+            const currentBody = mdManager.serialize(
+              yXmlFragmentToProseMirrorRootNode(xmlFragment, schema).toJSON(),
+            );
+            const currentFull = prependFrontmatter(currentFm, currentBody);
+
+            const pos =
+              offset == null
+                ? currentFull.indexOf(find)
+                : currentFull.slice(offset, offset + find.length) === find
+                  ? offset
+                  : -1;
+            if (pos === -1) {
+              if (offset == null) {
+                notFound = true;
+              } else {
+                staleTarget = true;
+              }
+              return;
+            }
+
+            // Position-based FM-intersection check. The string-shape
+            // heuristic above handles yaml-style find strings; this catches
+            // the residual class where a non-yaml find (e.g. a single word
+            // like `draft`) happens to first-match in the FM region.
+            // `pos < currentFm.length` is the necessary-and-sufficient
+            // signal — FM is contiguous at doc start, so any match starting
+            // before the FM-end byte overlaps the FM region.
+            if (pos < currentFm.length) {
+              fmIntersect = true;
+              return;
+            }
+
+            // Splice at the character level. Only body-region patches
+            // reach here, so this branch never modifies the FM.
+            // applyAgentMarkdownWrite reads the current FM from the YAML
+            // region of Y.Text and writes the canonical full document
+            // back, so a body-only payload here keeps the existing FM
+            // intact.
+            const newFull =
+              currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+            const { body: newBody } = stripFrontmatter(newFull);
+            applyAgentMarkdownWrite(
+              session.dc.document,
+              newBody,
+              'replace',
+              options.resolveEmbed
+                ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+                : undefined,
+            );
+
+            const activityMap = session.dc.document.getMap('agent-flash');
+            activityMap.set(agentId, {
+              agentId,
+              timestamp: Date.now(),
+              type: 'insert',
+              description: `Patched (${agentName}): ${find.slice(0, 50)}`,
+            });
+          }, session.origin);
+          if (!notFound && !staleTarget && !fmIntersect) {
+            // Only count + record when the patch actually applied. The M1
+            // denominator excludes 404/409 + FM-intersect 400 so adoption
+            // rate reflects successful writes, not total attempts.
+            const { stored: storedSummary } = summaryResponseFields(normalizedSummary);
+            recordContributor(
+              docName,
+              agentId,
+              agentName,
+              colorSeed,
+              undefined,
+              buildAgentActor({ clientName, clientVersion, label }),
+              storedSummary,
+            );
+            incrementAgentWriteCalls();
+            countNormalizedSummary(normalizedSummary);
+          }
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        if (staleTarget) {
+          errorResponse(
+            res,
+            409,
+            'urn:ok:error:stale-target',
+            'Target text no longer matches at the requested offset.',
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+        if (notFound) {
+          errorResponse(res, 404, 'urn:ok:error:target-not-found', 'Text not found in document.', {
+            handler: 'agent-patch',
+          });
+          return;
+        }
+        if (fmIntersect) {
+          agentPatchFmTouchCounter().add(1, { result: 'rejected' });
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:frontmatter-edit-not-supported',
+            'Frontmatter edits are not supported via edit_document. Use write_document with position:"replace" to rewrite the document including its YAML block.',
+            { handler: 'agent-patch' },
+          );
+          return;
+        }
+
+        flushDocToGit(docName, 'agent-patch');
+
+        // Focus (attribution) on __system__ awareness. Presence is separately
+        // maintained via setPresence/touchMode pairs above.
+        agentFocusBroadcaster?.setFocus(agentId, {
+          agentName,
+          currentDoc: docName,
+          writeKind: 'edit',
+          ts: Date.now(),
+        });
+        onAgentWrite?.();
+
+        const subscriberCount = getSubscriberCount(docName);
+        const systemSubscriberCount = getSystemSubscriberCount();
+
+        // Once-per-session attach hint counter (matches handleAgentWriteMd).
+        if (systemSubscriberCount === 0) {
+          hintEmittedCounter().add(1, {
+            'shadow.writer': 'agent',
+            'agent.type': resolveAgentType(clientName),
+          });
+        }
+
+        const { response: summaryResponse } = summaryResponseFields(normalizedSummary);
+
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, {
+          timestamp,
+          subscriberCount,
+          systemSubscriberCount,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        log.error({ err: e }, '[agent-patch] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-patch',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'agent-patch', method: 'POST' },
+  );
 
   /**
    * POST /api/agent-undo — V0-14 agent undo via per-session Y.UndoManager.
@@ -2933,302 +3066,339 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Fires applyAgentUndo under session.undoOrigin (paired: true) — Observer
    * A/B short-circuit; XmlFragment-authoritative composition updates both CRDTs.
    */
-  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawBody: Buffer;
+  const handleAgentUndo = withValidation(
+    AgentUndoRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: Record<string, unknown>;
-      try {
-        body =
-          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
+        // FR-5, D42: extract identity from body so shadow-repo attribution
+        // threads through the undo write the same way it does through
+        // agent-write / agent-write-md / agent-patch. `agentId` is the
+        // broadcaster-map key (prefixed via `toBroadcasterKey`) — use it
+        // for setPresence/touchMode so cleanup via the keepalive WS close
+        // handler finds the entry.
+        const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
+          extractAgentIdentity(body);
 
-      // FR-5, D42: extract identity from body so shadow-repo attribution threads through
-      // the undo write the same way it does through agent-write / agent-write-md / agent-patch.
-      // MCP clients that don't yet forward identity fall back to extractAgentIdentity defaults.
-      // `agentId` is the broadcaster-map key (prefixed via `toBroadcasterKey`) — use it for
-      // setPresence/touchMode so cleanup via the keepalive WS close handler finds the entry.
-      const { agentId, agentName, colorSeed, clientName, clientVersion, label } =
-        extractAgentIdentity(body);
+        const rawDocName =
+          body.docName !== undefined && body.docName.length > 0 ? body.docName : 'test-doc';
+        const docName = resolveAlias(rawDocName);
 
-      const rawDocName =
-        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-undo' },
+          );
+          return;
+        }
 
-      const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined;
-      if (!connectionId) {
-        json(res, 400, { ok: false, error: 'connectionId required' });
-        return;
-      }
+        const { connectionId } = body;
 
-      const rawScope = body.scope;
-      // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
-      const scope: 'last' | 'session' =
-        rawScope === 'session' || rawScope === 'file' ? 'session' : 'last';
+        // 'file' scope is a thin alias for 'session' (all bursts on this file's session).
+        const scope: 'last' | 'session' =
+          body.scope === 'session' || body.scope === 'file' ? 'session' : 'last';
 
-      if (!sessionManager.hasSession(docName, connectionId)) {
-        json(res, 404, { ok: false, error: 'No active session for this connectionId and docName' });
-        return;
-      }
+        if (!sessionManager.hasSession(docName, connectionId)) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:no-active-session',
+            'No active session for this connectionId and docName.',
+            { handler: 'agent-undo' },
+          );
+          return;
+        }
 
-      const session = await sessionManager.getSession(docName, connectionId);
+        const session = await sessionManager.getSession(docName, connectionId);
 
-      // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
-      // instead of the per-doc awareness — the per-doc awareness has ONE
-      // shared clientID across N concurrent agents and would stomp. The
-      // broadcaster map is keyed by `agentId` (prefixed via toBroadcasterKey)
-      // so the keepalive-WS close handler's cleanup path finds the entry.
-      //
-      // setPresence lives INSIDE the try so the pairing with touchMode('idle')
-      // in `finally` is atomic — any throw between setPresence and the undo
-      // transact flips the badge back to idle rather than wedging it on 'writing'.
-      let undone = false;
-      try {
-        const icon = iconFromClientName(clientName);
-        const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
-        agentPresenceBroadcaster?.setPresence(agentId, {
-          displayName: agentName,
-          icon,
-          color,
+        // FR-3: publish presence on __system__ (map-valued, keyed by agentId)
+        // instead of the per-doc awareness — the per-doc awareness has ONE
+        // shared clientID across N concurrent agents and would stomp.
+        //
+        // setPresence lives INSIDE the try so the pairing with touchMode('idle')
+        // in `finally` is atomic — any throw between setPresence and the undo
+        // transact flips the badge back to idle rather than wedging it on 'writing'.
+        let undone = false;
+        try {
+          const icon = iconFromClientName(clientName);
+          const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(colorSeed ?? agentId);
+          agentPresenceBroadcaster?.setPresence(agentId, {
+            displayName: agentName,
+            icon,
+            color,
+            currentDoc: docName,
+            mode: 'writing',
+            ts: Date.now(),
+          });
+          // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
+          // applyAgentUndo wraps um.undo() + composition in one transact under
+          // session.undoOrigin (paired: true) so Observer A/B short-circuit.
+          undone = applyAgentUndo(
+            session,
+            scope,
+            options.resolveEmbed
+              ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+              : undefined,
+          );
+          // FR-5 / D42: record attribution for the undo write so the shadow-repo
+          // L2 drain fans it out under this session's writer-id. Skip when the
+          // UM stack was empty — a no-op undo has no mutation to attribute.
+          if (undone) {
+            recordContributor(
+              docName,
+              connectionId,
+              agentName,
+              colorSeed,
+              undefined,
+              buildAgentActor({ clientName, clientVersion, label }),
+            );
+          }
+        } finally {
+          agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+        }
+
+        if (undone) {
+          flushDocToGit(docName, 'agent-undo');
+        }
+
+        agentFocusBroadcaster?.setFocus(connectionId, {
+          agentName: connectionId,
           currentDoc: docName,
-          mode: 'writing',
+          writeKind: 'undo',
           ts: Date.now(),
         });
-        // V0-14 (US-009): XmlFragment-authoritative undo via per-session UM.
-        // applyAgentUndo wraps um.undo() + composition in one transact under
-        // session.undoOrigin (paired: true) so Observer A/B short-circuit.
-        // Pass embedResolver so the post-undo body re-parse maps
-        // `![[photo.png]]` → resolved src on PM image nodes — matching
-        // applyAgentMarkdownWrite's composition contract so the XmlFragment
-        // shape stays equivalent to a fresh load of the same body.
-        undone = applyAgentUndo(
-          session,
-          scope,
-          options.resolveEmbed
-            ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-            : undefined,
-        );
-        // FR-5 / D42: record attribution for the undo write so the shadow-repo
-        // L2 drain fans it out under this session's writer-id. Skip when the
-        // UM stack was empty — a no-op undo has no mutation to attribute.
-        if (undone) {
-          recordContributor(
-            docName,
-            connectionId,
-            agentName,
-            colorSeed,
-            undefined,
-            buildAgentActor({ clientName, clientVersion, label }),
-          );
-        }
-      } finally {
-        agentPresenceBroadcaster?.touchMode(agentId, 'idle');
+
+        // D22: success body is flat — no `{ ok: true }` wrapper.
+        json(res, 200, { docName, scope, undone });
+      } catch (e) {
+        log.error({ err: e }, '[agent-undo] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-undo',
+          cause: e,
+        });
       }
-
-      if (undone) {
-        flushDocToGit(docName, 'agent-undo');
-      }
-
-      agentFocusBroadcaster?.setFocus(connectionId, {
-        agentName: connectionId,
-        currentDoc: docName,
-        writeKind: 'undo',
-        ts: Date.now(),
-      });
-
-      json(res, 200, { ok: true, docName, scope, undone });
-    } catch (e) {
-      log.error({ err: e }, '[agent-undo] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-undo', method: 'POST' },
+  );
 
   /**
    * GET /api/agent-activity?agentId=<connId>
    * Returns per-file + per-burst stats for one agent's session(s).
    * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
    */
-  async function handleAgentActivity(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
-      // POST handler) — consistent identity shape across all surfaces per
-      // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
-      const agentId = validateAgentId(url.searchParams.get('agentId'));
-      if (agentId === null) {
-        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
-        return;
+  const handleAgentActivity = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        // `validateAgentId` enforces AGENT_ID_RE (same shape as every mutating
+        // POST handler) — consistent identity shape across all surfaces per
+        // `packages/server/src/agent-id.ts`'s "three-surfaces" rule.
+        const agentId = validateAgentId(url.searchParams.get('agentId'));
+        if (agentId === null) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'agentId required (alphanumeric/_/- only).',
+            { handler: 'agent-activity' },
+          );
+          return;
+        }
+        const result = listAgentActivity(sessionManager, agentId);
+        json(res, 200, result);
+      } catch (e) {
+        log.error({ err: e }, '[agent-activity] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-activity',
+          cause: e,
+        });
       }
-      const result = listAgentActivity(sessionManager, agentId);
-      json(res, 200, { ok: true, ...result });
-    } catch (e) {
-      log.error({ err: e }, '[agent-activity] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-activity', method: 'GET', skipBodyParse: true },
+  );
 
   /**
    * GET /api/agent-burst-diff?agentId=<connId>&docName=<path>&stackIndex=<n>
    * Returns unified-diff text for one StackItem in a given session.
    * Exempt from extractAgentIdentity — read-only, no CRDT mutation.
    */
-  async function handleAgentBurstDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const agentId = validateAgentId(url.searchParams.get('agentId'));
-      const rawDocName = url.searchParams.get('docName');
-      const stackIndexStr = url.searchParams.get('stackIndex');
-
-      if (agentId === null) {
-        json(res, 400, { ok: false, error: 'agentId required (alphanumeric/_/- only)' });
-        return;
-      }
-      if (!rawDocName || rawDocName.trim() === '') {
-        json(res, 400, { ok: false, error: 'docName required' });
-        return;
-      }
-      // Same docName validator every mutating POST handler uses — parity with
-      // the rest of the API surface (path traversal, reserved names).
-      if (!isSafeDocName(rawDocName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
-        json(res, 400, { ok: false, error: 'stackIndex must be a number' });
-        return;
-      }
-      const stackIndex = Number(stackIndexStr);
-      if (!Number.isInteger(stackIndex) || stackIndex < 0) {
-        json(res, 400, { ok: false, error: 'stackIndex must be a non-negative integer' });
-        return;
-      }
-
-      // Typed accessor — no `(as any).sessions` bypass.
-      const session = sessionManager.getLiveSession(docName, agentId);
-      if (!session) {
-        json(res, 404, { ok: false, error: 'No active session for this agentId and docName' });
-        return;
-      }
-
-      const um = session.um;
-      if (stackIndex >= um.undoStack.length) {
-        json(res, 404, {
-          ok: false,
-          error: `stackIndex ${stackIndex} out of range (stack has ${um.undoStack.length} items)`,
-        });
-        return;
-      }
-
-      // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
-      const stackItem = um.undoStack[stackIndex] as any;
-      const ytext = session.dc.document.getText('source');
-      const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
-      // `generatedAt` is the server's wall clock at response time (used for
-      // client-side cache staleness). The StackItem's capture timestamp is
-      // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
-      // to duplicate it here.
-      json(res, 200, { ok: true, diff, generatedAt: Date.now() });
-    } catch (e) {
-      log.error({ err: e }, '[agent-burst-diff] handler failed');
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleTestReset(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
-
-      // Path traversal guard — reuse the canonical validator from persistence.ts.
-      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
-      // we translate that to a 400 response. Keeping the guard in one place (not
-      // re-implementing the startsWith check inline) ensures handleTestReset stays
-      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
-      let filePath: string;
+  const handleAgentBurstDiff = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
       try {
-        filePath = safeContentPath(docName, contentDir);
-      } catch (err) {
-        // Log the original error (safeContentPath produces messages like
-        // `Invalid document name: ${docName}` which are useful for diagnosing
-        // unexpected failures beyond the standard path-traversal case — e.g.,
-        // encoding errors from resolve(), null-byte truncation, etc.) but
-        // still return a sanitized, uniform 400 message to the client so
-        // filesystem details never leak through the API boundary.
-        console.error('[test-reset] safeContentPath rejected docName:', docName, err);
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const agentId = validateAgentId(url.searchParams.get('agentId'));
+        const rawDocName = url.searchParams.get('docName');
+        const stackIndexStr = url.searchParams.get('stackIndex');
 
-      await sessionManager.closeAll(docName);
-      hocuspocus.closeConnections(docName);
+        if (agentId === null) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'agentId required (alphanumeric/_/- only).',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+        if (!rawDocName || rawDocName.trim() === '') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'docName required.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        // Same docName validator every mutating POST handler uses — parity with
+        // the rest of the API surface (path traversal, reserved names).
+        if (!isSafeDocName(rawDocName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        const docName = resolveAlias(rawDocName);
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+        if (!stackIndexStr || Number.isNaN(Number(stackIndexStr))) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'stackIndex must be a number.', {
+            handler: 'agent-burst-diff',
+          });
+          return;
+        }
+        const stackIndex = Number(stackIndexStr);
+        if (!Number.isInteger(stackIndex) || stackIndex < 0) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'stackIndex must be a non-negative integer.',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
 
-      // D18: Force-flush any pending onStoreDocument debounced work before unload.
-      // Without this, unloadDocument silently no-ops if the debouncer is active
-      // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
-      const debounceId = `onStoreDocument-${docName}`;
-      if (hocuspocus.debouncer.isDebounced(debounceId)) {
-        await hocuspocus.debouncer.executeNow(debounceId);
-      }
+        // Typed accessor — no `(as any).sessions` bypass.
+        const session = sessionManager.getLiveSession(docName, agentId);
+        if (!session) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:no-active-session',
+            'No active session for this agentId and docName.',
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
 
-      const doc = hocuspocus.documents.get(docName);
-      if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
-      writeFileSync(filePath, '', 'utf-8');
-      if (backlinkIndex) {
-        backlinkIndex.deleteDocument(docName);
-        void backlinkIndex.saveToDisk().catch((err) => {
-          console.warn(`[backlinks] Failed to persist cache after test-reset for ${docName}:`, err);
+        const um = session.um;
+        if (stackIndex >= um.undoStack.length) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:not-found',
+            `stackIndex ${stackIndex} out of range (stack has ${um.undoStack.length} items).`,
+            { handler: 'agent-burst-diff' },
+          );
+          return;
+        }
+
+        // biome-ignore lint/suspicious/noExplicitAny: Y.StackItem is internal to yjs — structural shape matches YjsStackItemShape in agent-activity.ts
+        const stackItem = um.undoStack[stackIndex] as any;
+        const ytext = session.dc.document.getText('source');
+        const diff = synthesizeStackItemDiffText(stackItem, ytext, docName);
+        // `generatedAt` is the server's wall clock at response time (used for
+        // client-side cache staleness). The StackItem's capture timestamp is
+        // already carried in `/api/agent-activity`'s `bursts[].ts` — no need
+        // to duplicate it here.
+        json(res, 200, { diff, generatedAt: Date.now() });
+      } catch (e) {
+        log.error({ err: e }, '[agent-burst-diff] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'agent-burst-diff',
+          cause: e,
         });
-        signalChannel?.('backlinks');
-        signalChannel?.('graph');
       }
-      signalChannel?.('files');
-      json(res, 200, { ok: true });
-    } catch (e) {
-      console.error('[test-reset]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+    },
+    { handler: 'agent-burst-diff', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleTestReset = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
+
+        // Path traversal guard — reuse the canonical validator from persistence.ts.
+        // Throws `Invalid document name: ${docName}` for names that escape contentDir;
+        // we translate that to a 400 response. Keeping the guard in one place (not
+        // re-implementing the startsWith check inline) ensures handleTestReset stays
+        // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
+        let filePath: string;
+        try {
+          filePath = safeContentPath(docName, contentDir);
+        } catch (err) {
+          // Log the original error (safeContentPath produces messages like
+          // `Invalid document name: ${docName}` which are useful for diagnosing
+          // unexpected failures beyond the standard path-traversal case — e.g.,
+          // encoding errors from resolve(), null-byte truncation, etc.) but
+          // still return a sanitized, uniform 400 message to the client so
+          // filesystem details never leak through the API boundary.
+          console.error('[test-reset] safeContentPath rejected docName:', docName, err);
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'test-reset',
+            cause: err,
+          });
+          return;
+        }
+
+        await sessionManager.closeAll(docName);
+        hocuspocus.closeConnections(docName);
+
+        // D18: Force-flush any pending onStoreDocument debounced work before unload.
+        // Without this, unloadDocument silently no-ops if the debouncer is active
+        // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
+        const debounceId = `onStoreDocument-${docName}`;
+        if (hocuspocus.debouncer.isDebounced(debounceId)) {
+          await hocuspocus.debouncer.executeNow(debounceId);
+        }
+
+        const doc = hocuspocus.documents.get(docName);
+        if (doc) await (forceUnloadDocument ?? hocuspocus.unloadDocument.bind(hocuspocus))(doc);
+        writeFileSync(filePath, '', 'utf-8');
+        if (backlinkIndex) {
+          backlinkIndex.deleteDocument(docName);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist cache after test-reset for ${docName}:`,
+              err,
+            );
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+        signalChannel?.('files');
+        json(res, 200, {});
+      } catch (e) {
+        console.error('[test-reset]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'test-reset',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'test-reset', method: 'POST', skipBodyParse: true },
+  );
 
   /**
    * Test-only rescue hatch for the @parcel/watcher + inotify race on Linux.
@@ -3247,284 +3417,306 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * debounced to disk (e.g. a live agent-write awaiting persistence). Gated
    * behind `enableTestRoutes` for that reason.
    */
-  async function handleTestRescanBacklinks(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      if (!backlinkIndex) {
-        json(res, 503, { ok: false, error: 'Backlink index not configured' });
-        return;
-      }
-      backlinkIndex.rebuildFromDisk();
-      void backlinkIndex.saveToDisk().catch((err) => {
-        console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
-      });
-      signalChannel?.('backlinks');
-      signalChannel?.('graph');
-      json(res, 200, { ok: true });
-    } catch (e) {
-      console.error('[test-rescan-backlinks]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
+  const handleTestRescanBacklinks = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      // Parse optional writers + message + principal from body
-      const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
-      let writers: WriterIdentity[] = [];
-      let userMessage: string | undefined;
-      let saveVersionBody: Record<string, unknown> = {};
-      let principalName: string | undefined;
-      let principalEmail: string | undefined;
-      if (rawBody.length > 0) {
-        let body: Record<string, unknown>;
-        try {
-          body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
-        } catch {
-          json(res, 400, { ok: false, error: 'Invalid JSON' });
+        if (!backlinkIndex) {
+          errorResponse(
+            res,
+            503,
+            'urn:ok:error:backlink-index-not-configured',
+            'Backlink index not configured.',
+            { handler: 'test-rescan-backlinks' },
+          );
           return;
         }
-        saveVersionBody = body;
+        backlinkIndex.rebuildFromDisk();
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn('[backlinks] Failed to persist cache after test-rescan-backlinks:', err);
+        });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
+        json(res, 200, {});
+      } catch (e) {
+        console.error('[test-rescan-backlinks]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'test-rescan-backlinks',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'test-rescan-backlinks', method: 'POST', skipBodyParse: true },
+  );
+
+  const handleSaveVersion = withValidation(
+    SaveVersionRequestSchema,
+    async (_req, res, body) => {
+      try {
+        // Thread agent identity FIRST so the attribution-sweep ordering check
+        // is satisfied: any errorResponse below this point is post-identity.
+        // Shadow availability + writer-id validation are semantic checks that
+        // would otherwise route through `openknowledge-service` attribution.
+        const saveVersionBody = body as unknown as Record<string, unknown>;
+        const {
+          rawAgentId: svRawAgentId,
+          agentId: svAgentId,
+          agentName: svAgentName,
+          clientName: svClientName,
+        } = extractAgentIdentity(saveVersionBody);
+
+        const shadow = shadowRef?.current;
+        if (!shadow) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:shadow-not-configured',
+            'Shadow repo not configured.',
+            { handler: 'save-version' },
+          );
+          return;
+        }
+
+        // Parse optional writers + message + principal from already-validated body.
+        const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+        let writers: WriterIdentity[] = [];
+        let userMessage: string | undefined;
+        let principalName: string | undefined;
+        let principalEmail: string | undefined;
+
         if (typeof body.message === 'string' && body.message.trim()) {
           userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
         if (Array.isArray(body.writers)) {
-          writers = (body.writers as Array<Record<string, string>>).map((w) => {
-            const id = w.id ?? 'unknown';
-            if (!SAFE_ID_RE.test(id)) {
-              throw new Error(`Invalid writer id: ${id}`);
-            }
-            return {
-              id,
-              name: (w.name ?? 'unknown').replace(/[\r\n]/g, ''),
-              email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
-            };
-          });
-        }
-        // Optional principal identity: { name: string, email: string } (US-020, D12)
-        const p = body.principal;
-        if (p && typeof p === 'object' && !Array.isArray(p)) {
-          const pr = p as Record<string, unknown>;
-          if (typeof pr.name === 'string' && pr.name.trim()) {
-            principalName = sanitizeGitIdentity(pr.name.trim());
-          }
-          if (typeof pr.email === 'string' && pr.email.trim()) {
-            principalEmail = sanitizeGitIdentity(pr.email.trim());
-          }
-        }
-      }
-
-      // Thread agent identity — extends writers[] with calling agent (D42).
-      const {
-        rawAgentId: svRawAgentId,
-        agentId: svAgentId,
-        agentName: svAgentName,
-        clientName: svClientName,
-      } = extractAgentIdentity(saveVersionBody);
-      if (writers.length === 0) {
-        if (svRawAgentId !== undefined) {
-          const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
-          writers = [
-            { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
-          ];
-        } else {
-          writers = [SERVICE_WRITER];
-        }
-      }
-
-      const resolvedContentRoot = contentRoot ?? '.';
-      const result = await saveVersion(shadow, resolvedContentRoot, writers);
-
-      console.log(`[history] checkpoint ${result.checkpointRef}`);
-
-      // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
-      // swapContributors() atomically captures all agent writes since the last checkpoint.
-      const contributorSnapshot = swapContributors();
-
-      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
-      let versionTag: string | undefined;
-      if (projectDir) {
-        // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
-        // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
-        let parentGitAvailable = false;
-        try {
-          const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
-          await checkPg.revparse(['--git-dir']);
-          parentGitAvailable = true;
-        } catch (e) {
-          console.warn(
-            `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-        if (parentGitAvailable) {
           try {
-            versionTag = await withParentLock(async () => {
-              const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-              // Count existing ok/v* tags to derive N
-              const existing = await pg.tags(['--list', 'ok/v*']);
-              const n = existing.all.length + 1;
-              const tag = `ok/v${n}`;
-
-              // Author identity: principal from body > git config > openknowledge fallback
-              let authorName = 'openknowledge';
-              let authorEmail = 'noreply@openknowledge.local';
-              if (principalName && principalEmail) {
-                authorName = principalName;
-                authorEmail = principalEmail;
-              } else {
-                try {
-                  const gitId = await resolveGitIdentity(projectDir);
-                  if (gitId) {
-                    authorName = gitId.name;
-                    authorEmail = gitId.email;
-                  }
-                } catch {
-                  // no-op — use defaults
-                }
+            writers = body.writers.map((w) => {
+              const id = w.id ?? 'unknown';
+              if (!SAFE_ID_RE.test(id)) {
+                throw new Error(`Invalid writer id: ${id}`);
               }
-
-              // Co-Authored-By trailers for agent/principal session contributors (US-020)
-              const coAuthorLines: string[] = [];
-              for (const entry of contributorSnapshot.values()) {
-                if (
-                  entry.writerId.startsWith('agent-') ||
-                  entry.writerId.startsWith('principal-')
-                ) {
-                  const trailerEmail = `${entry.writerId}@openknowledge.local`;
-                  coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
-                }
-              }
-
-              // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
-              const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
-              const commitMsg =
-                coAuthorLines.length > 0
-                  ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
-                  : subjectLine;
-
-              // Stage content changes and create commit (allow-empty so a tag always lands)
-              const gitPathspec = resolvedContentRoot || '.';
-              await pg.add(gitPathspec);
-              await pg
-                .env({
-                  GIT_AUTHOR_NAME: authorName,
-                  GIT_AUTHOR_EMAIL: authorEmail,
-                  GIT_COMMITTER_NAME: authorName,
-                  GIT_COMMITTER_EMAIL: authorEmail,
-                })
-                .commit(commitMsg, ['--allow-empty']);
-              await pg.addTag(tag);
-              console.log(`[checkpoint] parent-git commit + tag ${tag}`);
-              return tag;
+              return {
+                id,
+                name: (w.name ?? 'unknown').replace(/[\r\n]/g, ''),
+                email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
+              };
             });
           } catch (e) {
-            console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              e instanceof Error ? e.message : 'Invalid writer id.',
+              { handler: 'save-version', cause: e },
+            );
+            return;
           }
         }
-      }
+        // Optional principal identity: { name?: string, email?: string } (US-020, D12)
+        if (body.principal) {
+          if (typeof body.principal.name === 'string' && body.principal.name.trim()) {
+            principalName = sanitizeGitIdentity(body.principal.name.trim());
+          }
+          if (typeof body.principal.email === 'string' && body.principal.email.trim()) {
+            principalEmail = sanitizeGitIdentity(body.principal.email.trim());
+          }
+        }
 
-      json(res, 200, {
-        ok: true,
-        checkpointRef: result.checkpointRef,
-        ...(versionTag ? { versionTag } : {}),
-      });
-    } catch (e) {
-      console.error('[save-version]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        if (writers.length === 0) {
+          if (svRawAgentId !== undefined) {
+            const displayName = svClientName ? `${svAgentName} (${svClientName})` : svAgentName;
+            writers = [
+              { id: svAgentId, name: displayName, email: `${svAgentId}@openknowledge.local` },
+            ];
+          } else {
+            writers = [SERVICE_WRITER];
+          }
+        }
+
+        const resolvedContentRoot = contentRoot ?? '.';
+        const result = await saveVersion(shadow, resolvedContentRoot, writers);
+
+        console.log(`[history] checkpoint ${result.checkpointRef}`);
+
+        // Drain contributor snapshot for Co-Authored-By trailers (US-020, FR-9, D12).
+        // swapContributors() atomically captures all agent writes since the last checkpoint.
+        const contributorSnapshot = swapContributors();
+
+        // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
+        let versionTag: string | undefined;
+        if (projectDir) {
+          // Verify a git repo exists at projectDir before acquiring the lock (US-021, D45).
+          // git rev-parse --git-dir succeeds iff the directory is inside a git repo.
+          let parentGitAvailable = false;
+          try {
+            const checkPg = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+            await checkPg.revparse(['--git-dir']);
+            parentGitAvailable = true;
+          } catch (e) {
+            console.warn(
+              `[save-version] parent-git unavailable: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          if (parentGitAvailable) {
+            try {
+              versionTag = await withParentLock(async () => {
+                const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+                // Count existing ok/v* tags to derive N
+                const existing = await pg.tags(['--list', 'ok/v*']);
+                const n = existing.all.length + 1;
+                const tag = `ok/v${n}`;
+
+                // Author identity: principal from body > git config > openknowledge fallback
+                let authorName = 'openknowledge';
+                let authorEmail = 'noreply@openknowledge.local';
+                if (principalName && principalEmail) {
+                  authorName = principalName;
+                  authorEmail = principalEmail;
+                } else {
+                  try {
+                    const gitId = await resolveGitIdentity(projectDir);
+                    if (gitId) {
+                      authorName = gitId.name;
+                      authorEmail = gitId.email;
+                    }
+                  } catch {
+                    // no-op — use defaults
+                  }
+                }
+
+                // Co-Authored-By trailers for agent/principal session contributors (US-020)
+                const coAuthorLines: string[] = [];
+                for (const entry of contributorSnapshot.values()) {
+                  if (
+                    entry.writerId.startsWith('agent-') ||
+                    entry.writerId.startsWith('principal-')
+                  ) {
+                    const trailerEmail = `${entry.writerId}@openknowledge.local`;
+                    coAuthorLines.push(`Co-Authored-By: ${entry.displayName} <${trailerEmail}>`);
+                  }
+                }
+
+                // Commit message: checkpoint: subject + trailers (US-015 prefix, US-020 trailers)
+                const subjectLine = formatCheckpointSubject(userMessage ?? `Checkpoint v${n}`);
+                const commitMsg =
+                  coAuthorLines.length > 0
+                    ? `${subjectLine}\n\n${coAuthorLines.join('\n')}`
+                    : subjectLine;
+
+                // Stage content changes and create commit (allow-empty so a tag always lands)
+                const gitPathspec = resolvedContentRoot || '.';
+                await pg.add(gitPathspec);
+                await pg
+                  .env({
+                    GIT_AUTHOR_NAME: authorName,
+                    GIT_AUTHOR_EMAIL: authorEmail,
+                    GIT_COMMITTER_NAME: authorName,
+                    GIT_COMMITTER_EMAIL: authorEmail,
+                  })
+                  .commit(commitMsg, ['--allow-empty']);
+                await pg.addTag(tag);
+                console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+                return tag;
+              });
+            } catch (e) {
+              console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+            }
+          }
+        }
+
+        json(res, 200, {
+          checkpointRef: result.checkpointRef,
+          ...(versionTag ? { versionTag } : {}),
+        });
+      } catch (e) {
+        console.error('[save-version]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'save-version',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'save-version', method: 'POST' },
+  );
 
   // ── GET /api/history ─────────────────────────────────────────────────────
-  async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleHistory = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:shadow-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'history' },
+        );
+        return;
+      }
 
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? '';
+      const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
+      if (!docName) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          'docName query parameter is required.',
+          { handler: 'history' },
+        );
+        return;
+      }
 
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const docName = url.searchParams.get('docName') ?? '';
-    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
-    if (!docName) {
-      json(res, 400, { ok: false, error: 'docName query parameter is required' });
-      return;
-    }
+      if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid branch name.', {
+          handler: 'history',
+        });
+        return;
+      }
 
-    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
-      json(res, 400, { ok: false, error: 'Invalid branch name' });
-      return;
-    }
+      const rawLimit = Number(url.searchParams.get('limit') ?? '50');
+      const rawOffset = Number(url.searchParams.get('offset') ?? '0');
+      const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
+      const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+      const type = url.searchParams.get('type') ?? undefined;
+      const author = url.searchParams.get('author') ?? undefined;
+      const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
 
-    const rawLimit = Number(url.searchParams.get('limit') ?? '50');
-    const rawOffset = Number(url.searchParams.get('offset') ?? '0');
-    const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
-    const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
-    const type = url.searchParams.get('type') ?? undefined;
-    const author = url.searchParams.get('author') ?? undefined;
-    const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
+      const t0 = Date.now();
+      try {
+        const resolvedContentRoot = contentRoot ?? '.';
+        const result = await getDocumentHistory(
+          shadow,
+          {
+            docName,
+            branch,
+            limit,
+            offset,
+            type,
+            author,
+            excludeAuthor,
+          },
+          resolvedContentRoot,
+        );
 
-    const t0 = Date.now();
-    try {
-      const resolvedContentRoot = contentRoot ?? '.';
-      const result = await getDocumentHistory(
-        shadow,
-        {
-          docName,
-          branch,
-          limit,
-          offset,
-          type,
-          author,
-          excludeAuthor,
-        },
-        resolvedContentRoot,
-      );
+        const duration = Date.now() - t0;
+        console.log(
+          `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
+        );
 
-      const duration = Date.now() - t0;
-      console.log(
-        `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
-      );
-
-      json(res, 200, { ok: true, ...result });
-    } catch (e) {
-      console.error('[shadow]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
-    }
-  }
+        json(res, 200, { ...result });
+      } catch (e) {
+        console.error('[shadow]', e);
+        const message = e instanceof Error ? e.message : String(e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+          handler: 'history',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'history', method: 'GET', skipBodyParse: true },
+  );
 
   // ── GET /api/history/:sha ─────────────────────────────────────────────────
   async function handleHistoryVersion(
@@ -3533,14 +3725,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sha: string,
   ): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'history-version',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
 
     const shadow = shadowRef?.current;
     if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      errorResponse(res, 400, 'urn:ok:error:shadow-not-configured', 'Shadow repo not configured.', {
+        handler: 'history-version',
+      });
       return;
     }
 
@@ -3550,7 +3746,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const resolvedContentRoot = contentRoot ?? '.';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+        handler: 'history-version',
+      });
       return;
     }
     const docPath = pathResult.path;
@@ -3558,7 +3756,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
-      json(res, 400, { ok: false, error: 'Invalid commit SHA' });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid commit SHA.', {
+        handler: 'history-version',
+      });
       return;
     }
 
@@ -3566,8 +3766,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Verify file exists at this commit
       try {
         await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+      } catch (catFileErr) {
+        errorResponse(
+          res,
+          404,
+          'urn:ok:error:doc-not-found',
+          'Document did not exist at this version.',
+          { handler: 'history-version', cause: catFileErr },
+        );
         return;
       }
 
@@ -3577,380 +3783,405 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
 
-      json(res, 200, { ok: true, sha, content, timestamp, author });
+      json(res, 200, { sha, content, timestamp, author });
     } catch (e) {
       console.error('[shadow-version]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'history-version',
+        cause: e,
+      });
     }
   }
 
   // ── GET /api/diff ─────────────────────────────────────────────────────────
-  async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
-
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const docName = url.searchParams.get('docName') ?? '';
-    const from = url.searchParams.get('from') ?? '';
-    const to = url.searchParams.get('to') ?? '';
-
-    if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
-      json(res, 400, { ok: false, error: "'to' must be a valid 40-char commit SHA" });
-      return;
-    }
-
-    const resolvedContentRoot = contentRoot ?? '.';
-    const pathResult = safeDocPath(docName, resolvedContentRoot);
-    if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
-      return;
-    }
-    const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
-
-    try {
-      // Get "to" content
-      let toContent: string;
-      try {
-        toContent = await sg.raw('show', `${to}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
+  const handleDiff = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:shadow-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'diff' },
+        );
         return;
       }
 
-      // Get "from" content — either a commit SHA or current Y.Doc text
-      let fromContent: string;
-      if (from && /^[0-9a-f]{40}$/i.test(from)) {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? '';
+      const from = url.searchParams.get('from') ?? '';
+      const to = url.searchParams.get('to') ?? '';
+
+      if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:invalid-request',
+          "'to' must be a valid 40-char commit SHA.",
+          { handler: 'diff' },
+        );
+        return;
+      }
+
+      const resolvedContentRoot = contentRoot ?? '.';
+      const pathResult = safeDocPath(docName, resolvedContentRoot);
+      if ('error' in pathResult) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+          handler: 'diff',
+        });
+        return;
+      }
+      const docPath = pathResult.path;
+      const sg = shadowGit(shadow);
+
+      try {
+        // Get "to" content
+        let toContent: string;
         try {
-          fromContent = await sg.raw('show', `${from}:${docPath}`);
-        } catch {
-          json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
+          toContent = await sg.raw('show', `${to}:${docPath}`);
+        } catch (toErr) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:doc-not-found',
+            'Document did not exist at the target version.',
+            { handler: 'diff', cause: toErr },
+          );
           return;
         }
-      } else {
-        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
-        const doc = hocuspocus.documents.get(docName);
-        if (!doc) {
-          json(res, 409, {
-            ok: false,
-            error: 'Document is not currently open — open it in the editor first',
-          });
-          return;
+
+        // Get "from" content — either a commit SHA or current Y.Doc text
+        let fromContent: string;
+        if (from && /^[0-9a-f]{40}$/i.test(from)) {
+          try {
+            fromContent = await sg.raw('show', `${from}:${docPath}`);
+          } catch (fromErr) {
+            errorResponse(
+              res,
+              404,
+              'urn:ok:error:doc-not-found',
+              'Document did not exist at the source version.',
+              { handler: 'diff', cause: fromErr },
+            );
+            return;
+          }
+        } else {
+          // from omitted — read current Y.Doc content directly (avoids creating an agent session)
+          const doc = hocuspocus.documents.get(docName);
+          if (!doc) {
+            errorResponse(
+              res,
+              409,
+              'urn:ok:error:doc-not-open',
+              'Document is not currently open — open it in the editor first.',
+              { handler: 'diff' },
+            );
+            return;
+          }
+          fromContent = doc.getText('source').toString();
         }
-        fromContent = doc.getText('source').toString();
-      }
 
-      // Strip frontmatter from both sides so the diff shows only body changes.
-      // Git content includes frontmatter; Y.Text may or may not depending on
-      // sync state. Stripping both sides normalizes the comparison.
-      const fromBody = stripFrontmatter(fromContent).body;
-      const toBody = stripFrontmatter(toContent).body;
-      const changes = diffLines(fromBody, toBody);
+        // Strip frontmatter from both sides so the diff shows only body changes.
+        // Git content includes frontmatter; Y.Text may or may not depending on
+        // sync state. Stripping both sides normalizes the comparison.
+        const fromBody = stripFrontmatter(fromContent).body;
+        const toBody = stripFrontmatter(toContent).body;
+        const changes = diffLines(fromBody, toBody);
 
-      // Build full-file line array: every line annotated as added/removed/unchanged
-      const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
-      let additions = 0;
-      let deletions = 0;
-      for (const change of changes) {
-        const changeLines = change.value.replace(/\n$/, '').split('\n');
-        const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
-        for (const text of changeLines) {
-          lines.push({ type, text });
+        // Build full-file line array: every line annotated as added/removed/unchanged
+        const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
+        let additions = 0;
+        let deletions = 0;
+        for (const change of changes) {
+          const changeLines = change.value.replace(/\n$/, '').split('\n');
+          const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
+          for (const text of changeLines) {
+            lines.push({ type, text });
+          }
+          if (change.added) additions += changeLines.length;
+          if (change.removed) deletions += changeLines.length;
         }
-        if (change.added) additions += changeLines.length;
-        if (change.removed) deletions += changeLines.length;
-      }
 
-      json(res, 200, { ok: true, lines, additions, deletions });
-    } catch (e) {
-      console.error('[diff]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
+        json(res, 200, { lines, additions, deletions });
+      } catch (e) {
+        console.error('[diff]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'diff',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'diff', method: 'GET', skipBodyParse: true },
+  );
 
   // ── POST /api/rollback ────────────────────────────────────────────────────
-  async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+  const handleRollback = withValidation(
+    RollbackRequestSchema,
+    async (_req, res, body) => {
+      const bodyObj = body as unknown as Record<string, unknown>;
+      const actor = extractActorIdentity(bodyObj, getPrincipal);
+      if (actor.kind === 'invalid-summary') {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+          handler: 'rollback',
+        });
+        return;
+      }
 
-    const shadow = shadowRef?.current;
-    if (!shadow) {
-      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
-      return;
-    }
+      // Server-mode availability check. Identity is extracted first so the
+      // attribution-sweep ordering invariant holds: any errorResponse below
+      // this point is post-identity. The emit is still anonymous on the
+      // wire because identity is captured but never echoed.
+      const shadow = shadowRef?.current;
+      if (!shadow) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:rollback-not-configured',
+          'Shadow repo not configured.',
+          { handler: 'rollback' },
+        );
+        return;
+      }
 
-    let rawBody: Buffer;
-    try {
-      rawBody = await readBody(req);
-    } catch {
-      json(res, 413, { ok: false, error: 'Payload too large' });
-      return;
-    }
+      const { docName, commitSha, versionTag: versionTagForRollback } = body;
 
-    let body: unknown;
-    try {
-      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON' });
-      return;
-    }
+      const resolvedContentRoot = contentRoot ?? '.';
+      const pathResult = safeDocPath(docName, resolvedContentRoot);
+      if ('error' in pathResult) {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', pathResult.error, {
+          handler: 'rollback',
+        });
+        return;
+      }
+      const docPath = pathResult.path;
+      const sg = shadowGit(shadow);
 
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-      return;
-    }
-
-    const bodyObj = body as Record<string, unknown>;
-    const actor = extractActorIdentity(bodyObj, getPrincipal);
-    if (actor.kind === 'invalid-summary') {
-      json(res, 400, { ok: false, error: 'summary must be a string' });
-      return;
-    }
-
-    const { docName: rawDocName, commitSha: rawSha, versionTag: rawVersionTag } = bodyObj;
-    const docName = typeof rawDocName === 'string' ? rawDocName : '';
-    const commitSha = typeof rawSha === 'string' ? rawSha : '';
-    const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
-
-    if (!docName) {
-      json(res, 400, { ok: false, error: 'docName required' });
-      return;
-    }
-    if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
-      json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
-      return;
-    }
-
-    const resolvedContentRoot = contentRoot ?? '.';
-    const pathResult = safeDocPath(docName, resolvedContentRoot);
-    if ('error' in pathResult) {
-      json(res, 400, { ok: false, error: pathResult.error });
-      return;
-    }
-    const docPath = pathResult.path;
-    const sg = shadowGit(shadow);
-
-    const t0 = Date.now();
-    try {
-      // Verify file exists at this commit
+      const t0 = Date.now();
       try {
-        await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
-      } catch {
-        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
-        return;
-      }
+        // Verify file exists at this commit
+        try {
+          await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
+        } catch (catFileErr) {
+          errorResponse(
+            res,
+            404,
+            'urn:ok:error:doc-not-found',
+            'Document did not exist at this version.',
+            { handler: 'rollback', cause: catFileErr },
+          );
+          return;
+        }
 
-      const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
-      const timestamp = new Date().toISOString();
+        const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
+        const timestamp = new Date().toISOString();
 
-      // snapshot current state before the destructive rollback
-      await safetyCheckpoint(shadow, resolvedContentRoot, {
-        action: 'rollback',
-        context: { docName, targetSha: commitSha },
-      });
-
-      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
-      const document = hocuspocus.documents.get(docName);
-      if (!document) {
-        json(res, 409, {
-          ok: false,
-          error: 'Document is not currently open — open it in the editor first',
+        // snapshot current state before the destructive rollback
+        await safetyCheckpoint(shadow, resolvedContentRoot, {
+          action: 'rollback',
+          context: { docName, targetSha: commitSha },
         });
-        return;
-      }
 
-      // FM lives in the YAML region of Y.Text directly (D8/D26); the rollback
-      // body parse only needs the body half — `frontmatter` is no longer
-      // mirrored into a separate metaMap slot.
-      const { body: mdBody } = stripFrontmatter(markdown);
-      const rollbackParseOpts = options.resolveEmbed
-        ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
-        : undefined;
-      const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
-      const pmNode = schema.nodeFromJSON(parsedJson);
-      const xmlFragment = document.getXmlFragment('default');
-
-      document.transact(() => {
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(document, xmlFragment, pmNode, meta);
-
-        // Y.Text receives the full markdown (FM + body) verbatim — the
-        // YAML region IS the FM source of truth (D8/D26). No separate
-        // metadata-map mirror.
-        const ytext = document.getText('source');
-        const currentText = ytext.toString();
-        if (currentText !== markdown) {
-          ytext.delete(0, currentText.length);
-          ytext.insert(0, markdown);
-        }
-      }, ROLLBACK_ORIGIN);
-
-      // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
-      // here. Setting the base before `onStoreDocument` has fired would trip the
-      // "skip write when serialized === currentBase" guard at
-      // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
-      // — which also skips the following `scheduleGitCommit()`, orphaning any
-      // `recordContributor(...)` entry we add below into the next unrelated
-      // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
-      // Letting `onStoreDocument` fire naturally writes disk AND updates the
-      // reconciled base (line 497 of persistence.ts), which is the correct order.
-
-      // Default summary `"Restored to <sha-short>"` applies for the agent path
-      // when no agent-supplied summary was given; the default goes through
-      // `normalizeSummary` so the 80-char cap covers it. When the default
-      // truncates (rare for rollback since "Restored to <8-char-sha>" is ~22
-      // chars, but symmetric with `handleRenamePath` where defaults frequently
-      // overflow for deeply-nested doc paths), we strip `truncatedFrom` +
-      // `hint` from the response so the truncation message doesn't misattribute
-      // blame to the caller. The principal path records the contributor with
-      // the rollback subject but does NOT generate a default summary bullet —
-      // the rollback subject already drives the timeline display.
-      let summaryResponse: SummaryResponse | undefined;
-      switch (actor.kind) {
-        case 'agent': {
-          const shaShort = commitSha.slice(0, 8);
-          const agentProvidedSummary = actor.summary.kind === 'value';
-          const effectiveNormalized = agentProvidedSummary
-            ? actor.summary
-            : normalizeSummary(`Restored to ${shaShort}`);
-          const fields = summaryResponseFields(effectiveNormalized);
-          summaryResponse =
-            agentProvidedSummary || !fields.response
-              ? fields.response
-              : stripDefaultPathTruncation(fields.response);
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRollbackSubject(docName, commitSha),
-            actor.actor,
-            fields.stored,
+        // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
+        const document = hocuspocus.documents.get(docName);
+        if (!document) {
+          errorResponse(
+            res,
+            409,
+            'urn:ok:error:doc-not-open',
+            'Document is not currently open — open it in the editor first.',
+            { handler: 'rollback' },
           );
-          incrementAgentWriteCalls();
-          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-          break;
+          return;
         }
-        case 'principal': {
-          const fields = summaryResponseFields(actor.summary);
-          summaryResponse = fields.response;
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            formatRollbackSubject(docName, commitSha),
-            actor.actor,
-            fields.stored,
-          );
-          countNormalizedSummary(actor.summary, false);
-          break;
+
+        // FM lives in the YAML region of Y.Text directly (#365); the rollback
+        // body parse only needs the body half — `frontmatter` is no longer
+        // mirrored into a separate metaMap slot.
+        const { body: mdBody } = stripFrontmatter(markdown);
+        const rollbackParseOpts = options.resolveEmbed
+          ? { resolveEmbed: options.resolveEmbed, sourcePath: docName }
+          : undefined;
+        const parsedJson = mdManager.parseWithFallback(mdBody, rollbackParseOpts);
+        const pmNode = schema.nodeFromJSON(parsedJson);
+        const xmlFragment = document.getXmlFragment('default');
+
+        document.transact(() => {
+          const meta = { mapping: new Map(), isOMark: new Map() };
+          updateYFragment(document, xmlFragment, pmNode, meta);
+
+          // Y.Text receives the full markdown (FM + body) verbatim — the
+          // YAML region IS the FM source of truth. No separate metadata-map
+          // mirror.
+          const ytext = document.getText('source');
+          const currentText = ytext.toString();
+          if (currentText !== markdown) {
+            ytext.delete(0, currentText.length);
+            ytext.insert(0, markdown);
+          }
+        }, ROLLBACK_ORIGIN);
+
+        // NOTE: we deliberately do NOT call `setReconciledBase(docName, markdown)`
+        // here. Setting the base before `onStoreDocument` has fired would trip the
+        // "skip write when serialized === currentBase" guard at
+        // `persistence.ts:onStoreDocument` and drop the L1 disk write entirely
+        // — which also skips the following `scheduleGitCommit()`, orphaning any
+        // `recordContributor(...)` entry we add below into the next unrelated
+        // write's L2 commit (a leak surfaced by the agent-write-summaries QA run).
+        // Letting `onStoreDocument` fire naturally writes disk AND updates the
+        // reconciled base (line 497 of persistence.ts), which is the correct order.
+
+        // 4-way actor switch (NG12 invariant): agent records contributor with
+        // optional default summary; principal records with the rollback subject;
+        // anonymous skips recordContributor entirely (never default-attribute);
+        // invalid-summary already returned above.
+        let summaryResponse: SummaryResponse | undefined;
+        switch (actor.kind) {
+          case 'agent': {
+            const shaShort = commitSha.slice(0, 8);
+            const agentProvidedSummary = actor.summary.kind === 'value';
+            const effectiveNormalized = agentProvidedSummary
+              ? actor.summary
+              : normalizeSummary(`Restored to ${shaShort}`);
+            const fields = summaryResponseFields(effectiveNormalized);
+            summaryResponse =
+              agentProvidedSummary || !fields.response
+                ? fields.response
+                : stripDefaultPathTruncation(fields.response);
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRollbackSubject(docName, commitSha),
+              actor.actor,
+              fields.stored,
+            );
+            incrementAgentWriteCalls();
+            countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+            break;
+          }
+          case 'principal': {
+            const fields = summaryResponseFields(actor.summary);
+            summaryResponse = fields.response;
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              formatRollbackSubject(docName, commitSha),
+              actor.actor,
+              fields.stored,
+            );
+            countNormalizedSummary(actor.summary, false);
+            break;
+          }
+          case 'anonymous':
+            log.debug(
+              { docName, commitSha: commitSha.slice(0, 8) },
+              '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+            );
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
         }
-        case 'anonymous':
-          log.debug(
-            { docName, commitSha: commitSha.slice(0, 8) },
-            '[rollback] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
-          );
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleRollback: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
+        renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
+
+        // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
+        // restored version + attribution appear in the timeline within ~100ms
+        // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
+        // the shared `flushDocToGit` helper (same pattern as the three
+        // agent-write handlers) rather than a raw `flushGitCommit()` which
+        // no-ops when no L2 timer is set yet.
+        flushDocToGit(docName, 'rollback');
+
+        const duration = Date.now() - t0;
+        console.log(
+          `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
+        );
+
+        // Parent-git commit for team-visible restore record (non-fatal)
+        if (projectDir) {
+          const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
+          const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
+          const resolvedContentRoot = contentRoot ?? '.';
+          withParentLock(async () => {
+            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+            const gitPathspec = resolvedContentRoot || '.';
+            await pg.add(gitPathspec);
+            await pg.commit(restoreMsg, { '--allow-empty': null });
+            console.log(`[rollback] parent-git commit: ${restoreMsg}`);
+          }).catch((e) => {
+            console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+          });
         }
-      }
-      renameAttributionCounter().add(1, { kind: 'rollback', attribution_kind: actor.kind });
 
-      // Force-flush L1 (onStoreDocument debounce) then L2 (git commit) so the
-      // restored version + attribution appear in the timeline within ~100ms
-      // rather than waiting for the natural ~4s L1+L2 debounce stack. Uses
-      // the shared `flushDocToGit` helper (same pattern as the three
-      // agent-write handlers) rather than a raw `flushGitCommit()` which
-      // no-ops when no L2 timer is set yet.
-      flushDocToGit(docName, 'rollback');
+        // Only broadcast agent-focus push-nav when the caller explicitly
+        // identified as an agent. UI-driven Restore (principal or anonymous)
+        // must not trigger a cross-client push-nav as if an agent did the
+        // rollback.
+        if (actor.kind === 'agent') {
+          agentFocusBroadcaster?.setFocus(actor.writerId, {
+            agentName: actor.displayName,
+            currentDoc: docName,
+            writeKind: 'rollback-apply',
+            ts: Date.now(),
+          });
+        }
 
-      const duration = Date.now() - t0;
-      console.log(
-        `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
-      );
-
-      // Parent-git commit for team-visible restore record (non-fatal)
-      if (projectDir) {
-        const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
-        const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
-        const resolvedContentRoot = contentRoot ?? '.';
-        withParentLock(async () => {
-          const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
-          const gitPathspec = resolvedContentRoot || '.';
-          await pg.add(gitPathspec);
-          await pg.commit(restoreMsg, { '--allow-empty': null });
-          console.log(`[rollback] parent-git commit: ${restoreMsg}`);
-        }).catch((e) => {
-          console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+        json(res, 200, {
+          restoredFrom: commitSha,
+          timestamp,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        console.error('[rollback]', e);
+        const message = e instanceof Error ? e.message : String(e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+          handler: 'rollback',
+          cause: e,
         });
       }
+    },
+    { handler: 'rollback', method: 'POST' },
+  );
 
-      // Only broadcast agent-focus push-nav when the caller explicitly
-      // identified as an agent. UI-driven Restore (principal or anonymous)
-      // must not trigger a cross-client push-nav as if an agent did the
-      // rollback.
-      if (actor.kind === 'agent') {
-        agentFocusBroadcaster?.setFocus(actor.writerId, {
-          agentName: actor.displayName,
-          currentDoc: docName,
-          writeKind: 'rollback-apply',
-          ts: Date.now(),
+  const handleMetricsReconciliation = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        json(res, 200, getMetrics());
+      } catch (e) {
+        log.error({ err: e }, '[metrics-reconciliation] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'metrics-reconciliation',
+          cause: e,
         });
       }
+    },
+    { handler: 'metrics-reconciliation', method: 'GET', skipBodyParse: true },
+  );
 
-      json(res, 200, {
-        ok: true,
-        restoredFrom: commitSha,
-        timestamp,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rollback]', e);
-      const message = e instanceof Error ? e.message : 'Failed to roll back document';
-      json(res, 500, { ok: false, error: message });
-    }
-  }
-
-  async function handleMetricsReconciliation(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    json(res, 200, getMetrics());
-  }
-
-  async function handleMetricsParseHealth(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    json(res, 200, getParseHealth());
-  }
+  const handleMetricsParseHealth = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        json(res, 200, getParseHealth());
+      } catch (e) {
+        log.error({ err: e }, '[metrics-parse-health] handler failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'metrics-parse-health',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'metrics-parse-health', method: 'GET', skipBodyParse: true },
+  );
 
   /**
    * GET /api/server-info
@@ -3988,34 +4219,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * tenant deployments must wrap this entire `/api/*` class with
    * authentication and per-caller scoping.
    */
-  async function handleServerInfo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    const currentBranch = getActiveBranch();
-    // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
-    // server) doesn't have a CC1Broadcaster and omits the field. The
-    // schema's `.optional()` keeps the response shape valid in both
-    // cases without a separate "no broadcaster" branch on the client.
-    const currentDiskAckSVs = getDiskAckSVs?.();
-    // `Cache-Control: no-store` matches the disclosure semantics: every
-    // field is per-process / per-moment state. A back/forward-cached
-    // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
-    // the recycle baseline-selection on the next mismatch.
-    json(
-      res,
-      200,
-      {
-        ok: true,
-        serverInstanceId,
-        currentBranch,
-        ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
-      },
-      { 'Cache-Control': 'no-store' },
-    );
-  }
+  const handleServerInfo = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        const currentBranch = getActiveBranch();
+        // `getDiskAckSVs` is wired by standalone boot; plugin mode (dev
+        // server) doesn't have a CC1Broadcaster and omits the field. The
+        // schema's `.optional()` keeps the response shape valid in both
+        // cases without a separate "no broadcaster" branch on the client.
+        const currentDiskAckSVs = getDiskAckSVs?.();
+        // `Cache-Control: no-store` matches the disclosure semantics: every
+        // field is per-process / per-moment state. A back/forward-cached
+        // 304 carrying a stale `currentDiskAckSVs` could silently corrupt
+        // the recycle baseline-selection on the next mismatch.
+        json(
+          res,
+          200,
+          {
+            serverInstanceId,
+            currentBranch,
+            ...(currentDiskAckSVs !== undefined ? { currentDiskAckSVs } : {}),
+          },
+          { 'Cache-Control': 'no-store' },
+        );
+      } catch (e) {
+        console.error('[server-info]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'server-info',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'server-info', method: 'GET', skipBodyParse: true },
+  );
 
   async function handlePrincipal(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // Loopback + Host-header gate. The principal record discloses operator
@@ -4028,21 +4265,29 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // Authorization runs BEFORE method dispatch so a bad Host never leaks
     // "verb the endpoint expects" via the 405 response (OWASP ASVS V4.1.1).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'principal',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'principal',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'principal',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     const principal = getPrincipal?.() ?? null;
     if (!principal) {
-      json(res, 404, { error: 'Principal not available' });
+      errorResponse(res, 404, 'urn:ok:error:principal-not-available', 'Principal not available.', {
+        handler: 'principal',
+      });
       return;
     }
     json(res, 200, principal);
@@ -4062,36 +4307,50 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // via 405 (same pattern + rationale as handleWorkspace — see its
     // comment block for the ASVS / DNS-rebinding background).
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'metrics-agent-presence',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'metrics-agent-presence',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'metrics-agent-presence',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
-    // Pre-filter stale entries using the same threshold the broadcaster
-    // uses for opportunistic eviction (runs inside setPresence). Eviction
-    // is write-triggered — if the last agent disconnects without the
-    // keepalive close firing (proxy ate the frame, `-9` kill) and no other
-    // agent writes after, the raw map keeps the zombie entry. Clients
-    // already filter with their own 5s TTL so this is invisible to the
-    // bar, but `/api/metrics/agent-presence` would otherwise lie to
-    // operators. Filtering here matches what a "live" read returns
-    // without paying for a sparse timer.
-    const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
-    const now = Date.now();
-    const presence: typeof rawPresence = {};
-    for (const [agentId, entry] of Object.entries(rawPresence)) {
-      if (now - entry.ts < BROADCASTER_EVICTION_MS) {
-        presence[agentId] = entry;
+    try {
+      // Pre-filter stale entries using the same threshold the broadcaster
+      // uses for opportunistic eviction (runs inside setPresence). Eviction
+      // is write-triggered — if the last agent disconnects without the
+      // keepalive close firing (proxy ate the frame, `-9` kill) and no other
+      // agent writes after, the raw map keeps the zombie entry. Clients
+      // already filter with their own 5s TTL so this is invisible to the
+      // bar, but `/api/metrics/agent-presence` would otherwise lie to
+      // operators. Filtering here matches what a "live" read returns
+      // without paying for a sparse timer.
+      const rawPresence = agentPresenceBroadcaster?.getPresenceMap() ?? {};
+      const now = Date.now();
+      const presence: typeof rawPresence = {};
+      for (const [agentId, entry] of Object.entries(rawPresence)) {
+        if (now - entry.ts < BROADCASTER_EVICTION_MS) {
+          presence[agentId] = entry;
+        }
       }
+      json(res, 200, { presence });
+    } catch (e) {
+      log.error({ err: e }, '[metrics-agent-presence] handler failed');
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'metrics-agent-presence',
+        cause: e,
+      });
     }
-    json(res, 200, { presence });
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -4116,15 +4375,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
     // editor app pass; cross-origin rebinding attempts are refused.
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'loopback-required' });
+      errorResponse(res, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+        handler: 'workspace',
+      });
       return;
     }
     if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
-      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      errorResponse(res, 403, 'urn:ok:error:host-not-allowed', 'Host header not allowed.', {
+        handler: 'workspace',
+      });
       return;
     }
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'workspace',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     // Absolute, canonical contentDir so the client can build full filesystem
@@ -4153,7 +4419,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         symlinkResolved = false;
       } else {
         console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
-        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'workspace realpath failed.',
+          { handler: 'workspace', detail: code ?? undefined, cause: err },
+        );
         return;
       }
     }
@@ -4161,7 +4433,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // the shape of `contentDir` (which breaks on Windows + forward-slash paths
     // and on POSIX folders that contain a literal backslash in the name).
     json(res, 200, {
-      ok: true,
       contentDir: resolvedContentDir,
       pathSeparator: sep,
       symlinkResolved,
@@ -4171,77 +4442,76 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-  async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    if (!shadowRef?.current) {
-      json(res, 200, []);
-      return;
-    }
-
-    const now = Date.now();
-    // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
-    // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
-    // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
-    // can treat both as interchangeable unless they need the checkpoint sha.
-    interface RescueRowFlat {
-      docName: string;
-      timestamp: string;
-      size: number;
-      source: 'flat';
-    }
-    interface RescueRowTimeline extends TimelineRescueEntry {
-      source: 'timeline';
-    }
-    const entries: (RescueRowFlat | RescueRowTimeline)[] = [];
-
-    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
-    if (existsSync(rescueDir)) {
+  const handleRescueList = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
       try {
-        const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
-        for (const file of files) {
-          const filePath = resolve(rescueDir, file);
-          const stat = statSync(filePath);
-          const age = now - stat.mtimeMs;
-
-          if (age > RESCUE_MAX_AGE_MS) {
-            try {
-              unlinkSync(filePath);
-            } catch (e) {
-              console.debug('[rescue] cleanup failed (non-critical):', e);
-            }
-            continue;
-          }
-
-          entries.push({
-            docName: stripDocExtension(file),
-            timestamp: stat.mtime.toISOString(),
-            size: stat.size,
-            source: 'flat',
-          });
+        if (!shadowRef?.current) {
+          // No shadow repo configured = no rescue buffers; emit empty list (success).
+          json(res, 200, []);
+          return;
         }
+
+        const now = Date.now();
+        // `source: 'flat'` rows came from the shutdown-flush path (retained flat-
+        // file per SPEC); `source: 'timeline'` rows came from reconcile-delete /
+        // branch-switch (migrated to saveInMemoryCheckpoint per R7e). Clients
+        // can treat both as interchangeable unless they need the checkpoint sha.
+        const entries: (RescueEntryFlat | (RescueEntryTimeline & TimelineRescueEntry))[] = [];
+
+        const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
+        if (existsSync(rescueDir)) {
+          try {
+            const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
+            for (const file of files) {
+              const filePath = resolve(rescueDir, file);
+              const stat = statSync(filePath);
+              const age = now - stat.mtimeMs;
+
+              if (age > RESCUE_MAX_AGE_MS) {
+                try {
+                  unlinkSync(filePath);
+                } catch (e) {
+                  console.debug('[rescue] cleanup failed (non-critical):', e);
+                }
+                continue;
+              }
+
+              entries.push({
+                docName: stripDocExtension(file),
+                timestamp: stat.mtime.toISOString(),
+                size: stat.size,
+                source: 'flat',
+              });
+            }
+          } catch (e) {
+            console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+          }
+        }
+
+        // Timeline-ref source — merged in so the unified response surfaces all
+        // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
+        try {
+          const branch = getCurrentBranch?.() ?? 'main';
+          const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
+          for (const t of timelineEntries) {
+            entries.push({ ...t, source: 'timeline' });
+          }
+        } catch (e) {
+          console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
+        }
+
+        json(res, 200, entries);
       } catch (e) {
-        console.error('[rescue] Failed to list flat-file rescue buffers:', e);
+        console.error('[rescue]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'rescue-list',
+          cause: e,
+        });
       }
-    }
-
-    // Timeline-ref source — merged in so the unified response surfaces all
-    // three rescue classes once R7e's write migration ships (SPEC §6 R7f).
-    try {
-      const branch = getCurrentBranch?.() ?? 'main';
-      const timelineEntries = await listRescueCheckpoints(shadowRef.current, branch);
-      for (const t of timelineEntries) {
-        entries.push({ ...t, source: 'timeline' });
-      }
-    } catch (e) {
-      console.error('[rescue] Failed to list timeline-ref rescue checkpoints:', e);
-    }
-
-    json(res, 200, entries);
-  }
+    },
+    { handler: 'rescue-list', method: 'GET', skipBodyParse: true },
+  );
 
   async function handleRescueGet(
     req: IncomingMessage,
@@ -4249,13 +4519,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     docName: string,
   ): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'rescue-get',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!shadowRef?.current) {
-      res.writeHead(404);
-      res.end('Not found');
+      errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', { handler: 'rescue-get' });
       return;
     }
 
@@ -4265,8 +4536,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
-      res.writeHead(400);
-      res.end('Invalid document name');
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid document name.', {
+        handler: 'rescue-get',
+      });
       return;
     }
     if (existsSync(filePath)) {
@@ -4320,526 +4592,560 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       console.warn('[rescue] timeline-ref fallback failed:', e);
     }
 
-    res.writeHead(404);
-    res.end('Not found');
+    errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', { handler: 'rescue-get' });
   }
 
-  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      let rawBody: Buffer;
+  const handleCreatePage = withValidation(
+    CreatePageRequestSchema,
+    async (_req, res, body) => {
       try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-      // Identity boundary (D22 LOCKED): only attribute when the caller
-      // explicitly supplies agentId. UI-driven creates fall through to the
-      // loaded principal (if any) or anonymous — never to a synthetic
-      // 'Claude' default. Mirrors handleRollback / handleRenamePath.
-      const actor = extractActorIdentity(body as Record<string, unknown>, getPrincipal);
-      if (actor.kind === 'invalid-summary') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { path: filePath } = body as Record<string, unknown>;
-      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
-        json(res, 400, { ok: false, error: 'path is required' });
-        return;
-      }
-      if (!isSupportedDocFile(filePath)) {
-        json(res, 400, { ok: false, error: 'path must end with .md or .mdx' });
-        return;
-      }
-      if (
-        filePath.includes('..') ||
-        filePath.startsWith('/') ||
-        filePath.includes('\x00') ||
-        filePath.includes('\\')
-      ) {
-        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
-        return;
-      }
-      const resolvedContentDir = resolve(contentDir);
-      const fullPath = resolve(resolvedContentDir, filePath);
-      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
-        json(res, 400, { ok: false, error: 'path must not escape content directory' });
-        return;
-      }
-      const candidateDocName = stripDocExtension(filePath);
-      if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
-        json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
-        return;
-      }
-      mkdirSync(dirname(fullPath), { recursive: true });
-      const initialContent = '';
-      try {
-        writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          json(res, 409, { ok: false, error: 'File already exists' });
-          return;
-        }
-        throw err;
-      }
-      const docName = stripDocExtension(filePath);
-      // Synchronously bump the content filter's sibling-asset dirCount so any
-      // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
-      // rule. The file watcher's `create` event will also increment later,
-      // which would double-count — so we also `registerWrite` to mark this
-      // as a self-write, and the watcher skips its own `incrementMdDir` on
-      // self-writes. See file-watcher.ts for the paired logic.
-      if (contentFilter) {
-        contentFilter.incrementMdDir(dirname(docName));
-      }
-      registerWrite(fullPath, contentHash(initialContent));
-      switch (actor.kind) {
-        case 'agent':
-        case 'principal':
-          recordContributor(
-            docName,
-            actor.writerId,
-            actor.displayName,
-            actor.colorSeed,
-            undefined,
-            actor.actor,
-          );
-          break;
-        case 'anonymous':
-          // UI-driven create with no loaded principal — no contributor recorded.
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
-        }
-      }
-      const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
-      if (fileIndex instanceof Map) {
-        updateFileIndex(
-          { kind: 'create', path: fullPath, docName, content: initialContent },
-          fileIndex as Map<string, FileIndexEntry>,
-        );
-      }
-      if (backlinkIndex) {
-        backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
-        void backlinkIndex.saveToDisk().catch((err) => {
-          console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
-        });
-        signalChannel?.('backlinks');
-        signalChannel?.('graph');
-      }
-      signalChannel?.('files');
-      json(res, 200, { ok: true, docName });
-    } catch (e) {
-      console.error('[create-page]', e);
-      json(res, 500, { ok: false, error: 'Failed to create page' });
-    }
-  }
-
-  async function handlePageHeadings(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName || typeof docName !== 'string' || docName.length === 0) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
-      }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      const filePath = resolveDocPath(docName);
-      if (!filePath) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      if (!existsSync(filePath)) {
-        json(res, 404, { ok: false, error: 'Page not found' });
-        return;
-      }
-      const content = readFileSync(filePath, 'utf-8');
-      const headings = extractHeadings(content);
-      json(res, 200, { ok: true, docName, headings });
-    } catch (e) {
-      console.error('[page-headings]', e);
-      json(res, 500, { ok: false, error: 'Failed to read headings' });
-    }
-  }
-
-  async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      const bodyObj = body as Record<string, unknown>;
-      const actor = extractActorIdentity(bodyObj, getPrincipal);
-      if (actor.kind === 'invalid-summary') {
-        json(res, 400, { ok: false, error: 'summary must be a string' });
-        return;
-      }
-      const { kind, fromPath, toPath } = bodyObj;
-      if (kind !== 'file' && kind !== 'folder') {
-        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
-        return;
-      }
-      if (typeof fromPath !== 'string' || typeof toPath !== 'string') {
-        json(res, 400, { ok: false, error: 'fromPath and toPath are required' });
-        return;
-      }
-      if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
-        json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
-        return;
-      }
-      if (
-        kind === 'file' &&
-        (isSystemDoc(fromPath) ||
-          isSystemDoc(toPath) ||
-          isConfigDoc(fromPath) ||
-          isConfigDoc(toPath))
-      ) {
-        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
-        return;
-      }
-      // Reject paths whose first segment is `.ok` — that directory
-      // holds per-machine OK runtime state (server.lock, principal.json, cache,
-      // etc.) and is symmetric with the `__system__` carve-out above. The
-      // `AGENTS.md` file inside `.ok/` is a tracked content file
-      // by design, but a rename TO or FROM this directory would clobber OK
-      // bookkeeping.
-      if (
-        fromPath === '.ok' ||
-        fromPath.startsWith('.ok/') ||
-        toPath === '.ok' ||
-        toPath.startsWith('.ok/')
-      ) {
-        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
-        return;
-      }
-      if (fromPath === toPath) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-      // On case-insensitive filesystems (macOS APFS default, Windows NTFS)
-      // a case-only move would no-op or behave unpredictably; reject explicitly.
-      if (fromPath.toLowerCase() === toPath.toLowerCase()) {
-        json(res, 400, { ok: false, error: 'Case-only renames are not supported' });
-        return;
-      }
-
-      // Register the source's actual on-disk extension before downstream
-      // checks so admission and existsSync probes both see the right value
-      // when the file watcher hasn't yet observed the source (boot race).
-      if (kind === 'file') {
-        probeAndRegisterSourceFileExtension(contentDir, fromPath);
-      }
-
-      if (contentFilter) {
-        // Mirror `resolveContentEntryPath`'s explicit-extension detection so
-        // a destination like `bar.mdx` is checked verbatim instead of as
-        // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
-        const excluded =
-          kind === 'file'
-            ? contentFilter.isExcluded(
-                isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
-              )
-            : contentFilter.isDirExcluded(toPath);
-        if (excluded) {
-          json(res, 400, {
-            ok: false,
-            error: `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the workspace content config`,
+        const bodyObj = body as unknown as Record<string, unknown>;
+        // Identity boundary: only attribute when the caller explicitly supplies
+        // agentId. UI-driven creates fall through to the loaded principal (if
+        // any) or anonymous — never to a synthetic 'Claude' default. Mirrors
+        // handleRollback / handleRenamePath.
+        const actor = extractActorIdentity(bodyObj, getPrincipal);
+        if (actor.kind === 'invalid-summary') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+            handler: 'create-page',
           });
           return;
         }
-      }
 
-      let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
-      try {
-        result = await _performManagedRenameForDocs(fromPath, toPath, kind);
-      } catch (err) {
-        if (err instanceof ManagedRenameCollisionError) {
-          json(res, 409, {
-            ok: false,
-            error: err.message,
-            colliding: err.colliding,
+        const filePath = body.path;
+        if (!isSupportedDocFile(filePath)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'path must end with .md or .mdx.',
+            { handler: 'create-page' },
+          );
+          return;
+        }
+        if (
+          filePath.includes('..') ||
+          filePath.startsWith('/') ||
+          filePath.includes('\x00') ||
+          filePath.includes('\\')
+        ) {
+          errorResponse(res, 400, 'urn:ok:error:path-escape', 'Invalid path.', {
+            handler: 'create-page',
+            detail: 'path must not contain .. or start with /',
           });
           return;
         }
-        throw err;
-      }
-
-      if (result.renamed.length === 0) {
-        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
-        return;
-      }
-
-      let summaryResponse: SummaryResponse | undefined;
-      switch (actor.kind) {
-        case 'agent': {
-          const agentProvidedSummary = actor.summary.kind === 'value';
-          const effectiveNormalized = agentProvidedSummary
-            ? actor.summary
-            : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
-          const fields = summaryResponseFields(effectiveNormalized);
-          summaryResponse =
-            agentProvidedSummary || !fields.response
-              ? fields.response
-              : stripDefaultPathTruncation(fields.response);
-          for (const { fromDocName, toDocName } of result.renamed) {
-            recordContributor(
-              toDocName,
-              actor.writerId,
-              actor.displayName,
-              actor.colorSeed,
-              formatRenameSubject(fromDocName, toDocName),
-              actor.actor,
-              fields.stored,
-            );
-          }
-          incrementAgentWriteCalls();
-          countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
-          for (const { toDocName } of result.renamed) {
-            flushDocToGit(toDocName, 'rename-path');
-          }
-          break;
-        }
-        case 'principal': {
-          const fields = summaryResponseFields(actor.summary);
-          summaryResponse = fields.response;
-          for (const { fromDocName, toDocName } of result.renamed) {
-            recordContributor(
-              toDocName,
-              actor.writerId,
-              actor.displayName,
-              actor.colorSeed,
-              formatRenameSubject(fromDocName, toDocName),
-              actor.actor,
-              fields.stored,
-            );
-          }
-          countNormalizedSummary(actor.summary, false);
-          for (const { toDocName } of result.renamed) {
-            flushDocToGit(toDocName, 'rename-path');
-          }
-          break;
-        }
-        case 'anonymous':
-          log.debug(
-            { kind, fromPath, toPath, affectedDocs: result.renamed.length },
-            '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+        const resolvedContentDir = resolve(contentDir);
+        const fullPath = resolve(resolvedContentDir, filePath);
+        if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:path-escape',
+            'path must not escape content directory.',
+            { handler: 'create-page' },
           );
-          break;
-        default: {
-          const _exhaustive: never = actor;
-          throw new Error(
-            `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
-          );
+          return;
         }
-      }
-      renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
-
-      json(res, 200, {
-        ok: true,
-        renamed: result.renamed,
-        rewrittenDocs: result.rewrittenDocs,
-        ...(summaryResponse ? { summary: summaryResponse } : {}),
-      });
-    } catch (e) {
-      console.error('[rename-path]', e);
-      const { status, error } = toManagedRenamePublicError(e);
-      json(res, status, { ok: false, error });
-    }
-  }
-
-  async function handleDeletePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      let rawBody: Buffer;
-      try {
-        rawBody = await readBody(req);
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-
-      let body: unknown;
-      try {
-        body = JSON.parse(rawBody.toString());
-      } catch {
-        json(res, 400, { ok: false, error: 'Invalid JSON' });
-        return;
-      }
-
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
-        return;
-      }
-
-      extractAgentIdentity(body as Record<string, unknown>); // attribution threading (FR-5, D42)
-      const { kind, path } = body as Record<string, unknown>;
-      if (kind !== 'file' && kind !== 'folder') {
-        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
-        return;
-      }
-      if (typeof path !== 'string' || !isValidRelativeContentPath(path)) {
-        json(res, 400, { ok: false, error: 'path must be a relative content path' });
-        return;
-      }
-
-      const targetPath = resolveContentEntryPath(contentDir, kind, path);
-      if (!existsSync(targetPath)) {
-        json(res, 404, { ok: false, error: `${kind} does not exist` });
-        return;
-      }
-
-      const targetStat = statSync(targetPath);
-      if (
-        (kind === 'file' && !targetStat.isFile()) ||
-        (kind === 'folder' && !targetStat.isDirectory())
-      ) {
-        json(res, 400, { ok: false, error: `Target path is not a ${kind}` });
-        return;
-      }
-
-      const deletedDocNames =
-        kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
-
-      await captureAndCloseDocuments(deletedDocNames);
-
-      if (kind === 'file') {
-        unlinkSync(targetPath);
-      } else {
-        rmSync(targetPath, { recursive: true, force: false });
-      }
-
-      json(res, 200, { ok: true, deletedDocNames });
-    } catch (e) {
-      console.error('[delete-path]', e);
-      json(res, 500, { ok: false, error: 'Failed to delete path' });
-    }
-  }
-
-  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const index = getFileIndex();
-      const pages: {
-        docName: string;
-        title: string;
-        docExt: string;
-        size: number;
-        modified: string;
-      }[] = [];
-      for (const [docName, entry] of index) {
-        let title = docName;
-        const docExt = getDocExtension(docName);
+        const candidateDocName = stripDocExtension(filePath);
+        if (isSystemDoc(candidateDocName) || isConfigDoc(candidateDocName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${candidateDocName}' is a reserved document name.`,
+            { handler: 'create-page' },
+          );
+          return;
+        }
+        mkdirSync(dirname(fullPath), { recursive: true });
+        const initialContent = '';
         try {
-          const filePath = resolve(contentDir, `${docName}${docExt}`);
-          const content = readFileSync(filePath, 'utf-8');
-          title = extractPageTitle(content, docName);
+          writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
         } catch (err) {
-          console.warn(`[pages] Failed to read title for ${docName}:`, err);
+          if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+            errorResponse(res, 409, 'urn:ok:error:doc-already-exists', 'File already exists.', {
+              handler: 'create-page',
+              cause: err,
+            });
+            return;
+          }
+          throw err;
         }
-        pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
+        const docName = stripDocExtension(filePath);
+        // Synchronously bump the content filter's sibling-asset dirCount so any
+        // sibling asset drop that follows is admitted by the `ASSET_EXTENSIONS`
+        // rule. The file watcher's `create` event will also increment later,
+        // which would double-count — so we also `registerWrite` to mark this
+        // as a self-write, and the watcher skips its own `incrementMdDir` on
+        // self-writes. See file-watcher.ts for the paired logic.
+        if (contentFilter) {
+          contentFilter.incrementMdDir(dirname(docName));
+        }
+        registerWrite(fullPath, contentHash(initialContent));
+        switch (actor.kind) {
+          case 'agent':
+          case 'principal':
+            recordContributor(
+              docName,
+              actor.writerId,
+              actor.displayName,
+              actor.colorSeed,
+              undefined,
+              actor.actor,
+            );
+            break;
+          case 'anonymous':
+            // UI-driven create with no loaded principal — no contributor recorded.
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleCreatePage: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
+        }
+        const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
+        if (fileIndex instanceof Map) {
+          updateFileIndex(
+            { kind: 'create', path: fullPath, docName, content: initialContent },
+            fileIndex as Map<string, FileIndexEntry>,
+          );
+        }
+        if (backlinkIndex) {
+          backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
+          });
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        }
+        signalChannel?.('files');
+        json(res, 200, { docName });
+      } catch (e) {
+        console.error('[create-page]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to create page.', {
+          handler: 'create-page',
+          cause: e,
+        });
       }
-      pages.sort((a, b) => a.docName.localeCompare(b.docName));
-      json(res, 200, { ok: true, pages });
-    } catch (e) {
-      console.error('[pages]', e);
-      json(res, 500, { ok: false, error: 'Failed to list pages' });
-    }
-  }
+    },
+    { handler: 'create-page', method: 'POST' },
+  );
 
-  async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '', 'http://localhost');
-      const docName = url.searchParams.get('docName');
-      if (!docName) {
-        json(res, 400, { ok: false, error: 'Missing docName parameter' });
-        return;
+  const handlePageHeadings = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName || docName.length === 0) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Missing docName query parameter.',
+            { handler: 'page-headings' },
+          );
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        const filePath = resolveDocPath(docName);
+        if (!filePath) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        if (!existsSync(filePath)) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', 'Page not found.', {
+            handler: 'page-headings',
+          });
+          return;
+        }
+        const content = readFileSync(filePath, 'utf-8');
+        const headings = extractHeadings(content);
+        json(res, 200, { docName, headings });
+      } catch (e) {
+        console.error('[page-headings]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to read headings.', {
+          handler: 'page-headings',
+          cause: e,
+        });
       }
-      if (!isSafeDocName(docName)) {
-        json(res, 400, { ok: false, error: 'Invalid docName' });
-        return;
-      }
-      if (isSystemDoc(docName) || isConfigDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
+    },
+    { handler: 'page-headings', method: 'GET', skipBodyParse: true },
+  );
 
-      const result = await suggestLinks({
-        hocuspocus,
-        fileIndex: getFileIndex(),
-        docName,
-      });
-      json(res, 200, { ok: true, ...result });
-    } catch (error) {
-      if (error instanceof SuggestLinksTargetNotFoundError) {
-        json(res, 404, { ok: false, error: 'Page not found' });
-        return;
-      }
-      console.error('[suggest-links]', error);
-      json(res, 500, { ok: false, error: 'Failed to suggest links' });
-    }
-  }
+  const handleRenamePath = withValidation(
+    RenamePathRequestSchema,
+    async (_req, res, body) => {
+      try {
+        const bodyObj = body as unknown as Record<string, unknown>;
+        const actor = extractActorIdentity(bodyObj, getPrincipal);
+        if (actor.kind === 'invalid-summary') {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'summary must be a string', {
+            handler: 'rename-path',
+          });
+          return;
+        }
+        const { kind, fromPath, toPath } = body;
+        if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Paths must be relative content paths.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
+        if (
+          kind === 'file' &&
+          (isSystemDoc(fromPath) ||
+            isSystemDoc(toPath) ||
+            isConfigDoc(fromPath) ||
+            isConfigDoc(toPath))
+        ) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            'Reserved document names cannot be renamed.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
+        // Reject paths whose first segment is `.ok` — that directory holds
+        // per-machine OK runtime state (server.lock, principal.json, cache,
+        // etc.) and is symmetric with the `__system__` carve-out above. The
+        // `AGENTS.md` file inside `.ok/` is a tracked content file by design,
+        // but a rename TO or FROM this directory would clobber OK bookkeeping.
+        if (
+          fromPath === '.ok' ||
+          fromPath.startsWith('.ok/') ||
+          toPath === '.ok' ||
+          toPath.startsWith('.ok/')
+        ) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            '.ok is a reserved directory.',
+            {
+              handler: 'rename-path',
+            },
+          );
+          return;
+        }
+        if (fromPath === toPath) {
+          json(res, 200, { renamed: [], rewrittenDocs: [] });
+          return;
+        }
+        // On case-insensitive filesystems (macOS APFS default, Windows NTFS) a
+        // case-only move would no-op or behave unpredictably; reject explicitly.
+        if (fromPath.toLowerCase() === toPath.toLowerCase()) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'Case-only renames are not supported.',
+            { handler: 'rename-path' },
+          );
+          return;
+        }
 
-  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+        // Register the source's actual on-disk extension before downstream
+        // checks so admission and existsSync probes both see the right value
+        // when the file watcher hasn't yet observed the source (boot race).
+        if (kind === 'file') {
+          probeAndRegisterSourceFileExtension(contentDir, fromPath);
+        }
+
+        if (contentFilter) {
+          // Mirror `resolveContentEntryPath`'s explicit-extension detection so
+          // a destination like `bar.mdx` is checked verbatim instead of as
+          // `bar.mdx.md` (which would miss `*.mdx` exclusion patterns).
+          const excluded =
+            kind === 'file'
+              ? contentFilter.isExcluded(
+                  isSupportedDocFile(toPath) ? toPath : `${toPath}${getDocExtension(fromPath)}`,
+                )
+              : contentFilter.isDirExcluded(toPath);
+          if (excluded) {
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              `Destination ${kind === 'file' ? 'document' : 'folder'} is excluded by the project content config.`,
+              { handler: 'rename-path' },
+            );
+            return;
+          }
+        }
+
+        let result: { renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] };
+        try {
+          result = await _performManagedRenameForDocs(fromPath, toPath, kind);
+        } catch (err) {
+          if (err instanceof ManagedRenameCollisionError) {
+            errorResponse(res, 409, 'urn:ok:error:doc-already-exists', err.message, {
+              handler: 'rename-path',
+              extensions: { colliding: err.colliding },
+              cause: err,
+            });
+            return;
+          }
+          throw err;
+        }
+
+        if (result.renamed.length === 0) {
+          json(res, 200, { renamed: [], rewrittenDocs: [] });
+          return;
+        }
+
+        let summaryResponse: SummaryResponse | undefined;
+        switch (actor.kind) {
+          case 'agent': {
+            const agentProvidedSummary = actor.summary.kind === 'value';
+            const effectiveNormalized = agentProvidedSummary
+              ? actor.summary
+              : normalizeSummary(`Renamed ${fromPath} → ${toPath}`);
+            const fields = summaryResponseFields(effectiveNormalized);
+            summaryResponse =
+              agentProvidedSummary || !fields.response
+                ? fields.response
+                : stripDefaultPathTruncation(fields.response);
+            for (const { fromDocName, toDocName } of result.renamed) {
+              recordContributor(
+                toDocName,
+                actor.writerId,
+                actor.displayName,
+                actor.colorSeed,
+                formatRenameSubject(fromDocName, toDocName),
+                actor.actor,
+                fields.stored,
+              );
+            }
+            incrementAgentWriteCalls();
+            countNormalizedSummary(effectiveNormalized, !agentProvidedSummary);
+            for (const { toDocName } of result.renamed) {
+              flushDocToGit(toDocName, 'rename-path');
+            }
+            break;
+          }
+          case 'principal': {
+            const fields = summaryResponseFields(actor.summary);
+            summaryResponse = fields.response;
+            for (const { fromDocName, toDocName } of result.renamed) {
+              recordContributor(
+                toDocName,
+                actor.writerId,
+                actor.displayName,
+                actor.colorSeed,
+                formatRenameSubject(fromDocName, toDocName),
+                actor.actor,
+                fields.stored,
+              );
+            }
+            countNormalizedSummary(actor.summary, false);
+            for (const { toDocName } of result.renamed) {
+              flushDocToGit(toDocName, 'rename-path');
+            }
+            break;
+          }
+          case 'anonymous':
+            log.debug(
+              { kind, fromPath, toPath, affectedDocs: result.renamed.length },
+              '[rename-path] anonymous actor — no contributor recorded (no agentId in body and getPrincipal() returned null)',
+            );
+            break;
+          default: {
+            const _exhaustive: never = actor;
+            throw new Error(
+              `Unhandled actor kind in handleRenamePath: ${String((_exhaustive as { kind?: unknown }).kind)}`,
+            );
+          }
+        }
+        renameAttributionCounter().add(1, { kind: `rename-${kind}`, attribution_kind: actor.kind });
+
+        json(res, 200, {
+          renamed: result.renamed,
+          rewrittenDocs: result.rewrittenDocs,
+          ...(summaryResponse ? { summary: summaryResponse } : {}),
+        });
+      } catch (e) {
+        console.error('[rename-path]', e);
+        const { status, type, error } = toManagedRenamePublicError(e);
+        errorResponse(res, status, type, error, {
+          handler: 'rename-path',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'rename-path', method: 'POST' },
+  );
+
+  const handleDeletePath = withValidation(
+    DeletePathRequestSchema,
+    async (_req, res, body) => {
+      try {
+        extractAgentIdentity(body as unknown as Record<string, unknown>); // attribution threading (FR-5, D42)
+        const { kind, path } = body;
+        if (!isValidRelativeContentPath(path)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:invalid-request',
+            'path must be a relative content path.',
+            { handler: 'delete-path' },
+          );
+          return;
+        }
+
+        const targetPath = resolveContentEntryPath(contentDir, kind, path);
+        if (!existsSync(targetPath)) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', `${kind} does not exist.`, {
+            handler: 'delete-path',
+          });
+          return;
+        }
+
+        const targetStat = statSync(targetPath);
+        if (
+          (kind === 'file' && !targetStat.isFile()) ||
+          (kind === 'folder' && !targetStat.isDirectory())
+        ) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', `Target path is not a ${kind}.`, {
+            handler: 'delete-path',
+          });
+          return;
+        }
+
+        const deletedDocNames =
+          kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
+
+        await captureAndCloseDocuments(deletedDocNames);
+
+        if (kind === 'file') {
+          unlinkSync(targetPath);
+        } else {
+          rmSync(targetPath, { recursive: true, force: false });
+        }
+
+        json(res, 200, { deletedDocNames });
+      } catch (e) {
+        console.error('[delete-path]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to delete path.', {
+          handler: 'delete-path',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'delete-path', method: 'POST' },
+  );
+
+  const handlePages = withValidation(
+    EmptyRequestSchema,
+    async (_req, res) => {
+      try {
+        const index = getFileIndex();
+        const pages: {
+          docName: string;
+          title: string;
+          docExt: string;
+          size: number;
+          modified: string;
+        }[] = [];
+        for (const [docName, entry] of index) {
+          let title = docName;
+          const docExt = getDocExtension(docName);
+          try {
+            const filePath = resolve(contentDir, `${docName}${docExt}`);
+            const content = readFileSync(filePath, 'utf-8');
+            title = extractPageTitle(content, docName);
+          } catch (err) {
+            console.warn(`[pages] Failed to read title for ${docName}:`, err);
+          }
+          pages.push({ docName, title, docExt, size: entry.size, modified: entry.modified });
+        }
+        pages.sort((a, b) => a.docName.localeCompare(b.docName));
+        json(res, 200, { pages });
+      } catch (e) {
+        console.error('[pages]', e);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to list pages.', {
+          handler: 'pages',
+          cause: e,
+        });
+      }
+    },
+    { handler: 'pages', method: 'GET', skipBodyParse: true },
+  );
+
+  const handleSuggestLinks = withValidation(
+    EmptyRequestSchema,
+    async (req, res) => {
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost');
+        const docName = url.searchParams.get('docName');
+        if (!docName) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Missing docName parameter.', {
+            handler: 'suggest-links',
+          });
+          return;
+        }
+        if (!isSafeDocName(docName)) {
+          errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid docName.', {
+            handler: 'suggest-links',
+          });
+          return;
+        }
+        if (isSystemDoc(docName) || isConfigDoc(docName)) {
+          errorResponse(
+            res,
+            400,
+            'urn:ok:error:reserved-doc-name',
+            `'${docName}' is a reserved document name.`,
+            { handler: 'suggest-links' },
+          );
+          return;
+        }
+
+        const result = await suggestLinks({
+          hocuspocus,
+          fileIndex: getFileIndex(),
+          docName,
+        });
+        json(res, 200, result);
+      } catch (error) {
+        if (error instanceof SuggestLinksTargetNotFoundError) {
+          errorResponse(res, 404, 'urn:ok:error:doc-not-found', 'Page not found.', {
+            handler: 'suggest-links',
+            cause: error,
+          });
+          return;
+        }
+        console.error('[suggest-links]', error);
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to suggest links.', {
+          handler: 'suggest-links',
+          cause: error,
+        });
+      }
+    },
+    { handler: 'suggest-links', method: 'GET', skipBodyParse: true },
+  );
+
+  async function handleUploadAsset(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'upload-asset',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
@@ -4847,41 +5153,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       uploadResult = await readUploadBody(req, contentDir);
     } catch (e) {
-      // All body-parse failures land as UploadWriteError with a typed reason.
-      // Tempfile cleanup is handled inside readUploadBody's error path.
+      // All body-parse failures land as UploadWriteError with a URN-form
+      // reason. Tempfile cleanup is handled inside readUploadBody's error
+      // path. Anonymous emit (no extractAgentIdentity yet) is semantically
+      // OK — no Y.Doc mutation has been attempted.
       if (e instanceof UploadWriteError) {
-        if (e.reason === 'malformed-upload') {
-          json(res, 400, { ok: false, error: 'malformed-upload' });
-          return;
-        }
-        if (e.reason === 'storage-full') {
-          json(res, 507, { ok: false, error: 'storage-full' });
-          return;
-        }
-        if (e.reason === 'storage-readonly') {
-          json(res, 500, { ok: false, error: 'storage-readonly' });
-          return;
-        }
-        json(res, 500, { ok: false, error: 'storage-error' });
+        errorResponse(res, uploadStatusFor(e.reason), e.reason, uploadTitleFor(e.reason), {
+          handler: 'upload-asset',
+          cause: e,
+        });
         return;
       }
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      errorResponse(res, 400, 'urn:ok:error:malformed-upload', 'Failed to parse upload.', {
+        handler: 'upload-asset',
+        cause: e,
+      });
       return;
     }
 
-    const { filename, tempPath, sha, byteLength, parentDocName } = uploadResult;
-
-    // Identity extracted from query params (multipart body precludes JSON).
-    // Capture agentId / agentName so structured upload logs carry
-    // attribution — mirrors precedent #24/#25 and lets operators trace
-    // unexpected file-creation events back to the originating agent
-    // during incident investigation. Both fields follow bounded shapes
-    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
-    // remain cardinality-safe for log indexing.
-    const { agentId, agentName } = extractAgentIdentity(
-      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
-    );
+    const { filename, tempPath, sha, byteLength, parentDocName: rawParentDocName } = uploadResult;
 
     // Belt-and-braces cleanup: if anything below this point errors or
     // early-returns, the tempfile must go away. Every early-return path
@@ -4896,26 +5186,57 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
     };
 
+    // Validate metadata fields (parentDocName etc.) via the shared
+    // `validateBody` middleware. Body-shape failure emits 400
+    // `urn:ok:error:invalid-request` BEFORE `extractAgentIdentity` runs —
+    // an anonymous response is semantically correct here because no Y.Doc
+    // mutation is attempted. Mirrors `withValidation`'s policy for JSON
+    // handlers.
+    const validated = validateBody(UploadRequestSchema, { parentDocName: rawParentDocName }, res, {
+      handler: 'upload-asset',
+    });
+    if (!validated.ok) {
+      cleanupTempfile();
+      return;
+    }
+    const { parentDocName } = validated.value;
+
+    // Identity extracted from query params (multipart body precludes JSON).
+    // Capture agentId / agentName so structured upload logs carry
+    // attribution — mirrors precedent #24/#25 and lets operators trace
+    // unexpected file-creation events back to the originating agent
+    // during incident investigation. Both fields follow bounded shapes
+    // (agentId matches AGENT_ID_RE; agentName is sanitized) so they
+    // remain cardinality-safe for log indexing.
+    //
+    // CRUCIAL: identity extraction must precede every SEMANTIC error
+    // emission below (path-escape, no-file-received, storage-error). Body-
+    // shape errors above (urn:ok:error:invalid-request, urn:ok:error:malformed-upload)
+    // are anonymous because no Y.Doc mutation is attempted. The
+    // attribution-sweep-coverage ordering check enforces this distinction
+    // (precedent #24).
+    const { agentId, agentName } = extractAgentIdentity(
+      Object.fromEntries(new URL(req.url ?? '', 'http://localhost').searchParams.entries()),
+    );
+
     if (byteLength === 0) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'No file received' });
+      errorResponse(res, 400, 'urn:ok:error:no-file-received', 'No file received.', {
+        handler: 'upload-asset',
+      });
       return;
     }
 
-    if (!parentDocName) {
-      cleanupTempfile();
-      json(res, 400, { ok: false, error: 'parentDocName is required' });
-      return;
-    }
-
-    // D15: reject path-escape attempts
+    // D15: reject path-escape attempts.
     if (
       parentDocName.includes('\x00') ||
       parentDocName.includes('..') ||
       parentDocName.startsWith('/')
     ) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'path-escape' });
+      errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+        handler: 'upload-asset',
+      });
       return;
     }
 
@@ -4927,7 +5248,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     );
     if (!isWithinContentDir(destDir, resolvedContentDir)) {
       cleanupTempfile();
-      json(res, 400, { ok: false, error: 'path-escape' });
+      errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+        handler: 'upload-asset',
+      });
       return;
     }
     // mkdir -p the destination — bare-name / nested attachmentFolderPath
@@ -4938,8 +5261,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'EEXIST') {
         cleanupTempfile();
-        log.error({ err, destDir }, '[upload] failed to create attachment directory');
-        json(res, 500, { ok: false, error: 'storage-error' });
+        errorResponse(res, 500, 'urn:ok:error:storage-error', 'Failed to write upload.', {
+          handler: 'upload-asset',
+          cause: err,
+          detail: 'failed to create attachment directory',
+        });
         return;
       }
     }
@@ -4955,7 +5281,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       if (!isWithinContentDir(realDestDir, realContentDir)) {
         cleanupTempfile();
-        json(res, 400, { ok: false, error: 'path-escape' });
+        errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+          handler: 'upload-asset',
+        });
         return;
       }
     } catch (e) {
@@ -4964,7 +5292,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         // Directory doesn't exist yet — will be created below; no symlink escape possible
       } else {
         cleanupTempfile();
-        json(res, 400, { ok: false, error: 'path-escape' });
+        errorResponse(res, 400, 'urn:ok:error:path-escape', 'Path escape detected.', {
+          handler: 'upload-asset',
+          cause: e,
+        });
         return;
       }
     }
@@ -5031,13 +5362,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           },
           '[upload] dedup hit',
         );
-        // Include the contentDir-relative `path` in the response so the
-        // client honors non-default `attachmentFolderPath`. Without this
-        // the client assumes the asset is co-located with the parent doc
-        // and emits a broken relative ref when operators configure
-        // attachmentFolderPath: 'attachments' (Obsidian-style global path)
-        // or similar.
-        json(res, 200, { ok: true, src: existing, path: relPath, deduped: true });
+        // RFC 9457 §3 success path: drop the `ok: true` wrapper. Wire
+        // shape is `{ src, path, deduped }` with `Content-Type:
+        // application/json`. Clients use HTTP-status discrimination
+        // (`if (!res.ok)`) to choose between this success schema and
+        // `ProblemDetailsSchema`.
+        json(res, 200, { src: existing, path: relPath, deduped: true });
         return;
       }
     }
@@ -5088,15 +5418,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         },
         '[upload] write ok',
       );
-      // Major-1: same rationale as the dedup branch above — client needs
-      // the contentDir-relative path to emit correct refs under any
-      // attachmentFolderPath value.
-      json(res, 200, { ok: true, src: destFilename, path: relPath, deduped: false });
+      json(res, 200, { src: destFilename, path: relPath, deduped: false });
     } catch (e) {
       // linkTempToFinalWithCollisionRetry best-effort unlinks the tempfile
       // on throw; no extra cleanupTempfile() call needed here.
-      const message = e instanceof Error ? e.message : String(e);
-      const reason = e instanceof UploadWriteError ? e.reason : 'unknown';
+      const reason: UploadWriteReason =
+        e instanceof UploadWriteError ? e.reason : 'urn:ok:error:storage-error';
       log.error(
         {
           event: 'upload',
@@ -5106,34 +5433,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           filename: finalFilename,
           size: byteLength,
           reason,
-          message,
-          httpStatus: e instanceof UploadWriteError && e.reason === 'storage-full' ? 507 : 500,
+          httpStatus: uploadStatusFor(reason),
+          err: e,
         },
         '[upload] write failed',
       );
-      if (e instanceof UploadWriteError) {
-        if (e.reason === 'storage-full') {
-          // RFC 4918 507 Insufficient Storage — explicit "disk full,"
-          // retry makes no sense until the operator frees space.
-          json(res, 507, { ok: false, error: 'storage-full' });
-          return;
-        }
-        if (e.reason === 'storage-readonly') {
-          json(res, 500, { ok: false, error: 'storage-readonly' });
-          return;
-        }
-        if (e.reason === 'collision-exhaustion') {
-          // Exhausted 100 collision-suffix candidates in one directory —
-          // practically unreachable absent an adversarial workload, but
-          // surfacing the reason helps operators diagnose a pathological
-          // filename that's dodging sanitize.
-          json(res, 500, { ok: false, error: 'collision-exhaustion' });
-          return;
-        }
-        json(res, 500, { ok: false, error: 'storage-error' });
-        return;
-      }
-      json(res, 500, { ok: false, error: 'storage-error' });
+      errorResponse(res, uploadStatusFor(reason), reason, uploadTitleFor(reason), {
+        handler: 'upload-asset',
+        cause: e,
+      });
     }
   }
 
@@ -5153,57 +5461,68 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Body: { url: string, dir: string }
    * Spawns: open-knowledge clone --json --dir <dir> <url>
    * Streams: NDJSON lines via chunked HTTP.
+   *
+   * Pre-stream errors (security gate, method, body shape, URL/path safety,
+   * concurrency) emit RFC 9457 problem+json via `errorResponse(...)` (D22).
+   * Mid-stream errors (clone subprocess failure, timeout, server-start
+   * chain) emit `{ type: 'error', problem: ProblemDetails }` events through
+   * `streamingProblemEvent(...)` (D36 c). The streaming protocol's outer
+   * `type` field stays the kind discriminator (`progress | complete |
+   * error`); the URN problem identifier lives nested under `problem.type`.
+   *
+   * CLI events are intercepted: complete events are swallowed and
+   * synthesized post-server-start; CLI error events are wrapped in the
+   * typed envelope so every mid-stream error has a `problem` payload.
    */
-  async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_CLONE = 'local-op-clone';
+  const handleLocalOpClone = withValidation(LocalOpCloneRequestSchema, handleLocalOpCloneInner, {
+    handler: HANDLE_LOCAL_OP_CLONE,
+    method: 'POST',
+    preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_CLONE }),
+  });
+  async function handleLocalOpCloneInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpCloneRequest,
+  ): Promise<void> {
+    const { url, dir } = body;
 
-    // Parse request body
-    let url: string;
-    let dir: string;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { url?: unknown; dir?: unknown };
-      if (typeof parsed.url !== 'string' || !parsed.url) {
-        json(res, 400, { ok: false, error: 'Missing or invalid url' });
-        return;
-      }
-      if (typeof parsed.dir !== 'string' || !parsed.dir) {
-        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
-        return;
-      }
-      url = parsed.url;
-      dir = parsed.dir;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-
-    // Security: URL protocol allowlist
+    // Semantic checks (post-shape): protocol allowlist + path safety.
     if (!isAllowedGitUrl(url)) {
-      json(res, 400, { ok: false, error: 'URL protocol not allowed' });
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:url-not-allowed',
+        'URL protocol is not allowed for clone.',
+        { handler: HANDLE_LOCAL_OP_CLONE, detail: `url=${url}` },
+      );
       return;
     }
-
-    // Security: dir must be within user home dir (no traversal)
     if (!isSafeLocalPath(dir)) {
-      json(res, 400, {
-        ok: false,
-        error: 'dir must be within the user home directory',
-      });
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:dir-outside-home',
+        'Clone destination must be within the user home directory.',
+        { handler: HANDLE_LOCAL_OP_CLONE, detail: `dir=${dir}` },
+      );
       return;
     }
 
-    // Concurrency guard: reject concurrent requests to this endpoint
+    // Concurrency guard: reject concurrent requests to this endpoint.
     if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
-      json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'A clone operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_CLONE },
+      );
       return;
     }
 
-    // Start chunked NDJSON response
+    // Start chunked NDJSON response — past this point, errors emit inline
+    // streaming events via `streamingProblemEvent(...)`, not `errorResponse`.
     res.writeHead(200, {
       'Content-Type': 'application/x-ndjson',
       'Transfer-Encoding': 'chunked',
@@ -5211,10 +5530,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
+    // HTTP-side mid-stream error writer (US-005 / D36 c). Wraps raw CLI
+    // `{type:'error', message}` events in the canonical RFC 9457 streaming
+    // envelope `{type:'error', problem: ProblemDetails}` so consumers can
+    // safeParse uniformly. The IPC pathway forwards the raw shape per its
+    // bridge contract; HTTP transport's `CloneEvent` union accepts both.
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_CLONE);
+
     // The CLI emits `{type:'complete', dir}` on success, but the browser
     // client expects `{type:'complete', port}`. We intercept the CLI's
-    // complete event, boot a server at the cloned dir, then emit a rewritten
-    // complete with the port. Non-terminal events (progress / error) flow
+    // complete event, boot a server at the cloned dir, then emit a
+    // rewritten complete with the port. CLI `error` events are wrapped in
+    // a typed `problem` envelope; non-terminal `progress` events flow
     // through unchanged.
     let cloneCompleteDir: string | null = null;
 
@@ -5232,7 +5559,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           if (event.message) {
             log.warn({ stderr: event.message, url, dir }, '[local-op/clone] clone failed');
           }
+          writeStreamError(
+            500,
+            'urn:ok:error:clone-failed',
+            'Clone subprocess reported an error.',
+            {
+              detail: event.message || undefined,
+            },
+          );
+          return;
         }
+        // progress events flow through unchanged
         if (!res.writableEnded) {
           res.write(`${JSON.stringify(event)}\n`);
         }
@@ -5255,7 +5592,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
                 `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
               );
             } else {
-              res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
+              writeStreamError(
+                500,
+                'urn:ok:error:server-start-failed',
+                'Cloned successfully but failed to start the project server.',
+                { detail: result.error },
+              );
             }
           }
         }
@@ -5372,53 +5714,59 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
-  async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_OPEN = 'local-op-open';
+  const handleLocalOpOpen = withValidation(
+    LocalOpOpenRequestSchema,
+    async (_req, res, body) => {
+      const { dir } = body;
 
-    let dir: string;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { dir?: unknown };
-      if (typeof parsed.dir !== 'string' || !parsed.dir) {
-        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+      // Security: dir must be within user home dir
+      if (!isSafeLocalPath(dir)) {
+        errorResponse(
+          res,
+          400,
+          'urn:ok:error:dir-outside-home',
+          'dir must be within the user home directory.',
+          { handler: HANDLE_LOCAL_OP_OPEN, detail: `dir=${dir}` },
+        );
         return;
       }
-      dir = parsed.dir;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
 
-    // Security: dir must be within user home dir
-    if (!isSafeLocalPath(dir)) {
-      json(res, 400, {
-        ok: false,
-        error: 'dir must be within the user home directory',
-      });
-      return;
-    }
-
-    // Concurrency guard
-    if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
-      json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
-      return;
-    }
-
-    try {
-      const result = await startServerAtDirAndGetPort(dir);
-      if ('port' in result) {
-        json(res, 200, { port: result.port });
-      } else {
-        json(res, 504, { ok: false, error: result.error });
+      // Concurrency guard
+      if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A server-open operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_OPEN },
+        );
+        return;
       }
-    } finally {
-      localOpGuard.release(LOCAL_OP_OPEN_KEY);
-    }
-  }
+
+      try {
+        const result = await startServerAtDirAndGetPort(dir);
+        if ('port' in result) {
+          json(res, 200, { port: result.port });
+        } else {
+          errorResponse(
+            res,
+            504,
+            'urn:ok:error:server-open-failed',
+            'Failed to open project server.',
+            { handler: HANDLE_LOCAL_OP_OPEN, detail: result.error },
+          );
+        }
+      } finally {
+        localOpGuard.release(LOCAL_OP_OPEN_KEY);
+      }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_OPEN,
+      method: 'POST',
+      preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_OPEN }),
+    },
+  );
 
   // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
   // FR18: loopback + origin security enforced on all five endpoints.
@@ -5438,26 +5786,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth login --json [--host <host>]
    * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
    * The device-flow subprocess manages its own timeout.
+   *
+   * Streaming endpoint per US-005 pattern: pre-stream errors emit
+   * `application/problem+json`; mid-stream errors emit a typed event
+   * `{ type: 'error', problem: ProblemDetails }`. The CLI's own
+   * `{ type: 'error', message }` events are intercepted and wrapped so the
+   * client always sees the canonical streaming envelope.
    */
-  async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    let host = 'github.com';
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_LOGIN = 'local-op-auth-login';
+  const handleLocalOpAuthLogin = withValidation(
+    LocalOpAuthHostRequestSchema,
+    handleLocalOpAuthLoginInner,
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_LOGIN,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_LOGIN }),
+    },
+  );
+  async function handleLocalOpAuthLoginInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpAuthHostRequest,
+  ): Promise<void> {
+    const host = body.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth login operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth login operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_LOGIN },
+      );
       return;
     }
 
@@ -5468,11 +5829,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
+    // Wrap CLI raw `error` events in RFC 9457 streaming envelope (US-005).
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_AUTH_LOGIN);
+
     const flow = runDeviceFlowSubprocess({
       cliArgs: localOpCliArgs,
       host,
       timeoutMs: LOCAL_OP_TIMEOUT_MS,
       onEvent: (event: AuthEvent) => {
+        if (event.type === 'error') {
+          writeStreamError(500, 'urn:ok:error:auth-failed', 'Auth subprocess reported an error.', {
+            detail: event.message || undefined,
+          });
+          return;
+        }
         if (!res.writableEnded) {
           res.write(`${JSON.stringify(event)}\n`);
         }
@@ -5501,85 +5871,87 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth status --json [--host <host>]
    * Returns: the single NDJSON line as parsed JSON.
    */
-  async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_STATUS = 'local-op-auth-status';
+  const handleLocalOpAuthStatus = withValidation(
+    LocalOpAuthHostRequestSchema,
+    async (_req, res, body) => {
+      const host = body.host ?? 'github.com';
 
-    let host = 'github.com';
-    try {
-      const body = await readBody(req);
-      const raw = body.toString().trim();
-      if (raw.length > 0) {
-        const parsed = JSON.parse(raw) as { host?: unknown };
-        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth status operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_STATUS },
+        );
+        return;
       }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
 
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth status operation is already in progress' });
-      return;
-    }
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
 
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
-
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env },
+        const output = await new Promise<string>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          const chunks: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+          child.on('close', () => {
+            clearTimeout(killTimer);
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
         });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        const chunks: Buffer[] = [];
-        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-        child.on('close', () => {
-          clearTimeout(killTimer);
-          resolve(Buffer.concat(chunks).toString('utf-8'));
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
 
-      // The CLI may emit non-JSON log lines on stdout before the terminal
-      // event (e.g. keychain probe messages on older builds). Find the last
-      // parseable JSON line and return that.
-      const lines = output
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      let parsed: unknown = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          parsed = JSON.parse(lines[i] as string);
-          break;
-        } catch {
-          /* skip non-JSON line */
+        // The CLI may emit non-JSON log lines on stdout before the terminal
+        // event (e.g. keychain probe messages on older builds). Find the last
+        // parseable JSON line and return that.
+        const lines = output
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        let parsed: unknown = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            parsed = JSON.parse(lines[i] as string);
+            break;
+          } catch {
+            /* skip non-JSON line */
+          }
         }
+        if (parsed !== null) {
+          json(res, 200, parsed);
+        } else {
+          json(res, 200, { authenticated: false });
+        }
+      } catch (err) {
+        // Fixed-vocabulary detail — raw err.message can carry filesystem paths,
+        // git stderr, or errno strings. Pino logs preserve full diagnostics via
+        // `cause` for server-side triage; the wire body stays bounded.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth status check failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
       }
-      if (parsed !== null) {
-        json(res, 200, parsed);
-      } else {
-        json(res, 200, { authenticated: false });
-      }
-    } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth status failed',
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
-    }
-  }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_STATUS,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_STATUS }),
+    },
+  );
 
   /**
    * POST /api/local-op/auth/repos
@@ -5587,29 +5959,38 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Body: { host?: string }
    * Spawns: auth repos --json [--host <host>]
    * Streams: NDJSON via chunked HTTP.
+   *
+   * Streaming endpoint per US-005 pattern: pre-stream errors emit
+   * `application/problem+json`; mid-stream errors emit a typed event
+   * `{ type: 'error', problem: ProblemDetails }`. CLI `error` events are
+   * intercepted and wrapped to keep the streaming envelope canonical.
    */
-  async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    let host = 'github.com';
-    try {
-      const body = await readBody(req);
-      const raw = body.toString().trim();
-      if (raw.length > 0) {
-        const parsed = JSON.parse(raw) as { host?: unknown };
-        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-      }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_REPOS = 'local-op-auth-repos';
+  const handleLocalOpAuthRepos = withValidation(
+    LocalOpAuthHostRequestSchema,
+    handleLocalOpAuthReposInner,
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_REPOS,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_REPOS }),
+    },
+  );
+  async function handleLocalOpAuthReposInner(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    body: LocalOpAuthHostRequest,
+  ): Promise<void> {
+    const host = body.host ?? 'github.com';
 
     if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth repos operation is already in progress' });
+      errorResponse(
+        res,
+        429,
+        'urn:ok:error:concurrent-operation',
+        'An auth repos operation is already in progress.',
+        { handler: HANDLE_LOCAL_OP_AUTH_REPOS },
+      );
       return;
     }
 
@@ -5620,10 +6001,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
+    /** Write a typed mid-stream error event (US-005 pattern). */
+    const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_AUTH_REPOS);
+
     const [cmd, ...baseArgs] = localOpCliArgs;
     const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
 
     let settled = false;
+    let stdoutBuffer = '';
     const child = spawn(cmd, spawnArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -5634,7 +6019,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }, LOCAL_OP_TIMEOUT_MS);
 
     child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let evt: { type?: unknown; message?: unknown } | null = null;
+        try {
+          evt = JSON.parse(line) as { type?: unknown; message?: unknown };
+        } catch {
+          /* non-JSON line — ignore */
+        }
+        if (evt && evt.type === 'error') {
+          // Wrap CLI's untyped error into the canonical streaming envelope.
+          const detail = typeof evt.message === 'string' ? evt.message : undefined;
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Auth repos subprocess reported an error.',
+            { detail },
+          );
+          continue;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
+      }
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
@@ -5646,8 +6054,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (code !== 0 && !res.writableEnded) {
-          res.write(
-            `${JSON.stringify({ type: 'error', message: `auth repos exited with code ${code}` })}\n`,
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            `Auth repos subprocess exited with code ${code}.`,
           );
         }
         res.end();
@@ -5660,7 +6070,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
-          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          // Fixed-vocabulary detail — see clone-failed catch site.
+          writeStreamError(
+            500,
+            'urn:ok:error:auth-failed',
+            'Failed to spawn the auth repos subprocess.',
+            { cause: err },
+          );
           res.end();
         }
       }
@@ -5673,65 +6089,65 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { host?: string }
    * Spawns: auth signout [--host <host>]
-   * Returns: { ok: true }
+   * Returns: {} (flat success per D22)
    */
-  async function handleLocalOpAuthSignout(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_SIGNOUT = 'local-op-auth-signout';
+  const handleLocalOpAuthSignout = withValidation(
+    LocalOpAuthHostRequestSchema,
+    async (_req, res, body) => {
+      const host = body.host ?? 'github.com';
 
-    let host = 'github.com';
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth signout operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT },
+        );
+        return;
+      }
 
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth signout operation is already in progress' });
-      return;
-    }
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
 
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
-
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: 'ignore',
-          env: { ...process.env },
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: 'ignore',
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          child.on('close', () => {
+            clearTimeout(killTimer);
+            resolve();
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
         });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        child.on('close', () => {
-          clearTimeout(killTimer);
-          resolve();
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
 
-      json(res, 200, { ok: true });
-    } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth signout failed',
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
-    }
-  }
+        json(res, 200, {});
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth signout failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
+      }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SIGNOUT }),
+    },
+  );
 
   /**
    * POST /api/local-op/auth/pat
@@ -5740,111 +6156,115 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
    * Returns: the NDJSON complete-event as parsed JSON.
    */
-  async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_PAT = 'local-op-auth-pat';
+  const handleLocalOpAuthPat = withValidation(
+    LocalOpAuthPatRequestSchema,
+    async (_req, res, body) => {
+      const { pat, host: hostInput } = body;
+      const host = hostInput ?? 'github.com';
 
-    let host = 'github.com';
-    let pat: string;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { pat?: unknown; host?: unknown };
-      if (typeof parsed.pat !== 'string' || !parsed.pat) {
-        json(res, 400, { ok: false, error: 'Missing or invalid pat' });
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'An auth pat operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_PAT },
+        );
         return;
       }
-      pat = parsed.pat;
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
 
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
-      json(res, 429, { ok: false, error: 'An auth pat operation is already in progress' });
-      return;
-    }
+      try {
+        const [cmd, ...baseArgs] = localOpCliArgs;
+        const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
 
-    try {
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
+        const output = await new Promise<string>((resolve, reject) => {
+          const child = spawn(cmd, spawnArgs, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env },
+          });
+          const killTimer = setTimeout(() => {
+            child.kill('SIGTERM');
+          }, 30_000);
+          // Write the PAT to stdin and close it so the CLI readline resolves
+          child.stdin.write(`${pat}\n`);
+          child.stdin.end();
 
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(cmd, spawnArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env },
+          const chunks: Buffer[] = [];
+          child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+          child.on('close', (code) => {
+            clearTimeout(killTimer);
+            if (code !== 0) {
+              reject(new Error(`auth pat exited with code ${code}`));
+            } else {
+              resolve(Buffer.concat(chunks).toString('utf-8'));
+            }
+          });
+          child.on('error', (err) => {
+            clearTimeout(killTimer);
+            reject(err);
+          });
         });
-        const killTimer = setTimeout(() => {
-          child.kill('SIGTERM');
-        }, 30_000);
-        // Write the PAT to stdin and close it so the CLI readline resolves
-        child.stdin.write(`${pat}\n`);
-        child.stdin.end();
 
-        const chunks: Buffer[] = [];
-        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-        child.on('close', (code) => {
-          clearTimeout(killTimer);
-          if (code !== 0) {
-            reject(new Error(`auth pat exited with code ${code}`));
-          } else {
-            resolve(Buffer.concat(chunks).toString('utf-8'));
+        // Same robustness as status: pick the last JSON line, ignore any
+        // non-JSON output the CLI may have emitted.
+        const lines = output
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        let parsed: unknown = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            parsed = JSON.parse(lines[i] as string);
+            break;
+          } catch {
+            /* skip non-JSON line */
           }
-        });
-        child.on('error', (err) => {
-          clearTimeout(killTimer);
-          reject(err);
-        });
-      });
-
-      // Same robustness as status: pick the last JSON line, ignore any
-      // non-JSON output the CLI may have emitted.
-      const lines = output
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-      let parsed: unknown = null;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          parsed = JSON.parse(lines[i] as string);
-          break;
-        } catch {
-          /* skip non-JSON line */
         }
+        if (parsed !== null) {
+          json(res, 200, parsed);
+        } else {
+          json(res, 200, {});
+        }
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:auth-failed', 'Auth pat failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_PAT,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
       }
-      if (parsed !== null) {
-        json(res, 200, parsed);
-      } else {
-        json(res, 200, { ok: true });
-      }
-    } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'auth pat failed',
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
-    }
-  }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_PAT,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_PAT }),
+    },
+  );
 
   // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
   // Reads the resolved git identity via the identity resolution chain.
-  // Returns { ok: true, identity: { name, email } | null }.
+  // Returns flat { identity: { name, email } | null } per D22 (no `ok: true` wrapper).
 
+  const HANDLE_LOCAL_OP_AUTH_IDENTITY = 'local-op-auth-identity';
   async function handleLocalOpAuthIdentity(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_IDENTITY })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!projectDir) {
-      json(res, 400, { ok: false, error: 'No project directory configured' });
+      errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+      });
       return;
     }
     try {
@@ -5853,11 +6273,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // only local + global config tiers here. Sign-in flows pre-fill the form
       // with OAuth name/email separately.
       const identity = await resolveGitIdentity(projectDir);
-      json(res, 200, { ok: true, identity });
+      json(res, 200, { identity });
     } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'identity resolution failed',
+      // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Identity resolution failed.', {
+        handler: HANDLE_LOCAL_OP_AUTH_IDENTITY,
+        cause: err,
       });
     }
   }
@@ -5870,65 +6291,58 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
-  async function handleLocalOpAuthSetIdentity(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
+  const HANDLE_LOCAL_OP_AUTH_SET_IDENTITY = 'local-op-auth-set-identity';
+  const handleLocalOpAuthSetIdentity = withValidation(
+    LocalOpAuthSetIdentityRequestSchema,
+    async (_req, res, body) => {
+      const name = body.name.trim();
+      const email = body.email.trim();
 
-    let name: string;
-    let email: string;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { name?: unknown; email?: unknown };
-      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
-        json(res, 400, { ok: false, error: 'Missing or invalid name' });
-        return;
-      }
-      if (typeof parsed.email !== 'string' || !parsed.email.trim()) {
-        json(res, 400, { ok: false, error: 'Missing or invalid email' });
-        return;
-      }
-      name = parsed.name.trim();
-      email = parsed.email.trim();
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-
-    if (!projectDir) {
-      json(res, 400, { ok: false, error: 'No project directory configured' });
-      return;
-    }
-
-    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
-      json(res, 429, { ok: false, error: 'A set-identity operation is already in progress' });
-      return;
-    }
-
-    try {
-      writeGitIdentity(projectDir, name, email);
-      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
-      // so the unresolved nudge clears in the UI without waiting on the push timer.
-      void getSyncEngine?.()
-        ?.refreshIdentity()
-        .catch(() => {
-          /* best-effort — status will catch up on next push cycle */
+      if (!projectDir) {
+        errorResponse(res, 400, 'urn:ok:error:no-project-dir', 'No project directory configured.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
         });
-      json(res, 200, { ok: true });
-    } catch (err) {
-      json(res, 500, {
-        ok: false,
-        error: err instanceof Error ? err.message : 'set-identity failed',
-      });
-    } finally {
-      localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
-    }
-  }
+        return;
+      }
+
+      if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
+        errorResponse(
+          res,
+          429,
+          'urn:ok:error:concurrent-operation',
+          'A set-identity operation is already in progress.',
+          { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY },
+        );
+        return;
+      }
+
+      try {
+        writeGitIdentity(projectDir, name, email);
+        // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
+        // so the unresolved nudge clears in the UI without waiting on the push timer.
+        void getSyncEngine?.()
+          ?.refreshIdentity()
+          .catch(() => {
+            /* best-effort — status will catch up on next push cycle */
+          });
+        json(res, 200, {});
+      } catch (err) {
+        // Fixed-vocabulary detail — see HANDLE_LOCAL_OP_AUTH_STATUS catch site.
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Set-identity failed.', {
+          handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+          cause: err,
+        });
+      } finally {
+        localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
+      }
+    },
+    {
+      handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY,
+      method: 'POST',
+      preBodyGate: (req, res) =>
+        checkLocalOpSecurity(req, res, { handler: HANDLE_LOCAL_OP_AUTH_SET_IDENTITY }),
+    },
+  );
 
   // ─── Security helpers for sync endpoints ────────────────────────────────────
   // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
@@ -5937,169 +6351,224 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   // ─── Sync endpoints ──────────────────────────────────────────────────────────
 
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-status' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
-      // reads these fields unconditionally.
-      json(res, 200, {
-        state: 'dormant',
-        lastSyncUtc: null,
-        lastFetchUtc: null,
-        lastPushedSha: null,
-        ahead: 0,
-        behind: 0,
-        consecutiveFailures: 0,
-        conflictCount: 0,
-        hasRemote: false,
-        syncEnabled: false,
-        identityUnresolved: false,
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-status',
+        extraHeaders: { Allow: 'GET' },
       });
       return;
     }
-    json(res, 200, engine.getStatus());
-  }
-
-  async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
-      return;
-    }
-    let op: 'sync' | 'push' | 'pull' = 'sync';
     try {
-      const body = await readBody(req);
-      if (body.length > 0) {
-        const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-        if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
-          op = parsed.op as 'push' | 'pull' | 'sync';
-        }
-      }
-    } catch {
-      // Ignore parse errors — use default op
-    }
-    // Fire-and-return: 202 Accepted immediately, trigger runs in background
-    json(res, 202, { ok: true, op });
-    void engine.trigger(op);
-  }
-
-  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
-      return;
-    }
-    let enabled: boolean;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-      if (typeof parsed.enabled !== 'boolean') {
-        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Shape must stay aligned with SyncStatus (see sync-engine.ts) — the UI
+        // reads these fields unconditionally. Dormant fallback when the engine
+        // isn't constructed (no remote, sync disabled at boot).
+        json(res, 200, {
+          state: 'dormant',
+          lastSyncUtc: null,
+          lastFetchUtc: null,
+          lastPushedSha: null,
+          ahead: 0,
+          behind: 0,
+          consecutiveFailures: 0,
+          conflictCount: 0,
+          hasRemote: false,
+          syncEnabled: false,
+          identityUnresolved: false,
+        });
         return;
       }
-      enabled = parsed.enabled;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
+      json(res, 200, engine.getStatus());
+    } catch (e) {
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'sync-status',
+        cause: e,
+      });
     }
-    await engine.setEnabled(enabled);
-    json(res, 200, { ok: true, status: engine.getStatus() });
   }
+
+  const handleSyncTrigger = withValidation(
+    SyncTriggerRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard: the preBodyGate confirmed the engine was active,
+        // but it could have been torn down between gate and inner-handler
+        // invocation. Treat as 503 — same as the gate would have.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+          handler: 'sync-trigger',
+        });
+        return;
+      }
+      const op = body.op ?? 'sync';
+      // Fire-and-return: 202 Accepted immediately, trigger runs in background.
+      json(res, 202, { op });
+      void engine.trigger(op);
+    },
+    {
+      handler: 'sync-trigger',
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-trigger' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-trigger',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
+
+  const handleSyncSetEnabled = withValidation(
+    SyncSetEnabledRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard — see HANDLE_SYNC_TRIGGER comment.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+          handler: 'sync-set-enabled',
+        });
+        return;
+      }
+      try {
+        await engine.setEnabled(body.enabled);
+        json(res, 200, { status: engine.getStatus() });
+      } catch (e) {
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to toggle sync.', {
+          handler: 'sync-set-enabled',
+          cause: e,
+        });
+      }
+    },
+    {
+      handler: 'sync-set-enabled',
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-set-enabled' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-set-enabled',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflicts' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    const conflicts = engine ? engine.getConflicts() : [];
-    json(res, 200, { conflicts });
-  }
-
-  async function handleSyncResolveConflict(
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-    const engine = getSyncEngine?.();
-    if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
-      return;
-    }
-    let body: Record<string, unknown>;
-    try {
-      const raw = await readBody(req);
-      body = JSON.parse(raw.toString()) as Record<string, unknown>;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-    const { file, strategy, content } = body as {
-      file?: string;
-      strategy?: string;
-      content?: string;
-    };
-    if (!file || typeof file !== 'string') {
-      json(res, 400, { ok: false, error: 'Missing required field: file' });
-      return;
-    }
-    if (strategy !== 'mine' && strategy !== 'theirs' && strategy !== 'content') {
-      json(res, 400, {
-        ok: false,
-        error: "Invalid strategy: must be 'mine', 'theirs', or 'content'",
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-conflicts',
+        extraHeaders: { Allow: 'GET' },
       });
       return;
     }
     try {
-      await engine.resolveConflict(file, strategy as ResolveStrategy, content);
-      json(res, 200, { ok: true });
+      const engine = getSyncEngine?.();
+      const conflicts = engine ? engine.getConflicts() : [];
+      json(res, 200, { conflicts });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'sync-conflicts',
+        cause: e,
+      });
     }
   }
+
+  const handleSyncResolveConflict = withValidation(
+    SyncResolveConflictRequestSchema,
+    async (_req, res, body) => {
+      const engine = getSyncEngine?.();
+      if (!engine) {
+        // Race-window guard — see HANDLE_SYNC_TRIGGER comment.
+        errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+          handler: 'sync-resolve-conflict',
+        });
+        return;
+      }
+      const { file, strategy, content } = body;
+      try {
+        await engine.resolveConflict(file, strategy as ResolveStrategy, content);
+        json(res, 200, {});
+      } catch (e) {
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to resolve conflict.',
+          {
+            handler: 'sync-resolve-conflict',
+            cause: e,
+          },
+        );
+      }
+    },
+    {
+      handler: 'sync-resolve-conflict',
+      method: 'POST',
+      preBodyGate: (req, res) => {
+        if (!checkLocalOpSecurity(req, res, { handler: 'sync-resolve-conflict' })) return false;
+        const engine = getSyncEngine?.();
+        if (!engine) {
+          errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+            handler: 'sync-resolve-conflict',
+          });
+          return false;
+        }
+        return true;
+      },
+    },
+  );
 
   async function handleSyncConflictContent(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-conflict-content' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-conflict-content',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     if (!projectDir) {
-      json(res, 503, { ok: false, error: 'Project repo not configured' });
+      errorResponse(
+        res,
+        503,
+        'urn:ok:error:project-repo-not-configured',
+        'Project repo not configured.',
+        { handler: 'sync-conflict-content' },
+      );
       return;
     }
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const file = url.searchParams.get('file');
     if (!file) {
-      json(res, 400, { ok: false, error: 'Missing required query param: file' });
+      errorResponse(
+        res,
+        400,
+        'urn:ok:error:invalid-request',
+        'Missing required query param: file.',
+        {
+          handler: 'sync-conflict-content',
+        },
+      );
       return;
     }
     // Reject obvious path-traversal; git itself rejects paths outside the index.
     if (file.includes('..') || file.startsWith('/')) {
-      json(res, 400, { ok: false, error: 'Invalid file path' });
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid file path.', {
+        handler: 'sync-conflict-content',
+      });
       return;
     }
     const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
@@ -6114,90 +6583,119 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const [base, ours, theirs] = await Promise.all([showStage(1), showStage(2), showStage(3)]);
-      json(res, 200, { ok: true, file, base, ours, theirs });
+      json(res, 200, { file, base, ours, theirs });
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(
+        res,
+        500,
+        'urn:ok:error:internal-server-error',
+        'Failed to read conflict content.',
+        {
+          handler: 'sync-conflict-content',
+          cause: e,
+        },
+      );
     }
   }
 
   // ─── `ok seed` scaffolder endpoints ──────────────────────────────────────
-  // GET /api/seed/plan  → { ok:true, plan } | { ok:false, error:{kind,message} }
-  // POST /api/seed/apply with { plan } → { ok:true, result } | { ok:false, error:{kind,message} }
+  // GET /api/seed/plan  → 200 {plan} (RFC 9457 problem+json on error)
+  // POST /api/seed/apply with { plan } → 200 {result} (RFC 9457 problem+json on error)
   //
-  // Same logic as the `ok seed` CLI subcommand and the Electron IPC handler —
-  // three surfaces share `planSeed` / `applySeed` from the server seed module.
+  // Same `planSeed` / `applySeed` logic the CLI subcommand and Electron IPC
+  // handler use. The IPC bridge (`ok:seed:plan` / `ok:seed:apply`) keeps its
+  // in-process discriminated-union shape (`{ok: true, plan}` / `{ok: false,
+  // error: {kind, message}}`); the HTTP fallback in `seedClient()` translates
+  // RFC 9457 problem+json back to that shape at the renderer boundary so
+  // `SeedDialog` / `EmptyEditorState` are transport-agnostic.
   // Gated on `checkLocalOpSecurity` because the operation mutates the local
   // filesystem; same contract as /api/local-op/* and /api/installed-agents.
 
   /**
    * GET `/api/seed/plan?rootDir=brain` — preview the scaffold for a given
-   * subfolder. `rootDir` defaults to `.` (project root). Plan-time errors
-   * (absolute path, escape segments) surface as `{ ok: false, error }` so
-   * the dialog can render the message without an HTTP failure.
+   * subfolder. `rootDir` defaults to `.` (project root). Prerequisite-missing
+   * (no git init) → 422 with `urn:ok:error:seed-prerequisite-missing`;
+   * invalid-root (escape segments, absolute path) → 400 with
+   * `urn:ok:error:seed-invalid-root`. Both surface a `detail` carrying the
+   * underlying message so renderers can echo it.
    */
   async function handleSeedPlan(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'seed-plan' })) return;
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'seed-plan',
+        extraHeaders: { Allow: 'GET' },
+      });
       return;
     }
     const url = new URL(req.url ?? '/', 'http://localhost');
     const rootDir = url.searchParams.get('rootDir') ?? undefined;
     try {
       const plan = await planSeed({ projectDir: contentDir, rootDir });
-      json(res, 200, { ok: true, plan });
+      json(res, 200, { plan });
     } catch (err) {
       if (err instanceof SeedPrerequisiteError) {
-        json(res, 200, {
-          ok: false,
-          error: { kind: 'prerequisite-missing', message: err.message },
-        });
+        errorResponse(
+          res,
+          422,
+          'urn:ok:error:seed-prerequisite-missing',
+          'Seed prerequisite missing.',
+          { handler: 'seed-plan', detail: err.message, cause: err },
+        );
         return;
       }
       if (err instanceof SeedRootDirError) {
-        json(res, 200, {
-          ok: false,
-          error: { kind: 'invalid-root', message: err.message },
+        errorResponse(res, 400, 'urn:ok:error:seed-invalid-root', 'Invalid seed root directory.', {
+          handler: 'seed-plan',
+          detail: err.message,
+          cause: err,
         });
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+        handler: 'seed-plan',
+        cause: err,
+      });
     }
   }
 
-  async function handleSeedApply(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
-      return;
-    }
-
-    let plan: ScaffoldPlan;
-    try {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { plan?: unknown };
-      if (!parsed.plan || typeof parsed.plan !== 'object') {
-        json(res, 400, { ok: false, error: 'Missing or invalid plan' });
+  const handleSeedApply = withValidation(
+    SeedApplyRequestSchema,
+    async (_req, res, body) => {
+      // SeedApplyRequestSchema accepts `plan: unknown` (forward-compat); reject
+      // non-object payloads here so applySeed sees a structured value.
+      const planValue = body.plan;
+      if (!planValue || typeof planValue !== 'object') {
+        errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid plan payload.', {
+          handler: 'seed-apply',
+        });
         return;
       }
-      plan = parsed.plan as ScaffoldPlan;
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
-      return;
-    }
-
-    try {
-      // The plan already has rootDir baked into its entries — apply only
-      // needs projectDir.
-      const result = await applySeed(plan, { projectDir: contentDir });
-      json(res, 200, { ok: true, result });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
-    }
-  }
+      const plan = planValue as ScaffoldPlan;
+      try {
+        // The plan already has rootDir baked into its entries — apply only
+        // needs projectDir.
+        const result = await applySeed(plan, { projectDir: contentDir });
+        json(res, 200, { result });
+      } catch (err) {
+        errorResponse(
+          res,
+          500,
+          'urn:ok:error:internal-server-error',
+          'Failed to apply seed plan.',
+          {
+            handler: 'seed-apply',
+            cause: err,
+          },
+        );
+      }
+    },
+    {
+      handler: 'seed-apply',
+      method: 'POST',
+      preBodyGate: (req, res) => checkLocalOpSecurity(req, res, { handler: 'seed-apply' }),
+    },
+  );
 
   /**
    * `POST /api/install-skill` — build `openknowledge.skill` and open it via
@@ -6213,9 +6711,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    * Response: the `BuildAndOpenSkillResult` shape verbatim.
    */
   async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'install-skill' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'install-skill',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
 
@@ -6231,17 +6732,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // Confine to $HOME consistent with sibling local-op handlers
           // (`handleLocalOpClone`, `handleLocalOpOpen`).
           if (!isSafeLocalPath(parsed.out)) {
-            json(res, 400, {
-              ok: false,
-              error: 'Output path must be within home directory',
-            });
+            errorResponse(
+              res,
+              400,
+              'urn:ok:error:invalid-request',
+              'Output path must be within home directory.',
+              { handler: 'install-skill' },
+            );
             return;
           }
           opts.out = parsed.out;
         }
       }
-    } catch {
-      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+    } catch (e) {
+      errorResponse(res, 400, 'urn:ok:error:invalid-request', 'Invalid JSON body.', {
+        handler: 'install-skill',
+        cause: e,
+      });
       return;
     }
 
@@ -6250,7 +6757,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', message, {
+        handler: 'install-skill',
+        cause: err,
+      });
     }
   }
 
@@ -6266,27 +6776,49 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // `checkLocalOpSecurity` confines the fingerprint to same-machine,
     // same-origin callers (the editor UI) and refuses cross-origin browser
     // contexts + DNS-rebinding attempts that would otherwise succeed.
-    if (!checkLocalOpSecurity(req, res, json)) return;
-    return handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+    // `checkLocalOpSecurity` itself emits RFC 9457 problem+json on rejection.
+    if (!checkLocalOpSecurity(req, res, { handler: 'installed-agents' })) return;
+    try {
+      await handleInstalledAgents(req, res, installedAgentsCache.probeAll);
+    } catch (e) {
+      // Defensive: `handleInstalledAgents` catches internally, so this only
+      // fires on truly unexpected throws (e.g., probeAll synchronously
+      // throwing before its internal try/catch). Guard `headersSent` so we
+      // don't double-emit if the inner handler already wrote a response.
+      if (!res.headersSent) {
+        log.error({ err: e }, '[installed-agents] route wrapper failed');
+        errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Internal server error.', {
+          handler: 'installed-agents',
+          cause: e,
+        });
+      }
+    }
   }
 
   async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (!checkLocalOpSecurity(req, res, { handler: 'sync-abort-merge' })) return;
     if (req.method !== 'POST') {
-      json(res, 405, { ok: false, error: 'Method not allowed' });
+      errorResponse(res, 405, 'urn:ok:error:method-not-allowed', 'Method not allowed.', {
+        handler: 'sync-abort-merge',
+        extraHeaders: { Allow: 'POST' },
+      });
       return;
     }
     const engine = getSyncEngine?.();
     if (!engine) {
-      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      errorResponse(res, 503, 'urn:ok:error:sync-not-active', 'Sync engine not active.', {
+        handler: 'sync-abort-merge',
+      });
       return;
     }
     try {
       await engine.abortMerge();
-      json(res, 200, { ok: true });
+      json(res, 200, {});
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      errorResponse(res, 500, 'urn:ok:error:internal-server-error', 'Failed to abort merge.', {
+        handler: 'sync-abort-merge',
+        cause: e,
+      });
     }
   }
 
@@ -6306,7 +6838,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/create-page': handleCreatePage,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
-    '/api/upload': handleUploadImage,
+    '/api/upload': handleUploadAsset,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
@@ -6405,11 +6937,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (url.startsWith('/api/')) {
         const origin = request.headers.origin;
         if (origin !== undefined && !isAllowedApiOrigin(origin)) {
-          if (typeof response.setHeader === 'function') {
-            response.setHeader('Content-Type', 'application/json');
-          }
-          response.writeHead(403);
-          response.end(JSON.stringify({ ok: false, error: 'origin-not-allowed' }));
+          // RFC 9457 problem+json. Tag the handler as `api-origin-gate` so
+          // the `ok.api.error.count` counter distinguishes onRequest-level
+          // CSRF rejections from per-handler emits. The cross-origin browser
+          // can't read the body anyway (CORS strips it) but consistent wire
+          // shape lets server-to-server callers + tests parse uniformly.
+          errorResponse(response, 403, 'urn:ok:error:invalid-origin', 'Origin not allowed.', {
+            handler: 'api-origin-gate',
+          });
           return;
         }
         if (typeof response.setHeader === 'function') {
@@ -6452,11 +6987,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (MUTATING_ROUTES.has(url) || STATE_MUTATING_PREFIXES.some((p) => url.startsWith(p))) {
         const peerAddress = request.socket?.remoteAddress;
         if (peerAddress !== undefined && !isLoopbackAddress(peerAddress)) {
-          json(response, 403, { ok: false, error: 'loopback-required' });
+          errorResponse(response, 403, 'urn:ok:error:loopback-required', 'Loopback required.', {
+            handler: 'api-mutating-gate',
+          });
           return;
         }
         if (!isAllowedWorkspaceHostHeader(request.headers.host)) {
-          json(response, 403, { ok: false, error: 'host-header-not-allowed' });
+          errorResponse(
+            response,
+            403,
+            'urn:ok:error:host-not-allowed',
+            'Host header not allowed.',
+            { handler: 'api-mutating-gate' },
+          );
           return;
         }
       }
@@ -6495,14 +7038,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             try {
               // Static routes
               const handler = routes[url];
+              let dispatched = false;
               if (handler) {
+                dispatched = true;
                 await handler(request, response);
               } else if (url.startsWith('/api/rescue/')) {
                 const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
-                if (docName) await handleRescueGet(request, response, docName);
+                if (docName) {
+                  dispatched = true;
+                  await handleRescueGet(request, response, docName);
+                }
               } else if (url.startsWith('/api/history/')) {
                 const sha = decodeURIComponent(url.slice('/api/history/'.length));
-                if (sha) await handleHistoryVersion(request, response, sha);
+                if (sha) {
+                  dispatched = true;
+                  await handleHistoryVersion(request, response, sha);
+                }
+              }
+
+              // Defense-in-depth: unmatched `/api/*` routes (typos, removed
+              // endpoints, empty `/api/rescue/` / `/api/history/` segments)
+              // would otherwise fall through with no response body, leaving
+              // Hocuspocus's `onRequest` machinery to either pass through to
+              // static-file middleware or hang. Emit an explicit RFC 9457 404
+              // so the dispatch surface is fully closed. Dispatch flag is
+              // robust against test-mock `ServerResponse` shapes that don't
+              // simulate `headersSent` (vs checking `response.headersSent`
+              // directly, which would misfire on mocks after a handler
+              // successfully wrote 200).
+              if (!dispatched) {
+                errorResponse(response, 404, 'urn:ok:error:not-found', 'API endpoint not found.', {
+                  handler: 'api-dispatch',
+                  detail: `No handler for ${method} ${url}`,
+                });
               }
 
               const status = response.statusCode;

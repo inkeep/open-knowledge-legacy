@@ -6,10 +6,11 @@
  * Production implementation would be a micromark tokenizer (as per spec).
  * For the probe, a post-parse mdast walk is sufficient to validate feasibility.
  */
-import { visit } from 'unist-util-visit';
-import type { Root } from 'mdast';
 
-const WIKI_RE = /\[\[([^\[\]|#\n]+)(?:#([^\[\]|\n]+))?(?:\|([^\[\]\n]+))?\]\]/g;
+import type { Root } from 'mdast';
+import { visit } from 'unist-util-visit';
+
+const WIKI_RE = /\[\[([^[\]|#\n]+)(?:#([^[\]|\n]+))?(?:\|([^[\]\n]+))?\]\]/g;
 
 export function remarkWikiLink() {
   return (tree: Root) => {

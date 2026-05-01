@@ -86,8 +86,12 @@ export interface AssetViewer {
 /**
  * Result of `AssetViewerRegistry.lookup(ext)`. Discriminated union so callers
  * cannot accidentally pass a possibly-undefined viewer into `.render()` —
- * `found: true` narrows `viewer` to present.
+ * `ok: true` narrows `viewer` to present.
+ *
+ * The `ok` field name is the repo-wide convention for boolean-discriminated
+ * result envelopes (HTTP / IPC / lookup), matching `Map.set`-style "this
+ * succeeded" semantics rather than `Map.has`-style "this contains."
  */
 export type AssetViewerLookupResult =
-  | { readonly found: true; readonly viewer: AssetViewer }
-  | { readonly found: false };
+  | { readonly ok: true; readonly viewer: AssetViewer }
+  | { readonly ok: false };

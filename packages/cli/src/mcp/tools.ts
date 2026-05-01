@@ -52,11 +52,7 @@ async function httpGet(
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
-  try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
-  } catch {
-    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
-  }
+  return parseHttpResponse(res);
 }
 
 async function httpPost(
@@ -74,11 +70,41 @@ async function httpPost(
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
+  return parseHttpResponse(res);
+}
+
+// RFC 9457-aware response normalizer (D22). Mirrors the shared shim in
+// `tools/shared.ts`; kept inline here so the pre-Commander legacy MCP shim
+// surface stays self-contained.
+async function parseHttpResponse(
+  res: Response,
+): Promise<{ ok: boolean; [key: string]: unknown }> {
+  let body: unknown;
   try {
-    return (await res.json()) as { ok: boolean; [key: string]: unknown };
+    body = await res.json();
   } catch {
     return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
   }
+  if (!res.ok) {
+    const errBody = body as Partial<{
+      title: string;
+      type: string;
+      detail: string;
+      error: string;
+      message: string;
+    }> | null;
+    const errorMsg =
+      (typeof errBody?.title === 'string' && errBody.title.length > 0 && errBody.title) ||
+      (typeof errBody?.error === 'string' && errBody.error.length > 0 && errBody.error) ||
+      (typeof errBody?.message === 'string' && errBody.message.length > 0 && errBody.message) ||
+      (typeof errBody?.type === 'string' && errBody.type.length > 0 && errBody.type) ||
+      `HTTP ${res.status}`;
+    return { ok: false, error: errorMsg, problem: body, status: res.status };
+  }
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    return { ok: true, ...(body as Record<string, unknown>) };
+  }
+  return { ok: true, data: body };
 }
 
 function textResult(text: string, isError?: boolean) {

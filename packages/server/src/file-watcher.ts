@@ -647,6 +647,8 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
       });
       break;
     }
+    default:
+      assertNeverDiskEvent(event);
   }
 }
 
@@ -731,6 +733,11 @@ export async function handleRawEvents(
     // `ASSET_EXTENSIONS + dirCount > 0` rule without racing this async
     // watcher callback. Incrementing here on self-writes would double-count.
     if (contentFilter && !isSelf) {
+      // `event` here is narrowed to MarkdownDiskEvent by classifyEvents above
+      // (asset events route through a separate path); the explicit no-op cases
+      // make dirCount-unaffected variants visible, and assertNeverDiskEvent
+      // fires if a new MarkdownDiskEvent variant is ever added without
+      // updating this site.
       switch (event.kind) {
         case 'create':
           contentFilter.incrementMdDir(dirname(event.docName));
@@ -742,6 +749,12 @@ export async function handleRawEvents(
           contentFilter.decrementMdDir(dirname(event.oldDocName));
           contentFilter.incrementMdDir(dirname(event.newDocName));
           break;
+        case 'update':
+        case 'conflict':
+          // Content edits don't add/remove a markdown directory entry.
+          break;
+        default:
+          assertNeverDiskEvent(event);
       }
     }
 

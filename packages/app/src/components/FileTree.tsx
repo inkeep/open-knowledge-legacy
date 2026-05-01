@@ -1,4 +1,14 @@
-import type { HandoffOutcome, HandoffTarget, InstallState } from '@inkeep/open-knowledge-core';
+import {
+  CreatePageSuccessSchema,
+  DeletePathSuccessSchema,
+  DocumentListSuccessSchema,
+  type HandoffOutcome,
+  type HandoffTarget,
+  type InstallState,
+  ProblemDetailsSchema,
+  RenamePathSuccessSchema,
+  WorkspaceSuccessSchema,
+} from '@inkeep/open-knowledge-core';
 import {
   type ContextMenuItem,
   type ContextMenuOpenContext,
@@ -178,23 +188,57 @@ function isAgentTreePath(treePath: string): boolean {
   return !!name && AGENT_FILE_NAMES.has(name);
 }
 
-interface RenamePathResponse {
-  ok: boolean;
-  renamed?: RenamedDocMapping[];
-  rewrittenDocs?: Array<{ docName: string; rewrites: number }>;
-  error?: string;
+/**
+ * Read a server response body and narrow on HTTP status per the RFC 9457
+ * two-step parse pattern. Errors return the human-readable `title` from
+ * `ProblemDetailsSchema` (or a fallback when the body fails schema). Success
+ * returns the body as-is (caller validates with the per-handler schema).
+ */
+async function parseServerResponse(
+  res: Response,
+  fallbackErrorTitle: string,
+): Promise<{ ok: true; body: unknown } | { ok: false; title: string }> {
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    return { ok: false, title: `Server error (HTTP ${res.status})` };
+  }
+  if (!res.ok) {
+    const problem = ProblemDetailsSchema.safeParse(body);
+    return {
+      ok: false,
+      title: problem.success ? problem.data.title : fallbackErrorTitle,
+    };
+  }
+  return { ok: true, body };
 }
 
-interface DeletePathResponse {
-  ok: boolean;
-  deletedDocNames?: string[];
-  error?: string;
-}
-
-interface CreatePageResponse {
-  ok: boolean;
-  docName?: string;
-  error?: string;
+/**
+ * Apply a per-handler success schema to a `parseServerResponse` body, with
+ * a typed fallback for schema drift. When the response shape diverges from
+ * what the schema expects (server-side change without client lockstep,
+ * forward-compat field rename, etc.), the caller's `fallback` value is
+ * returned and the divergence is logged via `console.warn` so the drift is
+ * observable in dev tools and forwarded to integration test harnesses.
+ *
+ * Mid-mutation flows (rename / delete / create) cannot recover from a thrown
+ * parse error mid-transaction — the server already committed the operation.
+ * The fallback keeps the UI consistent (e.g., derive docName from the path)
+ * while making the schema drift loud rather than silent.
+ */
+function parseSuccessOrWarn<TIn, TOut>(
+  schema: {
+    safeParse: (v: unknown) => { success: true; data: TIn } | { success: false; error: unknown };
+  },
+  body: unknown,
+  handler: string,
+  fallback: TOut,
+): TIn | TOut {
+  const result = schema.safeParse(body);
+  if (result.success) return result.data;
+  console.warn('[FileTree] response schema drift:', handler, body, result.error);
+  return fallback;
 }
 
 interface WorkspaceInfo {
@@ -594,13 +638,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     async function refreshDocs() {
       try {
         const res = await fetch('/api/documents');
-        const data = await res.json().catch(() => null);
+        const parsed = await parseServerResponse(res, 'Failed to load documents');
         if (!active) return;
-        if (res.ok && data?.ok) {
-          setDocuments(data.documents);
-          setError(null);
+        if (!parsed.ok) {
+          setError(parsed.title);
         } else {
-          setError(data?.error ?? `Server error (HTTP ${res.status})`);
+          const success = DocumentListSuccessSchema.safeParse(parsed.body);
+          if (!success.success) {
+            setError('Documents response did not match expected shape.');
+          } else {
+            setDocuments(success.data.documents);
+            setError(null);
+          }
         }
       } catch (err) {
         if (active) setError('Could not reach server');
@@ -638,17 +687,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       .then(async (res) => {
         const data = await res.json().catch(() => null);
         if (!active) return;
-        if (
-          res.ok &&
-          data?.ok &&
-          typeof data.contentDir === 'string' &&
-          (data.pathSeparator === '/' || data.pathSeparator === '\\')
-        ) {
-          setWorkspace({
-            contentDir: data.contentDir,
-            pathSeparator: data.pathSeparator,
-          });
-        }
+        if (!res.ok) return;
+        const parsed = parseSuccessOrWarn(WorkspaceSuccessSchema, data, 'workspace', null);
+        if (!parsed) return;
+        setWorkspace({
+          contentDir: parsed.contentDir,
+          pathSeparator: parsed.pathSeparator,
+        });
       })
       .catch((err) => {
         console.warn('[FileTree] /api/workspace fetch failed:', err);
@@ -746,19 +791,22 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: createPath }),
         });
-        const data: CreatePageResponse | null = await res.json().catch(() => null);
+        const parsed = await parseServerResponse(res, `Failed to create ${kind}`);
 
-        if (!res.ok || !data?.ok) {
-          const msg = data?.error ?? `Failed to create ${kind}`;
-          toast.error(msg);
-          setError(msg);
+        if (!parsed.ok) {
+          toast.error(parsed.title);
+          setError(parsed.title);
           resetModelToDocuments();
           pendingCreateRef.current = null;
           setBusyPath(null);
           return;
         }
 
-        const docName = data.docName ?? createPath.replace(/\.md$/i, '');
+        const fallbackDocName = createPath.replace(/\.md$/i, '');
+        const success = parseSuccessOrWarn(CreatePageSuccessSchema, parsed.body, 'create-page', {
+          docName: fallbackDocName,
+        });
+        const docName = success.docName;
         setDocuments((current) => {
           if (current.some((doc) => doc.docName === docName)) return current;
           const next = [
@@ -796,19 +844,21 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data: RenamePathResponse = await res.json();
+      const parsed = await parseServerResponse(res, 'Failed to rename path');
 
-      if (!res.ok || !data.ok) {
-        const msg = data.error ?? 'Failed to rename path';
-        toast.error(msg);
-        setError(msg);
+      if (!parsed.ok) {
+        toast.error(parsed.title);
+        setError(parsed.title);
         resetModelToDocuments();
         pendingCreateRef.current = null;
         setBusyPath(null);
         return;
       }
 
-      await applyRenamedDocuments(Array.isArray(data.renamed) ? data.renamed : []);
+      const success = parseSuccessOrWarn(RenamePathSuccessSchema, parsed.body, 'rename-path', {
+        renamed: [],
+      });
+      await applyRenamedDocuments(success.renamed);
       pendingCreateRef.current = null;
       setBusyPath(null);
     } catch (err) {
@@ -855,17 +905,22 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        const data: RenamePathResponse = await res.json();
+        const parsed = await parseServerResponse(res, 'Failed to move');
 
-        if (!res.ok || !data.ok) {
-          const msg = data.error ?? 'Failed to move';
-          toast.error(msg);
-          setError(msg);
+        if (!parsed.ok) {
+          toast.error(parsed.title);
+          setError(parsed.title);
           resetModelToDocuments();
           setBusyPath(null);
           return;
         }
-        renamed = renamed.concat(Array.isArray(data.renamed) ? data.renamed : []);
+        const success = parseSuccessOrWarn(
+          RenamePathSuccessSchema,
+          parsed.body,
+          'rename-path:drop',
+          { renamed: [] },
+        );
+        renamed = renamed.concat(success.renamed);
       }
 
       await applyRenamedDocuments(renamed);
@@ -998,15 +1053,18 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: target.kind, path: target.path }),
       });
-      const data: DeletePathResponse = await res.json();
+      const parsed = await parseServerResponse(res, 'Failed to delete path');
 
-      if (!res.ok || !data.ok) {
-        toast.error(data.error ?? 'Failed to delete path');
+      if (!parsed.ok) {
+        toast.error(parsed.title);
         setBusyPath(null);
         return;
       }
 
-      const deletedDocNames = Array.isArray(data.deletedDocNames) ? data.deletedDocNames : [];
+      const success = parseSuccessOrWarn(DeletePathSuccessSchema, parsed.body, 'delete-path', {
+        deletedDocNames: [],
+      });
+      const deletedDocNames = success.deletedDocNames;
       const deleted = new Set(deletedDocNames);
       for (const docName of deleted) closeDocument(docName);
 

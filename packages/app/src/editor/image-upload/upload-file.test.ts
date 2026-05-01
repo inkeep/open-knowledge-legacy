@@ -144,24 +144,33 @@ describe('uploadFile', () => {
     expect(result).toEqual({ url: '/docs/photo.png' });
   });
 
-  test('HTTP error response surfaces server-supplied error message', async () => {
-    const { fetch } = captureFetch(() =>
-      jsonResponse(400, { ok: false, error: 'Unsupported file type: application/pdf' }),
+  test('HTTP error response surfaces server-supplied title from RFC 9457 problem+json', async () => {
+    const { fetch } = captureFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'urn:ok:error:storage-error',
+            title: 'Failed to write upload.',
+            status: 500,
+            instance: '01234567-89ab-4def-8123-456789abcdef',
+          }),
+          { status: 500, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
     );
     const file = new File(['fake'], 'malicious.png', { type: 'image/png' });
 
     await expect(
       uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow('Unsupported file type: application/pdf');
+    ).rejects.toThrow('Failed to write upload.');
   });
 
-  test('HTTP error without parseable body falls back to status-code message', async () => {
+  test('HTTP error without parseable body throws HttpResponseParseError', async () => {
     const { fetch } = captureFetch(() => new Response('Server error', { status: 500 }));
     const file = new File(['x'], 'x.png', { type: 'image/png' });
 
     await expect(
       uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow('Upload failed (500)');
+    ).rejects.toThrow(/HttpResponseParseError|response is not JSON/i);
   });
 
   test('network error surfaces a descriptive message', async () => {
@@ -187,12 +196,12 @@ describe('uploadFile', () => {
     expect(calls).toHaveLength(0);
   });
 
-  test('response missing path and src throws', async () => {
+  test('response missing src throws HttpResponseParseError', async () => {
     const { fetch } = captureFetch(() => jsonResponse(200, { ok: true }));
     const file = new File(['x'], 'x.png', { type: 'image/png' });
 
     await expect(
       uploadFile(file, ['image/png'], { fetch, docName: TEST_DOC_NAME }),
-    ).rejects.toThrow(/path.*src/);
+    ).rejects.toThrow(/UploadAssetSuccess/i);
   });
 });

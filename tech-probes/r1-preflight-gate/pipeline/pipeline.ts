@@ -2,19 +2,19 @@
  * Unified pipeline factory. Single-source for parse + serialize so the probe
  * matches the spec's R3 composition.
  */
-import { unified } from 'unified';
+
+import { fromProseMirror, remarkProseMirror } from '@handlewithcare/remark-prosemirror';
+import remarkDirective from 'remark-directive';
+import remarkFrontmatter from 'remark-frontmatter';
+import remarkGfm from 'remark-gfm';
+import remarkMdx from 'remark-mdx';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
-import remarkGfm from 'remark-gfm';
-import remarkFrontmatter from 'remark-frontmatter';
-import remarkMdx from 'remark-mdx';
-import remarkDirective from 'remark-directive';
-import { remarkProseMirror, fromProseMirror } from '@handlewithcare/remark-prosemirror';
-
-import { schema } from './schema';
-import { mdastToPmHandlers, pmToMdastNodeHandlers, pmToMdastMarkHandlers } from './handlers';
+import { unified } from 'unified';
+import { mdastToPmHandlers, pmToMdastMarkHandlers, pmToMdastNodeHandlers } from './handlers';
 import { customMdToMdHandlers } from './md-handlers';
 import { walkRecoverDelimiters } from './position-walker';
+import { schema } from './schema';
 import { remarkWikiLink } from './wiki-link';
 
 // Parse: string → ProseMirror Node

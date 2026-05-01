@@ -17,7 +17,7 @@
  * yields a byte-identical file.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { argv, exit } from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -71,9 +71,7 @@ const args = argv.slice(2);
 const CHECK_MODE = args.includes('--check');
 const outIdx = args.indexOf('--out');
 const OUT_PATH =
-  outIdx >= 0 && args[outIdx + 1]
-    ? args[outIdx + 1]
-    : join(REPO_ROOT, 'THIRD_PARTY_NOTICES.md');
+  outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : join(REPO_ROOT, 'THIRD_PARTY_NOTICES.md');
 
 // Byte (lexicographic) comparator. Use this everywhere instead of
 // `String.prototype.localeCompare` — locale-aware sorting depends on the
@@ -184,12 +182,7 @@ function collectClosure() {
       continue;
     }
 
-    if (
-      !isWorkspacePkg(pkg) &&
-      pkg.name &&
-      pkg.version &&
-      !isPlatformRestricted(pkg)
-    ) {
+    if (!isWorkspacePkg(pkg) && pkg.name && pkg.version && !isPlatformRestricted(pkg)) {
       collected.push({ dir: pkgDir, pkg });
     }
 
@@ -254,8 +247,7 @@ function normalizeSpdx(licenseField) {
       .map((l) => (typeof l === 'string' ? l : l.type || JSON.stringify(l)))
       .join(' OR ');
   }
-  if (typeof licenseField === 'object')
-    return licenseField.type || JSON.stringify(licenseField);
+  if (typeof licenseField === 'object') return licenseField.type || JSON.stringify(licenseField);
   return String(licenseField);
 }
 
@@ -313,11 +305,7 @@ function extractCopyrights(licenseText) {
         // or another Copyright line. Plain prose terminates the block — this
         // tightens the previous overly-permissive `\s*\w+` alternative which
         // could fold non-attribution sentences into the captured block.
-        if (
-          /^[-*•]/.test(next) ||
-          /^\S+ <\S+@\S+>/.test(next) ||
-          /^copyright\b/i.test(next)
-        ) {
+        if (/^[-*•]/.test(next) || /^\S+ <\S+@\S+>/.test(next) || /^copyright\b/i.test(next)) {
           block.push(next);
           j++;
         } else {
@@ -562,9 +550,7 @@ function build() {
   // where the binary may ship in `Resources/app.asar.unpacked/`, this
   // satisfies the obligation independent of network access.
   push('## LGPL-3.0 — transitive optional binary', '');
-  const lgplResolved = (grouped.get('LGPL') || []).find(
-    (e) => e.pkg.name === 'node-liblzma',
-  );
+  const lgplResolved = (grouped.get('LGPL') || []).find((e) => e.pkg.name === 'node-liblzma');
   push(
     `\`node-liblzma\`${
       lgplResolved ? `@${lgplResolved.pkg.version}` : ''
@@ -667,13 +653,7 @@ function build() {
   // truly require no attribution belong here. CC-BY-4.0 and Python-2.0 (PSF)
   // both REQUIRE attribution (CC-BY §3 and the PSF copyright-preservation
   // clause, respectively) and are routed to dedicated sections below.
-  const PERMISSIVE_NO_ATTR = [
-    'BlueOak-1.0.0',
-    '0BSD',
-    'WTFPL',
-    'Unlicense',
-    'CC0-1.0',
-  ];
+  const PERMISSIVE_NO_ATTR = ['BlueOak-1.0.0', '0BSD', 'WTFPL', 'Unlicense', 'CC0-1.0'];
   const noAttrEntries = [];
   for (const cat of PERMISSIVE_NO_ATTR) {
     if (grouped.has(cat)) noAttrEntries.push(...grouped.get(cat));
@@ -780,8 +760,7 @@ const generated = build();
 // would write now. Used by `--check` to surface what changed so contributors
 // can debug drift without having to regenerate locally to see the delta.
 function computeHeaderDiff(existing, fresh) {
-  const headerOf = (s) =>
-    new Set(s.split('\n').filter((l) => /^### `[^@]+@[^`]+`$/.test(l)));
+  const headerOf = (s) => new Set(s.split('\n').filter((l) => /^### `[^@]+@[^`]+`$/.test(l)));
   const a = headerOf(existing);
   const b = headerOf(fresh);
   const added = [...b].filter((h) => !a.has(h)).sort();

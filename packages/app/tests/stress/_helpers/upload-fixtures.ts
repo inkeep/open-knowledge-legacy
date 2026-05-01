@@ -1,6 +1,6 @@
 /**
  * Magic-byte buffers for upload e2e tests. Mirror the fixtures used by the
- * unit-tier `handleUploadImage` tests in `packages/server/src/api-extension.test.ts`
+ * unit-tier `handleUploadAsset` tests in `packages/server/src/api-extension.test.ts`
  * (which exercise the unified `/api/upload` endpoint). Extracted here so the
  * e2e suite exercises the same byte sequences the server's
  * `fileTypeFromFile` dispatcher accepts — if `file-type` widens or narrows

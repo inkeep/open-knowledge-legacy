@@ -22,6 +22,7 @@
  */
 import type { Server as HttpServer } from 'node:http';
 import { toBroadcasterKey, validateAgentId } from './agent-id.ts';
+import { errorResponse } from './http/error-response.ts';
 import { attachIdleShutdown, type IdleShutdownHandle } from './idle-shutdown.ts';
 import { getLogger, type PinoLogger } from './logger.ts';
 import { handleCollabSocketError } from './metrics.ts';
@@ -269,29 +270,36 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
+          // Defense-in-depth: api-extension.ts now has its own dispatch-level
+          // 404 fallback (pass-3 W3-1), so this branch is unreachable in
+          // normal flow. Keep it as a backstop in case a future Hocuspocus
+          // extension intercepts the request before api-extension.ts runs.
           if (res.writableEnded || res.headersSent) return;
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+          errorResponse(res, 404, 'urn:ok:error:not-found', 'API endpoint not found.', {
+            handler: 'boot-fallback',
+            detail: `No handler for ${req.method ?? 'GET'} ${url}`,
+          });
         })
         .catch((err) => {
           log.error({ err }, 'Unhandled onRequest error');
           if (!res.writableEnded && !res.headersSent) {
-            res.writeHead(500);
-            res.end('Internal server error');
+            errorResponse(
+              res,
+              500,
+              'urn:ok:error:internal-server-error',
+              'Internal server error.',
+              { handler: 'boot-fallback', cause: err },
+            );
           } else if (!res.writableEnded) {
             res.end();
           }
         });
       return;
     }
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: 'Not found. The React UI is served by `ok ui` (default port 3000).',
-        path: url ?? '/',
-      }),
-    );
+    errorResponse(res, 404, 'urn:ok:error:not-found', 'Not found.', {
+      handler: 'boot-fallback',
+      detail: `The React UI is served by \`ok ui\` (default port 3000). No handler for ${url ?? '/'}`,
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true });

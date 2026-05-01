@@ -50,12 +50,12 @@ interface OkScaffoldApplyError {
   path: string;
   error: string;
 }
-interface OkScaffoldApplyResult {
+export interface OkScaffoldApplyResult {
   applied: number;
   errors: OkScaffoldApplyError[];
   durationMs: number;
 }
-interface OkSeedError {
+export interface OkSeedError {
   kind: 'no-project' | 'prerequisite-missing' | 'invalid-root' | 'internal';
   message: string;
 }

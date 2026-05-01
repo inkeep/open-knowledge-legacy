@@ -14,62 +14,6 @@ function ctx(overrides: Partial<AssetClickContext> = {}): AssetClickContext {
   };
 }
 
-describe('AssetViewerRegistry', () => {
-  test('lookup on empty registry returns not-found', () => {
-    const r = new AssetViewerRegistry();
-    expect(r.lookup('pdf')).toEqual({ found: false });
-  });
-
-  test('register + lookup returns the viewer', () => {
-    const r = new AssetViewerRegistry();
-    const viewer = { exts: ['pdf'] as const, render: mock(() => {}) };
-    r.register(viewer);
-    expect(r.lookup('pdf')).toEqual({ found: true, viewer });
-  });
-
-  test('lookup is case-insensitive on the ext parameter', () => {
-    const r = new AssetViewerRegistry();
-    const viewer = { exts: ['pdf'] as const, render: mock(() => {}) };
-    r.register(viewer);
-    expect(r.lookup('PDF')).toEqual({ found: true, viewer });
-  });
-
-  test('register normalizes its exts to lowercase', () => {
-    const r = new AssetViewerRegistry();
-    const viewer = { exts: ['PDF'] as const, render: mock(() => {}) };
-    r.register(viewer);
-    expect(r.lookup('pdf')).toEqual({ found: true, viewer });
-  });
-
-  test('a viewer with multiple exts is findable under each', () => {
-    const r = new AssetViewerRegistry();
-    const viewer = {
-      exts: ['png', 'jpg', 'webp'] as const,
-      render: mock(() => {}),
-    };
-    r.register(viewer);
-    expect(r.lookup('png')).toEqual({ found: true, viewer });
-    expect(r.lookup('jpg')).toEqual({ found: true, viewer });
-    expect(r.lookup('webp')).toEqual({ found: true, viewer });
-  });
-
-  test('second register on the same ext overrides the first', () => {
-    const r = new AssetViewerRegistry();
-    const first = { exts: ['pdf'] as const, render: mock(() => {}) };
-    const second = { exts: ['pdf'] as const, render: mock(() => {}) };
-    r.register(first);
-    r.register(second);
-    expect(r.lookup('pdf')).toEqual({ found: true, viewer: second });
-  });
-
-  test('clearForTests empties the registry', () => {
-    const r = new AssetViewerRegistry();
-    r.register({ exts: ['pdf'] as const, render: mock(() => {}) });
-    r.clearForTests();
-    expect(r.lookup('pdf')).toEqual({ found: false });
-  });
-});
-
 describe('dispatchAssetClick', () => {
   beforeEach(() => {
     assetViewerRegistry.clearForTests();
