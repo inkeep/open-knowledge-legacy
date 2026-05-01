@@ -32,7 +32,11 @@ export interface ScenarioOptions {
   target: string;
   /** Where to write `results/<scenario>.<timestamp>.json`. Default: repo-relative `results/`. */
   outDir: string;
-  /** Run headed Chromium. Default: true (required for GPU/paint events). */
+  /**
+   * Run headed Chromium. Default: false. Set via `--headed` flag or
+   * `OK_PERF_HEADED=1` env. Headed is required for some paint/GPU events
+   * but multi-cell sweeps that lose foreground focus get throttled.
+   */
   headed: boolean;
   /** Override viewport (mostly for CI repro). Default: 1440×900. */
   viewport?: { width: number; height: number };

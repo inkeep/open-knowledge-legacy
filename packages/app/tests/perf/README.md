@@ -59,8 +59,8 @@ Flags:
 | `--scenario=<name>` | *(required)* | Loads `./scenarios/<name>.ts` |
 | `--target=<url>` | `http://localhost:5173` | Base URL for the dev server |
 | `--out=<dir>` | `./results` | Results directory |
-| `--headless` | (headed) | Launch without a visible browser window. **Note**: some paint/GPU events don't emit under headless; keep headed for S1/S3 diagnosis. |
-| `--headed` | (default) | Explicit opt-in, inverse of `--headless` |
+| `--headed` | (headless) | Launch with a visible browser window. Equivalent to `OK_PERF_HEADED=1` in the env. Use for paint/GPU diagnosis (S1/S3) where the headless browser drops some events. |
+| `--headless` | (default) | Launch without a visible browser window. Default since multi-cell sweeps that lose foreground focus while headed get caught by Chromium's setTimeout/rAF throttle and turn into false-positive cold-load timeouts. |
 | `--viewport=WxH` | `1440x900` | Viewport; use for reproducing resize-sensitive symptoms |
 
 Exit codes:
@@ -109,7 +109,7 @@ Rules of the road:
 3. **No hard-fail asserts inside `run()`.** If an assumption doesn't hold (PROJECT.md missing, dev server unreachable), `note()` it and return — the result JSON is still useful context. Throws get written to `result.error` so CI artifacts remain debuggable.
 4. **Use the collector for semantic events, not ad-hoc `console.log`.** `mark('ok/<subsystem>/<event>', ...)` from `packages/app/src/lib/perf/` routes into both Chrome DevTools custom tracks and `globalThis.__ok_perf.marks`, which the driver drains into the result JSON.
 5. **Use `recordMetric()` for symptom-specific numbers.** Standard numbers (wall-clock, long tasks, layout/style ms) are captured automatically from the CDP trace.
-6. **Headed by default.** Some events (paint, GPU) require a real display. Keep `--headless` as an opt-in for CI-style runs where body-of-scenario is enough.
+6. **Headless by default; opt into headed.** Multi-cell sweeps that lose foreground focus mid-run get throttled by Chromium (`setTimeout`/`rAF` ticks stretch past 1 s once the window is backgrounded), so headed runs produce false-positive cold-load timeouts during long sweeps. Use `--headed` (or `OK_PERF_HEADED=1`) for single-scenario paint/GPU diagnosis where you need a real display, but expect to sit in front of the window for the duration.
 
 ---
 
