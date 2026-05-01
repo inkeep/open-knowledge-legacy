@@ -246,4 +246,84 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     // Telemetry + toast path still runs.
     expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
+
+  test('ChunkedInsertError + dispatch throw: toast accurately states selection NOT restored', () => {
+    // Regression for the misleading-toast-on-dispatch-failure finding.
+    // When dispatch throws (view destroyed by Activity-hidden unmount, Y.Doc
+    // GC'd, etc.), the user's selection is NOT restored. The toast must say
+    // so rather than claim a successful restoration.
+    const throwingDispatch = mock(() => {
+      throw new Error('view destroyed');
+    });
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
+        source: 'gmail',
+        html: '<p>x</p>',
+        restoreText: 'original user content',
+        anchorIndex: 0,
+        err: new ChunkedInsertError(new Error('x'), {
+          chunksCompleted: 1,
+          totalChunks: 3,
+          bytesWritten: 50000,
+          bytesRemaining: 100000,
+        }),
+      }),
+    );
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    const msg = toastMock.error.mock.calls[0]?.[0] as string;
+    // Must NOT claim "selection has been restored" — dispatch threw.
+    expect(msg).not.toContain('been restored');
+    // Should communicate the failed-restore state explicitly.
+    expect(msg.toLowerCase()).toContain('could not be restored');
+  });
+
+  test('non-ChunkedInsertError + dispatch throw: toast accurately states selection NOT restored', () => {
+    // Same regression for the generic-error path.
+    const throwingDispatch = mock(() => {
+      throw new Error('view destroyed');
+    });
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
+        source: 'notion',
+        html: '<p>x</p>',
+        restoreText: 'abc',
+        anchorIndex: 5,
+        err: new Error('unrelated failure'),
+      }),
+    );
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    const msg = toastMock.error.mock.calls[0]?.[0] as string;
+    expect(msg).not.toContain('been restored');
+    expect(msg.toLowerCase()).toContain('could not be restored');
+  });
+
+  test('zero-bytes + empty selection: toast omits restoration claim entirely', () => {
+    // Edge case: nothing was selected, nothing was written. Don't claim
+    // "Your selection has been restored" — there was no selection.
+    const { dispatch, state } = makeFakeView();
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch, state } as any,
+        source: 'generic',
+        html: '<p>x</p>',
+        restoreText: '',
+        anchorIndex: 0,
+        err: new ChunkedInsertError(new Error('boom'), {
+          chunksCompleted: 0,
+          totalChunks: 5,
+          bytesWritten: 0,
+          bytesRemaining: 250 * 1024,
+        }),
+      }),
+    );
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    const msg = toastMock.error.mock.calls[0]?.[0] as string;
+    expect(msg).not.toContain('been restored');
+    expect(msg).not.toContain('could not be restored');
+  });
 });

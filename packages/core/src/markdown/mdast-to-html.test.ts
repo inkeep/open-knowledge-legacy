@@ -189,7 +189,7 @@ describe('custom-node regression gate — every promoted mdast type emits semant
       expect(html).not.toMatch(/<Callout/);
     });
 
-    test('mdxJsxTextElement emits <span class="mdx-inline"> with entity-escaped raw', () => {
+    test('mdxJsxTextElement emits <span class="mdx-inline" data-jsx-inline=""> with entity-escaped raw', () => {
       const html = mdastToHtml({
         type: 'root',
         children: [
@@ -210,12 +210,15 @@ describe('custom-node regression gate — every promoted mdast type emits semant
           },
         ],
       });
-      expect(html).toContain('<span class="mdx-inline">');
+      // Outbound carries BOTH class (cross-app readability) AND data-* (PM
+      // parseHTML round-trip via Branch C).
+      expect(html).toContain('class="mdx-inline"');
+      expect(html).toContain('data-jsx-inline=""');
       expect(html).toMatch(/&#x3C;Tag/);
       expect(html).not.toMatch(/<Tag /);
     });
 
-    test('rawMdxFallback emits parse-error comment + <pre class="mdx-fallback">', () => {
+    test('rawMdxFallback emits parse-error comment + <pre> with class + data-raw-mdx-fallback markers', () => {
       const html = mdastToHtml({
         type: 'root',
         children: [
@@ -228,7 +231,12 @@ describe('custom-node regression gate — every promoted mdast type emits semant
         ],
       });
       expect(html).toContain('<!-- Parse error: Unclosed JSX -->');
-      expect(html).toContain('<pre class="mdx-fallback">');
+      // Outbound carries both class and data-* markers (PM parseHTML
+      // round-trip via Branch C; cross-app destinations strip data-* without
+      // rendering regression).
+      expect(html).toContain('class="mdx-fallback"');
+      expect(html).toContain('data-raw-mdx-fallback=""');
+      expect(html).toContain('data-reason="Unclosed JSX"');
       expect(html).toContain('<code>');
       expect(html).toMatch(/&#x3C;Broken/);
       expect(html).not.toMatch(/<Broken /);

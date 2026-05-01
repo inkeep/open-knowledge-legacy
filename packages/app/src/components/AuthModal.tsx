@@ -16,6 +16,7 @@
 import { type ProblemDetails, ProblemDetailsSchema } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
 import { consumeAuthEventStream } from './auth-event-stream';
 import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -75,6 +76,13 @@ interface AuthModalProps {
   identityPrompt?: boolean;
   /** Show "Re-authenticate" heading. */
   reauth?: boolean;
+  /**
+   * Transport for the device-flow subprocess. Defaults to the HTTP path
+   * (POST /api/local-op/auth/login) so existing editor / web callers
+   * don't change. The Project Navigator passes an IPC transport because
+   * its window has no backing API server.
+   */
+  transport?: AuthTransport;
 }
 
 // ── Device Flow panel ─────────────────────────────────────────────────────────
@@ -82,61 +90,35 @@ interface AuthModalProps {
 interface DeviceFlowPanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
   onCancel: () => void;
+  transport: AuthTransport;
 }
 
 const DEVICE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
-function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
+function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProps) {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState('https://github.com/login/device');
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [timeLeft, setTimeLeft] = useState(DEVICE_TIMEOUT_MS);
-  const abortRef = useRef<AbortController | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function startDeviceFlow(ac: AbortController) {
+  async function startDeviceFlow() {
     setError(null);
     setPolling(true);
     try {
-      const res = await fetch('/api/local-op/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ json: true }),
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        // Pre-stream error: server emitted RFC 9457 problem+json before
-        // committing to the NDJSON stream. Display the typed `title`.
-        let message = 'Failed to start sign-in — try again';
-        try {
-          const body = (await res.json()) as unknown;
-          const result = ProblemDetailsSchema.safeParse(body);
-          if (result.success) message = result.data.title;
-        } catch {
-          /* keep generic message */
-        }
-        setError(message);
-        setPolling(false);
-        return;
-      }
-      if (!res.body) {
-        setError('Failed to start sign-in — try again');
-        setPolling(false);
-        return;
-      }
-
-      const terminated = await consumeAuthEventStream(res.body, (line): 'terminal' | 'continue' => {
-        // Narrow try/catch to JSON.parse only — event-processing errors (e.g.
-        // server bug emitting `{type:'error'}` without `problem`) propagate
-        // instead of being silently swallowed alongside malformed JSON.
-        let event: DeviceEvent;
-        try {
-          event = JSON.parse(line) as DeviceEvent;
-        } catch {
-          return 'continue'; // malformed JSON line
-        }
+      const handle = transport.start();
+      cancelRef.current = handle.cancel;
+      // Manual iterator drive — React Compiler (BuildHIR) does not yet
+      // support `for await ... of` lowering, so we walk the iterator with
+      // explicit `next()` calls instead.
+      const iter = handle.events[Symbol.asyncIterator]();
+      let sawTerminal = false;
+      let result = await iter.next();
+      while (!result.done) {
+        const event = result.value;
         if (event.type === 'verification') {
           setUserCode(event.user_code);
           setVerificationUri(event.verification_uri);
@@ -146,6 +128,7 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
             setTimeout(() => setCopied(false), 2000);
           });
         } else if (event.type === 'complete') {
+          sawTerminal = true;
           setPolling(false);
           onSuccess({
             login: event.login,
@@ -153,16 +136,16 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
             email: event.email,
             avatarUrl: event.avatarUrl,
           });
-          return 'terminal';
+          break;
         } else if (event.type === 'error') {
-          setError(event.problem?.title ?? 'Sign-in error');
+          sawTerminal = true;
+          setError(event.message);
           setPolling(false);
-          return 'terminal';
+          break;
         }
-        return 'continue';
-      });
-
-      if (!terminated) {
+        result = await iter.next();
+      }
+      if (!sawTerminal) {
         setError('Sign-in stream ended without confirmation — please try again');
         setPolling(false);
       }
@@ -176,12 +159,24 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
   useEffect(() => {
-    const ac = new AbortController();
-    abortRef.current = ac;
-    void startDeviceFlow(ac);
-
+    // Defer the start by one microtask so React StrictMode's dev-mode
+    // mount→cleanup→remount cycle coalesces into a single start. Without
+    // this, the first mount's IPC `:start` fires, the cleanup chains a
+    // cancel onto its (still-pending) promise, and the second mount's
+    // `:start` reaches main BEFORE the chained cancel — main's
+    // single-in-flight guard then rejects the second start with "An auth
+    // login operation is already in progress". The microtask defer lets
+    // the first mount's cleanup set `cancelled = true` before its start
+    // ever fires, leaving only the second mount's start to run.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void startDeviceFlow();
+    });
     return () => {
-      ac.abort();
+      cancelled = true;
+      cancelRef.current?.();
+      cancelRef.current = null;
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
@@ -452,7 +447,11 @@ export function AuthModal({
   onSuccess,
   identityPrompt,
   reauth,
+  transport,
 }: AuthModalProps) {
+  // Default to the HTTP path so existing editor / web callers don't need
+  // to change. Navigator passes its IPC transport explicitly.
+  const resolvedTransport = transport ?? httpAuthTransport();
   const [tab, setTab] = useState<AuthTab>('device');
   const [step, setStep] = useState<AuthStep>('auth');
   const [authResult, setAuthResult] = useState<AuthSuccessResult | null>(null);
@@ -541,7 +540,11 @@ export function AuthModal({
               </div>
 
               {tab === 'device' ? (
-                <DeviceFlowPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
+                <DeviceFlowPanel
+                  onSuccess={handleAuthSuccess}
+                  onCancel={handleCancel}
+                  transport={resolvedTransport}
+                />
               ) : (
                 <PATPanel onSuccess={handleAuthSuccess} onCancel={handleCancel} />
               )}

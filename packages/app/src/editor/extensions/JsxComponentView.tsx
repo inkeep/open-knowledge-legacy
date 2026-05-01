@@ -54,6 +54,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../components/ui/popover.tsx';
+import { OPT_OUT_ATTR } from '../clipboard/index.ts';
 import { DescriptorPlaceholder } from '../components/DescriptorPlaceholder.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { getWrapperBridgeId } from '../extensions/selection-state-plugin.ts';
@@ -542,6 +543,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         <div
           className="text-xs font-mono text-muted-foreground px-2 py-2 border border-destructive/40 rounded bg-destructive/5 flex items-center gap-2"
           contentEditable={false}
+          {...{ [OPT_OUT_ATTR]: 'true' }}
         >
           <span className="flex-1">{label}</span>
           <button
@@ -744,6 +746,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           className="jsx-component-chrome"
           contentEditable={false}
           onMouseDown={(e) => e.stopPropagation()}
+          {...{ [OPT_OUT_ATTR]: 'true' }}
         >
           {/* Move up/down — only for children inside containers; hidden at boundaries.
             `doc.resolve(pos)` / `doc.slice(...)` can throw `RangeError` when the
@@ -939,6 +942,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               editor.chain().focus().insertContentAt(insertPos, childJSON).run();
               focusInsertedComponent(editor, insertPos, getDescriptor(childName));
             }}
+            {...{ [OPT_OUT_ATTR]: 'true' }}
           >
             <span>+ Add {descriptor.emptyChildName}</span>
           </button>

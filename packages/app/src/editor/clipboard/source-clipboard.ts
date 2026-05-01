@@ -1,29 +1,35 @@
 /**
  * Source-view clipboard extension — `EditorView.domEventHandlers` for copy,
- * cut, and paste per FR-4 / FR-5 / D4 / D5.
+ * cut, and paste per precedent #19(c).
  *
  * CodeMirror 6 has no equivalent to PM's `clipboardTextSerializer` /
  * `clipboardSerializer` hooks, so we override the DOM events directly.
- * Per D14, this is the only view where DOM-level override is acceptable
- * (WYSIWYG uses PM's hooks instead). User-facing behavior is symmetric
- * across both views:
+ * This is the only view where DOM-level override is acceptable (WYSIWYG
+ * uses PM's hooks instead per precedent #19(b)). User-facing behavior is
+ * symmetric across both views:
  *
  *   - Copy/cut write text/plain = markdown source AND text/html = canonical
  *     rendered HTML (via the shared mdast-to-html module). Cross-view
- *     byte-identical output per D4.
+ *     byte-identical output.
  *
- *   - Paste routes through a 4-branch dispatcher (D5) parallel to the
- *     WYSIWYG 5-branch. Source's insertion IS markdown text, so branch B
- *     (text/x-gfm) collapses into CM6's text/plain default path.
+ *   - Paste routes through a 5-branch dispatcher parallel to WYSIWYG's
+ *     5-branch (A/B/C/D/E). Source's insertion IS markdown text, so the
+ *     markdown-first tiebreak (Branch B), the Branch C `data-pm-slice`
+ *     check, and Branch E all resolve to "let CM6 default text/plain
+ *     verbatim insert run" — the dispatcher's value here is structural,
+ *     not behavioral. The tiebreak fires AHEAD of Branch C and Branch D
+ *     for the narrow case where external markdown carries a rich-HTML
+ *     preview; without it Branch D's `htmlToMdast` would normalize bytes
+ *     that the user pasted as canonical markdown.
  *
  *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
  *     tracker — ClipboardEvent does not expose shiftKey natively).
  *
- *   - FR-21 large-paste chunked insert: payloads >500KB bypass the CM6
- *     dispatch and land via `chunkedYTextInsert` directly. A Y.RelativePosition
- *     is pinned before the first chunk so concurrent peers writing at
- *     offsets ≤ writeIndex during rAF yields do not shift the target.
- *     Mid-stream failure surfaces as a structured `clipboard-chunked-insert-failed`
+ *   - Large-paste chunked insert: payloads >500KB bypass the CM6 dispatch
+ *     and land via `chunkedYTextInsert` directly. A Y.RelativePosition is
+ *     pinned before the first chunk so concurrent peers writing at offsets
+ *     ≤ writeIndex during rAF yields do not shift the target. Mid-stream
+ *     failure surfaces as a structured `clipboard-chunked-insert-failed`
  *     event with partial-progress fields.
  */
 
@@ -47,6 +53,7 @@ import {
   logSerializeFail,
   logSourceDetected,
 } from './instrument.ts';
+import { isMarkdown } from './is-markdown.ts';
 import { installShiftTracker, pasteShiftHeld } from './shift-tracker.ts';
 
 export interface SourceClipboardDeps {
@@ -142,6 +149,18 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
       logIfSlow(start, { op: 'paste', view: 'source', branch: 'A', source });
       return true;
     }
+  }
+
+  // Markdown-first tiebreak: both text/plain (markdown-shaped) AND text/html
+  // present. Source's insertion IS markdown, so let CM6 default text/plain
+  // verbatim insert run. Runs ahead of Branch C (data-pm-slice) and Branch
+  // D (htmlToMdast) so external markdown-with-rich-HTML-preview pastes
+  // (J3 narrow case) preserve the canonical text/plain bytes instead of
+  // being normalized through the htmlToMdast cleanup pipeline.
+  if (plain && html && isMarkdown(plain)) {
+    logSourceDetected({ view: 'source', branch: 'B', source });
+    logIfSlow(start, { op: 'paste', view: 'source', branch: 'B', source });
+    return false;
   }
 
   // Branch C: PM-origin slice — the data-pm-slice wrapper's inner content
@@ -374,7 +393,12 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
 
   // 1. Rollback + restore. If we know bytesWritten (ChunkedInsertError) we
   //    delete the partial range; otherwise we restore the selection at the
-  //    anchor (best effort).
+  //    anchor (best effort). Track the outcome so the user-visible toast
+  //    reflects whether restoration actually succeeded — claiming "selection
+  //    restored" when the dispatch threw (view destroyed by Activity-hidden
+  //    unmount, Y.Doc GC'd) silently masks user-visible data loss.
+  type RestoreOutcome = 'restored' | 'restore-failed' | 'no-restore-needed';
+  let restoreOutcome: RestoreOutcome = 'no-restore-needed';
   if (err instanceof ChunkedInsertError && err.bytesWritten > 0) {
     const absStart =
       anchorRelPos && ydoc
@@ -387,21 +411,33 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
       view.dispatch({
         changes: { from: absStart, to: deleteEnd, insert: restoreText },
       });
+      restoreOutcome = restoreText.length > 0 ? 'restored' : 'no-restore-needed';
     } catch (restoreErr) {
       console.warn('[clipboard] partial-chunk rollback dispatch failed', restoreErr);
+      restoreOutcome = restoreText.length > 0 ? 'restore-failed' : 'no-restore-needed';
     }
   } else if (restoreText.length > 0) {
     // Non-typed error or zero bytes written — restore the user's selection
     // at the anchor. No partial range to delete.
     try {
       view.dispatch({ changes: { from: anchorIndex, to: anchorIndex, insert: restoreText } });
+      restoreOutcome = 'restored';
     } catch (restoreErr) {
       // Restoration is best-effort — the view may be destroyed by the time
       // the promise settles. Log, then continue emitting the telemetry /
       // toast paths.
       console.warn('[clipboard] selection-restore dispatch failed', restoreErr);
+      restoreOutcome = 'restore-failed';
     }
   }
+
+  // Toast suffix mirrors the actual outcome of the restoration attempt.
+  const restoreSuffix =
+    restoreOutcome === 'restored'
+      ? ' Your selection has been restored.'
+      : restoreOutcome === 'restore-failed'
+        ? ' Your selection could not be restored.'
+        : '';
 
   // 2. Emit structured telemetry.
   if (err instanceof ChunkedInsertError) {
@@ -415,7 +451,7 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
     });
     // 3. User-visible signal with partial-progress info.
     toast.error(
-      `Paste was incomplete — ${err.chunksCompleted} of ${err.totalChunks} chunks landed. Your selection has been restored.`,
+      `Paste was incomplete — ${err.chunksCompleted} of ${err.totalChunks} chunks landed.${restoreSuffix}`,
     );
     return;
   }
@@ -428,5 +464,5 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
     errorClass: classifyError(err),
     htmlBytes: html.length,
   });
-  toast.error('Paste failed. Your selection has been restored.');
+  toast.error(`Paste failed.${restoreSuffix}`);
 }

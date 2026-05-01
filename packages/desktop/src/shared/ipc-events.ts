@@ -15,7 +15,12 @@
  * `tests/integration/no-loosely-typed-webcontents-ipc.test.ts`.
  */
 
-import type { OkDesktopConfig, OkMenuAction } from './bridge-contract.ts';
+import type {
+  OkDesktopConfig,
+  OkLocalOpAuthEvent,
+  OkLocalOpCloneEvent,
+  OkMenuAction,
+} from './bridge-contract.ts';
 import type { McpWiringEditorDetection } from './ipc-channels.ts';
 
 export interface EventChannels {
@@ -66,5 +71,26 @@ export interface EventChannels {
    */
   'ok:mcp-wiring:show': {
     payload: { detectedEditors: readonly McpWiringEditorDetection[] };
+  };
+
+  /**
+   * Streaming events for the pre-project Navigator local-op flows. Pair
+   * with `ok:local-op:auth:start` / `ok:local-op:clone:start`. Events
+   * carry the `streamId` returned by the start call so multiple in-flight
+   * flows on the same channel can be disambiguated (currently we cap at
+   * one, but the streamId design lets future renderer code subscribe to
+   * specific flows).
+   *
+   * Auth events mirror the server-side `AuthEvent` discriminated union
+   * (`verification` | `complete` | `error`); clone events mirror the raw
+   * CLI shape (`progress` | `complete` with `dir` only | `error`) — the
+   * IPC path doesn't need the HTTP relay's port chaining because main
+   * spawns a new editor window directly at `dir`.
+   */
+  'ok:local-op:auth:event': {
+    payload: { streamId: string; event: OkLocalOpAuthEvent };
+  };
+  'ok:local-op:clone:event': {
+    payload: { streamId: string; event: OkLocalOpCloneEvent };
   };
 }

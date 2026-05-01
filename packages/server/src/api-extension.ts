@@ -172,6 +172,7 @@ import {
   isAllowedGitUrl,
   isSafeLocalPath,
 } from './local-op-security.ts';
+import { type AuthEvent, runCloneSubprocess, runDeviceFlowSubprocess } from './local-ops/index.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -5529,17 +5530,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    /** Write a typed mid-stream error event and emit one telemetry+log line. */
+    // HTTP-side mid-stream error writer (US-005 / D36 c). Wraps raw CLI
+    // `{type:'error', message}` events in the canonical RFC 9457 streaming
+    // envelope `{type:'error', problem: ProblemDetails}` so consumers can
+    // safeParse uniformly. The IPC pathway forwards the raw shape per its
+    // bridge contract; HTTP transport's `CloneEvent` union accepts both.
     const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_CLONE);
 
-    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
-    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
-    const targetDir = expandTilde(dir);
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
-
-    let timedOut = false;
-    let settled = false;
     // The CLI emits `{type:'complete', dir}` on success, but the browser
     // client expects `{type:'complete', port}`. We intercept the CLI's
     // complete event, boot a server at the cloned dir, then emit a
@@ -5547,129 +5544,72 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // a typed `problem` envelope; non-terminal `progress` events flow
     // through unchanged.
     let cloneCompleteDir: string | null = null;
-    let stdoutBuffer = '';
 
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    const killTimer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let parsed: { type?: unknown; dir?: unknown; message?: unknown } | null = null;
-        try {
-          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown; message?: unknown };
-        } catch {
-          /* non-JSON — ignore */
+    const flow = runCloneSubprocess({
+      cliArgs: localOpCliArgs,
+      url,
+      dir,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event) => {
+        if (event.type === 'complete') {
+          cloneCompleteDir = event.dir;
+          return;
         }
-        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
-          // Swallow this line; we'll emit our own complete after starting the server.
-          cloneCompleteDir = parsed.dir;
-          continue;
-        }
-        if (parsed && parsed.type === 'error') {
-          // Wrap the CLI's untyped error into the canonical streaming envelope so
-          // every mid-stream error event carries a `problem: ProblemDetails`
-          // payload — clients read `event.problem.title`, not `event.message`.
-          const cliMessage = typeof parsed.message === 'string' ? parsed.message : undefined;
+        if (event.type === 'error') {
+          if (event.message) {
+            log.warn({ stderr: event.message, url, dir }, '[local-op/clone] clone failed');
+          }
           writeStreamError(
             500,
             'urn:ok:error:clone-failed',
             'Clone subprocess reported an error.',
             {
-              detail: cliMessage,
+              detail: event.message || undefined,
             },
           );
-          continue;
+          return;
         }
-        if (!res.writableEnded) res.write(`${line}\n`);
-      }
+        // progress events flow through unchanged
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
 
-    // Buffer stderr so we can surface it when the clone fails; also log.
-    const stderrChunks: Buffer[] = [];
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
-      if (settled) {
-        localOpGuard.release(LOCAL_OP_CLONE_KEY);
-        return;
-      }
-      settled = true;
-
-      void (async () => {
-        try {
-          if (timedOut && !res.writableEnded) {
-            writeStreamError(
-              504,
-              'urn:ok:error:clone-timeout',
-              'Clone timed out after 10 minutes.',
-              { detail: stderrOutput || undefined },
-            );
-          } else if (code !== 0 && !res.writableEnded) {
-            if (stderrOutput) {
-              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
-            }
-            writeStreamError(
-              500,
-              'urn:ok:error:clone-failed',
-              `Clone subprocess exited with code ${code}.`,
-              { detail: stderrOutput || undefined },
-            );
-          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
-            // Chain into server-start so the client can redirect.
-            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
-            if (!res.writableEnded) {
-              if ('port' in result) {
-                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
-              } else {
-                writeStreamError(
-                  500,
-                  'urn:ok:error:server-start-failed',
-                  'Cloned successfully but failed to start the project server.',
-                  { detail: result.error },
-                );
-              }
+    void (async () => {
+      try {
+        await flow.done;
+        if (cloneCompleteDir && !res.writableEnded) {
+          // Chain into server-start so the client can redirect.
+          const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+          if (!res.writableEnded) {
+            if ('port' in result) {
+              // `dir` is the absolute, tilde-expanded path to the cloned
+              // repo. Web clients ignore it and redirect via `port`; the
+              // Electron Navigator uses it to spawn a new editor window
+              // instead of navigating the launcher to a dev-server URL.
+              res.write(
+                `${JSON.stringify({ type: 'complete', port: result.port, dir: cloneCompleteDir })}\n`,
+              );
+            } else {
+              writeStreamError(
+                500,
+                'urn:ok:error:server-start-failed',
+                'Cloned successfully but failed to start the project server.',
+                { detail: result.error },
+              );
             }
           }
-        } finally {
-          if (!res.writableEnded) res.end();
-          localOpGuard.release(LOCAL_OP_CLONE_KEY);
         }
-      })();
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          // Fixed-vocabulary detail — Node's spawn ENOENT/EACCES messages carry
-          // the resolved binary path; `cause` preserves diagnostics for Pino.
-          writeStreamError(
-            500,
-            'urn:ok:error:clone-failed',
-            'Failed to spawn the clone subprocess.',
-            { cause: err },
-          );
-          res.end();
-        }
+      } finally {
+        if (!res.writableEnded) res.end();
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
       }
-      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    })();
+
+    // Cancel the subprocess if the client disconnects.
+    res.on('close', () => {
+      flow.cancel();
     });
   }
 
@@ -5889,107 +5829,37 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
-    /** Write a typed mid-stream error event (US-005 pattern). */
+    // Wrap CLI raw `error` events in RFC 9457 streaming envelope (US-005).
     const writeStreamError = createStreamingErrorWriter(res, HANDLE_LOCAL_OP_AUTH_LOGIN);
 
-    const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
-
-    let settled = false;
-    let sawTerminalEvent = false;
-    let stdoutBuffer = '';
-    const child = spawn(cmd, spawnArgs, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+    const flow = runDeviceFlowSubprocess({
+      cliArgs: localOpCliArgs,
+      host,
+      timeoutMs: LOCAL_OP_TIMEOUT_MS,
+      onEvent: (event: AuthEvent) => {
+        if (event.type === 'error') {
+          writeStreamError(500, 'urn:ok:error:auth-failed', 'Auth subprocess reported an error.', {
+            detail: event.message || undefined,
+          });
+          return;
+        }
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(event)}\n`);
+        }
+      },
     });
-
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, LOCAL_OP_TIMEOUT_MS);
 
     // Kill the child if the client disconnects so `auth login` doesn't keep
     // polling in the background and write a token to the keychain that the
     // user never saw confirmation for.
     const onClientClose = () => {
-      if (!child.killed) child.kill('SIGTERM');
+      flow.cancel();
     };
     res.on('close', onClientClose);
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf-8');
-      const lines = stdoutBuffer.split('\n');
-      stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let evt: { type?: unknown; message?: unknown } | null = null;
-        try {
-          evt = JSON.parse(line) as { type?: unknown; message?: unknown };
-        } catch {
-          /* non-JSON line (e.g. keychain-backend log) — ignore */
-        }
-        if (evt && evt.type === 'error') {
-          // Wrap the CLI's untyped error into the typed streaming envelope.
-          const detail = typeof evt.message === 'string' ? evt.message : undefined;
-          writeStreamError(
-            500,
-            'urn:ok:error:auth-failed',
-            'Auth login subprocess reported an error.',
-            { detail },
-          );
-          sawTerminalEvent = true;
-          continue;
-        }
-        if (evt && evt.type === 'complete') {
-          sawTerminalEvent = true;
-        }
-        if (!res.writableEnded) res.write(`${line}\n`);
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
+    void flow.done.finally(() => {
       res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          if (code === 0 && !sawTerminalEvent) {
-            // CLI exited cleanly without emitting a terminal event — synthesize
-            // one so the client's stream reader can resolve. Login name will be
-            // filled in by the next /api/local-op/auth/status poll.
-            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
-          } else if (code !== 0) {
-            writeStreamError(
-              500,
-              'urn:ok:error:auth-failed',
-              `Auth login subprocess exited with code ${code}.`,
-            );
-          }
-        }
-        res.end();
-      }
-      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      res.off('close', onClientClose);
-      if (!settled) {
-        settled = true;
-        if (!res.writableEnded) {
-          // Fixed-vocabulary detail — see clone-failed catch site.
-          writeStreamError(
-            500,
-            'urn:ok:error:auth-failed',
-            'Failed to spawn the auth login subprocess.',
-            { cause: err },
-          );
-          res.end();
-        }
-      }
+      if (!res.writableEnded) res.end();
       localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
     });
   }

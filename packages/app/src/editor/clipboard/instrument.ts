@@ -54,7 +54,35 @@ type ClipboardEventName =
   | 'clipboard-source-detected'
   | 'clipboard-html-conversion-failed'
   | 'clipboard-serialize-failed'
-  | 'clipboard-chunked-insert-failed';
+  | 'clipboard-chunked-insert-failed'
+  // Reserved: emitted by `descriptor.toClipboardHast` override invocations
+  // when the first descriptor with hidden state declares one. v1's 5-pack
+  // + 3 compat descriptors all use the walker default (Layer 2), which is
+  // intentionally NOT instrumented (would explode telemetry volume on
+  // every copy). The helper that emits this event lands with the first
+  // override; the name is registered here so dashboards know it exists.
+  | 'clipboard-hast-override-invoked'
+  // Emitted when the live-DOM walker hits `view.nodeDOM(pos) === null`
+  // and falls back to the per-descriptor static palette. Expected only
+  // for Activity-hidden subtrees; presence in normal copy operations
+  // signals a real bug per the walker STOP_IF rule.
+  | 'clipboard-walker-fallback-fired'
+  // Emitted when the live-DOM walker drops or rewrites a value at the
+  // FR-20 escape boundary — unsafe URL scheme on `href`/`src`/`srcset`/...,
+  // dangerous `on*` event-handler attribute, unsafe `url(javascript:...)` /
+  // `expression(...)` payload in `style`, or an embedded unsafe URL inside
+  // `aria-label`/`title` that was substituted with `[blocked]`. Cardinality
+  // bounded: `attr` is one of the URL_SCHEME_ATTRS / URL_BEARING_TEXT_ATTRS
+  // members or the literal `style` / `on*`; `reason` is a fixed taxonomy.
+  | 'clipboard-walker-url-blocked'
+  // Emitted at most once per process per `lucide-*` class when the walker
+  // encounters a lucide SVG icon with no glyph mapping in
+  // `LUCIDE_GLYPH_MAP`. Surface so a new descriptor that ships an icon
+  // without a corresponding glyph entry doesn't silently regress cross-app
+  // paste fidelity (the SVG stays as inline `<svg>` which every major
+  // destination strips). Cardinality bounded by the lucide-icons set
+  // (~1500 names total) and dedup'd per process.
+  | 'clipboard-walker-unmapped-lucide-detected';
 
 /** View identifier — one per clipboard-bearing editor surface. */
 type ClipboardView = 'wysiwyg' | 'source';
@@ -210,6 +238,89 @@ export function logSerializeFail(info: SerializeFailInfo): void {
       reason: info.reason,
     }),
   );
+}
+
+/**
+ * Emit when the live-DOM clipboard walker hits a `null` from
+ * `view.nodeDOM(pos)` and falls back to the per-descriptor static palette.
+ * Expected behavior for Activity-hidden subtrees; presence on a top-level
+ * descriptor in a normally-mounted editor signals a real bug per the
+ * walker STOP_IF rule. Bounded-cardinality: `descriptor` is a PM node
+ * type name (statically defined) and `view` is a fixed enum.
+ */
+export function logWalkerFallback(info: { descriptor: string; view: ClipboardView }): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-fallback-fired' satisfies ClipboardEventName,
+      descriptor: info.descriptor,
+      view: info.view,
+    }),
+  );
+}
+
+/**
+ * Reasons the walker rejected an attribute or value at the FR-20 escape
+ * boundary. Bounded enum so log-aggregator dashboards can render a static
+ * schema; `attr` is constrained at the call site to URL_SCHEME_ATTRS /
+ * URL_BEARING_TEXT_ATTRS members or the literal `style` / `on*`.
+ */
+type WalkerUrlBlockedReason =
+  | 'scheme'
+  | 'srcset-candidate'
+  | 'embedded-url'
+  | 'event-handler'
+  | 'unsafe-url-or-expression';
+
+/**
+ * Emit when the walker drops or rewrites a value at the FR-20 escape
+ * boundary. Defense-in-depth at the cross-app re-emit layer — sibling
+ * sanitizers (`sanitize-url.ts:emitPropDroppedEvent`) emit on the same
+ * cadence, so attack-surface visibility is symmetric across the codebase.
+ */
+export function logWalkerUrlBlocked(info: {
+  attr: string;
+  reason: WalkerUrlBlockedReason;
+  view: ClipboardView;
+}): void {
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-url-blocked' satisfies ClipboardEventName,
+      view: info.view,
+      attr: info.attr,
+      reason: info.reason,
+    }),
+  );
+}
+
+/**
+ * Emit at most once per process per unmapped `lucide-*` class. Module-level
+ * Set provides the dedup; bounded above by the lucide icon set (~1500
+ * names). Triggered from `replaceLucideIconsWithGlyphs` in clipboard-walker.ts
+ * when a descriptor's React render contains a lucide SVG that has no glyph
+ * entry. Without this signal, a new icon shipped without a mapping would
+ * silently disappear at every major paste destination (Gmail, Notion,
+ * Slack, Outlook, Google Docs all strip inline SVG).
+ *
+ * Test-only reset hook: `resetUnmappedLucideSeenForTest` exists so unit
+ * tests can clear the dedup set between assertions without paying the
+ * cost of unique-class-per-test bookkeeping.
+ */
+const unmappedLucideSeen = new Set<string>();
+export function logUnmappedLucideIcon(info: { lucideClass: string; view: ClipboardView }): void {
+  if (unmappedLucideSeen.has(info.lucideClass)) return;
+  unmappedLucideSeen.add(info.lucideClass);
+  console.warn(
+    JSON.stringify({
+      event: 'clipboard-walker-unmapped-lucide-detected' satisfies ClipboardEventName,
+      view: info.view,
+      lucideClass: info.lucideClass,
+    }),
+  );
+}
+
+/** Test-only: reset the dedup state. Not exported via barrel. */
+export function resetUnmappedLucideSeenForTest(): void {
+  unmappedLucideSeen.clear();
 }
 
 /**

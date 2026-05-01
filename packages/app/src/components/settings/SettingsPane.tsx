@@ -43,7 +43,12 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { type ControllerRenderProps, type FieldPath, useFormContext } from 'react-hook-form';
+import {
+  type ControllerRenderProps,
+  type FieldPath,
+  type UseFormReturn,
+  useFormContext,
+} from 'react-hook-form';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { InstallInClaudeDesktopDialog } from '@/components/InstallInClaudeDesktopDialog';
@@ -65,12 +70,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { subscribeToConfigValidationRejected } from '@/lib/config-validation-events';
 import type { SettingsScope } from '@/lib/use-settings-route';
+import { FoldersSection } from './FoldersSection';
 import {
   getEnumOptions,
   getFieldDefault,
   getLeafTypeTag,
   resolveLeafSchema,
 } from './schema-walker';
+import type { SlotForwardedProps } from './slot-forwarded-props';
 import { pickFirstIssueForPath, useConfigForm } from './use-config-form';
 
 interface SettingsPaneProps {
@@ -79,12 +86,34 @@ interface SettingsPaneProps {
   onScopeChange: (scope: SettingsScope) => void;
 }
 
-interface SectionDef {
-  id: string;
-  title: string;
-  description: string;
-  fields: FieldDef[];
-}
+/**
+ * Discriminated union: a section is either the scalar variant (`fields[]`
+ * iterated by SettingsForm + SettingsSection) OR the custom variant
+ * (delegates wholly to a custom component like `<FoldersSection>`). The
+ * `custom?: never` branch makes `{ custom: 'folders', fields: [{...}] }`
+ * unrepresentable — a stray `fields[]` entry on a custom section would
+ * silently never render under the dispatcher's early-return.
+ *
+ * Custom sections still carry `title` / `description` for shape
+ * uniformity (the SECTIONS array is iterated as a single list), but the
+ * custom component owns its own `<section>` + heading + scope handling
+ * and the dispatcher never reads those fields.
+ */
+type SectionDef =
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: FieldDef[];
+      custom?: never;
+    }
+  | {
+      id: string;
+      title: string;
+      description: string;
+      fields: [];
+      custom: 'folders';
+    };
 
 interface FieldDef {
   path: string[];
@@ -136,6 +165,14 @@ const SECTIONS: SectionDef[] = [
         description: 'URL of your team’s deployed wiki (project-only).',
       },
     ],
+  },
+  {
+    id: 'folders',
+    title: 'Folders',
+    description:
+      'Default frontmatter applied to documents matching glob patterns. Order matters: later rules override earlier ones.',
+    fields: [],
+    custom: 'folders',
   },
   {
     id: 'mcp',
@@ -392,21 +429,39 @@ function BoundSettingsForm({ scope, binding }: BoundSettingsFormProps) {
 
   return (
     <Form {...form}>
-      <SettingsForm scope={scope} commitField={commitField} flashedPath={flashedPath} />
+      <SettingsForm scope={scope} form={form} commitField={commitField} flashedPath={flashedPath} />
     </Form>
   );
 }
 
 interface SettingsFormProps {
   scope: SettingsScope;
+  form: UseFormReturn<Config>;
   commitField: (name: FieldPath<Config>) => boolean;
   flashedPath: string | null;
 }
 
-function SettingsForm({ scope, commitField, flashedPath }: SettingsFormProps) {
+function SettingsForm({ scope, form, commitField, flashedPath }: SettingsFormProps) {
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {SECTIONS.map((section) => {
+        if (section.custom === 'folders') {
+          // Custom-rendered section. The schema's `folders` field is
+          // `scope: 'either'` so the section renders on both sub-tabs;
+          // FoldersSection edits the active tab's array. FoldersSection
+          // owns its own `<section>` + heading (no SettingsSection wrap)
+          // because its add/remove/reorder UX needs full control over
+          // the heading-row layout.
+          return (
+            <FoldersSection
+              key={section.id}
+              form={form}
+              commitField={commitField}
+              scope={scope}
+              flashedPath={flashedPath}
+            />
+          );
+        }
         const visibleFields = section.fields.filter((field) =>
           isFieldVisibleAtScope(field.path, scope),
         );
@@ -650,12 +705,6 @@ interface FieldControlBodyProps {
    */
   onCommit: () => boolean;
 }
-
-type SlotForwardedProps = {
-  id?: string;
-  'aria-invalid'?: boolean | 'true' | 'false';
-  'aria-describedby'?: string;
-};
 
 /**
  * Type-tag-driven dispatch for the inner control element. Returns a

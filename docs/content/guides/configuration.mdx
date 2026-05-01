@@ -39,7 +39,7 @@ Every schema section uses Zod's `looseObject` mode: unknown keys are preserved o
 | `mcp.tools.search.maxResults`         | `number`                     | `50`                      | Max rows returned by the MCP `search` tool.                                                                                                                                                          |
 | `mcp.tools.read_document.historyDepth`| `number`                     | `5`                       | Number of shadow-repo history entries surfaced by the MCP `read_document` tool.                                                                                                                      |
 | `preview.baseUrl`                     | `string?`                    | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Workspace-only — illegal at user scope. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting. |
-| `folders[]`                           | `FolderRule[]`               | `[]`                      | Per-folder default frontmatter. Each entry is `{match: glob, frontmatter: {title?, description?, tags?}}`. Edit per-rule via the `set_folder_rule` MCP tool.                                          |
+| `folders[]`                           | `FolderRule[]`               | `[]`                      | Per-folder default frontmatter. Each entry is `{match: glob, frontmatter: {title?, description?, tags?}}`. Editable in the Settings pane's [Folders section](#folders-section), per-rule via the `set_folder_rule` MCP tool, or as a whole array via `set_config({patch: {folders: [...]}})`. Order matters: later rules override earlier scalars; tags concatenate and dedupe across all matching rules. |
 | `appearance.theme`                    | `"light" \| "dark" \| "system"`? | (unset)              | Editor theme. User-scope by default. When unset, the chrome FOUC script falls back to `localStorage` + system preference; the first explicit Settings-pane write canonicalizes the value into config.yml. |
 | `appearance.editorModeDefault`        | `"wysiwyg" \| "source"`?     | (unset)                   | Initial editor mode for newly opened documents. Same dual-track behavior as `appearance.theme`.                                                                                                       |
 | `github.oauthAppClientId`             | `string`                     | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
@@ -144,6 +144,18 @@ Validation runs in three places (defense-in-depth):
 3. **Persistence hook** parses + validates Y.Text on every commit; if a malformed mutation slips past 1+2 (a buggy client, a hand-edit during the transaction window), the server reverts Y.Text to last-known-good and broadcasts a `config-validation-rejected` notification — the pane shows a toast and flashes the offending field.
 
 Settings is unavailable in the Electron Navigator window — it has no project context to scope config to.
+
+### Folders section
+
+`folders[]` rules render as a dedicated section in the Settings pane (between Preview and MCP in the section list). Each row exposes the four editable keys — **Match** (the glob pattern), **Title**, **Description**, and **Tags** — alongside per-row controls:
+
+- **Add folder rule** appends an empty `{match: '', frontmatter: {}}` entry and focuses the new Match input. The row stays in error state (Zod requires `match` to be a non-empty glob) until you type a valid pattern; nothing lands on disk before that.
+- **Move up / Move down** reorder rules. Rule order is load-bearing — later rules override earlier scalars when their globs both match a doc, so reordering is a real edit, not a cosmetic one. Each move commits.
+- **Remove** (trash icon) drops the row and commits the new array.
+
+**Tags** uses a pill input: type a tag and press **Enter**, **comma**, or **Tab** to commit it as a Badge pill. **Backspace** on an empty input removes the last pill. Duplicates are silently deduped, and any uncommitted draft is auto-committed when the field loses focus. Click the × on any pill to remove it individually.
+
+Like scalar fields, per-row edits commit on blur or Enter — but the wire write is always the **whole `folders[]` array**, mirroring the all-or-nothing transactional semantics of the `set_folder_rule` MCP tool and `applyFolderRulesUpsert` core helper. Validation runs against the merged config; if any rule fails (e.g. an empty `match` slips through, or a sibling row is invalid for an unrelated reason), no rules land on disk and the offending **Match** field shows an inline validation error. Rejections from external writers (CLI, MCP, hand-edits to disk) also briefly flash the affected row in addition to showing the inline error.
 
 ## IDE intellisense
 
