@@ -118,8 +118,24 @@ function loadYamlFile(filePath: string): LoadedYamlFile {
 
 /** Removed `content.*` keys; their patterns now live in `.okignore`. */
 const REMOVED_CONTENT_KEYS = ['include', 'exclude'] as const;
-const OKIGNORE_REDIRECT =
-  'Move these patterns to .okignore at the project root (gitignore syntax).';
+
+/**
+ * Per-key redirect message. `content.exclude` patterns migrate 1:1 to
+ * `.okignore` (both are exclude-only). `content.include` was a positive
+ * whitelist — copying patterns straight into exclude-only `.okignore` would
+ * invert intent. Surface `content.dir` as the simpler subdirectory-scoping
+ * alternative for the common include case.
+ */
+function redirectForKey(key: 'include' | 'exclude'): string {
+  if (key === 'exclude') {
+    return 'Move these patterns to .okignore at the project root (gitignore syntax, 1:1 migration).';
+  }
+  return [
+    'content.include has been removed.',
+    'For subdirectory scoping, set content.dir in .ok/config.yml instead.',
+    'For pattern-based filtering, use .okignore (gitignore syntax — exclude-only; do not copy include patterns directly).',
+  ].join(' ');
+}
 
 /**
  * Detect `content.include` / `content.exclude` in a parsed YAML file. These
@@ -151,7 +167,7 @@ function detectRemovedContentKey(file: LoadedYamlFile): ConfigValidationError | 
       return {
         code: 'REMOVED_KEY',
         path,
-        redirect: OKIGNORE_REDIRECT,
+        redirect: redirectForKey(key),
         ...(source !== undefined ? { source } : {}),
       };
     }

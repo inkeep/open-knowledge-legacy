@@ -165,7 +165,12 @@ mcp:
       new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
     );
     expect(caught?.message).toContain('content.include');
+    // include-specific redirect: surfaces content.dir as the simpler
+    // subdirectory-scoping alternative AND warns that .okignore is
+    // exclude-only (don't copy include patterns directly).
+    expect(caught?.message).toContain('content.dir');
     expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('exclude-only');
   });
 
   test('content.exclude in project config rejects with REMOVED_KEY error', () => {
@@ -185,7 +190,9 @@ mcp:
       new RegExp(`${expectedPath.replace(/[/\\.]/g, '\\$&')}:\\d+:\\d+`),
     );
     expect(caught?.message).toContain('content.exclude');
+    // exclude-specific redirect: 1:1 migration to .okignore.
     expect(caught?.message).toContain('.okignore');
+    expect(caught?.message).toContain('1:1 migration');
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
