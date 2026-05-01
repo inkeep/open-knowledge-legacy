@@ -12,7 +12,7 @@ This page covers the collab-server lifecycle owned by `ok start` (holds `server.
 
 ```text
 createServer(options)          ← synchronous, returns ServerInstance
-  ├─ acquireServerLock         ← <contentDir>/.open-knowledge/server.lock
+  ├─ acquireServerLock         ← <contentDir>/.ok/server.lock
   │                              (thin adapter over acquireProcessLock;
   │                               throws ServerLockCollisionError — a subclass
   │                               of ProcessLockCollisionError — if a live

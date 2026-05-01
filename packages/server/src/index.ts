@@ -251,6 +251,10 @@ export {
   type WriterIdentity,
 } from './shadow-repo.ts';
 export {
+  type BuildAndOpenSkillOptions,
+  type BuildAndOpenSkillResult,
+  type BuildAndOpenSkillStatus,
+  buildAndOpenSkill,
   type InstallUserSkillOptions,
   type InstallUserSkillResult,
   installUserSkill,

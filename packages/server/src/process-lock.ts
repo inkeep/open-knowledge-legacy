@@ -2,7 +2,7 @@
  * Process lock factory — shared primitive for per-project process ownership.
  *
  * Only one Open Knowledge process with a given `lockName` may own a lockDir
- * at a time. `lockDir` is `<contentDir>/.open-knowledge` by convention; the
+ * at a time. `lockDir` is `<contentDir>/.ok` by convention; the
  * lock file sits at `<lockDir>/<lockName>.lock` and contains JSON metadata
  * used for stale detection and port discovery.
  *

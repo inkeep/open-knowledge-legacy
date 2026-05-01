@@ -2,11 +2,17 @@
 /**
  * `bun run tests/perf/profile.ts --scenario=<name>` — scenario driver.
  *
- * Loads `./scenarios/<name>.ts`, launches a dedicated Chromium (headed by
- * default — required for GPU/paint events; cross-ref `reports/perf-profiling-
- * landscape-2026/evidence/cdp-tracing.md`), attaches a CDP session + Tracing
- * domain, calls `scenario.run(ctx)`, drains the `globalThis.__ok_perf`
- * collector, and writes `results/<scenario>.<timestamp>.json`.
+ * Loads `./scenarios/<name>.ts`, launches a dedicated Chromium (headless by
+ * default), attaches a CDP session + Tracing domain, calls
+ * `scenario.run(ctx)`, drains the `globalThis.__ok_perf` collector, and
+ * writes `results/<scenario>.<timestamp>.json`.
+ *
+ * Headless is the default because multi-cell sweeps that lose foreground
+ * focus mid-run hit Chromium setTimeout/rAF throttling that turns into
+ * false-positive cold-load timeouts. Single-scenario runs that need
+ * paint/GPU diagnosis can opt in with `--headed` or `OK_PERF_HEADED=1`;
+ * cross-ref `reports/perf-profiling-landscape-2026/evidence/browser-main-thread-tracing.md`
+ * for paint-event coverage.
  *
  * Standalone Bun entry point — NO `@playwright/test` runner (D2 LOCKED —
  * retries / fixtures fight perf-measurement stability). Mirrors the
@@ -16,7 +22,11 @@
  *   --scenario=<name>         Required. Matches file at ./scenarios/<name>.ts
  *   --target=<url>            Base URL. Default: http://localhost:5173
  *   --out=<dir>               Results dir. Default: ./results
- *   --headless                Launch headless (default headed)
+ *   --headed                  Launch with a visible browser window (paint/GPU
+ *                             diagnosis). Default: headless. Equivalent to
+ *                             OK_PERF_HEADED=1 in the environment.
+ *   --headless                Launch headless (the default — explicit only
+ *                             when overriding OK_PERF_HEADED=1).
  *   --viewport=<WxH>          Viewport, e.g. 1920x1080. Default 1440x900
  *
  * Exit codes:
@@ -60,11 +70,17 @@ interface CliArgs {
   viewport: { width: number; height: number };
 }
 
-function parseArgs(argv: readonly string[]): CliArgs {
+export function parseArgs(argv: readonly string[]): CliArgs {
   let scenario = '';
   let target = DEFAULT_TARGET;
   let outDir = DEFAULT_OUT_DIR;
-  let headed = true;
+  // Default headless. Multi-cell sweeps that lose foreground focus hit
+  // Chromium's setTimeout/rAF throttle (>1s/tick) and turn into false-
+  // positive cold-load timeouts; running headless eliminates that failure
+  // mode. Explicit --headed (or OK_PERF_HEADED=1) opts in for paint/GPU
+  // diagnosis on a single scenario. Sentinel-style env contract: only the
+  // literal "1" enables, so typos like "true" or "yes" stay headless.
+  let headed = process.env.OK_PERF_HEADED === '1';
   let viewport = DEFAULT_VIEWPORT;
 
   for (const raw of argv) {
@@ -98,7 +114,10 @@ function usageAndExit(err: string | null): never {
     '  --scenario=<name>        Required. Loads ./scenarios/<name>.ts',
     '  --target=<url>           Base URL. Default: http://localhost:5173',
     '  --out=<dir>              Output dir. Default: ./results',
-    '  --headless               Launch headless (default headed)',
+    '  --headed                 Launch with a visible browser window.',
+    '                           Default: headless. Equivalent to',
+    '                           OK_PERF_HEADED=1 in the environment.',
+    '  --headless               Launch headless (the default).',
     '  --viewport=<WxH>         Viewport, e.g. 1920x1080. Default 1440x900',
     '',
     'Scenarios live at packages/app/tests/perf/scenarios/*.ts',

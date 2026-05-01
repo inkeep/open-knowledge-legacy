@@ -23,7 +23,7 @@ describe('resolveContentDir', () => {
 });
 
 describe('resolveLockDir', () => {
-  test('returns <contentDir>/.open-knowledge', () => {
+  test('returns <contentDir>/.ok', () => {
     expect(resolveLockDir('/tmp/project')).toBe(resolve('/tmp/project', OK_DIR));
   });
 });

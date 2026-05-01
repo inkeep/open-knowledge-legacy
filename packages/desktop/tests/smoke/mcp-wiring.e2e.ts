@@ -86,7 +86,7 @@ function seedEditorDetectionDirs(tmpHome: string, editorHints: readonly string[]
 }
 
 function markerPath(tmpHome: string): string {
-  return join(tmpHome, '.open-knowledge', 'mcp-status.json');
+  return join(tmpHome, '.ok', 'mcp-status.json');
 }
 
 function readMarker(tmpHome: string): Record<string, unknown> | null {
@@ -253,7 +253,7 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
   test('idempotency — configured:true marker silences dialog on relaunch', async () => {
     const tmpHome = createTmpHome('idempotent');
     // Pre-populate a configured marker — simulates a prior completed consent.
-    mkdirSync(join(tmpHome, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(tmpHome, '.ok'), { recursive: true });
     writeFileSync(
       markerPath(tmpHome),
       JSON.stringify({
@@ -358,12 +358,12 @@ test.describe('M6b first-launch MCP-wiring smoke (US-010)', () => {
     const tmpHome = createTmpHome('f1');
     seedEditorDetectionDirs(tmpHome, ['.claude']);
 
-    // Create a project directory + `.open-knowledge/config.yml` so the opened
+    // Create a project directory + `.ok/config.yml` so the opened
     // project is valid (FileWatcher + content-filter have an admit surface).
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-m6b-f1-project-'));
-    mkdirSync(join(projectDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(projectDir, '.ok'), { recursive: true });
     writeFileSync(
-      join(projectDir, '.open-knowledge', 'config.yml'),
+      join(projectDir, '.ok', 'config.yml'),
       "content:\n  dir: '.'\n  include: ['**/*.md']\n  exclude: []\n",
     );
 

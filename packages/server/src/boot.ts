@@ -48,8 +48,6 @@ export interface BootServerOptions
     | 'gitEnabled'
     | 'commitDebounceMs'
     | 'wipRef'
-    | 'includePatterns'
-    | 'excludePatterns'
     | 'destroyTimeoutMs'
     | 'localOpCliArgs'
     | 'onAgentWrite'
@@ -143,7 +141,7 @@ export interface BootedServer {
   httpServer: HttpServer;
   /** Composite shutdown — closes httpServer, detaches idle-shutdown, destroys the Hocuspocus server (which releases server.lock). */
   destroy: () => Promise<void>;
-  /** Absolute path to `<contentDir>/.open-knowledge`. */
+  /** Absolute path to `<contentDir>/.ok`. */
   lockDir: string;
   /** Resolved content directory. */
   contentDir: string;
@@ -229,8 +227,6 @@ export async function bootServer(opts: BootServerOptions): Promise<BootedServer>
     wipRef: opts.wipRef,
     enableTestRoutes: opts.enableTestRoutes,
     shadowRepo: opts.shadowRepo,
-    includePatterns: opts.includePatterns,
-    excludePatterns: opts.excludePatterns,
     destroyTimeoutMs: opts.destroyTimeoutMs,
     localOpCliArgs: opts.localOpCliArgs,
     onAgentWrite: opts.onAgentWrite,

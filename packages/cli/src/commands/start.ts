@@ -251,7 +251,7 @@ interface BootStartServerOptions {
    * clients to discover.
    */
   port?: number;
-  /** Skip auto-init scaffolding of `<cwd>/.open-knowledge/` (tests usually want this). */
+  /** Skip auto-init scaffolding of `<cwd>/.ok/` (tests usually want this). */
   skipAutoInit?: boolean;
   /** Skip the auto-spawn-of-ok-ui-sibling step entirely (does not call `spawnOkUi`). */
   skipUiAutoSpawn?: boolean;
@@ -281,7 +281,7 @@ export interface BootedStartServer {
   httpServer: HttpServer;
   /** Composite shutdown — closes httpServer, detaches idle-shutdown, destroys the Hocuspocus server (which releases server.lock). */
   destroy: () => Promise<void>;
-  /** Absolute path to `<contentDir>/.open-knowledge`. */
+  /** Absolute path to `<contentDir>/.ok`. */
   lockDir: string;
   /** Resolved content directory (`resolveContentDir(config, cwd)`). */
   contentDir: string;
@@ -307,7 +307,7 @@ export interface BootedStartServer {
    * `ok ui` kernel-allocates and the real port is only knowable after bind.
    */
   resolvedUiPort: number | null;
-  /** `true` if `runInit` scaffolded `.open-knowledge/` during this boot. */
+  /** `true` if `runInit` scaffolded `.ok/` during this boot. */
   didAutoInit: boolean;
   /** `true` if `ensureProjectGit` ran `git init` during this boot. */
   didGitInit: boolean;
@@ -422,8 +422,6 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     // `persistence.{debounceMs, maxDebounceMs}` dropped from ConfigSchema
     // per D29 — engine has well-considered defaults (2s / 10s) and 99%+
     // users never tune them. `bootServer`/`createServer` defaults take over.
-    includePatterns: config.content.include,
-    excludePatterns: config.content.exclude,
     onAgentWrite,
     // Pass the exact runtime that started this server so /api/local-op/* can
     // spawn additional CLI processes without needing open-knowledge on PATH.
@@ -646,8 +644,6 @@ export function startCommand(getConfig: () => Config): Command {
                 const preview = previewContent({
                   projectDir: cwd,
                   contentDir: booted.contentDir,
-                  include: config.content.include,
-                  exclude: config.content.exclude,
                 });
                 console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
               } catch (e) {

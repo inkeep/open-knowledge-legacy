@@ -82,6 +82,7 @@ import {
   parseFrontmatterMetadata,
 } from './page-identity.ts';
 import { readServerLock } from './server-lock.ts';
+import { buildAndOpenSkill } from './skill-install.ts';
 import { readUiLock } from './ui-lock.ts';
 import {
   HashingPassThrough,
@@ -1076,9 +1077,8 @@ export interface ApiExtensionOptions {
   /**
    * Active ContentFilter (the same instance threaded into the file watcher).
    * When present, `POST /api/rename-path` rejects destinations excluded by
-   * the workspace's `content.include`/`content.exclude` config so renames
-   * cannot land outside the watched scope. Omit in tests where admission
-   * checks aren't relevant.
+   * `.gitignore` / `.okignore` rules so renames cannot land outside the
+   * watched scope. Omit in tests where admission checks aren't relevant.
    */
   contentFilter?: ContentFilter;
   /**
@@ -4518,19 +4518,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
         return;
       }
-      // Reject paths whose first segment is `.open-knowledge` — that directory
+      // Reject paths whose first segment is `.ok` — that directory
       // holds per-machine OK runtime state (server.lock, principal.json, cache,
       // etc.) and is symmetric with the `__system__` carve-out above. The
-      // `AGENTS.md` file inside `.open-knowledge/` is a tracked content file
+      // `AGENTS.md` file inside `.ok/` is a tracked content file
       // by design, but a rename TO or FROM this directory would clobber OK
       // bookkeeping.
       if (
-        fromPath === '.open-knowledge' ||
-        fromPath.startsWith('.open-knowledge/') ||
-        toPath === '.open-knowledge' ||
-        toPath.startsWith('.open-knowledge/')
+        fromPath === '.ok' ||
+        fromPath.startsWith('.ok/') ||
+        toPath === '.ok' ||
+        toPath.startsWith('.ok/')
       ) {
-        json(res, 400, { ok: false, error: '.open-knowledge is a reserved directory' });
+        json(res, 400, { ok: false, error: '.ok is a reserved directory' });
         return;
       }
       if (fromPath === toPath) {
@@ -5322,7 +5322,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     dir: string,
   ): Promise<{ port: number } | { error: string }> {
     const absDir = resolve(expandTilde(dir));
-    const lockDir = resolve(absDir, '.open-knowledge');
+    const lockDir = resolve(absDir, '.ok');
 
     // Case 1: UI already live — reuse.
     const existingUi = readUiLock(lockDir);
@@ -5391,7 +5391,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
    *
    * Body: { dir: string }
    * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
-   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Polls <dir>/.ok/server.lock until port > 0 appears.
    * Returns: { port: number }
    */
   async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -6279,6 +6279,61 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * `POST /api/install-skill` — build `openknowledge.skill` and open it via
+   * the OS file association so Claude Desktop's native install dialog takes
+   * over. Web-host counterpart of the Electron `okDesktop.skill.buildAndOpen`
+   * bridge — both delegate to `buildAndOpenSkill` in `skill-install.ts`.
+   *
+   * Loopback-only via `checkLocalOpSecurity` — the handler spawns child
+   * processes (`open` / `start` / `xdg-open`) and writes to the user's
+   * `~/Downloads`, which is squarely state-mutating.
+   *
+   * Request body (optional JSON): `{ noOpen?: boolean, out?: string }`.
+   * Response: the `BuildAndOpenSkillResult` shape verbatim.
+   */
+  async function handleInstallSkill(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const opts: { noOpen?: boolean; out?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (typeof parsed.noOpen === 'boolean') opts.noOpen = parsed.noOpen;
+        if (typeof parsed.out === 'string') {
+          // `out` flows into `path.resolve()` + `mkdir({recursive: true})` +
+          // `spawn('cmd', ['/c', 'start', '""', skillPath])` on Windows.
+          // Confine to $HOME consistent with sibling local-op handlers
+          // (`handleLocalOpClone`, `handleLocalOpOpen`).
+          if (!isSafeLocalPath(parsed.out)) {
+            json(res, 400, {
+              ok: false,
+              error: 'Output path must be within home directory',
+            });
+            return;
+          }
+          opts.out = parsed.out;
+        }
+      }
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    try {
+      const result = await buildAndOpenSkill(opts);
+      json(res, 200, result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      json(res, 500, { ok: false, error: { kind: 'internal', message } });
+    }
+  }
+
   async function handleInstalledAgentsRoute(
     req: IncomingMessage,
     res: ServerResponse,
@@ -6366,6 +6421,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
     '/api/installed-agents': handleInstalledAgentsRoute,
+    '/api/install-skill': handleInstallSkill,
     '/api/seed/plan': handleSeedPlan,
     '/api/seed/apply': handleSeedApply,
   };
@@ -6397,6 +6453,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/abort-merge',
     '/api/test-reset',
     '/api/test-rescan-backlinks',
+    '/api/install-skill',
   ]);
   // Every `/api/local-op/*` endpoint mutates local filesystem state or
   // issues network requests on behalf of the user — clone/open/auth

@@ -408,7 +408,7 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
       ? [
           {
             kind: 'config',
-            name: '.open-knowledge/config.yml',
+            name: '.ok/config.yml',
             description: 'Folder descriptions for AI agents',
           },
         ]

@@ -2,11 +2,10 @@
  * Shadow-repo layout helpers — shared between CLI (read path) and server
  * (write path) per spec D22.
  *
- * The shadow repo lives at `<projectRoot>/.git/open-knowledge/` (SPEC
- * 2026-04-21-shadow-repo-single-mode). Pre-spec integrated shadows at
- * `.git/openknowledge/` (legacy path) are silently rename-migrated in-place
- * once per repo via `initShadowRepo()`. Its on-disk layout is a documented
- * invariant:
+ * The shadow repo lives at `<projectRoot>/.git/ok/`. Pre-rename integrated
+ * shadows at `.git/openknowledge/` (legacy path) are silently rename-migrated
+ * in-place once per repo via `initShadowRepo()`. Its on-disk layout is a
+ * documented invariant:
  *
  *   refs/wip/<project-branch>/<writer-id>
  *
@@ -88,12 +87,12 @@ const WRITER_ID_RE =
  * checking whether it exists yet. Used by init (`packages/server/src/shadow-repo.ts`)
  * to pick where to create the repo, and internally by `getShadowRepoPath`.
  *
- * Single-mode layout: the shadow always lives at `<projectRoot>/.git/open-knowledge/`.
+ * Single-mode layout: the shadow always lives at `<projectRoot>/.git/ok/`.
  * Projects without `.git/` get auto-init'd via `ensureProjectGit` before this
  * function is consulted (SPEC 2026-04-21-shadow-repo-single-mode D12/R2).
  */
 export function resolveShadowDir(projectRoot: string): string {
-  return resolve(projectRoot, '.git/open-knowledge');
+  return resolve(projectRoot, '.git/ok');
 }
 
 /**

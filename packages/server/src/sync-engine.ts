@@ -221,7 +221,7 @@ export class SyncEngine {
     this.cc1Broadcaster = options.cc1Broadcaster ?? null;
     this.onStateChange = options.onStateChange;
     this.setBatchInProgress = options.setBatchInProgress;
-    this.statePath = resolve(this.contentDir, '.open-knowledge', 'sync-state.json');
+    this.statePath = resolve(this.contentDir, '.ok', 'sync-state.json');
     // ConflictStore branch is set lazily in start() after branch detection.
     // Use a placeholder here; setBranch() updates it before any conflict operations.
     this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, this.currentBranch);
@@ -1216,7 +1216,7 @@ export class SyncEngine {
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Skip git internals, node_modules, and hidden dirs. `.open-knowledge`
+          // Skip git internals, node_modules, and hidden dirs. `.ok`
           // used to be skipped wholesale, but its config.yml / AGENTS.md /
           // catalogs are legitimately user-content that should sync; runtime
           // state (cache/, server.lock, sync-state.json) is gitignored and
@@ -1224,7 +1224,7 @@ export class SyncEngine {
           if (
             entry.name === 'node_modules' ||
             entry.name === '.git' ||
-            (entry.name.startsWith('.') && entry.name !== '.open-knowledge')
+            (entry.name.startsWith('.') && entry.name !== '.ok')
           )
             continue;
           walk(fullPath);

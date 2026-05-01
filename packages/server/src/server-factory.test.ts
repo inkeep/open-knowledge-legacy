@@ -224,7 +224,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', 'server.lock');
     const docName = 'shutdown-order';
     const contentPath = join(tmpDir, `${docName}.md`);
     const captures: Array<{ lockExists: boolean; contentOnDisk: boolean; payload: string }> = [];
@@ -747,8 +747,8 @@ describe('createServer() — config file watcher (US-007)', () => {
     expect(ytext.toString()).toBe('');
 
     // Simulate a CLI / IDE / hand-edit creating the project config.
-    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
-    mkdirSync(join(testProjectDir, '.open-knowledge'), { recursive: true });
+    const configPath = join(testProjectDir, '.ok', 'config.yml');
+    mkdirSync(join(testProjectDir, '.ok'), { recursive: true });
     const newContent = 'mcp:\n  autoStart: false\n';
     writeFileSync(configPath, newContent, 'utf-8');
 
@@ -762,8 +762,8 @@ describe('createServer() — config file watcher (US-007)', () => {
     // Pre-seed a valid project config so the watcher's first read populates
     // LKG with valid content; then write broken YAML and assert Y.Text stays.
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
-    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
-    mkdirSync(join(testProjectDir, '.open-knowledge'), { recursive: true });
+    const configPath = join(testProjectDir, '.ok', 'config.yml');
+    mkdirSync(join(testProjectDir, '.ok'), { recursive: true });
     const validContent = 'mcp:\n  autoStart: false\n';
     writeFileSync(configPath, validContent, 'utf-8');
 
@@ -822,7 +822,7 @@ describe('createServer() — config file watcher (US-007)', () => {
       ytext.insert(0, newContent);
     });
 
-    const configPath = join(testProjectDir, '.open-knowledge', 'config.yml');
+    const configPath = join(testProjectDir, '.ok', 'config.yml');
     const fileLanded = await waitFor(
       () => existsSync(configPath) && readFileSync(configPath, 'utf-8') === newContent,
     );
@@ -899,7 +899,7 @@ describe('createServer() managed rename recovery', () => {
   });
 
   test('marks the server degraded when the managed rename journal is corrupt', async () => {
-    mkdirSync(join(tmpDir, '.open-knowledge'), { recursive: true });
+    mkdirSync(join(tmpDir, '.ok'), { recursive: true });
     writeFileSync(managedRenameJournalPath(tmpDir), '{not valid json', 'utf-8');
 
     const server = createServer({
@@ -936,7 +936,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', 'server.lock');
     expect(existsSync(lockPath)).toBe(true);
     const md = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(md.pid).toBe(process.pid);
@@ -955,7 +955,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    expect(server.lockDir).toBe(join(tmpDir, '.open-knowledge'));
+    expect(server.lockDir).toBe(join(tmpDir, '.ok'));
 
     await server.destroy();
   });
@@ -971,7 +971,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     // Seed a lock file with PID 1 (always alive) to simulate a foreign holder
     // (same process pid gets the idempotent path)
     const { hostname } = await import('node:os');
-    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', 'server.lock');
     writeFileSync(
       lockPath,
       JSON.stringify({
@@ -1013,7 +1013,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', 'server.lock');
     const before = JSON.parse(readFileSync(lockPath, 'utf-8'));
     expect(before.port).toBe(0);
 
@@ -1035,7 +1035,7 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await server.ready;
 
-    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const lockPath = join(tmpDir, '.ok', 'server.lock');
     expect(existsSync(lockPath)).toBe(true);
 
     // Inject Phase 2 failure: sessionManager.closeAll throws after normal cleanup

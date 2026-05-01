@@ -47,7 +47,7 @@ export type SpawnOutcome =
 
 /**
  * Append-only telemetry payload — one JSONL line per Open-in-Agent dispatch
- * written to `~/.open-knowledge/stats.jsonl` (SPEC 2026-04-21 §5.1 / E5b).
+ * written to `~/.ok/stats.jsonl` (SPEC 2026-04-21 §5.1 / E5b).
  * Zero phone-home (XQ3 LOCKED). Local-only diagnostic counter — when a
  * dogfood user reports "it didn't work," the file gives target / outcome /
  * reason history without any network egress.
@@ -165,7 +165,7 @@ export interface RequestChannels {
    */
   'ok:shell:show-item-in-folder': { args: [path: string]; result: undefined };
   /**
-   * Append a local-only telemetry line to `~/.open-knowledge/stats.jsonl`.
+   * Append a local-only telemetry line to `~/.ok/stats.jsonl`.
    * Zero phone-home (XQ3 LOCKED). Resolves on success; resolves (without
    * throwing) when HOME is unwritable so the dispatch path is never affected
    * by telemetry failure (SPEC 2026-04-21 §13.1 / E5b).
@@ -269,7 +269,7 @@ export interface RequestChannels {
    * First-launch MCP consent — user clicked "Add" in `<McpConsentDialog>`.
    * Main resolves the hybrid `cliPath`, classifies each editor's existing
    * entry via `isPublishedCanonical`, calls `writeUserMcpConfigs`, and writes
-   * the user-scoped marker at `<home>/.open-knowledge/mcp-status.json` IFF
+   * the user-scoped marker at `<home>/.ok/mcp-status.json` IFF
    * every per-editor write succeeds (deferred-marker pattern). Per-editor
    * failures emit `mcp-wiring-write-failed` structured logs and leave the
    * marker absent so the dialog re-fires next launch. Non-canonical (user-

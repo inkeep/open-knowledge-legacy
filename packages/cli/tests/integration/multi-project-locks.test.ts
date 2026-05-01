@@ -32,7 +32,7 @@ interface ProjectHandles {
 }
 
 function makeProject(root: string, slug: string): ProjectHandles {
-  const lockDir = join(root, slug, '.open-knowledge');
+  const lockDir = join(root, slug, '.ok');
   mkdirSync(lockDir, { recursive: true });
   const metadata = { worktreeRoot: join(root, slug), startedAt: new Date().toISOString() };
   const server = acquireProcessLock({ lockName: 'server', lockDir, metadata });
@@ -304,7 +304,7 @@ describe.skip('multi-project lock isolation — cross-process (A1)', () => {
 
   it('three concurrent worker processes each hold their own server+ui locks (no cross-contamination)', async () => {
     const lockDirs = [1, 2, 3].map((i) => {
-      const lockDir = join(testRoot, `project-${i}`, '.open-knowledge');
+      const lockDir = join(testRoot, `project-${i}`, '.ok');
       mkdirSync(lockDir, { recursive: true });
       return { i, lockDir, serverPort: 52100 + i, uiPort: 3100 + i };
     });
@@ -353,7 +353,7 @@ describe.skip('multi-project lock isolation — cross-process (A1)', () => {
   });
 
   it('a fourth worker against an already-held lockDir collides on the live foreign pid (US-001 collision branch)', async () => {
-    const lockDir = join(testRoot, 'shared-project', '.open-knowledge');
+    const lockDir = join(testRoot, 'shared-project', '.ok');
     mkdirSync(lockDir, { recursive: true });
 
     const holder = await spawnLockWorker(lockDir, 52200, 3200);

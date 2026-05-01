@@ -11,8 +11,6 @@ import {
   getEnumOptions,
   getFieldDefault,
   getLeafTypeTag,
-  pathHasValue,
-  readPath,
   resolveLeafSchema,
 } from './schema-walker';
 
@@ -35,31 +33,6 @@ describe('buildPatch', () => {
 
   test('throws on empty path', () => {
     expect(() => buildPatch([], 'x')).toThrow();
-  });
-});
-
-describe('readPath / pathHasValue', () => {
-  const sample = {
-    mcp: { tools: { search: { maxResults: 50 } } },
-    appearance: {},
-  };
-
-  test('readPath traverses object path', () => {
-    expect(readPath(sample, ['mcp', 'tools', 'search', 'maxResults'])).toBe(50);
-  });
-
-  test('readPath returns undefined for missing leaf', () => {
-    expect(readPath(sample, ['mcp', 'tools', 'missing'])).toBeUndefined();
-  });
-
-  test('pathHasValue is true for set keys', () => {
-    expect(pathHasValue(sample, ['mcp', 'tools'])).toBe(true);
-    expect(pathHasValue(sample, ['mcp', 'tools', 'search', 'maxResults'])).toBe(true);
-  });
-
-  test('pathHasValue is false for missing keys', () => {
-    expect(pathHasValue(sample, ['appearance', 'theme'])).toBe(false);
-    expect(pathHasValue(sample, ['github', 'oauthAppClientId'])).toBe(false);
   });
 });
 
@@ -91,7 +64,7 @@ describe('resolveLeafSchema against ConfigSchema', () => {
   });
 
   test('descends to an array leaf', () => {
-    expect(getLeafTypeTag(requireLeaf(['content', 'include']))).toBe('array');
+    expect(getLeafTypeTag(requireLeaf(['folders']))).toBe('array');
   });
 
   test('returns undefined for non-existent path', () => {
@@ -107,7 +80,7 @@ describe('getFieldDefault against ConfigSchema', () => {
   });
 
   test('returns array defaults', () => {
-    expect(getFieldDefault(requireLeaf(['content', 'exclude']))).toEqual([]);
+    expect(getFieldDefault(requireLeaf(['folders']))).toEqual([]);
   });
 
   test('returns undefined for fields without .default()', () => {

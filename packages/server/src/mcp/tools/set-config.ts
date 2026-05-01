@@ -2,9 +2,7 @@
  * `set_config` MCP tool — fs-direct upsert against the agent-settable
  * allowlist.
  *
- * **Allowlist** (5 paths in `ConfigSchema` tagged `agentSettable: true`):
- *   - `content.include`
- *   - `content.exclude`
+ * **Allowlist** (3 paths in `ConfigSchema` tagged `agentSettable: true`):
  *   - `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
  *   - `mcp.tools.read_document.historyDepth`
  *   - `mcp.tools.search.maxResults`
@@ -51,8 +49,6 @@ export const DESCRIPTION = [
   'Pass a deep-partial patch over the agent-settable allowlist. The server picks the write target (project vs user) automatically based on where the path is already set + per-field default scope.',
   '',
   '**Allowlist** (only these paths are agent-settable):',
-  '- `content.include` — globs of files to include in the wiki',
-  '- `content.exclude` — globs to exclude',
   '- `folders[]` — folder-rule defaults (whole-array replace; for per-rule upsert use `set_folder_rule`)',
   '- `mcp.tools.search.maxResults` — search result cap',
   '- `mcp.tools.read_document.historyDepth` — number of history entries returned',
@@ -86,7 +82,7 @@ const InputSchema = {
   patch: z
     .looseObject({})
     .describe(
-      'Deep-partial config patch over the agent-settable allowlist. See description for the 5 allowed paths. Null at any path clears the field; arrays replace wholesale.',
+      'Deep-partial config patch over the agent-settable allowlist. See description for the 3 allowed paths. Null at any path clears the field; arrays replace wholesale.',
     ),
   cwd: z.string().optional().describe(ROUTED_CWD_DESCRIPTION),
 } as const;

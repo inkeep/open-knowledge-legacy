@@ -119,10 +119,8 @@ function stubFsForResolve(opts: {
 }
 
 describe('mcpStatusMarkerPath', () => {
-  test('resolves to <home>/.open-knowledge/mcp-status.json', () => {
-    expect(mcpStatusMarkerPath('/Users/andrew')).toBe(
-      '/Users/andrew/.open-knowledge/mcp-status.json',
-    );
+  test('resolves to <home>/.ok/mcp-status.json', () => {
+    expect(mcpStatusMarkerPath('/Users/andrew')).toBe('/Users/andrew/.ok/mcp-status.json');
   });
 });
 
@@ -134,13 +132,13 @@ describe('readMcpStatusMarker', () => {
 
   test('returns null when marker is unparseable JSON', () => {
     const { fs, files } = createVirtualFs();
-    files.set('/Users/andrew/.open-knowledge/mcp-status.json', 'not-json{{{');
+    files.set('/Users/andrew/.ok/mcp-status.json', 'not-json{{{');
     expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
   });
 
   test('returns null when shape is neither configured:true nor configured:false', () => {
     const { fs, files } = createVirtualFs();
-    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify({ foo: 'bar' }));
+    files.set('/Users/andrew/.ok/mcp-status.json', JSON.stringify({ foo: 'bar' }));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toBeNull();
   });
 
@@ -152,7 +150,7 @@ describe('readMcpStatusMarker', () => {
       editors: ['claude', 'cursor'],
       cliPath: '/Applications/Open Knowledge.app/Contents/Resources/cli/bin/ok.sh',
     };
-    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify(marker));
+    files.set('/Users/andrew/.ok/mcp-status.json', JSON.stringify(marker));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual(marker);
   });
 
@@ -162,7 +160,7 @@ describe('readMcpStatusMarker', () => {
       configured: false,
       skippedAt: '2026-04-23T00:00:00Z',
     };
-    files.set('/Users/andrew/.open-knowledge/mcp-status.json', JSON.stringify(marker));
+    files.set('/Users/andrew/.ok/mcp-status.json', JSON.stringify(marker));
     expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual(marker);
   });
 });
@@ -177,8 +175,8 @@ describe('writeMcpStatusMarker', () => {
       cliPath: '/usr/local/bin/ok',
     };
     writeMcpStatusMarker('/Users/andrew', status, fs);
-    expect(dirs.has('/Users/andrew/.open-knowledge')).toBe(true);
-    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
+    expect(dirs.has('/Users/andrew/.ok')).toBe(true);
+    const written = files.get('/Users/andrew/.ok/mcp-status.json');
     expect(written).toBeDefined();
     if (written === undefined) throw new Error('marker not written');
     expect(JSON.parse(written)).toEqual(status);
@@ -191,7 +189,7 @@ describe('writeMcpStatusMarker', () => {
       skippedAt: '2026-04-23T00:00:00Z',
     };
     writeMcpStatusMarker('/Users/andrew', status, fs);
-    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
+    const written = files.get('/Users/andrew/.ok/mcp-status.json');
     if (written === undefined) throw new Error('marker not written');
     expect(JSON.parse(written)).toEqual(status);
   });
@@ -215,7 +213,7 @@ describe('writeMcpStatusMarker', () => {
       { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
       fs,
     );
-    const written = files.get('/Users/andrew/.open-knowledge/mcp-status.json');
+    const written = files.get('/Users/andrew/.ok/mcp-status.json');
     if (written === undefined) throw new Error('marker not written');
     expect(written.endsWith('\n')).toBe(true);
   });
@@ -227,7 +225,7 @@ describe('writeMcpStatusMarker', () => {
       { configured: false, skippedAt: '2026-04-23T00:00:00Z' },
       fs,
     );
-    const canonical = '/Users/andrew/.open-knowledge/mcp-status.json';
+    const canonical = '/Users/andrew/.ok/mcp-status.json';
     // Canonical path present.
     expect(files.has(canonical)).toBe(true);
     // No stray .tmp-<pid>-<ts> sibling — rename cleaned it up.
@@ -276,7 +274,7 @@ describe('writeMcpStatusMarker', () => {
     const strayTmps = [...files.keys()].filter((p) => p.includes('.tmp-'));
     expect(strayTmps).toEqual([]);
     // Canonical marker was NEVER created — failure must not leave partial state.
-    expect(files.has('/Users/andrew/.open-knowledge/mcp-status.json')).toBe(false);
+    expect(files.has('/Users/andrew/.ok/mcp-status.json')).toBe(false);
   });
 });
 
@@ -712,7 +710,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
   test('returns inert handle when marker is present (idempotent)', () => {
     const { fs, files } = createVirtualFs();
     files.set(
-      '/Users/andrew/.open-knowledge/mcp-status.json',
+      '/Users/andrew/.ok/mcp-status.json',
       JSON.stringify({
         configured: true,
         configuredAt: '2026-04-23T00:00:00Z',
@@ -740,7 +738,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
   test('returns inert handle when skip marker is present (still idempotent)', () => {
     const { fs, files } = createVirtualFs();
     files.set(
-      '/Users/andrew/.open-knowledge/mcp-status.json',
+      '/Users/andrew/.ok/mcp-status.json',
       JSON.stringify({
         configured: false,
         skippedAt: '2026-04-23T00:00:00Z',
@@ -769,7 +767,7 @@ describe('runMcpWiringOnFirstLaunch — gating', () => {
     // forceShow would silently break the menu entry — it would quietly no-op.
     const { fs, files } = createVirtualFs();
     files.set(
-      '/Users/andrew/.open-knowledge/mcp-status.json',
+      '/Users/andrew/.ok/mcp-status.json',
       JSON.stringify({
         configured: true,
         configuredAt: '2026-01-01T00:00:00Z',
@@ -1052,8 +1050,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
       expect(call.editors).toEqual(['claude', 'cursor']);
       expect(call.cliPath).toBe(INSTALLED_BUNDLE_WRAPPER);
       expect(call.home).toBe('/Users/andrew');
-      const markerRaw =
-        createVirtualFs().files.get('/Users/andrew/.open-knowledge/mcp-status.json') ?? null;
+      const markerRaw = createVirtualFs().files.get('/Users/andrew/.ok/mcp-status.json') ?? null;
       expect(markerRaw).toBeNull(); // written to the LIVE fs, not a fresh virtual fs
       expect(readMcpStatusMarker('/Users/andrew', fs)).toEqual({
         configured: true,
@@ -1290,7 +1287,7 @@ describe('runMcpWiringOnFirstLaunch — confirm flow', () => {
     // Wrap the virtual fs so the CLI write path (which doesn't touch the
     // marker) succeeds but the marker write at the end throws. The marker
     // path is a fixed constant so string-match on it.
-    const MARKER_PATH = '/Users/andrew/.open-knowledge/mcp-status.json';
+    const MARKER_PATH = '/Users/andrew/.ok/mcp-status.json';
     const inner = createVirtualFs();
     const fs: McpWiringFsOps = {
       ...inner.fs,

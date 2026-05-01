@@ -6,7 +6,7 @@ The Open Knowledge MCP server gives AI agents structured access to your knowledg
 
 ## Startup and connection model
 
-On startup, `ok mcp` resolves the HTTP MCP endpoint for the current project. It reads `<contentDir>/.open-knowledge/server.lock`; a live lock tells the shim which port to proxy to. If the lock is absent or stale, the shim detach-spawns `ok start` as a sibling process by default, then polls the lockfile for `port > 0` with a 5-second deadline.
+On startup, `ok mcp` resolves the HTTP MCP endpoint for the current project. It reads `<contentDir>/.ok/server.lock`; a live lock tells the shim which port to proxy to. If the lock is absent or stale, the shim detach-spawns `ok start` as a sibling process by default, then polls the lockfile for `port > 0` with a 5-second deadline.
 
 <Tabs items={["Existing server", "Auto-spawn on first use", "Auto-start disabled"]}>
 <Tab value="Existing server">
@@ -17,7 +17,7 @@ Active when a live `server.lock` is found at startup — `ok start` or `bun run 
 - Agents and humans can co-edit the same document simultaneously
 </Tab>
 <Tab value="Auto-spawn on first use">
-Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `ok start` as a sibling process with a kernel-fd stderr redirect to `.open-knowledge/last-spawn-error.log`, then proxies to the spawned server's `/mcp` endpoint once the lock advertises a port.
+Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `ok start` as a sibling process with a kernel-fd stderr redirect to `.ok/last-spawn-error.log`, then proxies to the spawned server's `/mcp` endpoint once the lock advertises a port.
 
 - Zero ceremony — the agent's first tool call resurrects the full stack
 - Sibling process (not embedded) so closing the stdio shim does **not** take down sibling editors' sessions
@@ -97,7 +97,7 @@ The five write tools — `write_document`, `edit_document`, `rename_document`, `
 
 ### Config tools
 
-`get_config`, `set_config`, and `set_folder_rule` operate directly on `.open-knowledge/config.yml` (project) and `~/.open-knowledge/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
+`get_config`, `set_config`, and `set_folder_rule` operate directly on `.ok/config.yml` (project) and `~/.ok/config.yml` (user-global). They do not require a running collab server — the tool resolves `cwd` to a project root and reads/writes via the imported Zod schema and `yaml@2`'s Document layer (preserving comments, blank lines, and anchors through round-trips). When a server IS running, the file watcher closes the loop: the write lands → file watcher detects → Y.Text updates → any open Settings panes refresh.
 
 #### `get_config`
 
@@ -115,15 +115,13 @@ Read-only and idempotent; no allowlist gating — every field is readable. Retur
 
 Patch one or more fields on the agent-settable allowlist. The patch is a deep-partial; `null` at any leaf clears the field; arrays replace wholesale (RFC 7396 spirit, TypeScript-only — no wire format).
 
-The allowlist is exactly five paths:
+The allowlist is exactly three paths:
 
-- `content.include`
-- `content.exclude`
 - `folders[]` (whole-array replace; use `set_folder_rule` for per-rule upsert)
 - `mcp.tools.search.maxResults`
 - `mcp.tools.read_document.historyDepth`
 
-Anything else returns `error.code: NOT_AGENT_SETTABLE`.
+Anything else returns `error.code: NOT_AGENT_SETTABLE`. (Content scope is configured via `.okignore` — not via `set_config` — see [Content filtering](/guides/content-filtering).)
 
 There is no `scope` parameter — the server picks the write target (project vs user) per leaf via the inspect-ladder: existing-at-project → existing-at-user → field's `defaultScope` → `user`. If a single patch's leaves resolve to multiple scopes, the call fails with `error.code: MIXED_SCOPE` and the agent retries per-scope.
 
@@ -152,8 +150,8 @@ Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for
 
 1. `openknowledge://` URL scheme — emitted when the server detects it is running inside the Open Knowledge desktop app (via `OK_ELECTRON_PROTOCOL_HOST=1`, which the desktop main process injects at utility-fork time). The resulting URL is `openknowledge://open?project=<realpath>&doc=<docName>` and routes through the desktop's main-process URL handler to the correct project window. CLI / `bunx` servers never set the flag, so they fall through to the HTTP sources below.
 2. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
-3. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
-4. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+3. `<contentDir>/.ok/ui.lock` — the live `ok ui` process's port.
+4. `config.preview.baseUrl` in `.ok/config.yml` — config fallback.
 
 The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 
@@ -174,7 +172,7 @@ CLI-origin `ok init` continues to produce the `{"command": "npx", "args": ["@ink
 
 ### Marker file
 
-The dialog records its outcome in `~/.open-knowledge/mcp-status.json` (next to `~/.open-knowledge/config.yml`):
+The dialog records its outcome in `~/.ok/mcp-status.json` (next to `~/.ok/config.yml`):
 
 ```json
 {
@@ -189,7 +187,7 @@ Skipped runs write `{ "configured": false, "skippedAt": "..." }` instead. Either
 
 ### Re-triggering the dialog
 
-Delete `~/.open-knowledge/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
+Delete `~/.ok/mcp-status.json`. The next time the desktop app launches, the consent dialog fires again with current editor detection.
 
 ### Resetting older development entries
 
@@ -211,9 +209,9 @@ That process is a shim. stdout carries JSON-RPC messages from the editor, stderr
 
 ## Mirrored catalogs
 
-The MCP server maintains auto-generated `INDEX.md` files in `.open-knowledge/catalogs/` that mirror the project's directory structure. These are rebuilt when content files change (500ms quiet period, 2s max debounce).
+The MCP server maintains auto-generated `INDEX.md` files in `.ok/catalogs/` that mirror the project's directory structure. These are rebuilt when content files change (500ms quiet period, 2s max debounce).
 
-Agents use these catalogs for navigation -- the MCP server's connect instructions tell agents to start with `.open-knowledge/catalogs/INDEX.md`.
+Agents use these catalogs for navigation -- the MCP server's connect instructions tell agents to start with `.ok/catalogs/INDEX.md`.
 
 ## Supported clients
 

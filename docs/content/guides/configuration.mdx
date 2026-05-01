@@ -2,7 +2,7 @@
 title: Configuration
 description: Config schema, YAML hierarchy, environment variables, CLI flag overrides, and the in-app Settings pane.
 ---
-Open Knowledge uses hierarchical YAML configuration stored in `.open-knowledge/config.yml` files. Both config files are optional -- sensible defaults cover everything.
+Open Knowledge uses hierarchical YAML configuration stored in `.ok/config.yml` files. Both config files are optional -- sensible defaults cover everything.
 
 There are three ways to edit config:
 
@@ -15,16 +15,16 @@ All three share a single Zod schema and a single validation core, so a write tha
 ## Config hierarchy
 
 <Mermaid chart={`graph LR
-  A[Zod defaults] --> B["~/.open-knowledge/config.yml"]
-  B --> C["./.open-knowledge/config.yml"]
+  A[Zod defaults] --> B["~/.ok/config.yml"]
+  B --> C["./.ok/config.yml"]
   C --> D[Environment variables]
   D --> E[CLI flags]
 `} />
 
 Each layer overrides the previous, from left to right. The merge is a deep merge: leaf values override, but arrays replace (not concatenate). There is no walk-up-tree discovery -- the loader checks exactly two fixed paths:
 
-1. **User config** -- `~/.open-knowledge/config.yml`
-2. **Workspace config** -- `./.open-knowledge/config.yml` (relative to the working directory)
+1. **User config** -- `~/.ok/config.yml`
+2. **Workspace config** -- `./.ok/config.yml` (relative to the working directory)
 
 Every schema section uses Zod's `looseObject` mode: unknown keys are preserved on disk through round-trip writes rather than rejected at load time. This makes upgrades forgiving -- an existing file with a removed field (e.g., a leftover `sync.pushIntervalSeconds: 30`) loads cleanly, the engine ignores it, and `ok config migrate` can drop it later. Schema-shaped fields still validate strictly; loose-mode only relaxes the "no extra keys" check.
 
@@ -32,9 +32,7 @@ Every schema section uses Zod's `looseObject` mode: unknown keys are preserved o
 
 | Field                                 | Type                         | Default                   | Description                                                                                                                                                                                          |
 | ------------------------------------- | ---------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `content.dir`                         | `string`                     | `"."`                     | Content directory relative to project root                                                                                                                                                           |
-| `content.include`                     | `string[]`                   | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
-| `content.exclude`                     | `string[]`                   | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore). See built-in skips below.                                                                                 |
+| `content.dir`                         | `string`                     | `"."`                     | Content directory relative to project root. Exclusions live in `.okignore` (root + nested) — see [Content filtering](/guides/content-filtering).                                                       |
 | `server.host`                         | `string`                     | `"localhost"`             | Server bind address                                                                                                                                                                                  |
 | `server.openOnAgentEdit`              | `boolean`                    | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
 | `mcp.autoStart`                       | `boolean`                    | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
@@ -48,16 +46,16 @@ Every schema section uses Zod's `looseObject` mode: unknown keys are preserved o
 
 ## Built-in directory skips
 
-The following directories are always excluded from traversal regardless of `.gitignore` or `content.exclude` config. They are never user-authored content, and some (notably `node_modules` with pnpm) contain broken symlinks that would crash the file walker.
+The following directories are always excluded from traversal regardless of `.gitignore` or `.okignore` rules. They are never user-authored content, and some (notably `node_modules` with pnpm) contain broken symlinks that would crash the file walker.
 
 | Category | Directories |
 |----------|-------------|
 | Package managers / runtimes | `node_modules`, `.venv`, `venv`, `env`, `__pycache__`, `vendor` |
 | Build output | `dist`, `build`, `out`, `output`, `.next`, `.nuxt`, `.svelte-kit`, `.astro` |
 | Tool caches | `.turbo`, `.cache`, `.parcel-cache`, `coverage` |
-| VCS | `.git` |
+| VCS / project state | `.git`, `.ok` |
 
-These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `content.exclude` patterns.
+These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `.okignore` patterns.
 
 ## Example configs
 
@@ -65,7 +63,7 @@ These skips apply when the directory name appears as the first path segment. For
 <Tab value="User config">
 Apply a default editor theme + MCP search cap to all projects on this machine:
 
-```yaml title="~/.open-knowledge/config.yml"
+```yaml title="~/.ok/config.yml"
 appearance:
   theme: dark
 mcp:
@@ -75,14 +73,18 @@ mcp:
 ```
 </Tab>
 <Tab value="Workspace config">
-Point at a subdirectory and exclude drafts:
+Point at a subdirectory:
 
-```yaml title="./.open-knowledge/config.yml"
+```yaml title="./.ok/config.yml"
 content:
   dir: docs
-  exclude:
-    - "drafts/**"
-    - "archive/**"
+```
+
+Exclude drafts via `.okignore`:
+
+```text title=".okignore"
+drafts/
+archive/
 ```
 </Tab>
 </Tabs>
@@ -128,8 +130,8 @@ Open the Settings pane from anywhere in the editor:
 
 The pane has two sub-tabs:
 
-- **This project** — project-scope fields, persisted to `./.open-knowledge/config.yml`.
-- **User** — user-scope fields, persisted to `~/.open-knowledge/config.yml`.
+- **This project** — project-scope fields, persisted to `./.ok/config.yml`.
+- **User** — user-scope fields, persisted to `~/.ok/config.yml`.
 
 Either-scope fields appear in both tabs with a "modified at this scope" indicator showing where the current value lives. Edits auto-save per field — text inputs commit on blur or Enter; toggles and selects commit on change. Hover any modified field for a "Reset to default" affordance.
 
@@ -145,18 +147,18 @@ Settings is unavailable in the Electron Navigator window — it has no project c
 
 ## IDE intellisense
 
-`ok init` scaffolds a magic comment on line 1 of generated `.open-knowledge/config.yml`:
+`ok init` scaffolds a magic comment on line 1 of generated `.ok/config.yml`:
 
-```yaml title=".open-knowledge/config.yml"
+```yaml title=".ok/config.yml"
 # yaml-language-server: $schema=https://unpkg.com/@inkeep/open-knowledge@0.2/dist/config-schema.json
 # Open Knowledge — project configuration
 content:
-  include: ["**/*.md", "**/*.mdx"]
+  dir: .
 ```
 
 Any LSP-aware editor (VS Code, JetBrains, Helix, Zed, vim with `yaml-language-server`) picks this up and provides autocomplete, hover docs, and inline validation against the published JSON Schema. The URL is pinned to the installed CLI's MAJOR.MINOR version so your autocomplete stays locked to the schema you wrote against; re-run `ok init` after upgrading to bump the pin.
 
-The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. A SchemaStore catalog entry (with a `fileMatch` of `**/.open-knowledge/config.{yml,yaml}`) is planned so editors that consult SchemaStore — most JetBrains IDEs by default — will auto-detect without needing the magic comment. Until that lands, the magic comment on line 1 is the primary intellisense mechanism.
+The schema artifact is published to npm at `@inkeep/open-knowledge/dist/config-schema.json`, generated from the same Zod source the runtime validates with. A SchemaStore catalog entry (with a `fileMatch` of `**/.ok/config.{yml,yaml}`) is planned so editors that consult SchemaStore — most JetBrains IDEs by default — will auto-detect without needing the magic comment. Until that lands, the magic comment on line 1 is the primary intellisense mechanism.
 
 For CI / pre-commit hooks, [`ok config validate`](/guides/cli-reference#config-validate) loads the merged config through the same Zod gate and exits non-zero with a `file:line:col` snippet on failure.
 
@@ -168,4 +170,4 @@ After editing config, run `preview` to verify the resolved content scope:
 npx @inkeep/open-knowledge preview
 ```
 
-This prints the file count, applied include/exclude patterns, and a sample of matched paths -- useful for confirming that `content.include` or `content.exclude` changes had the intended effect.
+This prints the file count and a sample of matched paths -- useful for confirming that `.okignore` changes had the intended effect.

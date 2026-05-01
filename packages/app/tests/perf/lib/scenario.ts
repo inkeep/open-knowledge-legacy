@@ -3,9 +3,10 @@
  *
  * Each scenario is a standalone module that default-exports the result of
  * `defineScenario({ name, run })`. The `profile.ts` CLI loads the module,
- * launches a dedicated Playwright Chromium (headed — required for GPU/paint
- * events per cdp-tracing.md guidance), attaches a CDP session + tracing,
- * and calls `scenario.run(ctx)`.
+ * launches a dedicated Playwright Chromium (headless by default; opt into
+ * headed via `--headed` or `OK_PERF_HEADED=1` for paint/GPU diagnosis where
+ * the headless browser drops some events), attaches a CDP session +
+ * tracing, and calls `scenario.run(ctx)`.
  *
  * The scenario's `run` function drives the browser to reproduce its symptom
  * and returns any symptom-specific fields it wants merged into the canonical
@@ -32,7 +33,11 @@ export interface ScenarioOptions {
   target: string;
   /** Where to write `results/<scenario>.<timestamp>.json`. Default: repo-relative `results/`. */
   outDir: string;
-  /** Run headed Chromium. Default: true (required for GPU/paint events). */
+  /**
+   * Run headed Chromium. Default: false. Set via `--headed` flag or
+   * `OK_PERF_HEADED=1` env. Headed is required for some paint/GPU events
+   * but multi-cell sweeps that lose foreground focus get throttled.
+   */
   headed: boolean;
   /** Override viewport (mostly for CI repro). Default: 1440×900. */
   viewport?: { width: number; height: number };

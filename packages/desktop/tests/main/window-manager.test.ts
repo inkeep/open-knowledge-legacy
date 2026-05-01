@@ -338,7 +338,7 @@ describe('WindowManager', () => {
     expect(env.utilities.length).toBe(0); // not forked yet
     // Wait a microtask so runClean's promise resolves
     await wait(5);
-    expect(runClean).toHaveBeenCalledWith({ lockDir: '/tmp/clean-run/.open-knowledge' });
+    expect(runClean).toHaveBeenCalledWith({ lockDir: '/tmp/clean-run/.ok' });
     env.utilities[0]?.fire({ type: 'ready', port: 51006, apiOrigin: 'http://localhost:51006' });
     await promise;
   });

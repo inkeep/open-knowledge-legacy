@@ -28,7 +28,7 @@ import { CONFIG_SCHEMA_MAJOR_PATH } from './schema-version.ts';
 import { addConfigSpanEvent, withConfigSpan, withConfigSpanSync } from './telemetry.ts';
 import { applyPatchToDocument, toConfigIssue } from './yaml-patch.ts';
 
-/** Filename of the project + user config under `.open-knowledge/`. */
+/** Filename of the project + user config under `.ok/`. */
 const CONFIG_FILENAME = 'config.yml';
 
 /**
@@ -99,10 +99,10 @@ export type WriteConfigPatchResult = Result<WriteConfigPatchSuccess, ConfigValid
 /**
  * Resolve the absolute config file path for a given scope.
  *
- * Project: `<cwd>/.open-knowledge/config.yml` (relative paths resolved
+ * Project: `<cwd>/.ok/config.yml` (relative paths resolved
  * against process.cwd() if `cwd` is relative).
  *
- * User: `<homedir>/.open-knowledge/config.yml`.
+ * User: `<homedir>/.ok/config.yml`.
  */
 export function resolveConfigPath(
   scope: 'project' | 'user',

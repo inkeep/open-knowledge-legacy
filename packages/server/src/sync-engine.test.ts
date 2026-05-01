@@ -35,7 +35,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'sync-engine-test-'));
   projectDir = join(tmpDir, 'project');
   contentDir = join(tmpDir, 'content');
-  okDir = join(contentDir, '.open-knowledge');
+  okDir = join(contentDir, '.ok');
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(okDir, { recursive: true });
 });

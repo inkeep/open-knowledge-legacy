@@ -24,7 +24,7 @@ let lockPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-process-lock-test-'));
-  lockDir = resolve(tmpDir, '.open-knowledge');
+  lockDir = resolve(tmpDir, '.ok');
   lockPath = lockFilePath(lockDir, LOCK_NAME);
 });
 

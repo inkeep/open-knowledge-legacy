@@ -25,7 +25,7 @@
  *
  * `ok init`'s scaffolded project `config.yml` magic-comment points at the
  * versioned project schema; `writeConfigPatch`'s lazy first-write of
- * `~/.open-knowledge/config.yml` points at the versioned user schema.
+ * `~/.ok/config.yml` points at the versioned user schema.
  * Each file's autocomplete then surfaces only the fields that are valid
  * AT that scope — an `appearance.theme` typed in project YAML squiggles,
  * a `content.dir` typed in user YAML squiggles.
@@ -123,7 +123,7 @@ writeSchema(resolve(versionedDir, 'config.project.schema.json'), projectSchema);
 writeSchema(resolve(versionedDir, 'config.user.schema.json'), userSchema);
 
 // Back-compat aliases at dist root — pre-versioning magic comments
-// point here. Removing these would break existing `~/.open-knowledge/
+// point here. Removing these would break existing `~/.ok/
 // config.yml` files that never re-pinned to a versioned URL.
 writeSchema(resolve(distDir, 'config-schema.json'), fullSchema);
 writeSchema(resolve(distDir, 'config.project.schema.json'), projectSchema);

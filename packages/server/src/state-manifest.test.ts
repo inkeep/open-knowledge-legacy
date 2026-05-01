@@ -14,8 +14,8 @@ import {
 
 function makeTmp(): { lockDir: string; shadowRepoDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'state-manifest-test-'));
-  const lockDir = join(root, '.open-knowledge');
-  const shadowRepoDir = join(root, '.git', 'open-knowledge');
+  const lockDir = join(root, '.ok');
+  const shadowRepoDir = join(root, '.git', 'ok');
   return {
     lockDir,
     shadowRepoDir,
@@ -34,7 +34,7 @@ describe('detectProjectShape', () => {
   });
 
   test('returns "fresh" when only lockDir exists (lockDir is NOT an adoption signal)', () => {
-    // Regression: `initContent` and `acquireServerLock` both create `.open-knowledge/`
+    // Regression: `initContent` and `acquireServerLock` both create `.ok/`
     // before the manifest check runs. If lockDir-existence triggered "adopt",
     // every fresh project would misclassify and stamp schema-0. Only the shadow
     // repo signals adoption.
@@ -65,6 +65,26 @@ describe('detectProjectShape', () => {
       expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
     } finally {
       cleanup();
+    }
+  });
+
+  test('only the configured shadowRepoDir triggers adopt — unrelated dirs nearby do not leak', () => {
+    // Existence of unrelated directories under `.git/` (e.g. left over from a
+    // prior tooling layout) MUST NOT affect the signal — `detectProjectShape`
+    // checks only the path it was passed.
+    const root = mkdtempSync(join(tmpdir(), 'state-manifest-shadow-only-'));
+    try {
+      const lockDir = join(root, '.ok');
+      const shadowRepoDir = join(root, '.git', 'ok');
+      const unrelatedSiblingDir = join(root, '.git', 'some-other-tooling-dir');
+
+      mkdirSync(unrelatedSiblingDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('fresh');
+
+      mkdirSync(shadowRepoDir, { recursive: true });
+      expect(detectProjectShape({ lockDir, shadowRepoDir })).toBe('adopt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
@@ -169,9 +189,9 @@ describe('assertCompatibleStateManifest', () => {
     }
   });
 
-  test('writes fresh manifest when only .open-knowledge dir exists (no shadow repo)', () => {
+  test('writes fresh manifest when only .ok dir exists (no shadow repo)', () => {
     // Regression for the smoke-test bug: `initContent` / `acquireServerLock`
-    // create `.open-knowledge/` before the manifest check runs. That alone is
+    // create `.ok/` before the manifest check runs. That alone is
     // NOT adoption — only the shadow repo signals durable pre-version-field
     // state. This is the user's exact scenario from the smoke test.
     const { lockDir, shadowRepoDir, cleanup } = makeTmp();

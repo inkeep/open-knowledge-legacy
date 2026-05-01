@@ -7,9 +7,10 @@
  *     failure. Success message goes to stderr (stdout is reserved for
  *     structured CI output, of which we emit none).
  *   - `migrate` — codemod removing deprecated fields (`sync.*`,
- *     `persistence.{debounceMs,maxDebounceMs}`, `server.port`) idempotently.
- *     Funnels through `writeConfigPatch` so atomic-write + Zod safeParse
- *     invariants apply automatically.
+ *     `persistence.{debounceMs,maxDebounceMs}`, `server.port`,
+ *     `content.{include,exclude}`) idempotently. Funnels through
+ *     `writeConfigPatch` so atomic-write + Zod safeParse invariants apply
+ *     automatically.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -24,12 +25,16 @@ import { loadConfig } from '../config/loader.ts';
  * single key delete (the entire section is gone, all 7 subfields with it).
  * `persistence.{debounceMs, maxDebounceMs}` and `server.port` are
  * field-level deletes that leave their parent sections intact.
+ * `content.{include, exclude}` were lifted to `.okignore` — patterns must be
+ * recreated there manually; the codemod only removes the obsolete keys.
  */
 export const DROPPED_FIELD_PATHS: ReadonlyArray<readonly string[]> = [
   ['sync'],
   ['persistence', 'debounceMs'],
   ['persistence', 'maxDebounceMs'],
   ['server', 'port'],
+  ['content', 'include'],
+  ['content', 'exclude'],
 ];
 
 interface ValidateRunOpts {
@@ -254,7 +259,7 @@ export function configCommand(): Command {
   cmd
     .command('migrate')
     .description(
-      'Remove deprecated config fields (sync.*, persistence.{debounceMs,maxDebounceMs}, server.port) idempotently',
+      'Remove deprecated config fields (sync.*, persistence.{debounceMs,maxDebounceMs}, server.port, content.{include,exclude}) idempotently',
     )
     .option('--scope <scope>', 'Which scope to migrate: project | user | both', 'both')
     .option('--dry-run', 'Preview without writing', false)

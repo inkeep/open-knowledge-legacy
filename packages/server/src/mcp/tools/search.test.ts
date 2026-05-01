@@ -145,6 +145,74 @@ describe('search — folder-rule flow-through (US-005)', () => {
   });
 });
 
+describe('search — .okignore exclusion', () => {
+  test('files under a .okignore-excluded path do not appear in results', async () => {
+    const project = await bootstrap();
+    const drafts = resolve(project, 'drafts');
+    const articles = resolve(project, 'articles');
+    mkdirSync(drafts, { recursive: true });
+    mkdirSync(articles, { recursive: true });
+    writeFileSync(resolve(drafts, 'wip.md'), '# Draft\n\nsearchterm in draft\n');
+    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm in article\n');
+    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    );
+
+    const paths = (structured?.results ?? []).map((r) => r.path);
+    expect(paths).toContain('articles/pub.md');
+    expect(paths).not.toContain('drafts/wip.md');
+  });
+
+  test('cross-source negation — .okignore !pattern re-includes a .gitignore-excluded file', async () => {
+    const project = await bootstrap();
+    writeFileSync(resolve(project, 'secret.md'), '# Secret\n\nsearchterm in secret\n');
+    writeFileSync(resolve(project, '.gitignore'), 'secret.md\n');
+    writeFileSync(resolve(project, '.okignore'), '!secret.md\n');
+
+    const { structured } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    );
+
+    const paths = (structured?.results ?? []).map((r) => r.path);
+    expect(paths).toContain('secret.md');
+  });
+
+  test('truncated reflects the grep cap even when most raw matches are excluded by .okignore', async () => {
+    const project = await bootstrap();
+    const drafts = resolve(project, 'drafts');
+    mkdirSync(drafts, { recursive: true });
+    // 5 hits in drafts/ (excluded) + 1 hit in articles/ (included).
+    // With maxResults=2, grep is asked for 3 → returns all 6 (cap 3 hit).
+    // Post-filter leaves only 1 visible match. Without the rawMatches-based
+    // truncation signal, this would report `truncated=false` despite grep
+    // having stopped at the cap.
+    for (let i = 0; i < 5; i++) {
+      writeFileSync(resolve(drafts, `wip-${i}.md`), '# Draft\n\nsearchterm here\n');
+    }
+    const articles = resolve(project, 'articles');
+    mkdirSync(articles, { recursive: true });
+    writeFileSync(resolve(articles, 'pub.md'), '# Article\n\nsearchterm here\n');
+    writeFileSync(resolve(project, '.okignore'), 'drafts/\n');
+
+    const config: Config = ConfigSchema.parse({
+      mcp: { tools: { search: { maxResults: 2 } } },
+    });
+
+    const { structured } = await buildSearchResult(
+      { query: 'searchterm' },
+      { resolveCwd: async () => project, serverUrl: undefined, config },
+    );
+
+    expect(structured?.truncated).toBe(true);
+    const paths = (structured?.results ?? []).map((r) => r.path);
+    expect(paths).toEqual(['articles/pub.md']);
+  });
+});
+
 describe('search — previewUrl + ui block', () => {
   test('each result row includes previewUrl + previewUrlSource when resolver resolves', async () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';

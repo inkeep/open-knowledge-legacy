@@ -16,7 +16,7 @@ interface Fixture {
 
 function makeFixture(): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'ok-config-watcher-'));
-  const absPath = join(root, '.open-knowledge', 'config.yml');
+  const absPath = join(root, '.ok', 'config.yml');
   mkdirSync(dirname(absPath), { recursive: true });
   return {
     root,

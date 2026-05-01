@@ -16,7 +16,7 @@ import { parseSpawnTimeoutEnv, startMcpShim } from '../mcp/shim.ts';
 
 /**
  * Pure predicate: should `ok mcp` refuse to start in this directory?
- * True when no `--port` override is given AND `<projectDir>/.open-knowledge/`
+ * True when no `--port` override is given AND `<projectDir>/.ok/`
  * does not exist (i.e. the directory was never `ok init`'d). Exported for
  * testing.
  */
@@ -41,7 +41,7 @@ export function mcpCommand(getConfig: () => Config): Command {
         // Refuse to start in directories that haven't been `ok init`'d. Without
         // this gate, a globally-registered MCP would treat any cwd as an OK
         // project and (transitively, via auto-spawned `ok start`) scaffold
-        // `.open-knowledge/`, `.git/`, and a shadow repo there. `--port`
+        // `.ok/`, `.git/`, and a shadow repo there. `--port`
         // bypasses — explicit user intent. Non-zero exit aligns with how
         // every other CLI precondition failure signals (config.ts, preview.ts,
         // start.ts) so MCP hosts can distinguish refusal from clean shutdown.

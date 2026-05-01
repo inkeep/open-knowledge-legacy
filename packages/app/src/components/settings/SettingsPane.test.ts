@@ -11,8 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const HERE = new URL('.', import.meta.url).pathname;
-const SRC = readFileSync(join(HERE, 'SettingsPane.tsx'), 'utf8');
+const SRC = readFileSync(join(__dirname, 'SettingsPane.tsx'), 'utf8');
 
 describe('SettingsPane module', () => {
   test('exports SettingsPane component', async () => {
@@ -34,6 +33,12 @@ describe('SettingsPane source-level guards', () => {
 
   test('subscribes to CC1 config-validation-rejected', () => {
     expect(SRC).toContain('subscribeToConfigValidationRejected');
+  });
+
+  test('L3 rejection wires form.setError + form.setFocus on the rejected field', () => {
+    expect(SRC).toContain('form.setError(');
+    expect(SRC).toContain('form.setFocus(');
+    expect(SRC).toContain("type: 'config-validation-rejected'");
   });
 
   test('renders as a pane, NOT a Dialog overlay', () => {
@@ -65,8 +70,12 @@ describe('SettingsPane source-level guards', () => {
 
   test('per-field reset writes default OR null-as-clear', () => {
     expect(SRC).toContain('Reset to default');
-    // null-as-clear when the field has no schema default (e.g. appearance.*)
-    expect(SRC).toContain('commit(null)');
+    // Post-RHF refactor: reset writes via form.setValue (defaultValue OR null
+    // for fields without a schema default — null-as-clear preserves RFC 7396
+    // semantics) followed by the harness's commitField.
+    expect(SRC).toMatch(/form\.setValue\(/);
+    expect(SRC).toContain('shouldDirty: false');
+    expect(SRC).toMatch(/defaultValue\s*===\s*undefined\s*\?\s*null/);
   });
 
   test('flash animation uses the settings-flash CSS keyframe', () => {
@@ -76,5 +85,18 @@ describe('SettingsPane source-level guards', () => {
   test('does not instantiate client-side IndexeddbPersistence', () => {
     expect(SRC).not.toContain('IndexeddbPersistence');
     expect(SRC).not.toContain('createClientPersistence');
+  });
+
+  test('uses the shadcn Form primitive (FormField / FormControl / FormMessage)', () => {
+    expect(SRC).toMatch(/from\s+['"]@\/components\/ui\/form['"]/);
+    // Ensure the imported names land on the JSX (FormField is the harness
+    // entry point; FormMessage owns the data-field-error attribute).
+    expect(SRC).toMatch(/<FormField\b/);
+    expect(SRC).toMatch(/<FormMessage\b/);
+  });
+
+  test('consumes the useConfigForm harness hook', () => {
+    expect(SRC).toMatch(/from\s+['"]\.\/use-config-form['"]/);
+    expect(SRC).toContain('useConfigForm(');
   });
 });

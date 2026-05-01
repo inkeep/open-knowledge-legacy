@@ -12,7 +12,7 @@
  *
  * Env wins over lock+config so per-shell overrides (tunnels, CI) are explicit.
  * Lock wins over config so a local checkout of a cloud-deployed repo resolves
- * to the running local UI, not the prod URL checked into `.open-knowledge/config.yml`.
+ * to the running local UI, not the prod URL checked into `.ok/config.yml`.
  *
  * The lock branch reads `ui.lock` (the `ok ui` process), not `server.lock`
  * (the `ok start` collab process), because preview URLs must point at the

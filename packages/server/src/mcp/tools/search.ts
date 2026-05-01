@@ -8,10 +8,13 @@
  * See spec: specs/2026-04-12-enriched-read-tools/SPEC.md § Tool 2.
  */
 
+import { relative as relativePath, resolve as resolvePath } from 'node:path';
 import { OK_DIR } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
+import { resolveContentDir } from '../../config/paths.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
+import { createContentFilter } from '../../content-filter.ts';
 import {
   buildListResolver,
   docNameFromPath,
@@ -28,7 +31,7 @@ export const DESCRIPTION = [
   '- Finding all articles mentioning a topic',
   '- Locating a specific term across the wiki before deciding which file to read',
   '',
-  '**When the project has `.open-knowledge/`**, strongly prefer this over your native `Grep` for wiki search — results include article metadata so you can skip irrelevant matches without extra reads. In projects without `.open-knowledge/`, use native `Grep` as usual.',
+  '**When the project has `.ok/`**, strongly prefer this over your native `Grep` for wiki search — results include article metadata so you can skip irrelevant matches without extra reads. In projects without `.ok/`, use native `Grep` as usual.',
   '',
   '**Parameters:**',
   '- `query` — Literal text to search for (fixed-string match, no regex)',
@@ -105,19 +108,31 @@ export async function buildSearchResult(
   }
   const { cwd, config, url: resolvedServerUrl } = context;
   const maxResults = config.mcp.tools.search.maxResults;
-  const include = config.content.include;
-  const exclude = config.content.exclude;
 
   // Request one extra match so we can tell whether the result set was truncated.
-  const matches = await grep(args.query, cwd, {
+  const rawMatches = await grep(args.query, cwd, {
     caseInsensitive: !(args.case_sensitive ?? false),
-    include,
-    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', OK_DIR],
+    include: ['**/*.md', '**/*.mdx'],
+    exclude: ['node_modules', '.git', '.claude', '.changeset', OK_DIR],
     maxResults: maxResults + 1,
   });
 
-  const truncated = matches.length > maxResults;
-  const visible = truncated ? matches.slice(0, maxResults) : matches;
+  // Apply user-defined .gitignore + .okignore rules via ContentFilter so
+  // search agrees with the file watcher about which files belong in the
+  // document index.
+  const contentDir = resolveContentDir(config, cwd);
+  const filter = createContentFilter({ projectDir: cwd, contentDir });
+  const matches = rawMatches.filter((m) => {
+    const contentRelPath = relativePath(contentDir, resolvePath(cwd, m.path));
+    if (contentRelPath.startsWith('..')) return false;
+    return !filter.isExcluded(contentRelPath);
+  });
+
+  // Truncation signal must reflect the grep cap, not the post-filter set —
+  // a query whose hits land mostly in `.okignore`-excluded paths can shrink
+  // below `maxResults` even though grep stopped early.
+  const truncated = rawMatches.length > maxResults;
+  const visible = matches.slice(0, maxResults);
 
   const { resolve, ui } = await buildListResolver(
     {
@@ -202,7 +217,7 @@ export async function buildSearchResult(
 
   if (truncated) {
     lines.push(
-      `_${visible.length} of ${matches.length}+ matches shown. Raise \`mcp.tools.search.maxResults\` in config.yml to see more._`,
+      `_${visible.length} of ${rawMatches.length}+ matches shown. Raise \`mcp.tools.search.maxResults\` in config.yml to see more._`,
     );
   }
 

@@ -339,7 +339,7 @@ export function showItemInFolder(
 
 /**
  * Local-only telemetry sink. Append-only writer to
- * `~/.open-knowledge/stats.jsonl` — one JSONL line per Open-in-Agent dispatch.
+ * `~/.ok/stats.jsonl` — one JSONL line per Open-in-Agent dispatch.
  * Zero phone-home.
  */
 interface RecordHandoffDeps {
@@ -363,7 +363,7 @@ interface RecordHandoffDeps {
 }
 
 /** Path to the stats file relative to HOME. Centralized so tests can assert on it. */
-export const STATS_FILE_RELATIVE_PATH = ['.open-knowledge', 'stats.jsonl'] as const;
+export const STATS_FILE_RELATIVE_PATH = ['.ok', 'stats.jsonl'] as const;
 
 /**
  * Append one JSONL line to the local stats sink. Failure NEVER throws — a
