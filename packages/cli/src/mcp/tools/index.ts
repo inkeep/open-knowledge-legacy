@@ -30,6 +30,10 @@ import {
   register as registerConsolidate,
 } from './consolidate.ts';
 import {
+  DESCRIPTION as DELETE_TEMPLATE_DESCRIPTION,
+  register as registerDeleteTemplate,
+} from './delete-template.ts';
+import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
@@ -118,6 +122,10 @@ import {
   register as registerWriteDocument,
   DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
 } from './write-document.ts';
+import {
+  register as registerWriteTemplate,
+  DESCRIPTION as WRITE_TEMPLATE_DESCRIPTION,
+} from './write-template.ts';
 
 /** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
 const _TOOL_DESCRIPTIONS = {
@@ -145,6 +153,8 @@ const _TOOL_DESCRIPTIONS = {
   get_config: GET_CONFIG_DESCRIPTION,
   set_config: SET_CONFIG_DESCRIPTION,
   set_folder_rule: SET_FOLDER_RULE_DESCRIPTION,
+  write_template: WRITE_TEMPLATE_DESCRIPTION,
+  delete_template: DELETE_TEMPLATE_DESCRIPTION,
 } as const;
 
 /**
@@ -327,5 +337,13 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerSetFolderRule(registrationServer, {
     config: opts.config,
     resolveCwd: named('set_folder_rule'),
+  });
+  registerWriteTemplate(registrationServer, {
+    config: opts.config,
+    resolveCwd: named('write_template'),
+  });
+  registerDeleteTemplate(registrationServer, {
+    config: opts.config,
+    resolveCwd: named('delete_template'),
   });
 }
