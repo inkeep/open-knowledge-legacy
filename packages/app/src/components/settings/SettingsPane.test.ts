@@ -141,11 +141,11 @@ describe('SettingsPane folders section integration', () => {
 });
 
 describe('SettingsPane Sync section guards', () => {
-  test('Sync section renders only on the workspace tab', () => {
-    // SyncEnabled is workspace-runtime state — the toggle has no meaning on
+  test('Sync section renders only on the project tab', () => {
+    // SyncEnabled is project-runtime state — the toggle has no meaning on
     // the User tab. Removing this guard would surface a duplicate, broken
     // toggle on User scope.
-    expect(SRC).toMatch(/scope\s*===\s*'workspace'[^\n]*<SyncSection\s*\/>/);
+    expect(SRC).toMatch(/scope\s*===\s*'project'[^\n]*<SyncSection\s*\/>/);
   });
 
   test('Sync section toggle goes through the shared confirmation hook', () => {
