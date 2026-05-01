@@ -5,9 +5,6 @@ import type { Duplex } from 'node:stream';
 import type { Scheduler } from '@inkeep/open-knowledge-core';
 import { attachIdleShutdown } from './idle-shutdown';
 
-// ─────────────────────────────────────────────────────────────
-// Test helpers
-// ─────────────────────────────────────────────────────────────
 
 interface ManualScheduler extends Scheduler {
   advanceTime(ms: number): void;
@@ -48,7 +45,6 @@ function createManualScheduler(): ManualScheduler {
   };
 }
 
-/** Minimal mock of the http.Server / Duplex surfaces we hook. */
 function createFakeHttpServer(): HttpServer {
   return new EventEmitter() as unknown as HttpServer;
 }
@@ -62,9 +58,6 @@ function emitUpgrade(server: HttpServer, url: string, socket: Duplex): void {
   (server as unknown as EventEmitter).emit('upgrade', req, socket);
 }
 
-// ─────────────────────────────────────────────────────────────
-// Tests
-// ─────────────────────────────────────────────────────────────
 
 describe('attachIdleShutdown', () => {
   test('fires onShutdown after thresholdMs when zero WebSocket clients', () => {
@@ -102,7 +95,6 @@ describe('attachIdleShutdown', () => {
     scheduler.advanceTime(10_000);
     emitUpgrade(server, '/collab', createFakeSocket());
 
-    // Pending shutdown cancelled
     scheduler.advanceTime(30_000);
     expect(onShutdown).toHaveBeenCalledTimes(0);
   });
@@ -171,8 +163,6 @@ describe('attachIdleShutdown', () => {
   });
 
   test('DirectConnections (no HTTP upgrade) do not affect the counter', () => {
-    // Simulates CC1 broadcaster + AgentSessionManager DirectConnections:
-    // they never transit an HTTP upgrade event. The timer must still fire.
     const scheduler = createManualScheduler();
     const onShutdown = mock(() => Promise.resolve());
     const server = createFakeHttpServer();
@@ -185,7 +175,6 @@ describe('attachIdleShutdown', () => {
       warnBeforeMs: 0,
     });
 
-    // No upgrade events at all — equivalent to "only DirectConnections alive".
     scheduler.advanceTime(30_000);
     expect(onShutdown).toHaveBeenCalledTimes(1);
   });
@@ -211,14 +200,11 @@ describe('attachIdleShutdown', () => {
       log,
     });
 
-    // Before 25 min: no warn
     scheduler.advanceTime(25 * 60 * 1000 - 1);
     expect(warnSpy).toHaveBeenCalledTimes(0);
-    // At 25 min: warn fires
     scheduler.advanceTime(1);
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(onShutdown).toHaveBeenCalledTimes(0);
-    // At 30 min: shutdown fires
     scheduler.advanceTime(5 * 60 * 1000);
     expect(onShutdown).toHaveBeenCalledTimes(1);
   });
@@ -263,7 +249,6 @@ describe('attachIdleShutdown', () => {
     handle.detach();
     expect(scheduler.pendingCount()).toBe(0);
 
-    // Upgrades after detach are no-ops
     emitUpgrade(server, '/collab', createFakeSocket());
     scheduler.advanceTime(30_000);
     expect(onShutdown).toHaveBeenCalledTimes(0);
@@ -305,7 +290,6 @@ describe('attachIdleShutdown', () => {
     scheduler.advanceTime(10_000);
     expect(onShutdown).toHaveBeenCalledTimes(1);
 
-    // Subsequent upgrade + close + advance must not re-fire
     const socket = createFakeSocket();
     emitUpgrade(server, '/collab', socket);
     (socket as unknown as EventEmitter).emit('close');
@@ -331,12 +315,10 @@ describe('attachIdleShutdown', () => {
     emitUpgrade(server, '/collab', s1);
     emitUpgrade(server, '/collab', s2);
 
-    // Close one — counter is 1, still active
     (s1 as unknown as EventEmitter).emit('close');
     scheduler.advanceTime(30_000);
     expect(onShutdown).toHaveBeenCalledTimes(0);
 
-    // Close the second — counter drops to 0, timer restarts
     (s2 as unknown as EventEmitter).emit('close');
     scheduler.advanceTime(30_000);
     expect(onShutdown).toHaveBeenCalledTimes(1);
@@ -380,7 +362,6 @@ describe('attachIdleShutdown', () => {
     });
 
     expect(() => scheduler.advanceTime(5_000)).not.toThrow();
-    // Give the microtask queue a chance to drain the catch handler
     return new Promise<void>((resolve) => {
       queueMicrotask(() => {
         expect(errorSpy).toHaveBeenCalledTimes(1);

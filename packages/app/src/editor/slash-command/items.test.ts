@@ -96,10 +96,6 @@ describe('built-in slash command items', () => {
   });
 
   test('legacy file-upload "image" slash item is removed', () => {
-    // Per US-006 / D7 LOCKED: the descriptor-driven slash menu (component-items)
-    // is the single insertion path for media — the legacy file-picker upload
-    // item that used to live here is gone. The descriptor-driven "Image" entry
-    // covers the same UX (insert + auto-focus + upload via PropPanel).
     expect(slashCommandItems.some((i) => i.name === 'image')).toBe(false);
     expect(slashCommandItems.some((i) => i.aliases?.includes('img'))).toBe(false);
   });

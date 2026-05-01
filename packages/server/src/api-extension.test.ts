@@ -48,9 +48,6 @@ describe('sanitizeFilename', () => {
   });
 
   test('preserves whitelisted characters (space, dot, dash, underscore)', () => {
-    // Space is whitelisted per FR-5 unicode-preserving sanitization — the
-    // sanitized "my file _1_.png" is filesystem-safe and matches the macOS
-    // Finder/Obsidian ergonomic that users expect.
     expect(sanitizeFilename('my file (1).png')).toBe('my file _1_.png');
   });
 
@@ -83,27 +80,18 @@ describe('sanitizeFilename', () => {
   });
 
   test('emoji preserved — Finder/macOS ergonomics', () => {
-    // Documented behavior: `\p{Extended_Pictographic}` pass through so users
-    // who drop 'emoji 🎉.png' get a faithful filename on disk.
     expect(sanitizeFilename('emoji 🎉.png')).toBe('emoji 🎉.png');
   });
 
   test('combining marks (Vietnamese tone, Devanagari) preserved', () => {
-    // `\p{M}` covers combining marks so characters that decompose into
-    // base+combining (NFD) do not lose their diacritics.
     expect(sanitizeFilename('ghi chú.pdf')).toBe('ghi chú.pdf');
   });
 
   test('path-escape attempt ../etc/passwd is flattened — no traversal survives', () => {
-    // The `/` and `\` are stripped; the remaining `..etcpasswd` sees its
-    // dot-run collapsed and leading dot trimmed → 'etcpasswd'.
     expect(sanitizeFilename('../etc/passwd')).toBe('etcpasswd');
   });
 
   test('Windows-style path traversal stripped', () => {
-    // Backslashes are stripped outright (not replaced with `_`) so the
-    // final shape collapses intermediate separators — matches the existing
-    // shipped behavior for forward slashes (e.g. `foo/bar.png` → `foobar.png`).
     expect(sanitizeFilename('..\\Windows\\System32\\evil.exe')).toBe('WindowsSystem32evil.exe');
   });
 
@@ -148,14 +136,10 @@ describe('sanitizeFilename', () => {
   });
 
   test('long adversarial extension falls back to upload', () => {
-    // ext alone = '.' + 'a'.repeat(300) > 255 bytes; while-loop drains stem to
-    // empty, then `'upload' + ext` still exceeds the ceiling. Final-pass
-    // guard kicks in and substitutes extensionless `'upload'`.
     expect(sanitizeFilename(`x.${'a'.repeat(300)}`)).toBe('upload');
   });
 
   test('pure unsafe-character input falls back to upload', () => {
-    // '!!!' → '___' → '_' → leading underscore trimmed → '' → 'upload'
     expect(sanitizeFilename('!!!')).toBe('upload');
   });
 
@@ -193,7 +177,6 @@ describe('handleUploadImage', () => {
 
     const { createServer } = await import('node:http');
     server = createServer((req, res) => {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness
       hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);
@@ -218,7 +201,6 @@ describe('handleUploadImage', () => {
   });
 
   function createPngBuffer(): Buffer {
-    // Minimal valid PNG (1x1 transparent pixel)
     return Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRElEQrkJggg==',
       'base64',
@@ -250,10 +232,6 @@ describe('handleUploadImage', () => {
     const body = (await res.json()) as { ok: boolean; src: string; path: string };
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    // Response shape: `src` is the bare filename (co-located-with-parent
-    // assumption), `path` is contentDir-relative and honors a non-default
-    // `attachmentFolderPath`. The client helper prefers `path` for accurate
-    // refs under any attachment-path config.
     expect(body.src).toBe('screenshot.png');
     expect(body.path).toBe('docs/screenshot.png');
     expect(existsSync(join(contentDir, 'docs', 'screenshot.png'))).toBe(true);
@@ -301,13 +279,6 @@ describe('handleUploadImage', () => {
   });
 
   test('D-M accept-all: spoofed MIME no longer rejects, file is stored under sanitized name', async () => {
-    // Pre-D-M behavior rejected with "Unsupported file type". Under D-M
-    // accept-all (SPEC §10), every file is accepted; post-streaming there
-    // is no user-facing byte cap either, only disk fullness. The SVG
-    // <img>-only routing relies on a successful magic-byte sniff (NFR-3
-    // LOAD-BEARING). The "exe spoofed as .png" test now confirms
-    // accept-all + storage; the security posture flips to render-time:
-    // unrecognized types serve as opaque blobs, never inline-executed.
     const exeBuffer = Buffer.from('MZexecutable content here');
     const res = await uploadImage(exeBuffer, 'malicious.png', 'docs/guide.md');
     expect(res.status).toBe(200);
@@ -327,10 +298,6 @@ describe('handleUploadImage', () => {
   });
 
   test('numeric suffix collision handling — distinct bytes, same filename', async () => {
-    // Pre-seed a file with DIFFERENT bytes than the upload so dedup misses
-    // and the collision-suffix loop produces screenshot-1.png. Under
-    // pre-FR-2 behavior this fired even with identical bytes; post-FR-2
-    // identical-bytes dedup wins (covered separately in the dedup describe).
     writeFileSync(join(contentDir, 'docs', 'screenshot.png'), Buffer.from('different bytes'));
     const res = await uploadImage(createPngBuffer(), 'screenshot.png', 'docs/guide.md');
     const body = (await res.json()) as { ok: boolean; src: string; path: string };
@@ -366,7 +333,6 @@ describe('handleUploadImage', () => {
   });
 
   test('D-M: PDF accepts and stores under sanitized name', async () => {
-    // PDF magic bytes start with %PDF-1.x.
     const pdfBuffer = Buffer.from('%PDF-1.4\n%fake pdf content for test');
     const formData = new FormData();
     formData.append('parentDocName', 'docs/guide.md');
@@ -382,10 +348,6 @@ describe('handleUploadImage', () => {
   });
 
   test('D-M: non-sniffable text file (CSV) accepts under client filename', async () => {
-    // CSV has no magic bytes — `file-type` returns undefined. SVG fallback
-    // does not match. Pre-D-M this rejected with "Unsupported file type";
-    // post-D-M the file lands on disk and emit-shape dispatch decides
-    // (markdown-link in the client per FR-1a).
     const csvBuffer = Buffer.from('a,b,c\n1,2,3\n', 'utf-8');
     const formData = new FormData();
     formData.append('parentDocName', 'docs/guide.md');
@@ -444,7 +406,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
 
     const { createServer } = await import('node:http');
     server = createServer((req, res) => {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness
       hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);
@@ -501,7 +462,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
     expect(second.deduped).toBe(true);
     expect(second.src).toBe('shot.png');
 
-    // Disk still has exactly one file in docs/
     expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
     expect(existsSync(join(contentDir, 'docs', 'shot-1.png'))).toBe(false);
   });
@@ -516,7 +476,6 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
       src: string;
       deduped: boolean;
     };
-    // Dedup is content-keyed, so second's src is the original existing basename.
     expect(second.deduped).toBe(true);
     expect(second.src).toBe('shot.png');
   });
@@ -535,14 +494,11 @@ describe('handleUploadImage — same-dir sha256 dedup (FR-2)', () => {
     };
     expect(inDocs.deduped).toBe(false);
     expect(inArchive.deduped).toBe(false);
-    // Both files exist on disk — same bytes, separate paths.
     expect(existsSync(join(contentDir, 'docs', 'shot.png'))).toBe(true);
     expect(existsSync(join(contentDir, 'archive', 'shot.png'))).toBe(true);
   });
 
   test('dedup ignores non-asset files (markdown sibling does not trigger a hash hit)', async () => {
-    // Pre-seed a markdown file that hashes to anything; the dedup scanner
-    // must skip it because .md is not in ASSET_EXTENSIONS.
     writeFileSync(join(contentDir, 'docs', 'sibling.md'), 'irrelevant');
     const buf = pngFixture();
     const res = (await (await postUpload(buf, 'shot.png', 'docs/guide.md')).json()) as {

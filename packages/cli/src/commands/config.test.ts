@@ -5,9 +5,6 @@ import { join } from 'node:path';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { buildClearPatchForTest, DROPPED_FIELD_PATHS, runMigrate, runValidate } from './config.ts';
 
-// Re-exported via the test module helper at the bottom of this file. The
-// `buildClearPatch` helper isn't exported by config.ts directly (kept private
-// to discourage external use), so the test module re-exports it for coverage.
 
 function makeTempProject(): { cwd: string; userHome: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'ok-config-test-'));
@@ -22,7 +19,6 @@ function makeTempProject(): { cwd: string; userHome: string; cleanup: () => void
       try {
         rmSync(root, { recursive: true, force: true });
       } catch {
-        /* best-effort */
       }
     },
   };
@@ -94,10 +90,8 @@ describe('runValidate', () => {
         error: (msg) => stderr.push(msg),
       });
       expect(outcome.ok).toBe(false);
-      // file:line:col substring per AC
       const joined = stderr.join('\n');
       expect(joined).toContain(`${wsPath}:`);
-      // Snippet caret marker
       expect(joined).toContain('^');
     } finally {
       project.cleanup();
@@ -157,7 +151,6 @@ describe('runMigrate', () => {
     expect(migrated).not.toContain('pushIntervalSeconds');
     expect(migrated).toContain('mcp:');
     expect(migrated).toContain('autoStart: true');
-    // Comments preserved
     expect(migrated).toContain('# Header comment');
     expect(migrated).toContain('# --- mcp ---');
     expect(migrated).toContain('# Trailing comment');
@@ -179,7 +172,6 @@ describe('runMigrate', () => {
     expect(migrated).not.toContain('port:');
     expect(migrated).not.toContain('debounceMs');
     expect(migrated).not.toContain('maxDebounceMs');
-    // Sibling fields preserved
     expect(migrated).toContain('host: localhost');
     expect(migrated).toContain('openOnAgentEdit: false');
     const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
@@ -202,7 +194,6 @@ describe('runMigrate', () => {
     const migrated = readFileSync(wsPath, 'utf-8');
     expect(migrated).not.toContain('include:');
     expect(migrated).not.toContain('exclude:');
-    // Sibling field preserved
     expect(migrated).toContain('dir: .');
     const wsOutcome = outcome.outcomes.find((o) => o.scope === 'project');
     expect(wsOutcome?.removed.sort()).toEqual(['content.exclude', 'content.include'].sort());
@@ -227,7 +218,6 @@ describe('runMigrate', () => {
     });
     expect(outcome.ok).toBe(true);
     expect(stdout).toEqual(['No deprecated fields found.']);
-    // File untouched on second pass — bytes-equal
     expect(readFileSync(wsPath, 'utf-8')).toBe(afterFirst);
   });
 
@@ -283,7 +273,6 @@ describe('runMigrate', () => {
     expect(outcome.ok).toBe(true);
     expect(readFileSync(wsPath, 'utf-8')).not.toContain('sync:');
     expect(readFileSync(userPath, 'utf-8')).toBe(userOriginal);
-    // Outcomes only includes project, not user
     expect(outcome.outcomes.every((o) => o.scope === 'project')).toBe(true);
   });
 

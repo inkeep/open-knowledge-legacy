@@ -1,11 +1,3 @@
-/**
- * SyncStatusBadge — displays the git sync engine state in the editor header.
- *
- * States: dormant (hidden) | idle/synced | fetching/pulling/pushing (syncing) |
- * conflict | offline | auth-error | disabled | available (sync off, remote present)
- *
- * Click opens a popover with last-sync details and action buttons.
- */
 import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -16,7 +8,6 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Switch } from './ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function formatRelative(iso: string | null): string {
   if (!iso) return 'never';
@@ -42,13 +33,10 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) {
-    // Surface as a thrown error so the caller can toast and avoid leaving
-    // the UI in a state where the switch flipped but the server didn't.
     throw new Error(`set-enabled failed: HTTP ${res.status}`);
   }
 }
 
-// ── inner: icon + color per state ────────────────────────────────────────────
 
 interface BadgeIconProps {
   status: GitSyncStatus;
@@ -58,7 +46,6 @@ function BadgeIcon({ status }: BadgeIconProps) {
   const cls = 'size-3.5';
   switch (status.state) {
     case 'dormant':
-      // Available: remote exists but sync not yet enabled
       return <Cloud className={`${cls} text-muted-foreground`} />;
     case 'idle':
       if (status.ahead > 0 || status.behind > 0) {
@@ -105,7 +92,6 @@ function badgeLabel(status: GitSyncStatus): string {
   }
 }
 
-// ── popover content ───────────────────────────────────────────────────────────
 
 function stateLabel(state: GitSyncStatus['state']): string {
   switch (state) {
@@ -186,8 +172,6 @@ function PopoverBody({
     try {
       await setSyncEnabled(next);
     } catch (e) {
-      // The switch animated but the server rejected the request — tell the
-      // user so they can retry instead of thinking sync silently flipped.
       console.error('[sync] toggle failed', e);
       toast.error(`Failed to ${next ? 'enable' : 'disable'} sync — try again`);
     }
@@ -287,14 +271,10 @@ function PopoverBody({
   );
 }
 
-// ── public component ──────────────────────────────────────────────────────────
 
 interface SyncStatusBadgeProps {
-  /** Called when "Sign in" is clicked in the auth-error popover or enable-sync prompt. */
   onSignIn?: () => void;
-  /** Called when "Review conflicts" is clicked in the conflict popover. */
   onOpenConflictResolver?: () => void;
-  /** Called when "Set identity" is clicked in the identity-unresolved nudge. */
   onSetIdentity?: () => void;
 }
 
@@ -305,10 +285,6 @@ export function SyncStatusBadge({
 }: SyncStatusBadgeProps = {}) {
   const { status, fetchError } = useGitSyncStatusDetailed();
 
-  // Surface a lightweight connectivity warning when the server has been
-  // reachable before (we have a prior status) but the last refresh failed.
-  // Before first successful fetch we stay hidden so the badge doesn't flash
-  // on every reload.
   if (!status) {
     if (fetchError) {
       return (
@@ -335,7 +311,6 @@ export function SyncStatusBadge({
     return null;
   }
 
-  // Hide when dormant with no remote (truly no git remote)
   if (status.state === 'dormant' && !status.hasRemote) return null;
 
   const label = badgeLabel(status);

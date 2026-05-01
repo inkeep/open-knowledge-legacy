@@ -1,15 +1,3 @@
-/**
- * AgentAvatar click → openActivityPanel behavior tests.
- *
- * PresenceBar's top-level component needs DocumentContext + a real
- * HocuspocusProvider to exercise, so we target AgentAvatar indirectly by
- * rendering PresenceBar with stubbed hooks via `mock.module`. Static
- * markup inspection verifies the aria-label + data attributes + the click
- * event wires through to the mocked openActivityPanel.
- *
- * The interactive flow (click → panel opens, Esc closes, swap behavior)
- * lives in Playwright (US-009).
- */
 
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { AgentPresenceEntry } from '@inkeep/open-knowledge-core';
@@ -84,7 +72,6 @@ describe('PresenceBar avatar click wiring', () => {
     );
     expect(html).toContain('data-presence-badge="agent"');
     expect(html).toContain('<button');
-    // aria-label prefix signals click-to-open behavior.
     expect(html).toContain('Open activity panel for Agent-abc');
   });
 

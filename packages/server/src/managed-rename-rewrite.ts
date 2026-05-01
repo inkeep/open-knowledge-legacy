@@ -100,9 +100,6 @@ function readMarkdownLink(
   };
 }
 
-// SPEC §13 / FR-7. Matches `![alt](src "optional title")`. Wiki-embeds
-// (`![[file.ext]]`) fail this pattern because the second char after `!`
-// is `[` not `]`-then-`(`, so they flow through untouched — D-K refs-only.
 function readImageRef(
   line: string,
   start: number,
@@ -195,14 +192,6 @@ function rewriteWikiLinksInLine(
   return { markdown: rewritten, rewrites };
 }
 
-// SPEC §13 / FR-7. Recompute a RELATIVE image-ref href when the containing
-// doc moves from oldSourceDocName to newSourceDocName. The asset stays put
-// (D-K refs-only); only the relative path needs adjustment.
-//
-// Returns null when the href should NOT be rewritten:
-//   - absolute path (`/docs/photo.png`) — pre-F8 legacy emit, leave verbatim
-//   - URL with scheme (`https://…`, `data:…`) — external, no recompute
-//   - protocol-relative (`//cdn.example.com/x.png`) — external
 function recomputeRelativeImageHref(
   originalHref: string,
   oldSourceDocName: string,
@@ -215,7 +204,6 @@ function recomputeRelativeImageHref(
   const querySuffix = queryIdx >= 0 ? beforeHash.slice(queryIdx) : '';
   const pathPart = queryIdx >= 0 ? beforeHash.slice(0, queryIdx) : beforeHash;
 
-  // Absolute / external — leave unchanged.
   if (pathPart.startsWith('/') || pathPart.startsWith('//')) return null;
   if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(pathPart)) return null;
 
@@ -223,16 +211,12 @@ function recomputeRelativeImageHref(
   const newDir = posix.dirname(newSourceDocName);
   if (oldDir === newDir) return null; // same dir → relative path unchanged
 
-  // Resolve asset's contentDir-relative path from oldSource's dirname.
   const oldDirAnchored = oldDir === '.' ? '/' : `/${oldDir}/`;
   const assetFromRoot = posix.resolve(oldDirAnchored, pathPart).slice(1);
 
-  // Compute new relative path from newSource's dirname.
   let newRef = posix.relative(newDir === '.' ? '' : newDir, assetFromRoot);
   if (!newRef) newRef = posix.basename(assetFromRoot);
 
-  // Preserve leading `./` if original had it (and result is not already an
-  // ancestor reference).
   if (pathPart.startsWith('./') && !newRef.startsWith('./') && !newRef.startsWith('../')) {
     newRef = `./${newRef}`;
   }
@@ -258,10 +242,6 @@ function recomputeRelativeMarkdownHref(
     relativePath = posix.basename(newDocName);
   }
 
-  // Preserve whatever supported doc extension the authored link carried.
-  // The canonical list lives at `packages/server/src/doc-extensions.ts`; this
-  // function is called in tight loops per link-rewrite so it inlines the
-  // two-case check rather than importing `isSupportedDocFile`.
   if (pathPart.endsWith('.mdx')) {
     relativePath += '.mdx';
   } else if (pathPart.endsWith('.md')) {
@@ -320,10 +300,6 @@ function rewriteMarkdownLinksInLine(
       }
     }
 
-    // SPEC §13 / FR-7. Image refs (`![alt](src)`) get path-recomputed when
-    // the SOURCE doc itself moves (sourceDocName === oldDocName). Wiki-embed
-    // refs (`![[file]]`) and image refs in docs that aren't moving fall
-    // through untouched per D-K refs-only.
     if (line[idx] === '!' && line[idx + 1] === '[') {
       const imageRef = readImageRef(line, idx);
       if (imageRef) {
@@ -473,9 +449,6 @@ function rewriteOutboundMarkdownLinksInLine(
       }
     }
 
-    // Wiki links resolve via the basename index, not relative paths — leave
-    // them alone here. Self-rename of `[[oldDocName]]` → `[[newDocName]]` is
-    // handled by `rewriteWikiLinksForDocumentRename` in the self-rename pass.
     if (line[idx] === '[' && line[idx + 1] === '[') {
       const wikiLink = readWikiLink(line, idx);
       if (wikiLink) {
@@ -485,10 +458,6 @@ function rewriteOutboundMarkdownLinksInLine(
       }
     }
 
-    // Image refs are recomputed by `rewriteMarkdownLinksInLine`'s
-    // `isContainingDocMove` branch in the self-rename pass — skip here so
-    // we don't double-recompute (which would treat an already-rewritten
-    // href as if it were still anchored to the old source dir).
     if (line[idx] === '!' && line[idx + 1] === '[') {
       const imageRef = readImageRef(line, idx);
       if (imageRef) {
@@ -533,17 +502,6 @@ function rewriteOutboundMarkdownLinksInLine(
   return { markdown: rewritten, rewrites };
 }
 
-/**
- * Recompute relative outbound markdown-link hrefs in a document whose own
- * location moved from `oldSourceDocName` to `newSourceDocName`. Image refs
- * and self-targeting wiki/markdown links are NOT handled here — they're
- * covered by `rewriteMarkdownLinksForDocumentRename` /
- * `rewriteWikiLinksForDocumentRename` invoked with the same (old, new) pair
- * (the self-rename pass in `applyRenameMap`).
- *
- * No-op when the dirname doesn't change — relative paths to non-renamed
- * targets stay correct on a same-folder rename.
- */
 export function rewriteOutboundMarkdownLinksForSourceMove(
   markdown: string,
   oldSourceDocName: string,

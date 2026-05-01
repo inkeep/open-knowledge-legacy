@@ -9,7 +9,6 @@ import { getMeter, getTracer, initTelemetry, shutdownTelemetry } from './telemet
 
 describe('Telemetry', () => {
   beforeEach(() => {
-    // Ensure clean global state before each test
     trace.disable();
     metrics.disable();
     context.disable();
@@ -31,7 +30,6 @@ describe('Telemetry', () => {
         expect(tracer).toBeDefined();
         expect(meter).toBeDefined();
 
-        // No-op tracer produces non-recording spans
         const span = tracer.startSpan('test-span');
         expect(span).toBeDefined();
         expect(span.isRecording()).toBe(false);
@@ -88,7 +86,6 @@ describe('Telemetry', () => {
       try {
         const first = initTelemetry();
         const second = initTelemetry();
-        // Both should return tracers from the same global provider
         const span1 = first.tracer.startSpan('idempotent-1');
         const span2 = second.tracer.startSpan('idempotent-2');
         expect(span1.isRecording()).toBe(true);
@@ -103,7 +100,6 @@ describe('Telemetry', () => {
 
   describe('shutdownTelemetry', () => {
     it('is idempotent — calling twice does not throw', async () => {
-      // No init — providers are null
       await shutdownTelemetry();
       await shutdownTelemetry();
     });
@@ -116,7 +112,6 @@ describe('Telemetry', () => {
       } finally {
         process.env.OTEL_SDK_DISABLED = saved;
       }
-      // Shutdown should resolve (timeout guard ensures it doesn't hang)
       await shutdownTelemetry();
     });
   });
@@ -133,7 +128,6 @@ describe('Telemetry', () => {
 
   describe('InMemorySpanExporter integration', () => {
     it('captures spans with correct name and attributes when SDK is registered', () => {
-      // Set up a test-only provider with InMemorySpanExporter (not via initTelemetry)
       const exporter = new InMemorySpanExporter();
       const provider = new BasicTracerProvider({
         spanProcessors: [new SimpleSpanProcessor(exporter)],
@@ -141,7 +135,6 @@ describe('Telemetry', () => {
       trace.setGlobalTracerProvider(provider);
 
       try {
-        // getTracer() uses the global API — should get the real provider
         const tracer = getTracer();
         const span = tracer.startSpan('test.operation', {
           attributes: {

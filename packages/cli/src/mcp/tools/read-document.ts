@@ -1,21 +1,3 @@
-/**
- * `read_document` MCP tool — enriched read.
- *
- * Single-call read that returns:
- *   - File contents (raw markdown, frontmatter and all)
- *   - Article metadata parsed from frontmatter (title / description / tags)
- *   - Recent shadow-repo activity with per-writer attribution (agent vs human)
- *   - Backlink count (when Hocuspocus is available — graceful degrade per FR9)
- *
- * Enrichment is fully delegated to the shared `enrichPath()` helper (D4/D13).
- * CC9 parity with `exec("cat X.md")` is by construction: both surfaces read
- * the same helper.
- *
- * Folder-catalog context is intentionally absent — folder INDEX.md
- * frontmatter was deprecated in D19.
- *
- * Spec: SPEC.md FR7 + FR15 + D13 + D19.
- */
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
@@ -42,13 +24,8 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export interface ReadDocumentDeps {
-  /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  /**
-   * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
-   * Resolved once per call before passing into `enrichPath`.
-   */
   serverUrl: ServerUrlOrResolver;
 }
 
@@ -110,7 +87,6 @@ function relativePath(input: string): string {
   return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
 
-/** Strip a trailing .md/.mdx to produce the extension-less docName the UI hash-routes on. */
 function docNameFromRelPath(relPath: string): string {
   return relPath.replace(/\.(md|mdx)$/i, '');
 }

@@ -3,25 +3,7 @@ import { join, resolve } from 'node:path';
 import { CONFIG_SCHEMA_MAJOR_PATH } from '@inkeep/open-knowledge-core';
 import { CACHE_DIR, CONFIG_FILENAME, OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
-/**
- * Build the `$schema` URL for a scaffolded project `config.yml`.
- *
- * Schema versioning is INDEPENDENT of the npm package version. The URL pins
- * to the schema MAJOR (`v0`, `v1`, …) and uses the npm `@latest` dist-tag
- * for the package itself — additive changes (new optional fields, new enum
- * values) reach existing users automatically as soon as unpkg's `@latest`
- * cache refreshes (typically <1h). Breaking changes bump the schema MAJOR
- * and emit to a new directory; the old directory keeps shipping for legacy
- * YAMLs that never re-pin.
- *
- * `_version` is retained on the signature for source-compat with callers
- * pre-versioning; it's no longer used in the URL — the URL pins to schema
- * major (from `CONFIG_SCHEMA_MAJOR_PATH`) and `@latest` of the package.
- */
 export function packageVersionMajorMinor(version: string): string {
-  // Default-on-undefined ([major = '0']) doesn't kick in for empty strings —
-  // ''.split('.') returns [''], not []. Coerce empty segments to '0' so a
-  // malformed version still yields a parsable URL slug.
   const [rawMajor = '0', rawMinor = '0'] = version.split('.');
   const major = rawMajor.length > 0 ? rawMajor : '0';
   const minor = rawMinor.length > 0 ? rawMinor : '0';
@@ -155,16 +137,6 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
-/**
- * Append missing scaffold entries to an existing `.gitignore`, or create the
- * file from scratch when absent. User customizations are preserved — only
- * entries that aren't already present (via trim-equality) get appended.
- *
- * Required entries are derived from `scaffoldContent`'s non-comment, non-empty
- * lines. This is the upgrade path: projects that ran `ok init` before this
- * scaffold gained `principal.json` / `last-spawn-error.log` would otherwise
- * never see the new entries because `writeIfMissing` short-circuits.
- */
 function ensureGitignoreEntries(
   filePath: string,
   scaffoldContent: string,
@@ -186,13 +158,6 @@ function ensureGitignoreEntries(
   return 'updated';
 }
 
-/**
- * Single source of truth for `.ok/.gitignore`.
- *
- * Every per-machine OK runtime path lives here so the project root
- * `.gitignore` stays free of OK-internal entries. No `ok` command writes
- * to the project root `.gitignore`.
- */
 const OK_GITIGNORE_CONTENT = `# Per-machine runtime state — never commit. All Open Knowledge ignore rules
 # live here so the project root .gitignore stays free of OK-internal paths.
 
@@ -212,14 +177,6 @@ state.json
 last-spawn-error.log
 `;
 
-/**
- * Single source of truth for the project-root `.okignore` scaffold.
- *
- * Comment-only header — no example excludes ship by default. The body
- * teaches gitignore syntax + the cross-source `!` override that makes
- * `.okignore` strictly more expressive than the previous YAML
- * `content.exclude` block.
- */
 export const OK_OKIGNORE_TEMPLATE = `# .okignore — paths to exclude from the Open Knowledge document index.
 # Uses gitignore syntax (parsed by the \`ignore\` npm library), evaluated
 # alongside .gitignore in a single ignore-lib instance.
@@ -244,15 +201,9 @@ export function initContent(projectDir: string): {
   const updated: string[] = [];
   const skipped: string[] = [];
 
-  // Create .ok/ itself + the cache/ subdir. No scaffold content dirs —
-  // content lives wherever config.content.dir points (project root by default).
   mkdirSync(okDir, { recursive: true });
   mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
 
-  // .gitignore: merge-on-upgrade — append missing scaffold entries to an
-  // existing file rather than skipping outright. Keeps the SSoT contract for
-  // projects created before new entries (`principal.json`,
-  // `last-spawn-error.log`) joined the scaffold.
   const gitignoreAction = ensureGitignoreEntries(join(okDir, '.gitignore'), OK_GITIGNORE_CONTENT);
   if (gitignoreAction === 'created') {
     created.push('.gitignore');
@@ -262,17 +213,12 @@ export function initContent(projectDir: string): {
     skipped.push('.gitignore');
   }
 
-  // config.yml: writeIfMissing — user customizations win.
   if (writeIfMissing(join(okDir, CONFIG_FILENAME), buildConfigYmlContent(PACKAGE_VERSION))) {
     created.push(CONFIG_FILENAME);
   } else {
     skipped.push(CONFIG_FILENAME);
   }
 
-  // .okignore at project root: writeIfMissing — never clobber an existing file.
-  // Lives alongside .gitignore (not under .ok/) so users author it like any
-  // other root-level ignore file. Patterns load through ContentFilter into the
-  // same ignore-lib instance as .gitignore, with cross-source `!` overrides.
   if (writeIfMissing(join(projectDir, '.okignore'), OK_OKIGNORE_TEMPLATE)) {
     created.push('.okignore');
   } else {

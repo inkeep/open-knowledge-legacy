@@ -238,10 +238,6 @@ export function wrapToolHandlerForLogging(
   };
 }
 
-/**
- * Return a server instance whose `tool(...)` and `registerTool(...)`
- * registration wraps handlers with request-aware structured logging.
- */
 export function createLoggedServer(
   server: ServerInstance,
   opts: LoggedToolServerOptions,
@@ -251,8 +247,6 @@ export function createLoggedServer(
   const originalTool = (server as unknown as { tool: (...args: unknown[]) => unknown }).tool.bind(
     server,
   );
-  // registerTool is the modern MCP SDK registration API; older mocks/test stubs may not
-  // expose it. Wrap only when present so consumers using the legacy `tool()` shape still work.
   const rawRegisterTool = (server as unknown as { registerTool?: (...args: unknown[]) => unknown })
     .registerTool;
   const originalRegisterTool =

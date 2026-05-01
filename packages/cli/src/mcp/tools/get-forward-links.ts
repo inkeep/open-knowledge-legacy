@@ -57,8 +57,6 @@ export function register(server: ServerInstance, deps: GetForwardLinksDeps): voi
       const { ok: _ok, ...rest } = result;
       const data = rest as ForwardLinksPayload;
       const { resolve, ui } = await buildListResolver(deps, cwd);
-      // 'doc' kind entries have a resolvable docName; 'external' kind entries
-      // point at arbitrary URLs and always emit previewUrl: null.
       const forwardLinks = (data.forwardLinks ?? []).map((row) => {
         const docName = row.kind === 'doc' && typeof row.docName === 'string' ? row.docName : null;
         const resolved = docName ? resolve(docName) : null;

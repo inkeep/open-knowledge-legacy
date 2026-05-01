@@ -1,14 +1,3 @@
-/**
- * Unit tests for the pluggable `SkillInstaller` adapters.
- *
- * Covers:
- *   - `electronSkillInstaller` translates the bridge's
- *     `{ok, path | reason+message}` into the normalized `SkillInstallResult`.
- *   - `httpSkillInstaller` posts to `/api/install-skill`, parses the
- *     server's `BuildAndOpenSkillResult`, and collapses 'installed' / 'built'
- *     to ok-true and 'failed' to ok-false. Network + non-2xx responses are
- *     surfaced as ok-false with diagnostic reason codes.
- */
 
 import { describe, expect, mock, test } from 'bun:test';
 import {

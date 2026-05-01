@@ -1,27 +1,3 @@
-/**
- * Invariant I19 — HTML5 `<details>` ↔ Accordion round-trip (US-011 / FR-8).
- *
- * Two claims (post canonical/compat split):
- *
- * 1. Prop-shape equivalence: `parse('<details><summary>X</summary>Y</details>')`
- *    produces the same `props` bag (modulo γ source-raw fields) as
- *    `parse('<Accordion title="X">Y</Accordion>')`. The `componentName` differs
- *    by design — `<details>` parses to `HtmlDetailsAccordion` (compat) so the
- *    serializer can round-trip back to HTML5; `<Accordion>` parses to
- *    `Accordion` (canonical). Both descriptors render through the same React
- *    Component via `rendersAs: 'Accordion'` on the compat side, so the runtime
- *    treats them identically.
- *
- * 2. γ pristine preservation: `parse → serialize` on `<details>` source
- *    emits the original bytes (modulo a single trailing newline that
- *    remark-stringify always appends). Proves the promoter correctly
- *    spans the opener+closer paragraphs with a single position so Phase
- *    B's position-slice walker attaches the right sourceRaw.
- *
- * Scope: I19 covers the HTML5 `<details>` authoring form. The MDX JSX
- * `<Accordion>` form is covered by I12 (pristine byte-identity across the
- * 5-pack fixture corpus) and US-009's descriptor tests.
- */
 
 import { describe, expect, test } from 'bun:test';
 import type { JSONContent } from '@tiptap/core';
@@ -37,8 +13,6 @@ function stripGammaAttrs(node: JSONContent): JSONContent {
     delete (attrs as Record<string, unknown>).content;
     delete (attrs as Record<string, unknown>).attributes;
     delete (attrs as Record<string, unknown>).sourceDirty;
-    // componentName differs by source form (HtmlDetailsAccordion vs Accordion)
-    // by design — strip it for prop-shape comparison.
     delete (attrs as Record<string, unknown>).componentName;
   }
   const content = node.content?.map(stripGammaAttrs);
@@ -156,9 +130,6 @@ describe('I19 — props shape after parse', () => {
     const json = mdManager.parse('<details><summary>X</summary>Body</details>');
     const node = findFirstNode(json, 'jsxComponent');
     const props = (node?.attrs?.props ?? {}) as Record<string, unknown>;
-    // The attr is NOT emitted on the mdast attributes array when absent —
-    // props.defaultOpen is undefined (descriptor default false applied at
-    // render time in the renderer, not at parse time).
     expect(props.defaultOpen).toBeUndefined();
   });
 
@@ -183,9 +154,6 @@ describe('I19 — props shape after parse', () => {
 });
 
 describe('I19 — PBT: arbitrary summary + body text → pristine round-trip', () => {
-  // Same body discipline as I18/I20 — letter-prefix + conservative
-  // punctuation; the property under test is the `<details>` promoter, not
-  // the text handler. Summary text is restricted to the same shape.
   const titleChars = fc.stringMatching(/^[A-Za-z][\w .,!?;:'-]{0,30}$/);
   const bodyChars = fc.stringMatching(/^[A-Za-z][\w .,!?;:()']{0,40}$/);
 

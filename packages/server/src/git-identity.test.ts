@@ -1,9 +1,3 @@
-/**
- * Unit tests for resolveGitIdentity() — chain order + fallback logic.
- * Uses injected GitConfigReader so no actual git or simple-git calls are made.
- *
- * US-017: repo-local → global → tokenStore → null
- */
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -12,16 +6,13 @@ import {
   resolveGitIdentity,
 } from './git-identity.ts';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Build a mock GitConfigReader that returns pre-defined values per (key, scope). */
 function mockReader(
   values: Partial<Record<string, Partial<Record<'local' | 'global', string | null>>>>,
 ): GitConfigReader {
   return (_dir, key, scope) => values[key]?.[scope] ?? null;
 }
 
-/** A minimal TokenStore stub. */
 function makeTokenStore(entry: { login: string; name?: string; email?: string } | null) {
   const store: GitIdentityTokenStore = {
     get: async (_host: string) => entry,
@@ -29,7 +20,6 @@ function makeTokenStore(entry: { login: string; name?: string; email?: string } 
   return store;
 }
 
-// ─── Chain order tests ────────────────────────────────────────────────────────
 
 describe('resolveGitIdentity chain order', () => {
   test('Step 1: returns repo-local identity when both name + email are set locally', async () => {
@@ -107,7 +97,6 @@ describe('resolveGitIdentity chain order', () => {
       name: 'The Octocat',
       email: 'cat@github.com',
     });
-    // host not provided — step 3 skipped even with a valid store
     const result = await resolveGitIdentity('/fake/repo', store, null, reader);
     expect(result).toBeNull();
   });

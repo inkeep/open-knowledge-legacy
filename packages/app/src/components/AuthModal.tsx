@@ -1,18 +1,3 @@
-/**
- * AuthModal — GitHub sign-in dialog.
- *
- * Two modes:
- *   'device'  — Device Flow (default): shows user_code, polls for completion,
- *               2-minute timeout. Calls POST /api/local-op/auth/login (streaming JSONL).
- *   'pat'     — PAT fallback: text input, validated via POST /api/local-op/auth/pat.
- *
- * Variant props:
- *   identityPrompt — when true, shows Name + Email fields after sign-in for unset
- *                    git identity (FR38 re-auth variant).
- *   reauth        — when true, shows "Re-authenticate" heading instead of "Sign in".
- *
- * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
- */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AuthTransport, httpAuthTransport } from '@/lib/transports/auth-transport';
@@ -21,7 +6,6 @@ import { Button } from './ui/button';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 
-// ── NDJSON event types from /api/local-op/auth/login ──────────────────────────
 
 interface DeviceVerificationEvent {
   type: 'verification';
@@ -45,13 +29,11 @@ interface DeviceErrorEvent {
 
 type DeviceEvent = DeviceVerificationEvent | DeviceCompleteEvent | DeviceErrorEvent;
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    /* ignore — clipboard not available */
   }
 }
 
@@ -66,20 +48,11 @@ interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (result: AuthSuccessResult) => void;
-  /** Show git identity fields (Name + Email) after sign-in. */
   identityPrompt?: boolean;
-  /** Show "Re-authenticate" heading. */
   reauth?: boolean;
-  /**
-   * Transport for the device-flow subprocess. Defaults to the HTTP path
-   * (POST /api/local-op/auth/login) so existing editor / web callers
-   * don't change. The Project Navigator passes an IPC transport because
-   * its window has no backing API server.
-   */
   transport?: AuthTransport;
 }
 
-// ── Device Flow panel ─────────────────────────────────────────────────────────
 
 interface DeviceFlowPanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
@@ -105,9 +78,6 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
     try {
       const handle = transport.start();
       cancelRef.current = handle.cancel;
-      // Manual iterator drive — React Compiler (BuildHIR) does not yet
-      // support `for await ... of` lowering, so we walk the iterator with
-      // explicit `next()` calls instead.
       const iter = handle.events[Symbol.asyncIterator]();
       let sawTerminal = false;
       let result = await iter.next();
@@ -151,17 +121,7 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
   useEffect(() => {
-    // Defer the start by one microtask so React StrictMode's dev-mode
-    // mount→cleanup→remount cycle coalesces into a single start. Without
-    // this, the first mount's IPC `:start` fires, the cleanup chains a
-    // cancel onto its (still-pending) promise, and the second mount's
-    // `:start` reaches main BEFORE the chained cancel — main's
-    // single-in-flight guard then rejects the second start with "An auth
-    // login operation is already in progress". The microtask defer lets
-    // the first mount's cleanup set `cancelled = true` before its start
-    // ever fires, leaving only the second mount's start to run.
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -175,7 +135,6 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
     };
   }, []);
 
-  // Countdown timer
   useEffect(() => {
     if (!userCode) return;
     const start = Date.now();
@@ -255,7 +214,6 @@ function DeviceFlowPanel({ onSuccess, onCancel, transport }: DeviceFlowPanelProp
   );
 }
 
-// ── PAT panel ─────────────────────────────────────────────────────────────────
 
 interface PATpanelProps {
   onSuccess: (result: AuthSuccessResult) => void;
@@ -268,8 +226,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Cancel any in-flight PAT validation when the panel unmounts so the stream
-  // reader doesn't keep running and calling setState on an unmounted component.
   useEffect(
     () => () => {
       abortRef.current?.abort();
@@ -316,7 +272,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
             return 'terminal';
           }
         } catch {
-          /* ignore */
         }
         return 'continue';
       });
@@ -367,7 +322,6 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
   );
 }
 
-// ── Identity prompt ────────────────────────────────────────────────────────────
 
 interface IdentityPromptProps {
   login: string;
@@ -413,7 +367,6 @@ function IdentityPrompt({ login, onSave, onSkip }: IdentityPromptProps) {
   );
 }
 
-// ── Main modal ────────────────────────────────────────────────────────────────
 
 type AuthTab = 'device' | 'pat';
 type AuthStep = 'auth' | 'identity' | 'done';
@@ -426,14 +379,11 @@ export function AuthModal({
   reauth,
   transport,
 }: AuthModalProps) {
-  // Default to the HTTP path so existing editor / web callers don't need
-  // to change. Navigator passes its IPC transport explicitly.
   const resolvedTransport = transport ?? httpAuthTransport();
   const [tab, setTab] = useState<AuthTab>('device');
   const [step, setStep] = useState<AuthStep>('auth');
   const [authResult, setAuthResult] = useState<AuthSuccessResult | null>(null);
 
-  // Reset on open
   useEffect(() => {
     if (open) {
       setTab('device');
@@ -455,13 +405,11 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via config endpoint (best-effort)
     void fetch('/api/local-op/auth/status', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ setIdentity: { name, email } }),
     }).catch(() => {
-      /* ignore */
     });
 
     const result = { ...(authResult ?? { login: '' }), name, email };

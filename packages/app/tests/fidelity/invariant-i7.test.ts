@@ -1,11 +1,3 @@
-/**
- * Invariant I7 — Cross-path consistency: all write paths that produce
- * the same logical content yield equivalent serialized output.
- *
- * Tests that content written via mdManager.parse (WYSIWYG), Y.Text
- * (source mode), and updateYFragment (external) all produce the same
- * serialized markdown when read back.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
@@ -19,12 +11,10 @@ import { NUM_RUNS, normalize } from './helpers';
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-/** Path 1: md → parse → serialize (mdManager only). */
 function pathMdManager(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-/** Path 2: md → parse → nodeFromJSON → Y.XmlFragment → serialize (Y.Doc path). */
 function pathYDoc(md: string): string {
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment('default');
@@ -38,15 +28,6 @@ function pathYDoc(md: string): string {
   return result;
 }
 
-/**
- * Path 3: md → parse → serialize (mdManager re-parse path).
- *
- * NOTE: This exercises the same mdManager round-trip as pathMdManager.
- * A true Y.Text path (write to Y.Text → Observer B fires → XmlFragment
- * → serialize) requires async debounce wiring that is impractical in PBT.
- * The actual text→tree path is covered by integration tests
- * (bridge-matrix.test.ts V2) rather than PBT invariants.
- */
 function pathMdManagerReparse(md: string): string {
   const json = mdManager.parse(md);
   return mdManager.serialize(json);

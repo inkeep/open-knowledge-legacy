@@ -1,12 +1,3 @@
-/**
- * `search` MCP tool — enriched grep.
- *
- * Runs grep across tracked content and groups matches by file. Each matched
- * file is annotated with frontmatter metadata (title, description, tags) so
- * the agent can evaluate relevance before reading.
- *
- * See spec: specs/2026-04-12-enriched-read-tools/SPEC.md § Tool 2.
- */
 import { relative as relativePath, resolve as resolvePath } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 import { z } from 'zod';
@@ -38,13 +29,8 @@ export const DESCRIPTION = [
 ].join('\n');
 
 interface SearchDeps {
-  /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
   resolveCwd: (explicit?: string) => Promise<string>;
   config: ConfigOrResolver;
-  /**
-   * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
-   * Resolved once per call before passing into `enrichPath`.
-   */
   serverUrl?: ServerUrlOrResolver;
 }
 
@@ -108,7 +94,6 @@ export async function buildSearchResult(
   const { cwd, config, url: resolvedServerUrl } = context;
   const maxResults = config.mcp.tools.search.maxResults;
 
-  // Request one extra match so we can tell whether the result set was truncated.
   const rawMatches = await grep(args.query, cwd, {
     caseInsensitive: !(args.case_sensitive ?? false),
     include: ['**/*.md', '**/*.mdx'],
@@ -116,9 +101,6 @@ export async function buildSearchResult(
     maxResults: maxResults + 1,
   });
 
-  // Apply user-defined .gitignore + .okignore rules via ContentFilter so
-  // search agrees with the file watcher about which files belong in the
-  // document index.
   const contentDir = resolveContentDir(config, cwd);
   const filter = createContentFilter({ projectDir: cwd, contentDir });
   const matches = rawMatches.filter((m) => {
@@ -127,9 +109,6 @@ export async function buildSearchResult(
     return !filter.isExcluded(contentRelPath);
   });
 
-  // Truncation signal must reflect the grep cap, not the post-filter set —
-  // a query whose hits land mostly in `.okignore`-excluded paths can shrink
-  // below `maxResults` even though grep stopped early.
   const truncated = rawMatches.length > maxResults;
   const visible = matches.slice(0, maxResults);
 
@@ -158,9 +137,6 @@ export async function buildSearchResult(
 
   const groups = groupByFile(visible);
 
-  // Per-file enrichment via shared helper (D4/D13). Slim shape per FR14 —
-  // no history, no backlinkCount, to avoid N-amplification on multi-file
-  // search output.
   const metaByPath = new Map<string, EnrichedMeta>();
   const folderRules = config.folders;
   await Promise.all(
@@ -173,7 +149,6 @@ export async function buildSearchResult(
         });
         metaByPath.set(g.path, meta);
       } catch {
-        // Enrichment failure is non-fatal — omit metadata for that file.
       }
     }),
   );

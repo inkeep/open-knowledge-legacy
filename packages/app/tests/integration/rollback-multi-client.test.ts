@@ -1,22 +1,3 @@
-/**
- * T7 — Multi-client content replace (rollback-class structural test).
- *
- * The /api/rollback endpoint requires a shadow-repo commit SHA to revert to,
- * which depends on the full save-version + commit-tree flow. Rather than
- * replicate that ceremony, this test exercises the STRUCTURALLY EQUIVALENT
- * mechanism that rollback uses internally: `applyAgentMarkdownWrite` in
- * `position: 'replace'` mode, which calls `updateYFragment` on the live server
- * Y.Doc under a paired-write origin — identical to ROLLBACK_ORIGIN's behavior
- * as far as Items + Observer A/B interaction is concerned.
- *
- * If the branch-switch path (T5) is exempt from the bug class because
- * `updateYFragment` + paired-write-origin preserves Y.Doc identity, the same
- * should hold here. This test confirms that empirically.
- *
- * Expected: PASS. Marker counts are 1× on both clients after replace.
- * If this test FAILS, the hypothesis that structural-diff paths are safe is
- * wrong, and the fix scope expands to cover ROLLBACK_ORIGIN + MANAGED_RENAME_ORIGIN.
- */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -57,7 +38,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
     const server = await createRestartableServer();
     cleanups.push(() => server.shutdown());
 
-    // Seed content-A on disk so initial sync loads content-A.
     const docName = 'replace-doc';
     writeFileSync(join(server.contentDir, `${docName}.md`), CONTENT_A, 'utf-8');
 
@@ -68,7 +48,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
     });
     cleanups.push(() => ctx.cleanup());
 
-    // Pre-replace: both clients see content-A.
     await pollUntil(
       () =>
         ctx.pools.every((p) =>
@@ -84,7 +63,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
       return clientIdsInDoc(entry.provider.document);
     });
 
-    // Agent replaces doc content with content-B.
     await agentWriteMd(server.port, CONTENT_B, {
       docName,
       position: 'replace',
@@ -92,7 +70,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
       agentName: 'T7-Agent',
     });
 
-    // Wait for both clients to see content-B.
     await pollUntil(
       () =>
         ctx.pools.every((p) =>
@@ -115,7 +92,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
       post: postReplaceClientIdSets.map((s) => [...s]),
     });
 
-    // Behavior: both clients settle to content-B exactly once, no content-A bleed.
     for (let i = 0; i < ctx.pools.length; i++) {
       const entry = ctx.pools[i].getActive();
       if (!entry) throw new Error(`pool[${i}] has no active entry during assertion`);
@@ -131,7 +107,6 @@ describe('T7: Multi-client content replace (rollback-class structural test)', ()
       expect(aHeading).toBe(0);
     }
 
-    // Disk reflects content-B exactly once.
     const disk = await pollDiskContentStable(
       join(server.contentDir, `${docName}.md`),
       (c) => c.includes('b-sibling'),

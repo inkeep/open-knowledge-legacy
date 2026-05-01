@@ -1,9 +1,3 @@
-/**
- * Subprocess runner — foundational behavior used by both auth + clone flows.
- *
- * Fixture subprocesses are spawned via `process.execPath -e <script>` so the
- * tests stay self-contained (no dependence on the project CLI being on PATH).
- */
 import { describe, expect, test } from 'bun:test';
 import { runSubprocess } from './subprocess.ts';
 
@@ -82,7 +76,6 @@ describe('runSubprocess', () => {
     setTimeout(() => proc.cancel(), 50);
     const result = await proc.done;
     expect(result.cancelled).toBe(true);
-    // Process exited via signal; exit code reported as null.
     expect(result.code).toBeNull();
   });
 

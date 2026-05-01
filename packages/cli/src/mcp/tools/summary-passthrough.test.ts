@@ -1,12 +1,3 @@
-/**
- * US-005 — MCP tools: summary Zod param + pass-through to HTTP body +
- * structured-response surfacing, plus the rename/rollback identity passthrough
- * wiring (D15) that lets the server-side D22 guard actually fire for
- * MCP-driven calls.
- *
- * Covers all five write-like tools: write_document, edit_document,
- * rename_document, rename_folder, rollback_to_version.
- */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -44,9 +35,6 @@ function createCaptureServer() {
   const tools: Array<{
     name: string;
     description: string;
-    /** Raw Zod schema object captured at register() time — exposed so
-     *  transport-safety tests can exercise the real Zod runtime guard
-     *  rather than a passthrough. */
     schema: Record<string, z.ZodTypeAny>;
     handler: Handler;
   }> = [];
@@ -87,7 +75,6 @@ beforeAll(() => {
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
-      // GETs (e.g. /api/history/<sha>) — return a versionResult shape
       if (req.method === 'GET') {
         return Response.json({
           ok: true,
@@ -169,10 +156,6 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
     });
 
     test('server response summary (with nested hint) surfaces in structuredContent; hint in text', async () => {
-      // Server emits the hint nested under `summary.hint` (not a top-level
-      // sibling) so the truncation message always travels with the field it
-      // explains. MCP tools read the nested hint for the human-readable text
-      // line; structured content passes the full summary object through.
       mockResponse = {
         summary: {
           value: 'fixed',
@@ -197,36 +180,27 @@ describe('US-005 — summary + identityRef passthrough across MCP write tools', 
     });
 
     test('Zod schema: summary 200 chars accepted, 201 chars rejected, non-string rejected', () => {
-      // Exercises the real Zod runtime guard captured at register() time —
-      // proves the transport-safety 200-char cap (D21) actually fires,
-      // independent of the HTTP passthrough machinery.
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());
       const summarySchema = cap.getTool('write_document').schema.summary;
       if (!summarySchema) throw new Error('summary schema missing from write_document');
 
-      // Accepts up-to-cap.
       expect(summarySchema.safeParse('x'.repeat(200)).success).toBe(true);
       expect(summarySchema.safeParse('short').success).toBe(true);
       expect(summarySchema.safeParse(undefined).success).toBe(true); // optional()
 
-      // Rejects over-cap.
       const over = summarySchema.safeParse('x'.repeat(201));
       expect(over.success).toBe(false);
       if (!over.success) {
         expect(over.error.issues[0]?.code).toBe('too_big');
       }
 
-      // Rejects non-string at the transport layer (number, object, array).
       expect(summarySchema.safeParse(42).success).toBe(false);
       expect(summarySchema.safeParse({ text: 'hi' }).success).toBe(false);
       expect(summarySchema.safeParse(['hi']).success).toBe(false);
     });
 
     test('200-char summary passes through to HTTP body unchanged (server-side truncation, not MCP)', async () => {
-      // The Zod cap is 200 (transport safety). API-side normalizeSummary
-      // truncates to 80 (render bound). This test proves a 200-char summary
-      // survives the MCP layer verbatim — any truncation happens on the server.
       const cap = createCaptureServer();
       registerWriteDocument(cap.server, baseDeps());
       const input = 'x'.repeat(200);

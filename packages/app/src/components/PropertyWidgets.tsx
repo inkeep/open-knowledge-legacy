@@ -1,21 +1,3 @@
-/**
- * Property widgets — controlled inputs for the five frontmatter types.
- *
- * Each widget reads `value` (parsed from the YAML region of `Y.Text('source')`
- * via `bindFrontmatterDoc.current()`) and emits `onCommit(newValue)` on Enter /
- * blur (or click for boolean). The parent (PropertyRow in PropertyPanel)
- * routes commits through `bindFrontmatterDoc.patch()`, which edits the YAML
- * region at the `Pair` level via yaml@2 and replaces the Y.Text byte range
- * under `FORM_WRITE_ORIGIN`. No HTTP round-trip — the change reaches the
- * server via the same WebSocket the editor already uses.
- *
- * Type picker (TypeIconButton) opens a dropdown listing the five widget types;
- * selecting a different type triggers a value coercion + commit so the slot
- * value matches the new shape.
- *
- * List values are flat `string[]`. Widgets present arrays as chip inputs
- * regardless of declared type — value shape wins for rendering (FR6 AC).
- */
 
 import type { FrontmatterType, FrontmatterValue } from '@inkeep/open-knowledge-core';
 import { format, parse, parseISO } from 'date-fns';
@@ -43,16 +25,7 @@ interface CommonWidgetProps<T extends FrontmatterValue> {
 export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<string>) {
   const [draft, setDraft] = useState(value);
   const focusedRef = useRef(false);
-  // Set in onKeyDown(Escape) before blur(); read synchronously in onBlur to
-  // skip the commit. setDraft(value) is async — without this flag, the blur
-  // handler reads the stale typed draft from the current render closure and
-  // commits it before React re-renders with the reverted draft.
   const revertingRef = useRef(false);
-  // Re-sync local draft to incoming `value` when the input is not focused.
-  // Without this, a remote concurrent edit (other peer / MCP / file-watcher)
-  // is invisible to the widget; on next blur the stale draft would overwrite
-  // the remote update — a CRDT divergence at the form surface that the per-
-  // key storage layer is supposed to prevent.
   useEffect(() => {
     if (!focusedRef.current) setDraft(value);
   }, [value]);
@@ -96,7 +69,6 @@ export function TextWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
 export function NumberWidget({ keyName, value, onCommit }: CommonWidgetProps<number>) {
   const [draft, setDraft] = useState<string>(String(value));
   const focusedRef = useRef(false);
-  // See TextWidget — synchronous flag to skip commit on Escape-driven blur.
   const revertingRef = useRef(false);
   useEffect(() => {
     if (!focusedRef.current) setDraft(String(value));
@@ -161,13 +133,8 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
   const [month, setMonth] = useState<Date | undefined>(date);
   const [open, setOpen] = useState(false);
   const focusedRef = useRef(false);
-  // Same async/sync mismatch as TextWidget / NumberWidget — Escape calls
-  // setInputValue(reverted) (async) then blur() (sync). Without this guard,
-  // onBlur reads the stale typed inputValue from closure and commitInput()
-  // would parse + commit the typed-but-cancelled value.
   const revertingRef = useRef(false);
 
-  // Re-sync input display from external value when not focused (remote edits / commits).
   useEffect(() => {
     if (!focusedRef.current) {
       const next = parseDate(value);
@@ -184,7 +151,6 @@ export function DateWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
       setInputValue(formatDateForInput(parsed));
       setMonth(parsed);
     } else {
-      // Invalid or empty input — revert to last committed value.
       setInputValue(formatDateForInput(date));
       setMonth(date);
     }
@@ -278,11 +244,6 @@ function formatDateForInput(date: Date | undefined): string {
   return date ? format(date, INPUT_DATE_FORMAT) : '';
 }
 
-// Explicit format strings parsed in local time. `new Date('2026-04-24')` would
-// interpret an ISO 8601 date-only string as UTC midnight; `format(d,'yyyy-MM-dd')`
-// then formats local — producing off-by-one days in negative-UTC-offset
-// timezones. `date-fns/parse` interprets every format in local time, matching
-// the rest of the widget's local-time presentation.
 const INPUT_PARSE_FORMATS = [
   'MMM d, yyyy', // matches INPUT_DATE_FORMAT — calendar picks round-trip
   'MMMM d, yyyy', // full month name
@@ -323,7 +284,6 @@ export function ListWidget({ keyName, value, onCommit }: CommonWidgetProps<strin
     >
       {value.map((chip, i) => (
         <span
-          // biome-ignore lint/suspicious/noArrayIndexKey: chips are positional; user reorders via add/remove
           key={`${i}-${chip}`}
           data-testid="list-chip"
           data-index={i}
@@ -424,11 +384,6 @@ export function TypeIconButton({ keyName, type, onChangeType }: TypeIconButtonPr
   );
 }
 
-/**
- * Best-effort coercion when the user changes the declared type. The value-shape
- * always wins for rendering (D10 / AC), so coercion mostly matters when a
- * primitive value transitions to a different primitive shape.
- */
 export function coerceValue(value: FrontmatterValue, target: FrontmatterType): FrontmatterValue {
   switch (target) {
     case 'text': {
@@ -460,12 +415,6 @@ export function coerceValue(value: FrontmatterValue, target: FrontmatterType): F
   }
 }
 
-/**
- * Resolve which widget to render given the underlying value. Value shape wins
- * (a string[] always renders as ListWidget regardless of declared type). For
- * scalar values, fall back to the supplied declared type, which is either an
- * inferred shape or a user-picked override.
- */
 export function resolveWidgetType(
   value: FrontmatterValue,
   declared: FrontmatterType,

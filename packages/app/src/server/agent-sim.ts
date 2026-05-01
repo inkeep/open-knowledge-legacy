@@ -1,23 +1,3 @@
-/**
- * V4: Agent simulator — triggers DirectConnection writes via HTTP API.
- *
- * The agent write endpoints (/api/agent-write, /api/agent-write-md) now:
- * - Set agent awareness (name: Claude, color: #D97757, type: agent)
- * - Write Y.Map('agent-flash') entry alongside content for flash plugins
- * - Use 'agent-write' origin for per-origin undo tracking
- *
- * Usage:
- *   bun run src/server/agent-sim.ts                    # single raw write
- *   bun run src/server/agent-sim.ts --rapid 5          # 5 rapid writes (100ms apart)
- *   bun run src/server/agent-sim.ts --markdown         # single markdown write (unified path)
- *   bun run src/server/agent-sim.ts --markdown --rapid 5
- *   bun run src/server/agent-sim.ts --patch            # targeted patch sequence
- *   bun run src/server/agent-sim.ts --patch --doc my-doc --interval 1000 --port 5173
- *   bun run src/server/agent-sim.ts --file             # disk-edit sequence (bypasses CRDT)
- *   bun run src/server/agent-sim.ts --file --content-dir ./content --doc my-doc --interval 1000
- *
- * Requires the Vite dev server to be running (bun run dev).
- */
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -25,7 +5,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
 
-// --- Flag parsing ---
 const useMarkdown = args.includes('--markdown');
 const usePatch = args.includes('--patch');
 const useFile = args.includes('--file');
@@ -42,7 +21,6 @@ const intervalIndex = args.indexOf('--interval');
 const intervalMs =
   intervalIndex >= 0 ? Number.parseInt(args[intervalIndex + 1] || '2000', 10) : 2000;
 
-// Default content dir: packages/app/content/ — 3 levels up from src/server/
 const DEFAULT_CONTENT_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
   '../../../content',
@@ -55,7 +33,6 @@ const contentDir =
 
 const BASE_URL = `http://localhost:${port}`;
 
-// --- Mutual exclusivity check ---
 if (usePatch && (useMarkdown || rapidIndex >= 0)) {
   console.error('Error: --patch is mutually exclusive with --markdown and --rapid.');
   process.exit(1);
@@ -65,7 +42,6 @@ if (useFile && (usePatch || useMarkdown || rapidIndex >= 0)) {
   process.exit(1);
 }
 
-// --- API helpers ---
 
 async function agentWriteRaw(): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
   const res = await fetch(`${BASE_URL}/api/agent-write`, { method: 'POST' });
@@ -116,7 +92,6 @@ async function readDocument(): Promise<{ ok: boolean; content?: string; error?: 
   return (await res.json()) as { ok: boolean; content?: string; error?: string };
 }
 
-// --- Write helper (existing modes) ---
 
 async function doWrite(index: number) {
   const timestamp = new Date().toISOString();
@@ -144,7 +119,6 @@ async function doWrite(index: number) {
   }
 }
 
-// --- Patch mode ---
 
 const PATCH_TEMPLATE = `# Test Document
 
@@ -160,10 +134,6 @@ No notes yet.
 
 TBD`;
 
-// Find strings deliberately avoid yaml-shape `key: value` patterns —
-// agent-patch rejects FM-targeting finds via a string-shape heuristic
-// that flags `^\s*[\w-]+:`. Matching on the value half only keeps the
-// simulator exercising body splices.
 const PATCH_SEQUENCE: Array<{ find: string; replace: string }> = [
   { find: 'pending', replace: 'in progress' },
   { find: 'No notes yet.', replace: 'Notes added by agent.' },
@@ -177,7 +147,6 @@ async function runPatchMode() {
   console.log(`Port: ${port}`);
   console.log(`Interval: ${intervalMs}ms between patches\n`);
 
-  // Step 1: Read current document
   let content: string;
   try {
     const docResult = await readDocument();
@@ -193,7 +162,6 @@ async function runPatchMode() {
     process.exit(1);
   }
 
-  // Step 2: Seed if empty or missing recognizable sections
   const hasRecognizableSections =
     content.includes('Status: pending') ||
     content.includes('Status: in progress') ||
@@ -219,7 +187,6 @@ async function runPatchMode() {
     console.log('Document already contains patch targets — skipping seed.\n');
   }
 
-  // Step 3: Run patch sequence
   for (let i = 0; i < PATCH_SEQUENCE.length; i++) {
     const { find, replace } = PATCH_SEQUENCE[i];
     console.log(`  [patch ${i + 1}/${PATCH_SEQUENCE.length}]`);
@@ -249,7 +216,6 @@ async function runPatchMode() {
   console.log('\nPatch sequence complete.');
 }
 
-// --- File mode ---
 
 async function runFileMode() {
   const filePath = resolve(contentDir, `${docName}.md`);
@@ -263,7 +229,6 @@ async function runFileMode() {
   console.log(`Port:        ${port}`);
   console.log(`Interval:    ${intervalMs}ms between edits\n`);
 
-  // Step 1: Read file from disk
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -271,7 +236,6 @@ async function runFileMode() {
     content = '';
   }
 
-  // Step 2: Seed via HTTP API if empty or missing patch targets
   const hasRecognizableSections =
     content.includes('Status: pending') ||
     content.includes('Status: in progress') ||
@@ -283,25 +247,21 @@ async function runFileMode() {
     writeFileSync(filePath, PATCH_TEMPLATE, 'utf8');
     content = PATCH_TEMPLATE;
     console.log('  Seeded file with template.');
-    // Give file watcher time to sync the seed into Y.Text before edits begin
     console.log(`  Waiting 1500ms for file watcher sync...\n`);
     await wait(1500);
   } else {
     console.log('File already contains patch targets — skipping seed.\n');
   }
 
-  // Step 3: Run edit sequence directly on disk
   for (let i = 0; i < PATCH_SEQUENCE.length; i++) {
     const { find, replace } = PATCH_SEQUENCE[i];
     console.log(`  [file-edit ${i + 1}/${PATCH_SEQUENCE.length}]`);
     console.log(`    find:    "${find}"`);
     console.log(`    replace: "${replace}"`);
 
-    // Re-read file before each edit to pick up any in-flight CRDT changes
     try {
       content = readFileSync(filePath, 'utf8');
     } catch {
-      // keep last known content
     }
 
     if (content.includes(find)) {
@@ -323,7 +283,6 @@ async function runFileMode() {
   console.log('The file watcher will propagate changes to Y.Text asynchronously.');
 }
 
-// --- Main ---
 
 if (usePatch) {
   await runPatchMode();

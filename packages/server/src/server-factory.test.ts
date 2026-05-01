@@ -14,9 +14,6 @@ import { ensureProjectGit } from './project-git.ts';
 import { createServer, type ServerInstance } from './server-factory.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 
-// ─── CaptureLogger infrastructure ───────────────────────────────────────────
-// Uses loggerFactory.configure() pattern from logger.test.ts:27-36.
-// NOT monkey-patching — injects a capture logger via the factory.
 
 interface LogEntry {
   level: 'info' | 'warn' | 'error' | 'debug';
@@ -60,7 +57,6 @@ class CaptureLogger {
   }
 }
 
-/** All loggers created during the test share this map, keyed by logger name. */
 const captureLoggers = new Map<string, CaptureLogger>();
 
 function captureAllLoggers(): {
@@ -98,7 +94,6 @@ function captureAllLoggers(): {
   };
 }
 
-// ─── Test suite ─────────────────────────────────────────────────────────────
 
 describe('createServer().destroy() — graceful shutdown flush', () => {
   let tmpDir: string;
@@ -124,9 +119,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await server.ready;
 
     const conn = await server.hocuspocus.openDirectConnection('test-doc');
-    // Write to XmlFragment('default') — the Y.Doc shape the persistence layer
-    // reads from in onStoreDocument. getText('source') is synced to XmlFragment
-    // by browser-side observers that don't exist in server-only tests.
     await conn.transact((doc) => {
       const xmlFragment = doc.getXmlFragment('default');
       const paragraph = new Y.XmlElement('paragraph');
@@ -134,15 +126,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       xmlFragment.insert(0, [paragraph]);
     });
 
-    // Release the DirectConnection's hold on the document WITHOUT triggering an
-    // immediate store (conn.disconnect() would store with debounce=0, bypassing
-    // the destroy-time flush path we want to test). removeDirectConnection()
-    // decrements the connection count so the document can unload when
-    // flushAllStoresAndWait fires flushPendingStores during destroy().
-    //
-    // NOTE: removeDirectConnection() is an internal Hocuspocus API. See
-    // SPEC.md §11 OQ-P2-06 for version-bump risk — any `@hocuspocus/server`
-    // upgrade must re-verify this coupling along with the 7 other internals.
     const doc = server.hocuspocus.documents.get('test-doc');
     expect(doc).toBeDefined();
     doc?.removeDirectConnection();
@@ -152,19 +135,15 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const onDisk = await readFile(join(tmpDir, 'test-doc.md'), 'utf-8');
     expect(onDisk).toContain('hello world');
 
-    // D14: behavioral contract — shutdown log emitted with documentCount >= 1
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
     expect(shutdownLogs[0].payload.documentCount).toBeGreaterThanOrEqual(1);
 
-    // No warn-level shutdown log means zero phaseErrors
     const warnShutdownLogs = logCapture.getCalls('warn', 'shutdown');
     expect(warnShutdownLogs).toHaveLength(0);
   });
 
   test('flushes L2 git commit after L1 drain', async () => {
-    // Shadow repo needs contentDir to be a subdirectory of projectDir so
-    // `git add <contentRoot>` has a valid pathspec. Mirror real-world layout.
     const { mkdirSync } = await import('node:fs');
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
@@ -190,32 +169,18 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       xmlFragment.insert(0, [paragraph]);
     });
 
-    // Release DirectConnection hold — same pattern as Test 1
     const doc = server.hocuspocus.documents.get('test-doc-2');
     expect(doc).toBeDefined();
     doc?.removeDirectConnection();
 
     await server.destroy();
 
-    // Verify L2 git commit landed in shadow repo — check for any WIP ref
-    // (the exact writer ID depends on contributor-tracker state shared across tests)
     const sg = shadowGit(shadowHandle);
     const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/')).trim();
     expect(wipRefs).toBeTruthy();
   });
 
   test('shutdown order: lock release happens AFTER L1 disk flush completes', async () => {
-    // Locks in the invariant from specs/2026-04-24-cross-install-version-handshake
-    // §6.4 + AC A6: phase 6 (`releaseServerLock`) must run AFTER phase 3
-    // (`flushAllStoresAndWait`). Reordering them would let a concurrent
-    // acquirer boot before in-flight writes have landed, racing two servers
-    // against the same disk file.
-    //
-    // Strategy: hook `afterUnloadDocument` (fires from inside phase 3 for each
-    // unloaded doc) and capture lock-file + content-file presence at that
-    // exact moment. Phase-3 → phase-6 ordering means the lock MUST still
-    // exist when this hook fires, and the disk write MUST have already
-    // landed.
     const server = createServer({
       contentDir: tmpDir,
       projectDir: tmpDir,
@@ -254,22 +219,16 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(existsSync(lockPath)).toBe(true);
     await server.destroy();
 
-    // Phase-3 capture: at unload-time, the lock was still held AND the L1
-    // write had already landed. If phase 6 ran before phase 3 finished, this
-    // capture would see `lockExists: false`.
     expect(captures.length).toBe(1);
     expect(captures[0]?.lockExists).toBe(true);
     expect(captures[0]?.contentOnDisk).toBe(true);
     expect(captures[0]?.payload).toContain('order-marker');
 
-    // Post-destroy: lock is gone, content survived. The standard end-state.
     expect(existsSync(lockPath)).toBe(false);
     expect(readFileSync(contentPath, 'utf-8')).toContain('order-marker');
   });
 
   test('destroy() completes within destroyTimeoutMs AND rescues hung docs when onStoreDocument throws', async () => {
-    // Pre-construct shadow handle so the test can assert the D15 rescue-buffer
-    // file exists on disk post-destroy. Mirrors Test 2's layout.
     const { mkdirSync } = await import('node:fs');
     const projectDir = tmpDir;
     const contentDir = join(tmpDir, 'content');
@@ -287,11 +246,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // Inject a failing onStoreDocument hook AFTER server construction.
-    // Must throw a generic Error (not SkipFurtherHooksError) to hit the
-    // "Document stays in memory to avoid data loss" branch at
-    // Hocuspocus.ts:486-490 — this prevents afterUnloadDocument from
-    // firing and triggers our timeout path.
     server.hocuspocus.configuration.extensions.push({
       async onStoreDocument() {
         throw new Error('simulated store failure');
@@ -306,7 +260,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       xmlFragment.insert(0, [paragraph]);
     });
 
-    // Release DirectConnection so closeConnections doesn't block unload
     const doc = server.hocuspocus.documents.get('pathological-doc');
     expect(doc).toBeDefined();
     doc?.removeDirectConnection();
@@ -315,13 +268,9 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await server.destroy();
     const elapsed = Date.now() - startedAt;
 
-    // Behavioral contract (D11): destroy() fires the timeout path (not the 10s
-    // default) when onStoreDocument throws. Widened bounds accommodate CI
-    // scheduling jitter (GHA runners under load can add 100-500ms variance).
     expect(elapsed).toBeGreaterThanOrEqual(300);
     expect(elapsed).toBeLessThan(5_000);
 
-    // D14: destroy() emits warn-level log with timeout phase error
     const warnLogs = logCapture.getCalls('warn', 'shutdown flushed');
     expect(warnLogs).toHaveLength(1);
     expect(warnLogs[0].payload.phaseErrors).toContainEqual(
@@ -331,15 +280,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       }),
     );
 
-    // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. The in-memory Y.Doc
-    // state was preserved to <history-gitDir>/rescue/<docName>.md so the user
-    // can recover via the existing /api/rescue endpoints.
     const rescuePath = join(shadowHandle.gitDir, 'rescue', 'pathological-doc.md');
     expect(existsSync(rescuePath)).toBe(true);
     expect(readFileSync(rescuePath, 'utf-8')).toContain('will not be flushed');
 
-    // The timeout error should name the rescued doc so operators can correlate
-    // the warn log's phaseErrors payload with on-disk rescue files.
     const phaseError = warnLogs[0].payload.phaseErrors as Array<{
       phase: string;
       error: string;
@@ -347,7 +291,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const flushErr = phaseError.find((e) => e.phase === 'flush-all-stores');
     expect(flushErr?.error).toContain('rescued [pathological-doc]');
 
-    // Structured rescue log was emitted via the [rescue] category
     const rescueLogs = logCapture.getCalls('info', '[rescue]');
     expect(rescueLogs.length).toBeGreaterThanOrEqual(1);
     expect(rescueLogs[0].payload.docName).toBe('pathological-doc');
@@ -362,7 +305,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // Write content so there's a non-trivial shutdown to exercise
     const conn = await server.hocuspocus.openDirectConnection('test-idempotent');
     await conn.transact((doc) => {
       const xmlFragment = doc.getXmlFragment('default');
@@ -374,16 +316,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(doc).toBeDefined();
     doc?.removeDirectConnection();
 
-    // D9: fire two destroys in parallel — both should resolve, neither should throw.
-    // The cached-Promise guard collapses them into one teardown.
     await Promise.all([server.destroy(), server.destroy()]);
 
-    // Key assertion: only ONE shutdown log emitted (not two), proving the
-    // cached-Promise guard prevented duplicate teardown.
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
 
-    // A third serial call after completion also resolves without throwing
     await server.destroy();
   });
 
@@ -393,11 +330,8 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       projectDir: tmpDir,
       quiet: true,
     });
-    // DON'T await ready — call destroy() while initAsync is still running.
-    // The `await ready.catch(() => {})` at the top of destroy() handles this.
     await server.destroy();
 
-    // Should resolve cleanly without throwing and still emit a shutdown log
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
   });
@@ -410,22 +344,12 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // Only the boot-admitted synthetic DirectConnections — no content
-    // documents loaded. flushAllStoresAndWait runs over them but the
-    // persistence config-doc/system-doc short-circuits make each flush a
-    // no-op. The short-circuit path completes fast.
     const startedAt = Date.now();
     await server.destroy();
     const elapsed = Date.now() - startedAt;
 
-    // Short-circuit path resolves fast. Widened from 500ms → 2_000ms to avoid
-    // flake on slow disks where initAsync (shadow repo + file watcher scan)
-    // dominates the destroy timeline. The behavioral contract is "no 10s
-    // timeout" — 2s still proves the short-circuit fired.
     expect(elapsed).toBeLessThan(2_000);
 
-    // Shutdown log still emitted — documentCount counts the boot-admitted
-    // synthetic docs (__system__, __config__/project, __user__/config.yml).
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
     expect(shutdownLogs[0].payload.documentCount).toBe(3);
@@ -440,7 +364,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // Open 3 independent DirectConnections to different docs
     const conn1 = await server.hocuspocus.openDirectConnection('doc-a');
     const conn2 = await server.hocuspocus.openDirectConnection('doc-b');
     const conn3 = await server.hocuspocus.openDirectConnection('doc-c');
@@ -464,7 +387,6 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       frag.insert(0, [p]);
     });
 
-    // Release all DirectConnection holds
     for (const name of ['doc-a', 'doc-b', 'doc-c']) {
       const doc = server.hocuspocus.documents.get(name);
       expect(doc).toBeDefined();
@@ -473,41 +395,16 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
 
     await server.destroy();
 
-    // All three files should be on disk with their distinctive content
     expect(await readFile(join(tmpDir, 'doc-a.md'), 'utf-8')).toContain('content A');
     expect(await readFile(join(tmpDir, 'doc-b.md'), 'utf-8')).toContain('content B');
     expect(await readFile(join(tmpDir, 'doc-c.md'), 'utf-8')).toContain('content C');
 
-    // Shutdown log reports documentCount === 6 (3 content docs +
-    // __system__ + 2 boot-admitted config docs).
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
     expect(shutdownLogs[0].payload.documentCount).toBe(6);
   });
 });
 
-// ─── createServer() degraded signal tests (from PR #62) ─────────────────────
-// These verify that ServerInstance.degraded correctly reports which subsystems
-// failed to initialize. Combined into this file during the PR #62 ↔ PR #61
-// merge so both test suites share the `server-factory.test.ts` filename.
-//
-/**
- * Tests for createServer() — degraded signal from initAsync.
- *
- * Verifies that ServerInstance.degraded correctly reports which subsystems
- * failed to initialize.
- *
- * Failure injection:
- *   - shadow-repo: forced via invalid path (file-as-dir). This subsystem's
- *     init throws on invalid paths, so the SPEC's preferred technique works.
- *   - file-watcher + head-watcher: cannot be forced via invalid paths because
- *     startWatcher falls back from @parcel/watcher to chokidar (tolerates
- *     invalid paths) and startHeadWatcher returns a no-op handle on missing
- *     .git. The degraded.push wiring for these subsystems is verified by
- *     the shadow-repo test (same push pattern) + code-level assertions below.
- *     mock.module was attempted but leaks across all test files in the same
- *     `bun test` process, breaking file-watcher.test.ts. See PR #62.
- */
 
 describe('createServer() degraded signal', () => {
   let testProjectDir: string;
@@ -556,19 +453,13 @@ describe('createServer() degraded signal', () => {
   });
 
   test('degraded push wiring exists for all three subsystems', () => {
-    // Verify at the source level that the degraded.push calls exist in
-    // initAsync for file-watcher and head-watcher. This is a code-level
-    // assertion — not as strong as a runtime test, but mock.module leaks
-    // make runtime testing impractical without process isolation.
     const dir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
     const src = readFileSync(resolve(dir, 'server-factory.ts'), 'utf-8');
 
-    // Each subsystem's catch block should push to the degraded array
     expect(src).toContain("degraded.push('shadow-repo')");
     expect(src).toContain("degraded.push('file-watcher')");
     expect(src).toContain("degraded.push('head-watcher')");
 
-    // The factory return should include degraded
     expect(src).toMatch(/return\s*\{[^}]*degraded[^}]*\}/s);
   });
 
@@ -580,10 +471,8 @@ describe('createServer() degraded signal', () => {
       quiet: true,
     });
 
-    // @ts-expect-error — readonly array: push is not allowed
     srv.degraded.push('test');
 
-    // @ts-expect-error — readonly field: reassignment is not allowed
     srv.degraded = [];
 
     await srv.ready;
@@ -591,14 +480,6 @@ describe('createServer() degraded signal', () => {
   });
 });
 
-// ─── US-005: config-doc admission + bridge bypass ──────────────────────────
-//
-// Spec: D39/D40/FR-29 (synthetic config docs admitted Y.Text-only at boot)
-//       + D41/FR-30 (markdown observer bridge bypass for non-content docs).
-// Subsystem short-circuits (persistence, agent-sessions, file-watcher,
-// content-filter, etc.) are unit-tested in their respective files. This
-// suite proves the boot-time admission + the bridge bypass end-to-end
-// against a real Hocuspocus instance.
 
 describe('createServer() — config-doc admission (US-005)', () => {
   let testProjectDir: string;
@@ -624,8 +505,6 @@ describe('createServer() — config-doc admission (US-005)', () => {
     expect(srv.hocuspocus.documents.has('__system__')).toBe(true);
     expect(srv.hocuspocus.documents.has('__config__/project')).toBe(true);
     expect(srv.hocuspocus.documents.has('__user__/config.yml')).toBe(true);
-    // Admission failures would surface as `degraded` entries — none expected
-    // for a clean init.
     expect(srv.degraded.filter((s) => s.startsWith('config-doc:'))).toEqual([]);
 
     await srv.destroy();
@@ -645,10 +524,6 @@ describe('createServer() — config-doc admission (US-005)', () => {
     expect(configDoc).toBeDefined();
     if (!configDoc) return;
 
-    // Bridge contract: Observer B (Y.Text → XmlFragment) would populate the
-    // 'default' XmlFragment from a Y.Text mutation. With the bypass in
-    // server-observer-extension.ts, the bridge never attaches for config
-    // docs, so the XmlFragment stays empty regardless of Y.Text content.
     const ytext = configDoc.getText('source');
     const xmlFragment = configDoc.getXmlFragment('default');
     expect(xmlFragment.length).toBe(0);
@@ -657,13 +532,9 @@ describe('createServer() — config-doc admission (US-005)', () => {
       ytext.insert(0, 'theme: dark\n');
     });
 
-    // Allow any debounced observer scheduling to settle (bridge would fire
-    // synchronously inside the transact, but await one microtask round to
-    // be safe).
     await new Promise((r) => setTimeout(r, 50));
 
     expect(ytext.toString()).toBe('theme: dark\n');
-    // Bridge bypass verified: the XmlFragment was never populated.
     expect(xmlFragment.length).toBe(0);
 
     await srv.destroy();
@@ -679,9 +550,6 @@ describe('createServer() — config-doc admission (US-005)', () => {
 
     await srv.ready;
 
-    // openDirectConnection is the in-process equivalent of a client
-    // attaching over the collab WS — it goes through the same auth
-    // extension. No additional gating needed for config docs (D49).
     const conn = await srv.hocuspocus.openDirectConnection('__config__/project');
     try {
       const document = conn.document;
@@ -696,11 +564,6 @@ describe('createServer() — config-doc admission (US-005)', () => {
   });
 });
 
-// ─── US-007: config file watcher ───────────────────────────────────────────
-//
-// Spec: FR-15 / D52 — chokidar single-file watch with awaitWriteFinish for
-// atomic-rename detection, server-origin Y.Text update on external change,
-// LKG-equality short-circuit prevents persistence-hook self-write feedback.
 
 async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<boolean> {
   const start = Date.now();
@@ -743,10 +606,8 @@ describe('createServer() — config file watcher (US-007)', () => {
     }
     const ytext = configDoc.getText('source');
 
-    // Y.Text starts empty (no prior config.yml on disk).
     expect(ytext.toString()).toBe('');
 
-    // Simulate a CLI / IDE / hand-edit creating the project config.
     const configPath = join(testProjectDir, '.ok', 'config.yml');
     mkdirSync(join(testProjectDir, '.ok'), { recursive: true });
     const newContent = 'mcp:\n  autoStart: false\n';
@@ -759,8 +620,6 @@ describe('createServer() — config file watcher (US-007)', () => {
   });
 
   test('external broken-YAML write keeps Y.Text at LKG and does not crash the server', async () => {
-    // Pre-seed a valid project config so the watcher's first read populates
-    // LKG with valid content; then write broken YAML and assert Y.Text stays.
     const contentDir = mkdtempSync(resolve(testProjectDir, 'content-'));
     const configPath = join(testProjectDir, '.ok', 'config.yml');
     mkdirSync(join(testProjectDir, '.ok'), { recursive: true });
@@ -783,13 +642,9 @@ describe('createServer() — config file watcher (US-007)', () => {
     }
     const ytext = configDoc.getText('source');
 
-    // Initial seed put validContent into Y.Text.
     expect(ytext.toString()).toBe(validContent);
 
-    // Externally write broken YAML. Watcher fires, validation rejects;
-    // Y.Text MUST stay at LKG.
     writeFileSync(configPath, 'mcp:\n  autoStart: !!!!!!!\n', 'utf-8');
-    // Give the watcher a generous window to fire + reject.
     await new Promise((r) => setTimeout(r, 1_500));
 
     expect(ytext.toString()).toBe(validContent);
@@ -815,8 +670,6 @@ describe('createServer() — config file watcher (US-007)', () => {
     }
     const ytext = configDoc.getText('source');
 
-    // Mutate Y.Text under a normal origin so the persistence-hook fires
-    // (no skipStoreHooks) and writes disk + updates LKG.
     const newContent = 'mcp:\n  autoStart: false\n';
     configDoc.transact(() => {
       ytext.insert(0, newContent);
@@ -828,20 +681,14 @@ describe('createServer() — config file watcher (US-007)', () => {
     );
     expect(fileLanded).toBe(true);
 
-    // Track all subsequent transactions for ~1s. The watcher will fire
-    // because the disk file changed; applyExternalConfigChange must
-    // short-circuit (LKG === content) and NOT mutate Y.Text again.
     const observedOrigins: unknown[] = [];
     configDoc.on('afterTransaction', (tx: { origin: unknown }) => {
       observedOrigins.push(tx.origin);
     });
     await new Promise((r) => setTimeout(r, 1_500));
 
-    // Y.Text content must not have changed.
     expect(ytext.toString()).toBe(newContent);
 
-    // No transactions fired with the file-watcher origin (which is what we
-    // would see on a feedback loop).
     const filewatcherOrigins = observedOrigins.filter(
       (o) =>
         o !== null &&
@@ -915,7 +762,6 @@ describe('createServer() managed rename recovery', () => {
   });
 });
 
-// ─── V0-1: server-lock integration ──────────────────────────────────────────
 
 describe('createServer() server-lock integration (V0-1)', () => {
   let tmpDir: string;
@@ -968,8 +814,6 @@ describe('createServer() server-lock integration (V0-1)', () => {
     });
     await first.ready;
 
-    // Seed a lock file with PID 1 (always alive) to simulate a foreign holder
-    // (same process pid gets the idempotent path)
     const { hostname } = await import('node:os');
     const lockPath = join(tmpDir, '.ok', 'server.lock');
     writeFileSync(
@@ -988,7 +832,6 @@ describe('createServer() server-lock integration (V0-1)', () => {
       /already running on port 9999/,
     );
 
-    // Restore our own lock so destroy() cleans up
     writeFileSync(
       lockPath,
       JSON.stringify({
@@ -1038,7 +881,6 @@ describe('createServer() server-lock integration (V0-1)', () => {
     const lockPath = join(tmpDir, '.ok', 'server.lock');
     expect(existsSync(lockPath)).toBe(true);
 
-    // Inject Phase 2 failure: sessionManager.closeAll throws after normal cleanup
     const origCloseAll = server.sessionManager.closeAll.bind(server.sessionManager);
     server.sessionManager.closeAll = async () => {
       await origCloseAll();
@@ -1071,13 +913,11 @@ describe('createServer() — serverInstanceId', () => {
       await serverA.ready;
       await serverB.ready;
 
-      // Both IDs are non-empty strings.
       expect(typeof serverA.serverInstanceId).toBe('string');
       expect(serverA.serverInstanceId.length).toBeGreaterThan(0);
       expect(typeof serverB.serverInstanceId).toBe('string');
       expect(serverB.serverInstanceId.length).toBeGreaterThan(0);
 
-      // UUID v4 shape (8-4-4-4-12 hex with the `-4` version nibble).
       expect(serverA.serverInstanceId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
@@ -1085,10 +925,6 @@ describe('createServer() — serverInstanceId', () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
 
-      // Distinct between instances — this is the load-bearing property for
-      // the CRDT restart-recovery defense: every server process advertises
-      // a fresh ID so a client's cached prior ID will mismatch and force a
-      // recycle before Yjs sync can merge stale state.
       expect(serverA.serverInstanceId).not.toBe(serverB.serverInstanceId);
     } finally {
       await serverA.destroy();
@@ -1097,14 +933,6 @@ describe('createServer() — serverInstanceId', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// US-002 / Commit 4: onAuthenticate enforcement for expectedServerInstanceId.
-// Exercises the principalAuthExtension directly rather than through a live
-// WebSocket — the hook is deterministic and the onAuthenticate contract is
-// "throw with reason X → client sees authenticationFailed({reason: X})".
-// Full end-to-end behavior is covered by the bug-class integration tests
-// (T1/T2/T6/T9 flip from FAIL→PASS at this commit).
-// ---------------------------------------------------------------------------
 describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'", () => {
   let tmpDir: string;
 
@@ -1115,11 +943,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  // Pull the principalAuthExtension out of the configured Hocuspocus
-  // extensions list via its `__kind: 'principal-auth'` marker. Matching on a
-  // named marker is robust against future additions of other extensions
-  // that also implement `onAuthenticate` — the `find` by function existence
-  // alone would silently pick the wrong one.
   function getAuthExtension(server: Awaited<ReturnType<typeof createServer>>): {
     onAuthenticate: (payload: unknown) => Promise<void>;
   } {
@@ -1156,8 +979,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
 
       expect(thrown).not.toBeNull();
       expect((thrown as { reason?: string }).reason).toBe('server-instance-mismatch');
-      // Rejection happens before context mutation — no partial state leaks
-      // through to the connection's identity.
       expect(context.principalId).toBeUndefined();
       expect(context.kind).toBeUndefined();
     } finally {
@@ -1184,7 +1005,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
         documentName: 'test-doc',
       });
 
-      // No throw, and the principal path still hoisted the identity into ctx.
       expect(context.kind).toBe('human');
       expect(context.tabSessionId).toBe('s-1');
     } finally {
@@ -1230,7 +1050,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
         documentName: 'test-doc',
       });
 
-      // Anonymous path — no principal, no kind.
       expect(context.principalId).toBeUndefined();
       expect(context.kind).toBeUndefined();
     } finally {
@@ -1257,7 +1076,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
         documentName: 'test-doc',
       });
 
-      // No throw — empty claim is legacy-equivalent and accepted.
       expect(context.kind).toBe('human');
     } finally {
       await server.destroy();
@@ -1265,11 +1083,6 @@ describe("createServer() — onAuthenticate rejects 'server-instance-mismatch'",
   });
 });
 
-// expectedBranch is the late-join backstop for cross-branch invalidation:
-// CC1 `branch-switched` is stateless (no replay), so a client offline
-// during the broadcast misses it. The auth-token claim mirrors
-// expectedServerInstanceId — server rejects on mismatch, client routes
-// the rejection through handleBranchSwitched.
 describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
   let tmpDir: string;
 
@@ -1295,8 +1108,6 @@ describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
     try {
       await server.ready;
       const authExt = getAuthExtension(server);
-      // Server defaults activeBranch to 'main' when git is disabled or
-      // not yet initialized — claim 'feature' to force the mismatch.
       const staleToken = JSON.stringify({
         principalId: 'p-1',
         tabSessionId: 's-1',
@@ -1317,7 +1128,6 @@ describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
 
       expect(thrown).not.toBeNull();
       expect((thrown as { reason?: string }).reason).toBe('branch-mismatch');
-      // Rejection runs before context hoisting.
       expect(context.principalId).toBeUndefined();
     } finally {
       await server.destroy();
@@ -1369,7 +1179,6 @@ describe("createServer() — onAuthenticate rejects 'branch-mismatch'", () => {
         documentName: 'test-doc',
       });
 
-      // No throw — empty claim is legacy-equivalent and accepted.
       expect(context.kind).toBe('human');
     } finally {
       await server.destroy();

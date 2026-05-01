@@ -1,47 +1,3 @@
-/**
- * Cold-pool-warm reproduction — target the specific state where the big-doc
- * is provider-pool-resident but Activity-evicted, so revisiting it forces
- * a fresh TipTap mount without the provider/Y.Doc re-sync.
- *
- * Rationale: the original 9.725s single-main-thread-task finding was on this
- * state, not a fresh cold-load. A fresh cold-load ALSO pays Y.Doc sync cost
- * which the post-US-008 instrumentation has already measured at 1.7-2.3s.
- * "Cold-pool-warm" isolates the TipTap+PM+React cost from the Y.Doc sync.
- *
- * Scenario flow:
- *   1. Cold-load README (small, 5 KB) — warms ProviderPool for README.
- *   2. Navigate to BIG_DOC (large) — warms pool for BIG_DOC, mounts Activity
- *      entry for BIG_DOC.
- *   3. Navigate to 3 OTHER docs (to force Activity eviction of BIG_DOC via
- *      ACTIVITY_MOUNT_LIMIT=3). BIG_DOC's provider stays pool-resident.
- *   4. Navigate BACK to BIG_DOC — measure time until PM content visible.
- *
- * The measured boundary is step 4. BIG_DOC's provider is still pool-resident
- * (ytext already hydrated), so the measurement is:
- *   [useState lazy init (new Editor → new EditorView → _forceRerender → docView)
- *    → React commit → EditorContent.init (createNodeViews) → portal reconcile →
- *    browser layout/paint]
- *
- * No Y.Doc sync on this path. Any difference vs `cold-load-big-doc` is the
- * sync cost. The monkey-patched `ok/cold/*` marks decompose the TipTap/PM/React
- * cost within this window.
- *
- * G2 regression-gate invocation (canonical, per V2 SPEC §11):
- *   OK_PERF_BIG_DOC=STORIES bun run perf:profile --scenario=cold-pool-warm
- *
- * STORIES is the designated G2 reference doc (≈176 MarkView portals, fits
- * the ≤200-view target band). Pre-V2 baseline: 541 ms. Post-V2 target:
- * < 300 ms. Depends on doc-markers.ts entry for STORIES — without it the
- * scenario falls through to a content-length heuristic that races against
- * still-Activity-mounted previous docs and produces pmLen numbers matching
- * the wrong editor (see tmp/ship/v2-perf-benchmark.md §"Scenario-coverage
- * gap discovered").
- *
- * Default (BIG_DOC=PROJECT) is a 768-view stress case used for attribution
- * measurements and precedent #27 validation — informative but outside the
- * G2 target scope. Use it for "how bad was pre-V2 on the worst case" and
- * the STORIES invocation for "does V2 still hit the G2 gate."
- */
 
 import { markerFor } from '../lib/doc-markers';
 import { defineScenario } from '../lib/scenario';
@@ -49,10 +5,6 @@ import { defineScenario } from '../lib/scenario';
 const BIG_DOC = process.env.OK_PERF_BIG_DOC ?? 'PROJECT';
 const WARM_DOC = process.env.OK_PERF_SMALL_DOC ?? 'README';
 
-// A list of small doc names used to force Activity eviction. We want >= 3
-// distinct docs (ACTIVITY_MOUNT_LIMIT default) so visiting all of them
-// pushes PROJECT off the mount list even though it stays pool-resident.
-// Defaults to well-known small docs in this repo; override via env if needed.
 const EVICT_DOCS_DEFAULT = ['AGENTS', 'CLAUDE', 'README'];
 const EVICT_DOCS = (process.env.OK_PERF_EVICT_DOCS ?? EVICT_DOCS_DEFAULT.join(','))
   .split(',')
@@ -107,8 +59,6 @@ export default defineScenario({
   async run(ctx) {
     const { page, opts } = ctx;
 
-    // Install longtask observer before navigation so buffered:true catches
-    // pre-script tasks.
     await page.addInitScript(() => {
       const store: { startTime: number; duration: number; name: string }[] = [];
       (globalThis as unknown as { __okScenLongTasks: typeof store }).__okScenLongTasks = store;
@@ -120,11 +70,9 @@ export default defineScenario({
         });
         obs.observe({ type: 'longtask', buffered: true });
       } catch {
-        // longtask unsupported
       }
     });
 
-    // ─── Step 1: cold-load WARM_DOC so app + ProviderPool exist. ───────────
     await page.goto(`${opts.target}/#/${encodeURIComponent(WARM_DOC)}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
@@ -138,7 +86,6 @@ export default defineScenario({
     }
     ctx.note(`Step 1: loaded ${WARM_DOC}`);
 
-    // ─── Step 2: cold-load BIG_DOC — hydrates provider + Activity mount. ───
     await page.goto(`${opts.target}/#/${encodeURIComponent(BIG_DOC)}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
@@ -152,14 +99,12 @@ export default defineScenario({
     }
     ctx.note(`Step 2: loaded ${BIG_DOC} (cold + Y.Doc sync)`);
 
-    // Capture sanity metrics on the loaded BIG_DOC
     const pmLenAfterCold = await page.evaluate(() => {
       const el = document.querySelector('.ProseMirror');
       return el ? (el.textContent ?? '').length : 0;
     });
     ctx.recordMetric('pmLenAfterCold', pmLenAfterCold);
 
-    // Extract ytext size from the pool provider so downstream analysis has it
     const ytextLenAfterCold = await page.evaluate((docName: string) => {
       const pool = (
         globalThis as unknown as {
@@ -179,7 +124,6 @@ export default defineScenario({
     }, BIG_DOC);
     ctx.recordMetric('ytextLenAfterCold', ytextLenAfterCold ?? -1);
 
-    // ─── Step 3: navigate to EVICT_DOCS so PROJECT falls out of Activity. ──
     for (const doc of EVICT_DOCS) {
       await page.goto(`${opts.target}/#/${encodeURIComponent(doc)}`, {
         waitUntil: 'domcontentloaded',
@@ -193,17 +137,11 @@ export default defineScenario({
     }
     ctx.note(`Step 3: evicted ${BIG_DOC} via navigation through ${EVICT_DOCS.join(',')}`);
 
-    // Let any background work settle before the cold-pool-warm measurement.
     await page.waitForTimeout(500);
 
-    // Reset counter / mark-store baselines so the `ok/cold/*` marks in the
-    // result correspond cleanly to the measured boundary. Marks from earlier
-    // steps are still in the collector but the scenario caller can filter by
-    // `startTime >= revisitStartPerf`.
     const revisitStartPerf = await page.evaluate(() => performance.now());
     ctx.recordMetric('revisitStartPerf', revisitStartPerf);
 
-    // ─── Step 4: navigate BACK to PROJECT. Measure remount cost. ───────────
     const clickAt = Date.now();
     await page.goto(`${opts.target}/#/${encodeURIComponent(BIG_DOC)}`, {
       waitUntil: 'domcontentloaded',
@@ -220,7 +158,6 @@ export default defineScenario({
     ctx.recordMetric('coldPoolWarmMs', coldPoolWarmMs);
     ctx.note(`Step 4: revisited ${BIG_DOC} in ${coldPoolWarmMs}ms`);
 
-    // ─── Post-measurement diagnostics ───────────────────────────────────────
     const longTasks = await page.evaluate(() => {
       const store = (
         globalThis as unknown as {
@@ -242,14 +179,12 @@ export default defineScenario({
       Math.round(tasksInRevisit.reduce((s, t) => s + t.duration, 0)),
     );
 
-    // Sanity: content should be visible
     const pmLenAfterRevisit = await page.evaluate(() => {
       const el = document.querySelector('.ProseMirror');
       return el ? (el.textContent ?? '').length : 0;
     });
     ctx.recordMetric('pmLenAfterRevisit', pmLenAfterRevisit);
 
-    // Confirm instrumentation installed
     const instrumented = await page.evaluate(
       () =>
         (globalThis as unknown as { __okColdMountInstrumented?: boolean })

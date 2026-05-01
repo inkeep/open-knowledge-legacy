@@ -1,9 +1,3 @@
-/**
- * Frontmatter strip/prepend utilities for markdown round-trip.
- *
- * marked treats `---` as a thematic break (horizontal rule).
- * Frontmatter must be regex-stripped before parsing and re-prepended after serialization.
- */
 
 export const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(\r?\n|$)/;
 
@@ -23,16 +17,6 @@ export function prependFrontmatter(frontmatter: string, body: string): string {
   return frontmatter + body;
 }
 
-/**
- * Strip the leading and trailing `---` fences from a `stripFrontmatter` result.
- * Inverse of `withFences` from `frontmatter/yaml-codec.ts`. Returns the YAML
- * body that `parseFrontmatterYaml` expects (no fences). Empty input → empty.
- *
- * Handles the empty-block case `---\n---\n` (and CRLF variants) by reusing
- * `FRONTMATTER_RE`'s body capture group instead of stripping fences in two
- * passes — the latter fails when the body capture is empty because the
- * trailing-fence regex needs a preceding `\n` that isn't there.
- */
 export function unwrapFrontmatterFences(fenced: string): string {
   if (fenced === '') return '';
   const match = fenced.match(FRONTMATTER_RE);

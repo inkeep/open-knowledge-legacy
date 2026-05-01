@@ -1,20 +1,3 @@
-/**
- * MCP stdio server — content server with instructions + tool registration.
- *
- * What this server provides:
- *   - Instructions on connect (the INSTRUCTIONS constant below)
- *   - All MCP tools registered from packages/cli/src/mcp/tools/
- *
- * Catalog auto-generation was removed per V0-24.2 — `exec("ls …")` +
- * per-file enrichment renders the same view on demand without the
- * persisted INDEX.md artifacts.
- *
- * Scaffolding (`.ok/` directory creation plus editor MCP config wiring) is a
- * terminal-side operation handled by the CLI `init` subcommand.
- *
- * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
- * (stdout is the MCP wire).
- */
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -168,22 +151,8 @@ export function createKeepaliveProjectState(
   };
 }
 
-/** Module-level logger; initialized in `startMcpServer`. */
 let logger: McpLogger | undefined;
 
-/**
- * MCP `instructions` handshake string — emitted on `initialize`.
- *
- * Compressed to ≤ 1,500 bytes per SPEC 2026-04-22 (FR3 / §9) so it fits
- * under Claude Code's 2 KB per-server cap without truncation. Front-loads
- * the STOP rules on native `Read`/`Grep`/`Glob`/`Edit` + preview-before-edit
- * contract; full behavioral guidance lives in the user-global Agent Skill
- * (bundled at `packages/server/assets/skills/open-knowledge/SKILL.md` and
- * installed via `installUserSkill` from `@inkeep/open-knowledge-server`).
- *
- * Per-tool descriptions reach clients via `tools/list` — we do NOT inline
- * them here (SPEC D13).
- */
 export function buildInstructions(config: Config, _opts?: { dynamicConfig?: boolean }): string {
   const { dir } = config.content;
 
@@ -227,7 +196,6 @@ async function detectHocuspocus(serverUrl: string, log: McpLogger): Promise<bool
   }
 }
 
-// ── Server entrypoint ──────────────────────────────────────────────────
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const {
@@ -267,15 +235,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     },
   );
 
-  // ── Cwd resolution via MCP roots ────────────────────────────────────
-  //
-  // Strict routing contract:
-  //   1. explicit tool `cwd`
-  //   2. exactly one advertised client root (fetched via `roots/list` on first use)
-  //   3. otherwise error
-  //
-  // `--port` is the only bypass path: it intentionally pins the session to the
-  // startup project for single-target debugging.
   const routing = createProjectRoutingResolver({
     startupCwd,
     bypassProjectSelection,
@@ -293,12 +252,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     routing.invalidateRoots();
   });
 
-  // MCP tools — workflow + document + enriched + exec (V0-24)
-  //
-  // Hocuspocus URL resolution is lazy unless the caller passed a concrete
-  // `--port` override string. The lazy resolver is already project-aware; it
-  // accepts the effective cwd of the current tool call and can auto-start the
-  // matching project server on demand.
   const resolveServerUrlForTools = async (cwd?: string): Promise<string | undefined> => {
     if (typeof serverUrl === 'string') {
       return serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
@@ -308,10 +261,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     return wsUrl?.replace('ws://', 'http://').replace('wss://', 'https://');
   };
 
-  // --- Agent identity (Ref pattern — tool handlers read .current at call time).
-  // From attribution PR #134: every MCP connection gets a stable connectionId
-  // used as the agentId; displayName/colorSeed fall back to label env → client
-  // name → connectionId suffix.
   const connectionId = randomUUID();
   const label = process.env.AGENT_LABEL || undefined;
 
@@ -352,14 +301,6 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   await server.connect(transport);
   logger.info('MCP server running on stdio');
 
-  // D-034 — keep-alive WebSocket to `/collab/keepalive`.
-  //
-  // Holds a single WS open for the lifetime of this MCP stdio process. Server-
-  // side idle-shutdown counts `/collab*` upgrades, so this channel (which
-  // carries no traffic) is exactly what keeps the collab server alive while
-  // a user has an MCP client connected but no browser tab open. Reconnects
-  // with exponential backoff so a server restart on a different port is
-  // picked up transparently.
   const { startKeepalive } = await import('./keepalive.ts');
   const keepaliveHandle = startKeepalive({
     resolveWsUrl: async () => {
@@ -369,22 +310,15 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       if (!httpUrl) return undefined;
       return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
     },
-    // Identity spec D27 + multi-agent-presence SPEC §6.4 FR-4 / D13:
-    // stable per-MCP-process connectionId threaded through the keepalive WS
-    // URL so the server can (a) correlate this WS with agent sessions and
-    // (b) deterministically clear this agent's __system__ presence entry on
-    // WS close.
     connectionId: `agent-${connectionId}`,
     logger: logger.child('keepalive'),
   });
 
-  // Cleanup on exit
   const shutdown = (signal: string): void => {
     logger?.info('MCP server shutting down', { signal });
     try {
       keepaliveHandle.close();
     } catch {
-      // best-effort
     }
     process.exit(0);
   };

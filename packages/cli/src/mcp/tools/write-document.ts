@@ -1,9 +1,3 @@
-/**
- * `write_document` MCP tool — write markdown to a document via the CRDT layer.
- *
- * Sends content to Hocuspocus via POST /api/agent-write-md, which applies it
- * through a DirectConnection and propagates to all connected editors in real-time.
- */
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -92,10 +86,6 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      // Once-per-session attach hint: fires only when no editor is attached
-      // to `__system__` at all — not when the current doc happens to have
-      // zero subscribers (which is normal for an agent's second+ doc before
-      // server-push carries the open tab there).
       const systemSubscriberCount =
         typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
       const noPreviewAnywhere = systemSubscriberCount === 0;

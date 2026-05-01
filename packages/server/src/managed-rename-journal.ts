@@ -21,10 +21,6 @@ interface ManagedRenameAffectedDoc {
   to: string;
 }
 
-/**
- * V1 schema (legacy) — single-doc rename. Kept for back-compat reading at
- * startup. New journals are written as V2.
- */
 interface ManagedRenameRecoveryJournalV1 {
   version: 1;
   sourceDocName: string;
@@ -33,10 +29,6 @@ interface ManagedRenameRecoveryJournalV1 {
   snapshots: ManagedRenameSnapshot[];
 }
 
-/**
- * V2 schema — multi-doc rename. `affectedDocs[]` drives recovery's destination
- * cleanup; `fromPath` / `toPath` are observability-only (logs + dashboards).
- */
 interface ManagedRenameRecoveryJournalV2 {
   version: 2;
   fromPath: string;
@@ -209,14 +201,6 @@ function clearManagedRenameJournal(contentDir: string): void {
   tracedRmSync(managedRenameJournalPath(contentDir), { force: true });
 }
 
-/**
- * Persist the pre-rename recovery journal, run the managed rename operation,
- * then clear the journal only if the operation completes successfully.
- *
- * If the operation throws, the journal remains on disk so the next server
- * startup can restore the pre-rename state. Do not wrap this in `try/finally`
- * or the crash-recovery guarantee is lost.
- */
 export async function withManagedRenameRecovery<T>(
   contentDir: string,
   journal: ManagedRenameRecoveryJournalV2,

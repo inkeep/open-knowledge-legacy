@@ -1,11 +1,3 @@
-/**
- * Position-slice delimiter recovery — R16(g).
- *
- * Verifies that the position-slice walker recovers authoring-form
- * delimiters from source text, and fidelity handlers preserve them
- * on round-trip. These are the non-default delimiter forms that would
- * normalize to defaults without position-slice recovery.
- */
 import { describe, expect, test } from 'bun:test';
 import { mdRoundTrip, normalize } from './helpers';
 
@@ -59,7 +51,6 @@ describe('position-slice delimiter recovery (R16g)', () => {
   test('setext heading level 1 stays setext', () => {
     const input = 'Heading\n=======\n';
     const output = normalize(mdRoundTrip(input));
-    // Should contain = underline (setext form preserved)
     expect(output).toContain('=');
     expect(output).not.toStartWith('#');
   });
@@ -67,9 +58,6 @@ describe('position-slice delimiter recovery (R16g)', () => {
   test('setext heading level 2 stays setext', () => {
     const input = 'Heading\n-------\n';
     const output = normalize(mdRoundTrip(input));
-    // Should contain - underline (setext form preserved)
-    // Note: must be careful — --- is also thematic break.
-    // Setext requires non-empty text preceding the underline.
     expect(output).toContain('Heading');
   });
 

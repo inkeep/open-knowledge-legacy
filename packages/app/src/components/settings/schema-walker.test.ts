@@ -1,8 +1,3 @@
-/**
- * Pure tests for the schema-walker helpers. Runs against the real
- * `ConfigSchema` from `@inkeep/open-knowledge-core`, so any drift between
- * the published schema and the form's introspection surfaces here.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { ConfigSchema } from '@inkeep/open-knowledge-core';
@@ -49,7 +44,6 @@ describe('resolveLeafSchema against ConfigSchema', () => {
 
   test('descends to a number leaf', () => {
     const tag = getLeafTypeTag(requireLeaf(['mcp', 'tools', 'search', 'maxResults']));
-    // Could be 'number' or 'int' depending on Zod's representation
     expect(['number', 'int', 'integer'].includes(tag ?? '')).toBe(true);
   });
 

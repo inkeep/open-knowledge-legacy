@@ -1,20 +1,3 @@
-/**
- * Tests for D7 / US-004: wikiLink promoted to first-class mdast type.
- *
- * Before US-004 the PM→mdast handler emitted `{type:'html',value:'[[...]]'}`
- * — a type lie that made HTML clipboard emission impossible without string
- * parsing. US-004 promotes the handler to emit `{type:'wikiLink', ...}`
- * matching the D7 shape, and registers `remarkWikiLink` in the serialize
- * pipeline so `mdast-util-to-markdown` still produces bit-exact `[[...]]`
- * source.
- *
- * Invariants asserted:
- *   1. PM→mdast emits a first-class wikiLink mdast node.
- *   2. Markdown serialization is bit-exact equivalent to today's output.
- *   3. Full PM → mdast → markdown → re-parse → mdast → PM round-trips
- *      produce an identical PM doc (preserves existing persistence-path
- *      fidelity per US-004 acceptance).
- */
 
 import { describe, expect, test } from 'bun:test';
 import { fromProseMirror } from '@handlewithcare/remark-prosemirror';
@@ -63,16 +46,10 @@ describe('wikiLink mdast promotion (US-004 / D7)', () => {
   });
 
   test('PM→mdast emits first-class wikiLink node (not html passthrough)', () => {
-    // Parse once to get a PM doc containing a wikiLink, then push it back
-    // through fromProseMirror with the same handler table the serialize
-    // path uses — we assert on the intermediate mdast shape here rather
-    // than on the final markdown, so the type-lie fix is observable even
-    // when the outward markdown output is identical.
     const pm = mdManager.parse('See [[Page|Alias]] here');
     const schema = getSchema(sharedExtensions);
     const pmNode = schema.nodeFromJSON(pm);
 
-    // Re-use the same handlers the manager uses internally.
     type Handlers = Parameters<typeof fromProseMirror>[1];
     type Managerish = {
       pmNodeHandlers: NonNullable<Handlers>['nodeHandlers'];
@@ -95,8 +72,6 @@ describe('wikiLink mdast promotion (US-004 / D7)', () => {
     expect(wiki.data.target).toBe('Page');
     expect(wiki.data.alias).toBe('Alias');
     expect(wiki.data.anchor).toBeNull();
-    // D7 shape: children mirror the display label so mdast→hast handlers
-    // render visible text inside an <a>.
     expect(wiki.children).toHaveLength(1);
     expect(wiki.children[0]?.value).toBe('Alias');
   });
@@ -106,12 +81,8 @@ describe('wikiLink mdast promotion (US-004 / D7)', () => {
     const pm1 = mdManager.parse(md);
     const mdOut = mdManager.serialize(pm1);
     const pm2 = mdManager.parse(mdOut);
-    // PM JSON equivalence is a strong form of round-trip correctness — both
-    // trees must be structurally identical, not just visually similar.
     expect(pm2).toEqual(pm1);
-    // And the markdown-level idempotence invariant (I3).
     expect(mdOut).toBe(md);
-    // Wiki link survives as a PM node (not degraded to plain text).
     const wikis = findWikiLinks(pm1);
     expect(wikis).toHaveLength(1);
     expect(wikis[0]?.attrs?.target).toBe('Page');

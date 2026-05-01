@@ -153,14 +153,12 @@ describe('applyFolderRulesUpsert — rename via new_match', () => {
 
 describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
   test('invalid rule rejects the whole batch; no file written', async () => {
-    // No file exists yet
     expect(existsSync(configPath())).toBe(false);
 
     const result = await applyFolderRulesUpsert({
       cwd: testDir,
       rules: [
         { match: 'specs/**', frontmatter: { title: 'Specs' } },
-        // Empty match string violates `match: z.string().min(1)`
         { match: '', frontmatter: { title: 'Invalid' } },
       ],
     });
@@ -168,7 +166,6 @@ describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
     if (result.ok) throw new Error('expected failure');
     if (!isKnownConfigError(result.error)) throw new Error('expected known error');
     expect(result.error.code).toBe('SCHEMA_INVALID');
-    // Critically: no file written because validation runs against the merged result
     expect(existsSync(configPath())).toBe(false);
   });
 
@@ -192,7 +189,6 @@ describe('applyFolderRulesUpsert — transactional all-or-nothing', () => {
       ],
     });
     expect(result.ok).toBe(false);
-    // File on disk unchanged byte-for-byte
     expect(readConfig()).toBe(before);
   });
 });
@@ -212,7 +208,6 @@ describe('applyFolderRulesUpsert — scope', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected success');
       expect(result.path).toBe(join(home, '.ok', 'config.yml'));
-      // project config not written
       expect(existsSync(configPath())).toBe(false);
     } finally {
       if (existsSync(home)) rmSync(home, { recursive: true, force: true });

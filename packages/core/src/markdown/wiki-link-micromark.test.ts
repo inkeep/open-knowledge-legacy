@@ -1,9 +1,3 @@
-/**
- * Tests for wiki-link micromark extension.
- *
- * 4 shapes + 11 edge cases + 5 integration cases from the probe.
- * Tests the full parse→serialize round-trip via MarkdownManager.
- */
 import { describe, expect, test } from 'bun:test';
 import fc from 'fast-check';
 import type { Nodes, Root } from 'mdast';
@@ -26,8 +20,6 @@ function serializeMdast(tree: Root): string {
 
 function findWikiLinks(tree: Root): WikiLinkMdast[] {
   const links: WikiLinkMdast[] = [];
-  // Use manual type check — visit(tree, 'wikiLink') double-counts due to
-  // unist-util-is checking both node.type and other properties
   visit(tree, (node: Nodes) => {
     if (node.type === 'wikiLink') links.push(node as unknown as WikiLinkMdast);
   });
@@ -206,9 +198,6 @@ describe('wiki-embed: interaction with wikiLink (additive, not mutual)', () => {
   });
 
   test('backslash-escape of ! defeats embed tokenization — renders as wikiLink', () => {
-    // CommonMark §2.4: `\!` is a recognized escape. The escape construct
-    // consumes `\!` before our tokenizer sees the stream, so what remains
-    // is `[[photo.png]]` — a plain wikiLink, not an embed.
     const tree = parseMdast('\\![[photo.png]]');
     expect(findWikiLinkEmbeds(tree)).toHaveLength(0);
     const links = findWikiLinks(tree);
@@ -217,8 +206,6 @@ describe('wiki-embed: interaction with wikiLink (additive, not mutual)', () => {
   });
 
   test('bang before non-embed text does not eat following brackets', () => {
-    // `!not-an-embed` — the ! is not followed by `[[`, so the tokenizer
-    // rejects and the bytes flow through as text.
     const tree = parseMdast('!not-an-embed');
     expect(findWikiLinkEmbeds(tree)).toHaveLength(0);
   });
@@ -239,11 +226,6 @@ describe('wiki-embed: mid-line context + edge cases', () => {
   });
 
   test('mid-word bang before [[…]] does tokenize as embed', () => {
-    // Our tokenizer is context-insensitive — it does not check whether `!`
-    // is preceded by whitespace. This matches Obsidian-family ergonomics
-    // (embed tokens are globally available inline) and keeps the
-    // implementation free of whitespace-disambiguation hazards. Documented
-    // here so future refactors preserve the call.
     const tree = parseMdast('a![[x.png]]');
     expect(findWikiLinkEmbeds(tree)).toHaveLength(1);
   });
@@ -268,18 +250,10 @@ describe('wiki-embed: mid-line context + edge cases', () => {
 });
 
 describe('wiki-embed: invariants I1 and I4 (mdast-util level)', () => {
-  // The mdManager-level fidelity PBT (I5/I7 cross-path) lives with US-010
-  // where the mdast↔PM handlers are added. This PBT covers pure mdast-util
-  // round-trip (I1 identity + I4 idempotence) so the tokenizer + to-markdown
-  // edges are locked independent of the PM conversion story.
 
   const extensionPool = ['png', 'jpg', 'pdf', 'mp4', 'mp3', 'wav', 'ogg', 'webm', 'm4a'];
 
   test('I1 — parse then serialize is byte-identical for canonical embed shapes', () => {
-    // Generators exclude whitespace: the from-markdown exit handlers trim
-    // anchor/alias, so a leading-space input round-trips as the trimmed
-    // form — that is intentional normalization (see `exitAlias`) rather
-    // than a byte-identical path. Whitespace round-trip is out of scope.
     fc.assert(
       fc.property(
         fc.stringMatching(/^[a-z][a-z0-9_-]{0,12}$/).filter((s) => s.length > 0),

@@ -1,25 +1,3 @@
-/**
- * `/api/config` client — fetches the UI's collab-bootstrap payload.
- *
- * Served by `ok ui` post-lifecycle-split AND by the Vite dev plugin
- * (`packages/app/src/server/api-config-handler.ts`) — both answer with the
- * same shape `{collabUrl, previewUrl, port}` where `collabUrl` is
- * `ws://localhost:<port>/collab` when a collab server is bound, else `null`.
- *
- * Result classification:
- *   - `{ status: 'ok', config }` — endpoint responded with a valid shape.
- *   - `{ status: 'absent' }`      — 404 / 501. Retained as defense-in-depth
- *                                   for unusual deployments (misconfigured
- *                                   proxy, mixed-version upgrade) that drop
- *                                   the endpoint; caller falls back to the
- *                                   same-origin WS URL.
- *   - `{ status: 'error', code }` — 5xx, network failure, or malformed body.
- *                                   Caller retries with backoff.
- *
- * Collapsing all failures to `null` (the previous shape) masked genuine
- * misconfigurations (e.g. corrupt `server.lock`) as dev-mode 404s, producing
- * a silent fallback to the wrong WebSocket URL.
- */
 
 interface ApiConfig {
   collabUrl: string | null;

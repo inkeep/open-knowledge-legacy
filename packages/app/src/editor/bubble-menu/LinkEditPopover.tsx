@@ -12,7 +12,6 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
   const isLinkActive = editor.isActive('link');
   const currentUrl = editor.getAttributes('link').href ?? '';
 
-  // Reset link input when selection collapses (bubble menu hides)
   useEffect(() => {
     function onSelectionUpdate() {
       if (editor.state.selection.empty) {

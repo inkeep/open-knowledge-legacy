@@ -217,7 +217,6 @@ describe('buildManagedServerEntry', () => {
       cliPath: '/usr/local/bin/ok',
     });
     expect(entry).toEqual({ command: '/usr/local/bin/ok', args: ['mcp'] });
-    // No env field — cliPath branch does not carry dev-mode env
     expect(entry.env).toBeUndefined();
   });
 
@@ -243,8 +242,6 @@ describe('buildManagedServerEntry', () => {
   it('pinned mode resolves a relative cliEntryPath to absolute', () => {
     const entry = buildManagedServerEntry({
       mode: 'pinned',
-      // Relative path — node would resolve relative to cwd at spawn time.
-      // We resolve at write time so the editor config is location-independent.
       cliEntryPath: 'packages/cli/dist/cli.mjs',
     });
     expect((entry.args as string[])[0]).toMatch(/^\//);

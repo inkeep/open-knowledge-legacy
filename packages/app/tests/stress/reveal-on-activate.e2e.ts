@@ -1,18 +1,7 @@
-// These tests assert sidebar UI state only — they never write content. They
-// read-only against the pre-seeded fixtures (`test-doc.md`, `sidebar-folder/
-// nested-doc.md`) from playwright.config.ts, which is why this file has no
-// beforeEach reset. Do not re-introduce a blanket /api/test-reset — it
-// interferes with parallel tests in other files (see spec §6 AC6). If a future
-// test here needs to assert doc *content*, migrate that specific test to the
-// per-test unique-docName pattern instead.
 import type { Page } from '@playwright/test';
 import { expect, test } from './_helpers';
 
 const sidebar = (page: Page) => page.locator('[data-slot="sidebar-container"]');
-// Targets the chevron (SidebarMenuAction) whose aria-label is
-// "Expand sidebar-folder" or "Collapse sidebar-folder" — NOT the
-// folder-row button whose accessible name is the plain "sidebar-folder".
-// Regex anchors disambiguate under strict-mode locator matching.
 const folderButton = (page: Page) =>
   page.getByRole('button', { name: /^(Expand|Collapse) sidebar-folder$/ });
 
@@ -48,21 +37,12 @@ test('hash navigation reveals nested doc (simulates graph/wikilink click)', asyn
 test('active-doc ancestor stays expanded despite chevron clicks (Model A ancestor priority)', async ({
   page,
 }) => {
-  // Contract (US-011): ancestors of the active doc are UNCONDITIONALLY
-  // expanded. Clicking the collapse chevron on an active-doc-ancestor is a
-  // no-op for the derived expansion state — userCollapsed is set but the
-  // derivation (`ancestors ∪ (userExpanded \ userCollapsed)`) re-adds the
-  // ancestor. This matches VS Code / Finder: active file's context is
-  // always visible. See SPEC.md §10 D-Q?? for rationale + US-011 implementation.
   await page.goto(`/#/sidebar-folder/nested-doc`);
   await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
 
-  // Click the chevron. Under Model A ancestor priority, the folder stays
-  // expanded because it's the active doc's ancestor.
   await folderButton(page).click();
-  // Yield a few frames so any state flip would have committed.
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {
@@ -74,7 +54,6 @@ test('active-doc ancestor stays expanded despite chevron clicks (Model A ancesto
         requestAnimationFrame(tick);
       }),
   );
-  // Folder remains expanded; nested-doc.md still visible in sidebar.
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
   await expect(sidebar(page).getByText('nested-doc.md')).toBeVisible();
 });
@@ -87,24 +66,15 @@ declare global {
 }
 
 test('activation auto-expands prior-collapsed non-ancestor folder (D1)', async ({ page }) => {
-  // Under Model A ancestor priority, user-collapse is only honored for
-  // non-ancestor folders. This test verifies: user collapses folder while
-  // it's NOT an active-doc ancestor, then navigates INTO the folder —
-  // activation wins, folder expands automatically.
   await page.goto(`/#/test-doc`);
   await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
-  // While test-doc is active (sidebar-folder is NOT an ancestor), expand
-  // then collapse it — this is a non-ancestor manual collapse, which IS
-  // honored.
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
   await folderButton(page).click(); // expand
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
   await folderButton(page).click(); // collapse (honored — non-ancestor)
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
 
-  // Now navigate INTO sidebar-folder. It becomes an ancestor — should
-  // auto-expand via ancestor priority, overriding the userCollapsed entry.
   await page.evaluate(() => {
     window.location.hash = '#/sidebar-folder/nested-doc';
   });

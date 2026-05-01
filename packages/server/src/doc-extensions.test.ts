@@ -101,14 +101,10 @@ describe('registerDocExtension / getDocExtension', () => {
   });
 
   test('forgetDocExtension after collision returns to default (no shadow restore)', () => {
-    // Both extensions observed on disk; .mdx wins precedence.
     registerDocExtension('foo', '.md');
     registerDocExtension('foo', '.mdx');
     expect(getDocExtension('foo')).toBe('.mdx');
 
-    // Forget clears the winning entry entirely — the shadowed .md is NOT
-    // resurrected. This is intentional: file-watcher re-registers the
-    // surviving extension on the next observed event, so drift is self-healing.
     forgetDocExtension('foo');
     expect(getDocExtension('foo')).toBe('.md'); // back to default
   });

@@ -183,12 +183,6 @@ describe('readShadowLog — upstream and empty cases', () => {
 });
 
 describe('readShadowLog — FR14 summaries carry through (US-007)', () => {
-  // This test fabricates a shadow commit with a hand-written `ok-contributors:`
-  // body line in the new shape (with `summaries`), then asserts that
-  // `readShadowLog` surfaces the summaries on `commits[i].contributors[*]`
-  // WITHOUT any CLI-side code change. The enrichment path flows through the
-  // existing `parseContributors` call at line 120 — once the parser accepts
-  // the field (US-001), exec/read_document see it for free.
   test('summaries on the body line surface in commit.contributors[*].summaries', async () => {
     const project = await bootstrapProject();
     const shadow = await initShadowRepo(project);
@@ -199,8 +193,6 @@ describe('readShadowLog — FR14 summaries carry through (US-007)', () => {
     const writer: WriterIdentity = { id: 'agent-c', name: 'Claude', email: 'c@t.test' };
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
-    // Commit message body that mimics what `formatContributorsFrom` emits once
-    // US-002 populates the summaries field.
     const body = [
       'WIP auto-save 2026-04-21T00:00:00.000Z',
       '',
@@ -228,7 +220,6 @@ describe('readShadowLog — FR14 summaries carry through (US-007)', () => {
     const writer: WriterIdentity = { id: 'agent-legacy', name: 'Legacy', email: 'l@t.test' };
     const branch = (await simpleGit(project).revparse(['--abbrev-ref', 'HEAD'])).trim();
 
-    // Legacy body (no `summaries` key) — identical to what shipped commits contain today.
     const body = [
       'WIP auto-save 2026-04-10T00:00:00.000Z',
       '',

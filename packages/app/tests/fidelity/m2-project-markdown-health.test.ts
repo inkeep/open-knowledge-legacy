@@ -1,32 +1,15 @@
-/**
- * M2 measurement: the project's own markdown files (PROJECT.md, AGENTS.md,
- * ARCHITECTURE.md, README.md, and every other .md under the repo excluding
- * node_modules/tmp/.git/fixtures) must parse through parseWithFallback with
- * zero whole-doc fallbacks.
- *
- * Per SPEC §7 M2: "Zero parseSafe whole-doc fallbacks on the project's own
- * markdown files (everything either parses clean or degrades via R6
- * block-level)."
- *
- * This test is the CI-enforced measurement of that metric. If a future change
- * introduces a parse path that whole-doc-fallbacks on the project's own docs,
- * this test fails loudly.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { sharedExtensions } from '../../../core/src/extensions/shared.ts';
 import { MarkdownManager } from '../../../core/src/markdown/index.ts';
-// Direct relative import to avoid ProseMirror-model duplication in nested worktrees
 import { getParseHealth, resetParseHealth } from '../../../core/src/metrics/parse-health.ts';
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..');
 
-/** Project-canonical top-level docs we expect to be clean parse-wise. */
 const CANONICAL_DOCS = ['PROJECT.md', 'AGENTS.md', 'ARCHITECTURE.md', 'README.md'];
 
-/** Directories to skip when walking for .md files. */
 const SKIP_DIRS = new Set([
   'node_modules',
   'tmp',
@@ -80,16 +63,13 @@ describe('M2: project markdown parse health', () => {
       try {
         content = readFileSync(path, 'utf8');
       } catch {
-        // Not every canonical doc exists in every worktree; skip missing
         continue;
       }
       resetParseHealth();
       const result = mgr.parseWithFallback(content);
       const health = getParseHealth();
       expect(health.parseFallback.wholeDoc).toBe(0);
-      // Sanity: the result should be non-trivial structured content
       expect(result.content?.length).toBeGreaterThan(0);
-      // Block-level fallback is permitted — just log if it fires (not a gate)
       if (health.parseFallback.blockLevel > 0) {
         console.warn(
           `[m2] ${doc} produced ${health.parseFallback.blockLevel} block-level fallback(s) — acceptable but worth noting`,
@@ -116,7 +96,6 @@ describe('M2: project markdown parse health', () => {
       try {
         mgr.parseWithFallback(content);
       } catch (e) {
-        // parseWithFallback should NEVER throw — this would be a bug
         failures.push({ file, reason: `parseWithFallback threw: ${(e as Error).message}` });
         continue;
       }

@@ -29,8 +29,6 @@ import type {
 interface SeedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Fired after a successful apply — used by the empty state to trigger the
-      OkBlob celebration burst. The dialog still owns the toast + dismissal. */
   onSeedApplied?: () => void;
 }
 
@@ -43,12 +41,6 @@ type DialogPhase =
 
 type RootChoice = 'project-root' | 'subfolder';
 
-/**
- * Runtime adapter that returns the right transport for plan/apply — Electron
- * IPC when the desktop bridge is populated, otherwise HTTP fetch to the
- * Hocuspocus `/api/seed/*` endpoints. Either path hits the same underlying
- * `planSeed` / `applySeed` in `@inkeep/open-knowledge-server`.
- */
 function seedClient() {
   const okDesktop = typeof window !== 'undefined' ? window.okDesktop : undefined;
   if (okDesktop?.seed) {
@@ -74,27 +66,12 @@ function seedClient() {
   };
 }
 
-/**
- * Dialog that explains the three-layer starter structure and lets the user
- * apply it with one click. Default body is a visual three-card preview of
- * what the layers mean; the full file/folder/config diff lives behind a
- * collapsible disclosure for power users. Mirrors the CLI flow: fetch plan →
- * show what will change → confirm → apply. Optional per SPEC.
- *
- * Runs in both desktop (via IPC) and web (via HTTP) distributions.
- */
 export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'loading' });
-  // 'project-root' scaffolds at `.`; 'subfolder' uses the typed `subfolder` value.
   const [rootChoice, setRootChoice] = useState<RootChoice>('project-root');
   const [subfolder, setSubfolder] = useState<string>('brain');
-  // Tracks whether the next re-plan is the first one this open cycle. The
-  // first one fires immediately so the dialog renders without a 200ms delay;
-  // subsequent runs (driven by typing) keep the debounce. Reset on open.
   const isFirstLoadRef = useRef(true);
 
-  // Reset form whenever the dialog opens so users get a predictable starting
-  // state (rather than stale values from a previous cancel).
   useEffect(() => {
     if (open) {
       setRootChoice('project-root');
@@ -103,16 +80,9 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
     }
   }, [open]);
 
-  // Whitespace-only subfolder while the "subfolder" radio is selected is a
-  // form error — we surface it inline and gate Initialize. Computed once per
-  // render so both the effect and the JSX read the same source of truth.
   const trimmedSubfolder = subfolder.trim();
   const subfolderInvalid = rootChoice === 'subfolder' && trimmedSubfolder === '';
 
-  // Re-plan whenever the chosen root changes. The first run after open fires
-  // immediately; subsequent runs (driven by typing in the subfolder field)
-  // get a 200ms debounce. The loading flip happens INSIDE the timer so typing
-  // doesn't strobe "Computing scaffold plan…" between keystrokes.
   useEffect(() => {
     if (!open) return;
 
@@ -128,8 +98,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
     let cancelled = false;
     const timer = setTimeout(() => {
       if (cancelled) return;
-      // Only flip to a loading visual if no plan is already on screen — keeps
-      // the live preview smooth when the user is still typing.
       setPhase((prev) =>
         prev.kind === 'plan' || prev.kind === 'already-seeded' ? prev : { kind: 'loading' },
       );
@@ -161,10 +129,6 @@ export function SeedDialog({ open, onOpenChange, onSeedApplied }: SeedDialogProp
   }, [open, rootChoice, trimmedSubfolder, subfolderInvalid]);
 
   async function handleApply() {
-    // `phase.kind !== 'plan'` already covers subfolderInvalid — when invalid,
-    // the planning effect parks phase at 'error' before this can fire. The
-    // Initialize button is also disabled in that state. Triple-redundant
-    // guard simplified to the one that's actually load-bearing.
     if (phase.kind !== 'plan') return;
     setPhase({ kind: 'applying', plan: phase.plan });
     const result = await seedClient().apply(phase.plan);
@@ -344,9 +308,6 @@ interface Layer {
   blurb: string;
 }
 
-/** Short description per starter folder (≤2 lines) — used by
-    `CreatedItemsList` to annotate each folder row in the "what gets created"
-    list. */
 const LAYERS: readonly Layer[] = [
   {
     name: 'external-sources',
@@ -365,13 +326,10 @@ const LAYERS: readonly Layer[] = [
   },
 ] as const;
 
-/** Hand-written 1-line descriptions for files outside the layer set. */
 const FILE_DESCRIPTIONS: Record<string, string> = {
   'log.md': 'Append-only timeline',
 };
 
-/** Last path segment so descriptions still attach in subfolder mode — e.g.
-    `brain/external-sources` resolves to the `external-sources` layer blurb. */
 function basename(path: string): string {
   return path.split('/').pop() ?? path;
 }
@@ -398,11 +356,6 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
       name: e.path,
       description: FILE_DESCRIPTIONS[basename(e.path)] ?? '',
     }));
-  // One synthetic row representing the config.yml side of the apply — either
-  // created from scratch (if absent) or appended to (if present). One row,
-  // not three, so the list doesn't double its size for an effectively-single
-  // file change. The folder rows above already convey the layer descriptions
-  // that get written into it.
   const configRow: CreatedItem[] =
     plan.configEdits.length > 0
       ? [
@@ -416,13 +369,6 @@ function describeCreatedItems(plan: OkScaffoldPlan): CreatedItem[] {
   return [...folders, ...files, ...configRow];
 }
 
-/**
- * Always-expanded list of the artifacts the apply will create. Each row is a
- * soft-bordered card with a checkbox-style icon, mono-font name, and 1-line
- * description. Config.yml entries are intentionally omitted — they're
- * implementation detail of the folder layers, surfaced via the layer
- * descriptions above.
- */
 function CreatedItemsList({ plan }: { plan: OkScaffoldPlan }) {
   const items = describeCreatedItems(plan);
 

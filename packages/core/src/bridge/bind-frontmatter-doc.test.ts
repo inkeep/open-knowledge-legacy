@@ -1,8 +1,3 @@
-/**
- * Unit tests for `bindFrontmatterDoc` — D11 hybrid contract: patch, rename,
- * reorder, current, subscribe, dispose. Writes the YAML region of
- * `Y.Text('source')` directly under `FORM_WRITE_ORIGIN` (D2).
- */
 
 import { describe, expect, test } from 'bun:test';
 import * as Y from 'yjs';
@@ -145,7 +140,6 @@ describe('bindFrontmatterDoc — patch()', () => {
     const provider = makeProvider();
     const binding = bindFrontmatterDoc(provider);
 
-    // Build a value that exceeds the byte limit when serialized.
     const huge = 'x'.repeat(MAX_FM_REGION_BYTES + 1);
     const result = binding.patch({ pad: huge });
 
@@ -291,7 +285,6 @@ describe('bindFrontmatterDoc — subscribe()', () => {
     });
     const callsBefore = calls;
 
-    // Append body content — does NOT touch the FM region.
     const ytext = provider.document.getText('source');
     ytext.insert(ytext.length, '\nmore body\n');
 
@@ -357,8 +350,6 @@ describe('bindFrontmatterDoc — multi-client convergence', () => {
     const providerA = makeProvider();
     const bindingA = bindFrontmatterDoc(providerA);
 
-    // Establish a shared baseline so the FM region exists on both peers
-    // before concurrent edits.
     bindingA.patch({ title: 'Initial', cluster: 'X' });
 
     const providerB = makeProvider();
@@ -371,7 +362,6 @@ describe('bindFrontmatterDoc — multi-client convergence', () => {
     Y.applyUpdate(providerA.document, Y.encodeStateAsUpdate(providerB.document));
     Y.applyUpdate(providerB.document, Y.encodeStateAsUpdate(providerA.document));
 
-    // Both peers converge on the same final state.
     expect(bindingA.current().map).toEqual(bindingB.current().map);
 
     bindingA.dispose();

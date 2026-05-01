@@ -46,10 +46,7 @@ describe('computeBodyStats', () => {
   });
 
   test('CJK without whitespace counts word-like segments via Intl.Segmenter', () => {
-    // 这是一个测试文档 — each character is a word-like segment in Chinese.
     const stats = computeBodyStats('这是一个测试文档');
-    // Segmenter behavior is locale-dependent, but each CJK ideograph is
-    // word-like; we only assert "more than one" to avoid over-specifying.
     expect(stats.words).toBeGreaterThan(1);
   });
 

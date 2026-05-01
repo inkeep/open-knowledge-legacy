@@ -11,9 +11,6 @@ describe('fieldRegistry singleton', () => {
   });
 
   test('two callers see the same registry instance', async () => {
-    // Re-import the same module spec; ESM caching means the second import
-    // resolves to the already-loaded module, but the Symbol-keyed singleton
-    // would also dedupe across genuinely separate copies of the module.
     const reimport = await import('./field-registry.ts');
     expect(reimport.fieldRegistry).toBe(fieldRegistry);
   });
@@ -66,11 +63,6 @@ describe('getFieldMeta walker (descends innerType)', () => {
 });
 
 describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)', () => {
-  // Walks ConfigSchema's structural shape and asserts that every leaf field
-  // (scalar, array-leaf, enum) has a `fieldRegistry` entry. Catches the
-  // load-bearing declaration-order rule: `.register()` MUST come BEFORE
-  // `.default()` / `.optional()` / `.nullable()`. Only ONE `fieldRegistry`
-  // per process, so misregistration here is unrecoverable.
   function isObjectLike(schema: unknown): schema is { _zod: { def: { shape: unknown } } } {
     const def = (schema as { _zod?: { def?: { type?: string } } })._zod?.def;
     return def?.type === 'object' || def?.type === 'looseObject';
@@ -81,9 +73,7 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     while (cur) {
       const def = (cur as { _zod?: { def?: { type?: string; innerType?: unknown } } })._zod?.def;
       if (!def) return cur;
-      // Stop at object/looseObject — they're walkable, not leaves.
       if (def.type === 'object' || def.type === 'looseObject') return cur;
-      // Descend wrappers.
       if (def.innerType !== undefined) {
         cur = def.innerType;
         continue;
@@ -134,21 +124,13 @@ describe('ConfigSchema coverage (NR3 — every leaf has fieldRegistry metadata)'
     );
   });
 
-  test('project-strict fields cover content.dir + preview.baseUrl + autoSync.onboardingResolvedAt', () => {
-    // `content.dir` is project-only — it names the root of this project's
-    // knowledge graph; a user-global override doesn't make sense. content.include
-    // / content.exclude were removed (path rules now live in `.okignore`).
-    // `preview.baseUrl` is project-only because each project has its own
-    // deployed wiki URL. `autoSync.onboardingResolvedAt` is per-project
-    // onboarding state.
+  test('project-strict fields cover content.dir + preview.baseUrl', () => {
     const leaves: { path: string[]; schema: unknown }[] = [];
     walkLeaves(ConfigSchema, [], leaves);
     const projectStrict = leaves
       .filter((l) => getFieldMeta(l.schema)?.scope === 'project')
       .map((l) => l.path.join('.'))
       .sort();
-    expect(projectStrict).toEqual(
-      ['autoSync.onboardingResolvedAt', 'content.dir', 'preview.baseUrl'].sort(),
-    );
+    expect(projectStrict).toEqual(['content.dir', 'preview.baseUrl'].sort());
   });
 });

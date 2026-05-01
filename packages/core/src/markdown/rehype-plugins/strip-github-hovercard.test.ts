@@ -1,7 +1,3 @@
-/**
- * Tests for rehypeStripGithubHovercard — removes GitHub rendered-view
- * hovercard metadata while preserving anchor href + text.
- */
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';

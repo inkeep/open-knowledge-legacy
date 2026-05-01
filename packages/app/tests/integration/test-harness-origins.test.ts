@@ -1,10 +1,3 @@
-/**
- * US-028: Test harness migration — structural isPairedWriteOrigin checks.
- *
- * Verifies that attachBridgeInvariantWatcher fires for per-session origins
- * (F1 shape, unique object refs) via the structural isPairedWriteOrigin
- * predicate, not identity-based Set membership with AGENT_WRITE_ORIGIN.
- */
 
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
@@ -13,7 +6,6 @@ import * as Y from 'yjs';
 
 import { attachBridgeInvariantWatcher } from './test-harness';
 
-/** Create a per-session origin matching the F1 shape (D2, D23). */
 function makeSessionOrigin(sessionId: string): LocalTransactionOrigin {
   return Object.freeze({
     source: 'local' as const,
@@ -34,7 +26,6 @@ describe('US-028: test harness migration — structural isPairedWriteOrigin', ()
 
     expect(isPairedWriteOrigin(o1)).toBe(true);
     expect(isPairedWriteOrigin(o2)).toBe(true);
-    // Object-identity-unique per precedent #1
     expect(o1).not.toBe(o2);
   });
 
@@ -49,13 +40,10 @@ describe('US-028: test harness migration — structural isPairedWriteOrigin', ()
     });
 
     try {
-      // Mutate Y.Text without matching XmlFragment — invariant violation.
-      // The watcher should fire because origin1 passes isPairedWriteOrigin.
       doc.transact(() => {
         ytext.insert(0, 'hello');
       }, origin1);
     } catch {
-      // BridgeInvariantViolationError expected
       violations.push('caught');
     }
 
@@ -101,12 +89,10 @@ describe('US-028: test harness migration — structural isPairedWriteOrigin', ()
     });
 
     try {
-      // undefined origin = local WYSIWYG typing — deliberately excluded
       doc.transact(() => {
         ytext.insert(0, 'typing');
       }, undefined);
     } catch {
-      // should not throw
     }
 
     detach();

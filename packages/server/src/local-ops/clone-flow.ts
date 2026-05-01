@@ -1,31 +1,7 @@
-/**
- * Git-clone subprocess runner — spawns `<cli> clone --json <url> <dir>` and
- * emits structured events.
- *
- * The CLI emits:
- *   {type:'progress', phase, pct}
- *   {type:'complete', dir}     ← CLI's terminal event (just the dir)
- *   {type:'error', message}
- *
- * The HTTP relay (api-extension.ts) intercepts the CLI's `complete` and
- * chains into `startServerAtDirAndGetPort` to add a `port` field before
- * forwarding to the browser. The Electron Navigator IPC path does NOT need
- * a port — main spawns a new editor window directly at `dir` — so it
- * forwards the CLI's `complete` as-is (with `dir`, no `port`).
- *
- * This runner is framing-agnostic: callers receive each parsed event
- * structurally and decide how to forward it.
- */
 
 import { expandTilde, isAllowedGitUrl, isSafeLocalPath } from '../local-op-security.ts';
 import { runSubprocess } from './subprocess.ts';
 
-/**
- * Variant of `CloneEvent` emitted directly by the CLI subprocess — the
- * `complete` carries `dir` instead of `port`. The HTTP relay rewrites this
- * to a port-bearing event before forwarding to browsers; the Electron IPC
- * path forwards it as-is.
- */
 export type RawCloneEvent =
   | { type: 'progress'; phase: string; pct: number }
   | { type: 'complete'; dir: string }
@@ -34,11 +10,8 @@ export type RawCloneEvent =
 export interface RunCloneOptions {
   cliArgs: readonly string[];
   url: string;
-  /** Tilde-expanded target directory. */
   dir: string;
-  /** Wall-clock subprocess timeout. Defaults to 10 minutes. */
   timeoutMs?: number;
-  /** Called for every parsed event. Use the controller's `done` to know when the stream ended. */
   onEvent: (event: RawCloneEvent) => void;
 }
 
@@ -51,7 +24,6 @@ type CloneInputValidation = { ok: true } | { ok: false; reason: 'invalid-url' | 
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** Validate clone inputs. Returns `{ok:true}` only when both pass. */
 export function validateCloneInputs(url: string, dir: string): CloneInputValidation {
   if (!isAllowedGitUrl(url)) return { ok: false, reason: 'invalid-url' };
   if (!isSafeLocalPath(dir)) return { ok: false, reason: 'invalid-dir' };
@@ -81,15 +53,6 @@ function asRawCloneEvent(parsed: Record<string, unknown>): RawCloneEvent | null 
   return null;
 }
 
-/**
- * Spawn `ok clone --json <url> <expanded-dir>` and stream events to
- * `onEvent`. Resolves once the subprocess exits.
- *
- * Note: the caller is responsible for any post-clone follow-up. The HTTP
- * relay rewrites the `complete` event into a port-bearing one (after
- * starting the cloned project's server); the Electron Navigator IPC path
- * leaves the `complete` as-is and lets main spawn a new editor window.
- */
 export function runCloneSubprocess(opts: RunCloneOptions): RunCloneController {
   const targetDir = expandTilde(opts.dir);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -125,10 +88,6 @@ export function runCloneSubprocess(opts: RunCloneOptions): RunCloneController {
       });
       return;
     }
-    // CLI exited cleanly without emitting a terminal event — synthesize a
-    // `complete` so the caller's stream resolves. Without this, the IPC
-    // path's async iterator hangs forever waiting for a terminal event
-    // that won't come. Mirrors `runDeviceFlowSubprocess`'s synthesis.
     opts.onEvent({ type: 'complete', dir: targetDir });
   });
 

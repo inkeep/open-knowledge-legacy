@@ -1,12 +1,3 @@
-/**
- * NavigatorApp unit tests — exercise the pure shape of the React component
- * via direct module imports + bridge-call counters. Repo convention is no
- * @testing-library/react, so we test the IPC dispatch logic via the bridge
- * mock surface (the same pattern as `EditorActivityPool.test.ts`).
- *
- * Full DOM rendering / interaction behavior is exercised by the US-013
- * Playwright smoke test which launches a real Electron BrowserWindow.
- */
 import { describe, expect, mock, test } from 'bun:test';
 
 interface MockBridge {
@@ -54,7 +45,6 @@ describe('NavigatorApp bridge contract', () => {
   test('Component module imports cleanly', async () => {
     const mod = await import('./NavigatorApp');
     expect(typeof mod.NavigatorApp).toBe('function');
-    // Pure helpers exposed for test access — absent = refactor drift.
     expect(typeof mod.resolveErrorMessage).toBe('function');
     expect(typeof mod.runWithErrorStatePure).toBe('function');
   });
@@ -120,7 +110,6 @@ describe('NavigatorApp error-state helpers', () => {
     const setError = mock(() => {});
     const fn = mock(() => Promise.resolve());
     await runWithErrorStatePure(fn, 'fallback', setError);
-    // setError(null) fires first to clear any prior banner.
     expect(setError).toHaveBeenCalledWith(null);
     expect(fn).toHaveBeenCalled();
   });
@@ -136,7 +125,6 @@ describe('NavigatorApp error-state helpers', () => {
       'Failed to open project.',
       setError,
     );
-    // Sequence: setError(null) to clear, then setError('boot failed') on catch.
     expect(setErrorCalls).toEqual([null, 'boot failed']);
   });
 
@@ -146,7 +134,6 @@ describe('NavigatorApp error-state helpers', () => {
     const setError = (msg: string | null) => {
       setErrorCalls.push(msg);
     };
-    // Rejection with a string (not an Error) — resolveErrorMessage path falls back.
     await runWithErrorStatePure(
       () => Promise.reject('network dropped'),
       'Failed to open project.',

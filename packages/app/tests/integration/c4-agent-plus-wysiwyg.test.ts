@@ -1,16 +1,3 @@
-/**
- * C4: Agent write + concurrent WYSIWYG (XmlFragment) edits.
- *
- * Validates that agent writes via the HTTP API (applyAgentMarkdownWrite under
- * AGENT_WRITE_ORIGIN) and concurrent client WYSIWYG edits both survive the
- * server-authoritative observer bridge. The server applies agent writes to
- * XmlFragment via updateYFragment and mirrors to Y.Text via applyByPrefixSuffix
- * (precedent #12). Client WYSIWYG edits propagate via CRDT sync and the server
- * observer handles cross-CRDT writes under OBSERVER_SYNC_ORIGIN.
- *
- * Per-test docName isolation via createTestClient/createTestClients.
- * Client lifecycle in try/finally (not afterEach) per R8a.
- */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -37,7 +24,6 @@ afterAll(async () => {
   await server.cleanup();
 });
 
-/** Append a paragraph with the given text to a client's XmlFragment. */
 function appendParagraph(client: TestClient, text: string): void {
   const paragraph = new Y.XmlElement('paragraph');
   const ytext = new Y.XmlText();
@@ -46,8 +32,6 @@ function appendParagraph(client: TestClient, text: string): void {
   client.fragment.push([paragraph]);
 }
 
-/** Assert convergence: polls until all markers appear in BOTH Y.Text and
- *  XmlFragment on all clients, then verifies bridge invariant and consistency. */
 async function assertConverged(clients: TestClient[], markers: string[]): Promise<void> {
   for (const marker of markers) {
     for (let i = 0; i < clients.length; i++) {
@@ -60,15 +44,12 @@ async function assertConverged(clients: TestClient[], markers: string[]): Promis
     }
   }
 
-  // Wait for server observer debounce + WebSocket propagation to settle
   await wait(500);
 
-  // Verify bridge invariant on all clients
   for (const c of clients) {
     assertBridgeInvariant(c.ytext, c.fragment);
   }
 
-  // Verify all clients have identical Y.Text state
   const ytexts = clients.map((c) => c.ytext.toString());
   for (let i = 1; i < ytexts.length; i++) {
     expect(ytexts[i]).toBe(ytexts[0]);
@@ -80,10 +61,8 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
     const docName = `c4-basic-${crypto.randomUUID()}`;
     const client = await createTestClient(server.port, docName, { skipInvariantWatcher: true });
     try {
-      // Client types in WYSIWYG
       appendParagraph(client, 'C4-WYSIWYG-USER-EDIT');
 
-      // Concurrent agent write via HTTP API
       await agentWriteMd(server.port, '# C4-AGENT-HEADING\n\nC4-agent-body.', {
         docName,
         position: 'append',
@@ -102,7 +81,6 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
     const docName = `c4-seed-${crypto.randomUUID()}`;
     const client = await createTestClient(server.port, docName, { skipInvariantWatcher: true });
     try {
-      // Seed content via agent write
       await agentWriteMd(server.port, '# Existing Document\n\nBase content here.', {
         docName,
         position: 'replace',
@@ -110,14 +88,11 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
       await pollUntil(() => client.ytext.toString().includes('Base content'), 5000);
       await wait(500);
 
-      // Client adds WYSIWYG paragraph
       appendParagraph(client, 'C4-SEED-WYSIWYG-ADDITION');
 
-      // Wait for WYSIWYG edit to propagate through server bridge
       await pollUntil(() => client.ytext.toString().includes('C4-SEED-WYSIWYG-ADDITION'), 5000);
       await wait(200);
 
-      // Agent appends more content
       await agentWriteMd(server.port, '\n\nC4-SEED-AGENT-APPEND\n', {
         docName,
         position: 'append',
@@ -128,7 +103,6 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
         ['Existing Document', 'Base content', 'C4-SEED-WYSIWYG-ADDITION', 'C4-SEED-AGENT-APPEND'],
       );
 
-      // Verify no duplication of seed content
       const text = client.ytext.toString();
       const seedCount = text.split('Base content').length - 1;
       expect(seedCount).toBe(1);
@@ -145,13 +119,10 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
       perClientOptions: { skipInvariantWatcher: true },
     });
     try {
-      // Client A: WYSIWYG edit
       appendParagraph(clients[0], 'C4-MULTI-CLIENT-A');
 
-      // Client B: WYSIWYG edit
       appendParagraph(clients[1], 'C4-MULTI-CLIENT-B');
 
-      // Wait for client edits to propagate before agent write
       await pollUntil(
         () =>
           clients[0].ytext.toString().includes('C4-MULTI-CLIENT-B') &&
@@ -160,7 +131,6 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
       );
       await wait(400);
 
-      // Agent write via HTTP API
       await agentWriteMd(server.port, '\n\nC4-MULTI-AGENT-WRITE\n', {
         docName,
         position: 'append',
@@ -180,7 +150,6 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
     const docName = `c4-seq-${crypto.randomUUID()}`;
     const client = await createTestClient(server.port, docName, { skipInvariantWatcher: true });
     try {
-      // Agent writes first
       await agentWriteMd(server.port, '# C4-SEQ-AGENT-FIRST\n\nAgent paragraph.', {
         docName,
         position: 'replace',
@@ -188,10 +157,8 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
       await pollUntil(() => client.ytext.toString().includes('C4-SEQ-AGENT-FIRST'), 5000);
       await wait(500);
 
-      // Verify bridge invariant after agent write settles
       assertBridgeInvariant(client.ytext, client.fragment);
 
-      // Client types WYSIWYG after agent write arrived
       appendParagraph(client, 'C4-SEQ-WYSIWYG-SECOND');
 
       await assertConverged(
@@ -207,24 +174,19 @@ describe('C4: agent write + concurrent WYSIWYG', () => {
     const docName = `c4-rapid-${crypto.randomUUID()}`;
     const client = await createTestClient(server.port, docName, { skipInvariantWatcher: true });
     try {
-      // Seed first
       await agentWriteMd(server.port, '# Rapid Test\n', { docName, position: 'replace' });
       await pollUntil(() => client.ytext.toString().includes('Rapid Test'), 5000);
       await wait(500);
 
-      // Client WYSIWYG edit
       appendParagraph(client, 'C4-RAPID-WYSIWYG-0');
 
-      // Wait for it to propagate
       await pollUntil(() => client.ytext.toString().includes('C4-RAPID-WYSIWYG-0'), 5000);
       await wait(300);
 
-      // Agent appends
       await agentWriteMd(server.port, '\n\nC4-RAPID-AGENT-0\n', { docName, position: 'append' });
       await pollUntil(() => client.ytext.toString().includes('C4-RAPID-AGENT-0'), 5000);
       await wait(300);
 
-      // Second WYSIWYG edit
       appendParagraph(client, 'C4-RAPID-WYSIWYG-1');
 
       await assertConverged(

@@ -1,19 +1,3 @@
-/**
- * Pure resolver for folder-level frontmatter defaults (D5 / FR5).
- *
- * Given an array of `FolderRule`s and a path, compute the effective
- * `{ title?, description?, tags? }` view by applying:
- *   - scalars (title, description): last matching rule wins (positional,
- *     declaration order — later rules in the `folders:` array override)
- *   - tags: concat across ALL matching rules in declaration order, then
- *     dedup preserving first-occurrence order
- *
- * Matching uses picomatch with `{ dot: true }`. Compiled matchers are
- * memoized via a module-level WeakMap keyed on the rules array so repeated
- * calls with the same (stable) array avoid recompilation.
- *
- * Pure: no I/O, does not mutate the input rules array.
- */
 
 import picomatch from 'picomatch';
 import type { FolderFrontmatter, FolderRule } from '../config/schema.ts';

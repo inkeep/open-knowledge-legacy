@@ -1,23 +1,3 @@
-/**
- * CommandPalette — Electron-only Cmd+K (Ctrl+K on Win/Linux) overlay that
- * mirrors the File-menu actions as a searchable list. User feedback during
- * Phase 8 review asked for a command-palette UI (beyond the menu bar + the
- * top-bar ProjectSwitcher pill) for project selection.
- *
- * Commands (project actions open a NEW editor BrowserWindow per D3 revised):
- *   - Open folder on disk…            — `bridge.dialog.openFolder()` → open
- *   - Switch Project…                 — `bridge.navigator.open()` (focus or
- *                                       create the Project Navigator window)
- *   - Install for Claude Chat & Cowork (Desktop App)…
- *   - Open in agent (per-target)
- *   - Open Recent → <one item per recent project>, up to 10
- *
- * Web / CLI distribution: `window.okDesktop` is undefined → the palette never
- * mounts; Cmd+K is a no-op outside Electron. Keeps zero-footprint for non-
- * Electron consumers of packages/app.
- *
- * Pattern mirrors VS Code's Cmd+Shift+P, Cursor's Cmd+K, Linear's Cmd+K, etc.
- */
 
 import { Download, FolderOpen, LayoutGrid, Settings, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -41,12 +21,6 @@ import { useWorkspace } from '@/lib/use-workspace';
 import { buildHandoffInput, useHandoffDispatch } from './handoff/useHandoffDispatch';
 import { useInstalledAgents } from './handoff/useInstalledAgents';
 
-/**
- * CommandPalette-scoped wrapper around the shared `runWithToast` helper. Same
- * surface ProjectSwitcher uses — consistent launcher UX (every rejection
- * surfaces as a sonner toast). Exported for unit-testing with a mockable
- * `toastApi` indirection; the default uses sonner's module-level `toast`.
- */
 export const runWithToast = (
   fn: () => Promise<void>,
   fallback: string,
@@ -64,17 +38,8 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
   const workspace = useWorkspace();
   const { states: installStates, refresh: refreshInstallStates } = useInstalledAgents();
   const { dispatch: dispatchHandoff } = useHandoffDispatch();
-  // Shared input construction — identical shape across the three surfaces so
-  // AC9's single-dispatch contract holds. `null` when no active doc or when
-  // workspace metadata has not resolved yet (web host only — Electron
-  // resolves synchronously via `window.okDesktop`).
   const handoffInput = buildHandoffInput({ docName: activeDocName, workspace });
 
-  // Lazy-load recents each time the palette opens so the list is always fresh.
-  // Cheap (<10ms over IPC), and avoids a stale snapshot if the user opens
-  // another project in a sibling window between palette opens. IPC rejection
-  // surfaces as a toast so users know the list is stale rather than silently
-  // seeing an empty group.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -82,18 +47,12 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
       const result = await bridge.project.listRecent();
       if (!cancelled) setRecents(result);
     }, 'Failed to load recent projects.');
-    // Fire-and-forget install-state refresh when the palette opens. The probe
-    // coordinator handles the 10s per-scheme throttle, so rapid open/close
-    // cycles collapse into at most one OS probe per window. Matches the
-    // EditorHeader dropdown's refresh-on-open semantics (SQ5 DIRECTED option c).
     void refreshInstallStates();
     return () => {
       cancelled = true;
     };
   }, [open, bridge, refreshInstallStates]);
 
-  // Cmd+K / Ctrl+K global opener. Attached once per bridge instance; React
-  // Compiler handles the no-stale-closure-on-re-render concern via reactivity.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isTrigger = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
@@ -107,8 +66,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
 
   const runAction = (fn: () => Promise<void> | void, fallback = 'Command failed.') => {
     setOpen(false);
-    // Normalize `fn` to `() => Promise<void>` so the shared helper's
-    // signature lines up; sync callbacks get wrapped into a resolved promise.
     void runWithToast(async () => {
       await fn();
     }, fallback);
@@ -157,9 +114,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
           <CommandItem
             value="settings preferences config"
             onSelect={() => {
-              // Hash-routed open — App.tsx's SettingsShortcutHandler /
-              // EditorArea's useSettingsRoute listen for SETTINGS_OPEN_HASH
-              // and render the Settings pane in the editor area (US-010).
               setOpen(false);
               if (window.location.hash !== SETTINGS_OPEN_HASH) {
                 window.location.hash = SETTINGS_OPEN_HASH;
@@ -173,9 +127,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
           </CommandItem>
           <CommandItem
             onSelect={() => {
-              // Trigger the install dialog by navigating to its hash route
-              // (App.tsx's InstallInClaudeDesktopTrigger listens for it).
-              // Closes the palette; the dialog renders independently.
               setOpen(false);
               window.location.hash = '#install-claude-desktop';
             }}
@@ -193,11 +144,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
               {KNOWN_TARGETS.map((target) => {
                 const installState = installStates[target.id];
                 const enabled = installState.installed === true && handoffInput !== null;
-                // The Command palette has no tooltip affordance on disabled
-                // rows; the dropdown surface (EditorHeader) carries the full
-                // PQ6 tooltip UX with install + claude.ai affordances. Here
-                // we surface a concise right-aligned status hint so the user
-                // sees *why* the row is disabled without hunting for it.
                 const hint =
                   installState.installed === null
                     ? 'Detecting…'
@@ -206,16 +152,6 @@ export function CommandPalette({ bridge }: CommandPaletteProps) {
                       : handoffInput === null
                         ? 'No active doc'
                         : null;
-                // Status hint for disabled rows is rendered as a plain <span>
-                // rather than <CommandShortcut>. CommandShortcut is cmdk's
-                // right-aligned affordance semantically reserved for keyboard
-                // shortcuts (⌘O / ⌘⇧N above). Overloading it with status copy
-                // ("Not installed", "Desktop only") conflated the shortcut
-                // affordance with disabled-state messaging; the plain span is
-                // the same visual placement without the semantic overload.
-                // `aria-label` composes the hint into the accessible name so
-                // AT users hear "Open in Codex, Not installed" rather than
-                // the bare "Open in Codex" that matches an enabled row.
                 const accessibleLabel = hint
                   ? `Open in ${target.displayName}, ${hint}`
                   : `Open in ${target.displayName}`;

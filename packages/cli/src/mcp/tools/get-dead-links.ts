@@ -69,9 +69,6 @@ export function register(server: ServerInstance, deps: GetDeadLinksDeps): void {
       const { ok: _ok, ...rest } = result;
       const data = rest as DeadLinksPayload;
       const { resolve, ui } = await buildListResolver(deps, cwd);
-      // Target previewUrls point at redlinks (the UI renders unresolved docs
-      // as a "page doesn't exist yet" state); sources previewUrls point at
-      // the live source doc that contains the broken link.
       const deadLinks = (data.deadLinks ?? []).map((row) => {
         const target = typeof row.target === 'string' ? row.target : null;
         const resolvedTarget = target ? resolve(target) : null;

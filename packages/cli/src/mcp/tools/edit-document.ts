@@ -1,9 +1,3 @@
-/**
- * `edit_document` MCP tool — targeted find-and-replace on live document content.
- *
- * Sends a patch to Hocuspocus via POST /api/agent-patch, which finds the text
- * in the Y.Text and replaces it, propagating to all connected editors.
- */
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { AgentIdentity } from '../agent-identity.ts';
@@ -104,7 +98,6 @@ export function register(server: ServerInstance, deps: EditDocumentDeps): void {
       const preview = resolvePreviewUrl(normalized.docName, { config, lockDir });
       const subscriberCount =
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
-      // Once-per-session attach hint — see write-document.ts for rationale.
       const systemSubscriberCount =
         typeof result.systemSubscriberCount === 'number' ? result.systemSubscriberCount : undefined;
       const noPreviewAnywhere = systemSubscriberCount === 0;

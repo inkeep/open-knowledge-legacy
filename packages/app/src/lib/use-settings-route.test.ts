@@ -1,9 +1,3 @@
-/**
- * Pure unit tests for the hash → settings-scope parser. The hook itself
- * (subscribing to `hashchange` + reading `window.location.hash`) is exercised
- * by Playwright in US-009/US-010 — repo convention is to keep DOM/event
- * coverage in stress tests and unit-test only the pure parser surface.
- */
 
 import { describe, expect, test } from 'bun:test';
 import {
